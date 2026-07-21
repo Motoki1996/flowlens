@@ -1,0 +1,72 @@
+# FlowLens local development stack.
+# Usage: `make dev` (or `docker compose up`).
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: flowlens-db
+    environment:
+      POSTGRES_USER: flowlens
+      POSTGRES_PASSWORD: flowlens
+      POSTGRES_DB: flowlens
+    ports:
+      # Host port 55432 avoids clashing with any local Postgres on 5432/5433.
+      # Inside the compose network the API still uses db:5432.
+      - "55432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowlens -d flowlens"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+      target: dev
+    container_name: flowlens-api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      API_PORT: "8080"
+      # Inside the compose network the DB host is the service name "db".
+      DATABASE_URL: postgres://flowlens:flowlens@db:5432/flowlens?sslmode=disable
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+      API_BASE_URL: ${API_BASE_URL:-http://localhost:8080}
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount source for hot reload (air rebuilds on change).
+      - ./apps/api:/app
+      # Keep the module cache out of the bind mount.
+      - go-mod-cache:/go/pkg/mod
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    container_name: flowlens-web
+    depends_on:
+      - api
+    environment:
+      # Server components reach the API via the compose network.
+      API_INTERNAL_URL: http://api:8080
+      # The browser reaches the API via the host-published port.
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  db-data:
+  go-mod-cache:

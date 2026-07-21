@@ -1,0 +1,116 @@
+openapi: 3.0.3
+info:
+  title: FlowLens API
+  version: 0.1.0
+  description: >
+    FlowLens API. This document covers the endpoints implemented in the
+    foundation phase (health, GitHub OAuth, current user). Organization,
+    repository and pull-request endpoints are added in later phases.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness / readiness probe
+      tags: [system]
+      responses:
+        "200":
+          description: API and database healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: Database unreachable
+
+  /auth/github:
+    get:
+      summary: Start GitHub OAuth login
+      description: >
+        Sets a short-lived anti-CSRF state cookie and redirects the browser
+        to GitHub's authorization page.
+      tags: [auth]
+      responses:
+        "307":
+          description: Redirect to GitHub
+        "503":
+          description: OAuth is not configured
+
+  /auth/github/callback:
+    get:
+      summary: GitHub OAuth callback
+      description: >
+        Verifies the state cookie, exchanges the code for an access token,
+        upserts the user, issues a session cookie and redirects to the web
+        app. On error it redirects to the web login page with an error code.
+      tags: [auth]
+      parameters:
+        - in: query
+          name: code
+          schema: { type: string }
+        - in: query
+          name: state
+          schema: { type: string }
+      responses:
+        "307":
+          description: Redirect to the web app (success) or login page (error)
+
+  /auth/logout:
+    post:
+      summary: Log out
+      description: Revokes the current session and clears the session cookie.
+      tags: [auth]
+      responses:
+        "204":
+          description: Logged out
+
+  /api/v1/me:
+    get:
+      summary: Get the authenticated user
+      tags: [users]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: flowlens_session
+  schemas:
+    Health:
+      type: object
+      properties:
+        status: { type: string, example: ok }
+        database: { type: string, example: ok }
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        githubUserId: { type: integer, format: int64 }
+        githubLogin: { type: string }
+        displayName: { type: string }
+        avatarUrl: { type: string }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }

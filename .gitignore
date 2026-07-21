@@ -1,1 +1,30 @@
+# direnv / local env
 .envrc
+.env
+.env.local
+*.env
+!.env.example
+
+# Go
+/apps/api/bin/
+/apps/api/tmp/
+*.test
+*.out
+coverage.out
+
+# Node / Next.js
+node_modules/
+/apps/web/.next/
+/apps/web/out/
+/apps/web/coverage/
+npm-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Docker
+/postgres-data/

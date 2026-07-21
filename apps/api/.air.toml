@@ -1,0 +1,14 @@
+# air configuration for hot reloading the Go API in development.
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/api ./cmd/api"
+  bin = "./tmp/api"
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "bin", "migrations", "openapi"]
+  delay = 500
+  stop_on_error = true
+
+[log]
+  time = true

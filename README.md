@@ -79,12 +79,13 @@ Requires Docker and an editor with Dev Containers support (VS Code + the
    (see steps below), then start the app from inside the container:
 
    ```bash
-   # API (hot reload) and web, in separate terminals:
-   cd apps/api && air
-   cd apps/web && npm run dev
+   make dev-container
    ```
 
-   The forwarded ports expose the web app on 3000 and the API on 8080.
+   This starts the API (`air`, hot reload) and web (`npm run dev`) natively
+   inside the container — `docker compose` (used by `make dev`) isn't
+   available there. `Ctrl+C` stops both. The forwarded ports expose the web
+   app on 3000 and the API on 8080.
 
 Inside the container Postgres is reachable at `db:5432` (the app picks this up
 from the container environment). Makefile DB targets read `.env`, which points
@@ -167,7 +168,8 @@ later, Azure Key Vault.
 | Command             | What it does                                        |
 | ------------------- | --------------------------------------------------- |
 | `make setup`        | Create `.env`, install Go and web dependencies      |
-| `make dev`          | Start Postgres + API + Web (hot reload)             |
+| `make dev`          | Start Postgres + API + Web (hot reload, via Docker Compose) |
+| `make dev-container` | Start API + Web natively inside the Dev Container (no Docker; `db` service must already be running) |
 | `make migrate`      | Apply database migrations                           |
 | `make generate`     | Regenerate sqlc query code                          |
 | `make test`         | Run Go and web unit tests                            |

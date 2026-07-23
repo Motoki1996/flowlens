@@ -28,6 +28,10 @@ dev: ## Start the full stack (Postgres + API + Web) with hot reload.
 down: ## Stop the stack.
 	docker compose down
 
+.PHONY: dev-container
+dev-container: ## Start API + Web natively inside the devcontainer (no Docker; "db" service must already be running).
+	@.devcontainer/dev.sh
+
 .PHONY: migrate
 migrate: ## Apply all up migrations against DATABASE_URL.
 	migrate -path $(MIGRATIONS) -database "$(DATABASE_URL)" up

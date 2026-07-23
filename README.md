@@ -62,6 +62,40 @@ See [docs/architecture.md](docs/architecture.md) for details and
 
 ## Local setup
 
+You can develop either in a **Dev Container** (recommended — no host toolchain
+needed) or directly on your host with Docker Compose.
+
+### Option A: Dev Container
+
+Requires Docker and an editor with Dev Containers support (VS Code + the
+"Dev Containers" extension, or the `devcontainer` CLI).
+
+1. Open the repo in VS Code and run **"Dev Containers: Reopen in Container"**
+   (or `devcontainer up --workspace-folder .`).
+2. The container ships both toolchains (Go 1.26 + Node 22) and the `sqlc`,
+   `migrate`, `air`, and `golangci-lint` CLIs. On first create it installs
+   dependencies, starts Postgres, and applies migrations automatically.
+3. Fill in `TOKEN_ENCRYPTION_KEY` and the GitHub OAuth values in `.env`
+   (see steps below), then start the app from inside the container:
+
+   ```bash
+   # API (hot reload) and web, in separate terminals:
+   cd apps/api && air
+   cd apps/web && npm run dev
+   ```
+
+   The forwarded ports expose the web app on 3000 and the API on 8080.
+
+Inside the container Postgres is reachable at `db:5432` (the app picks this up
+from the container environment). Makefile DB targets read `.env`, which points
+at the host port, so pass the container URL explicitly when needed:
+
+```bash
+make migrate DATABASE_URL="$DATABASE_URL"
+```
+
+### Option B: Host + Docker Compose
+
 ### Prerequisites
 
 - Docker + Docker Compose

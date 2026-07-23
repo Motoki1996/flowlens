@@ -1,0 +1,41 @@
+# Devcontainer overrides layered on top of ../docker-compose.yml.
+#
+# Adds a single `workspace` container that carries both toolchains and
+# reuses the `db` service from the base file. The api/web services from the
+# base file are NOT started here (see `runServices` in devcontainer.json);
+# instead you run the API and web dev servers from inside the workspace
+# (e.g. `make dev` targets or `air` / `npm run dev` directly).
+services:
+  workspace:
+    build:
+      # Relative build paths in a compose override are resolved from the
+      # project directory (the first compose file's dir = the repo root),
+      # not from this file's location — so point explicitly at .devcontainer.
+      context: .devcontainer
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: development
+      # Inside the compose network Postgres is reachable as db:5432
+      # (the host-published 55432 is only for tools on the host).
+      DATABASE_URL: postgres://flowlens:flowlens@db:5432/flowlens?sslmode=disable
+      # api and web both run inside this container, so they reach each
+      # other over localhost.
+      API_INTERNAL_URL: http://localhost:8080
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+    volumes:
+      # Same rule as build.context above: relative paths resolve from the
+      # project directory (the repo root), NOT from this file's location —
+      # so this is `.`, not `..`.
+      - .:/workspaces/flowlens:cached
+      # Keep the Go module cache off the bind mount (shared with the base api service).
+      - go-mod-cache:/go/pkg/mod
+      # Persist Claude Code login/config across container rebuilds.
+      - claude-config:/home/vscode/.claude
+    command: sleep infinity
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  go-mod-cache:
+  claude-config:

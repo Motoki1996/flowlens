@@ -4,6 +4,8 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError } from "@/types";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 export function SignupForm() {
   const router = useRouter();
@@ -39,16 +41,13 @@ export function SignupForm() {
   return (
     <form onSubmit={handleSubmit} className="mt-6 space-y-4">
       {error ? (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
 
       <div>
-        <label htmlFor="username" className="block text-sm font-medium text-slate-700">
+        <label htmlFor="username" className="text-foreground block text-sm font-medium">
           Username
         </label>
         <input
@@ -58,12 +57,12 @@ export function SignupForm() {
           required
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="border-input bg-input/30 text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 block w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
         />
       </div>
 
       <div>
-        <label htmlFor="email" className="block text-sm font-medium text-slate-700">
+        <label htmlFor="email" className="text-foreground block text-sm font-medium">
           Email
         </label>
         <input
@@ -73,12 +72,12 @@ export function SignupForm() {
           required
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="border-input bg-input/30 text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 block w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
         />
       </div>
 
       <div>
-        <label htmlFor="password" className="block text-sm font-medium text-slate-700">
+        <label htmlFor="password" className="text-foreground block text-sm font-medium">
           Password
         </label>
         <input
@@ -89,17 +88,13 @@ export function SignupForm() {
           minLength={8}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+          className="border-input bg-input/30 text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 block w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
         />
       </div>
 
-      <button
-        type="submit"
-        disabled={pending}
-        className="flex w-full items-center justify-center rounded-md bg-slate-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-      >
+      <Button type="submit" disabled={pending} className="w-full">
         {pending ? "Creating account…" : "Create account"}
-      </button>
+      </Button>
     </form>
   );
 }

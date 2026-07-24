@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/api";
 import { LoginForm } from "@/components/LoginForm";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 export default async function LoginPage() {
   // Already signed in -> go straight to the dashboard.
@@ -10,21 +11,24 @@ export default async function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold text-slate-900">FlowLens</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          Sign in to visualize your team&apos;s merge request flow.
-        </p>
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle className="text-xl">FlowLens</CardTitle>
+          <CardDescription>
+            Sign in to visualize your team&apos;s merge request flow.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LoginForm />
 
-        <LoginForm />
-
-        <p className="mt-4 text-center text-sm text-slate-600">
-          Don&apos;t have an account?{" "}
-          <Link href="/signup" className="font-medium text-slate-900 hover:underline">
-            Sign up
-          </Link>
-        </p>
-      </div>
+          <p className="text-muted-foreground mt-4 text-center text-sm">
+            Don&apos;t have an account?{" "}
+            <Link href="/signup" className="text-foreground font-medium hover:underline">
+              Sign up
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
     </main>
   );
 }

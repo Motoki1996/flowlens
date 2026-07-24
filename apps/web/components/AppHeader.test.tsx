@@ -10,10 +10,9 @@ vi.mock("next/navigation", () => ({
 
 const user: User = {
   id: "1",
-  githubUserId: 7,
-  githubLogin: "octocat",
+  username: "octocat",
+  email: "octocat@example.com",
   displayName: "The Octocat",
-  avatarUrl: "",
 };
 
 describe("AppHeader", () => {

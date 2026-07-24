@@ -16,16 +16,16 @@ export default async function SettingsPage() {
           <h2 className="text-base font-medium text-slate-800">Account</h2>
           <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
             <div>
-              <dt className="text-slate-500">GitHub login</dt>
-              <dd className="text-slate-900">{user.githubLogin}</dd>
+              <dt className="text-slate-500">Username</dt>
+              <dd className="text-slate-900">{user.username}</dd>
             </div>
             <div>
               <dt className="text-slate-500">Display name</dt>
               <dd className="text-slate-900">{user.displayName || "—"}</dd>
             </div>
             <div>
-              <dt className="text-slate-500">GitHub user ID</dt>
-              <dd className="text-slate-900">{user.githubUserId}</dd>
+              <dt className="text-slate-500">Email</dt>
+              <dd className="text-slate-900">{user.email}</dd>
             </div>
           </dl>
         </section>

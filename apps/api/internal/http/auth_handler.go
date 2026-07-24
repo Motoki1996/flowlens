@@ -1,82 +1,93 @@
 package http
 
 import (
-	"crypto/subtle"
+	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/flowlens/api/internal/auth"
+	"github.com/flowlens/api/internal/user"
 )
 
-// handleGitHubLogin starts the OAuth flow: it stores an anti-CSRF state in
-// a short-lived cookie and redirects the browser to GitHub.
-func (s *Server) handleGitHubLogin(w http.ResponseWriter, r *http.Request) {
-	if s.oauth.ClientID == "" {
-		writeError(w, http.StatusServiceUnavailable, "oauth_not_configured",
-			"GitHub OAuth is not configured")
+type signupRequest struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type loginRequest struct {
+	Identifier string `json:"identifier"`
+	Password   string `json:"password"`
+}
+
+// handleSignup creates a local account and starts a session for it.
+func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	var req signupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
 		return
 	}
-	state, err := auth.NewState()
+	if req.Username == "" || req.Email == "" {
+		writeError(w, http.StatusBadRequest, "missing_fields", "username and email are required")
+		return
+	}
+
+	ctx := r.Context()
+	row, err := s.users.SignUp(ctx, user.SignUpInput{
+		Username: req.Username,
+		Email:    req.Email,
+		Password: req.Password,
+	})
 	if err != nil {
-		slog.Error("generate oauth state", "error", err)
+		switch {
+		case errors.Is(err, user.ErrUsernameTaken):
+			writeError(w, http.StatusConflict, "username_taken", "username is already taken")
+		case errors.Is(err, user.ErrEmailTaken):
+			writeError(w, http.StatusConflict, "email_taken", "email is already registered")
+		case errors.Is(err, auth.ErrPasswordTooShort):
+			writeError(w, http.StatusBadRequest, "password_too_short", "password must be at least 8 characters")
+		default:
+			slog.Error("sign up", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		}
+		return
+	}
+
+	if err := s.startSession(w, r, row.ID); err != nil {
+		slog.Error("create session", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
-	s.cookies.setState(w, state)
-	http.Redirect(w, r, s.oauth.AuthCodeURL(state), http.StatusTemporaryRedirect)
+	writeJSON(w, http.StatusCreated, user.FromDB(row))
 }
 
-// handleGitHubCallback completes the OAuth flow: it verifies state,
-// exchanges the code for a token, upserts the user and issues a session.
-func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
+// handleLogin verifies credentials and starts a session.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var req loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
+		return
+	}
+
 	ctx := r.Context()
-
-	// Verify the state parameter against the state cookie (CSRF defence).
-	stateCookie, err := r.Cookie(stateCookieName)
-	s.cookies.clearState(w)
-	queryState := r.URL.Query().Get("state")
-	if err != nil || queryState == "" ||
-		subtle.ConstantTimeCompare([]byte(stateCookie.Value), []byte(queryState)) != 1 {
-		s.redirectToWebError(w, r, "invalid_state")
-		return
-	}
-
-	code := r.URL.Query().Get("code")
-	if code == "" {
-		s.redirectToWebError(w, r, "missing_code")
-		return
-	}
-
-	token, err := s.oauth.Exchange(ctx, code)
+	row, err := s.users.Authenticate(ctx, req.Identifier, req.Password)
 	if err != nil {
-		slog.Error("oauth token exchange", "error", err)
-		s.redirectToWebError(w, r, "exchange_failed")
+		if errors.Is(err, user.ErrInvalidCredentials) {
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username/email or password")
+			return
+		}
+		slog.Error("authenticate", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
-	ghUser, err := s.github.GetAuthenticatedUser(ctx, token.AccessToken)
-	if err != nil {
-		slog.Error("fetch github user", "error", err)
-		s.redirectToWebError(w, r, "github_user_failed")
-		return
-	}
-
-	row, err := s.users.UpsertFromGitHub(ctx, ghUser, token.AccessToken)
-	if err != nil {
-		slog.Error("upsert user", "error", err)
-		s.redirectToWebError(w, r, "user_persist_failed")
-		return
-	}
-
-	sessionToken, err := s.sessions.Create(ctx, row.ID)
-	if err != nil {
+	if err := s.startSession(w, r, row.ID); err != nil {
 		slog.Error("create session", "error", err)
-		s.redirectToWebError(w, r, "session_failed")
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
-
-	s.cookies.setSession(w, sessionToken, int(s.sessionTTL.Seconds()))
-	http.Redirect(w, r, s.webBaseURL+"/dashboard", http.StatusTemporaryRedirect)
+	writeJSON(w, http.StatusOK, user.FromDB(row))
 }
 
 // handleLogout revokes the current session and clears the cookie.
@@ -88,10 +99,4 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	s.cookies.clearSession(w)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// redirectToWebError sends the browser back to the web login page with an
-// error code it can display.
-func (s *Server) redirectToWebError(w http.ResponseWriter, r *http.Request, code string) {
-	http.Redirect(w, r, s.webBaseURL+"/login?error="+code, http.StatusTemporaryRedirect)
 }

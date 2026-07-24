@@ -14,10 +14,10 @@ import (
 
 func seedUser(t *testing.T, q *dbtest.FakeQuerier) db.User {
 	t.Helper()
-	u, err := q.UpsertUser(context.Background(), db.UpsertUserParams{
-		GithubUserID:         42,
-		GithubLogin:          "octocat",
-		EncryptedAccessToken: []byte("enc"),
+	u, err := q.CreateUser(context.Background(), db.CreateUserParams{
+		Username:     "octocat",
+		Email:        "octocat@example.com",
+		PasswordHash: "hash",
 	})
 	require.NoError(t, err)
 	return u
@@ -34,7 +34,7 @@ func TestSessionService_CreateAndAuthenticate(t *testing.T) {
 
 	got, err := svc.Authenticate(context.Background(), token)
 	require.NoError(t, err)
-	assert.Equal(t, u.GithubUserID, got.GithubUserID)
+	assert.Equal(t, u.Username, got.Username)
 }
 
 func TestSessionService_AuthenticateUnknownToken(t *testing.T) {

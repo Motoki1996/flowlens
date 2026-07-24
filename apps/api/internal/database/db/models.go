@@ -9,13 +9,13 @@ import (
 )
 
 type Organization struct {
-	ID                   pgtype.UUID        `json:"id"`
-	GithubOrganizationID int64              `json:"github_organization_id"`
-	Login                string             `json:"login"`
-	DisplayName          string             `json:"display_name"`
-	AvatarUrl            string             `json:"avatar_url"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID            pgtype.UUID        `json:"id"`
+	GitlabGroupID int64              `json:"gitlab_group_id"`
+	Login         string             `json:"login"`
+	DisplayName   string             `json:"display_name"`
+	AvatarUrl     string             `json:"avatar_url"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type OrganizationMember struct {
@@ -26,49 +26,49 @@ type OrganizationMember struct {
 }
 
 type PullRequest struct {
-	ID                  pgtype.UUID        `json:"id"`
-	RepositoryID        pgtype.UUID        `json:"repository_id"`
-	GithubPullRequestID int64              `json:"github_pull_request_id"`
-	Number              int32              `json:"number"`
-	Title               string             `json:"title"`
-	State               string             `json:"state"`
-	IsDraft             bool               `json:"is_draft"`
-	AuthorGithubLogin   string             `json:"author_github_login"`
-	AuthorAvatarUrl     string             `json:"author_avatar_url"`
-	BaseBranch          string             `json:"base_branch"`
-	HeadBranch          string             `json:"head_branch"`
-	Additions           int32              `json:"additions"`
-	Deletions           int32              `json:"deletions"`
-	ChangedFiles        int32              `json:"changed_files"`
-	GithubCreatedAt     pgtype.Timestamptz `json:"github_created_at"`
-	GithubUpdatedAt     pgtype.Timestamptz `json:"github_updated_at"`
-	MergedAt            pgtype.Timestamptz `json:"merged_at"`
-	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
-	HtmlUrl             string             `json:"html_url"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	RepositoryID         pgtype.UUID        `json:"repository_id"`
+	GitlabMergeRequestID int64              `json:"gitlab_merge_request_id"`
+	Number               int32              `json:"number"`
+	Title                string             `json:"title"`
+	State                string             `json:"state"`
+	IsDraft              bool               `json:"is_draft"`
+	AuthorGitlabUsername string             `json:"author_gitlab_username"`
+	AuthorAvatarUrl      string             `json:"author_avatar_url"`
+	BaseBranch           string             `json:"base_branch"`
+	HeadBranch           string             `json:"head_branch"`
+	Additions            int32              `json:"additions"`
+	Deletions            int32              `json:"deletions"`
+	ChangedFiles         int32              `json:"changed_files"`
+	GitlabCreatedAt      pgtype.Timestamptz `json:"gitlab_created_at"`
+	GitlabUpdatedAt      pgtype.Timestamptz `json:"gitlab_updated_at"`
+	MergedAt             pgtype.Timestamptz `json:"merged_at"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	HtmlUrl              string             `json:"html_url"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PullRequestReviewer struct {
-	PullRequestID pgtype.UUID        `json:"pull_request_id"`
-	GithubLogin   string             `json:"github_login"`
-	AvatarUrl     string             `json:"avatar_url"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	PullRequestID  pgtype.UUID        `json:"pull_request_id"`
+	GitlabUsername string             `json:"gitlab_username"`
+	AvatarUrl      string             `json:"avatar_url"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type Repository struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrganizationID     pgtype.UUID        `json:"organization_id"`
-	GithubRepositoryID int64              `json:"github_repository_id"`
-	Name               string             `json:"name"`
-	FullName           string             `json:"full_name"`
-	Description        string             `json:"description"`
-	IsPrivate          bool               `json:"is_private"`
-	DefaultBranch      string             `json:"default_branch"`
-	HtmlUrl            string             `json:"html_url"`
-	IsActive           bool               `json:"is_active"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID              pgtype.UUID        `json:"id"`
+	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	GitlabProjectID int64              `json:"gitlab_project_id"`
+	Name            string             `json:"name"`
+	FullName        string             `json:"full_name"`
+	Description     string             `json:"description"`
+	IsPrivate       bool               `json:"is_private"`
+	DefaultBranch   string             `json:"default_branch"`
+	HtmlUrl         string             `json:"html_url"`
+	IsActive        bool               `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Session struct {
@@ -90,12 +90,11 @@ type SyncRun struct {
 }
 
 type User struct {
-	ID                   pgtype.UUID        `json:"id"`
-	GithubUserID         int64              `json:"github_user_id"`
-	GithubLogin          string             `json:"github_login"`
-	DisplayName          string             `json:"display_name"`
-	AvatarUrl            string             `json:"avatar_url"`
-	EncryptedAccessToken []byte             `json:"encrypted_access_token"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ID           pgtype.UUID        `json:"id"`
+	DisplayName  string             `json:"display_name"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	Username     string             `json:"username"`
+	Email        string             `json:"email"`
+	PasswordHash string             `json:"password_hash"`
 }

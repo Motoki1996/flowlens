@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/api";
-import { LoginForm } from "@/components/LoginForm";
+import { SignupForm } from "@/components/SignupForm";
 
-export default async function LoginPage() {
+export default async function SignupPage() {
   // Already signed in -> go straight to the dashboard.
   const user = await getCurrentUser();
   if (user) redirect("/dashboard");
@@ -13,15 +13,15 @@ export default async function LoginPage() {
       <div className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-8 shadow-sm">
         <h1 className="text-xl font-semibold text-slate-900">FlowLens</h1>
         <p className="mt-2 text-sm text-slate-600">
-          Sign in to visualize your team&apos;s merge request flow.
+          Create an account to visualize your team&apos;s merge request flow.
         </p>
 
-        <LoginForm />
+        <SignupForm />
 
         <p className="mt-4 text-center text-sm text-slate-600">
-          Don&apos;t have an account?{" "}
-          <Link href="/signup" className="font-medium text-slate-900 hover:underline">
-            Sign up
+          Already have an account?{" "}
+          <Link href="/login" className="font-medium text-slate-900 hover:underline">
+            Sign in
           </Link>
         </p>
       </div>

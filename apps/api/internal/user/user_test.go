@@ -4,66 +4,96 @@ import (
 	"context"
 	"testing"
 
-	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/database/dbtest"
-	"github.com/flowlens/api/internal/github"
 	"github.com/flowlens/api/internal/user"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testCipher(t *testing.T) auth.TokenCipher {
-	t.Helper()
-	key := make([]byte, 32)
-	c, err := auth.NewAESGCMCipher(key)
+func TestService_SignUp_HashesPassword(t *testing.T) {
+	q := dbtest.New()
+	svc := user.NewService(q)
+
+	row, err := svc.SignUp(context.Background(), user.SignUpInput{
+		Username: "octocat", Email: "octocat@example.com", Password: "hunter22",
+	})
 	require.NoError(t, err)
-	return c
+
+	assert.Equal(t, "octocat", row.Username)
+	assert.Equal(t, "octocat@example.com", row.Email)
+	assert.Equal(t, "octocat", row.DisplayName) // defaults to username
+	assert.NotEqual(t, "hunter22", row.PasswordHash)
 }
 
-func TestService_UpsertFromGitHub_StoresEncryptedToken(t *testing.T) {
+func TestService_SignUp_RejectsDuplicateUsername(t *testing.T) {
 	q := dbtest.New()
-	cipher := testCipher(t)
-	svc := user.NewService(q, cipher)
+	svc := user.NewService(q)
+	ctx := context.Background()
 
-	ghUser := &github.User{ID: 7, Login: "octocat", Name: "The Octocat", AvatarURL: "https://x/y.png"}
-	row, err := svc.UpsertFromGitHub(context.Background(), ghUser, "gho_token")
+	_, err := svc.SignUp(ctx, user.SignUpInput{Username: "octocat", Email: "a@example.com", Password: "hunter22"})
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(7), row.GithubUserID)
-	assert.Equal(t, "octocat", row.GithubLogin)
-	// The stored token must be encrypted, not plaintext.
-	assert.NotEqual(t, "gho_token", string(row.EncryptedAccessToken))
-
-	decrypted, err := cipher.Decrypt(row.EncryptedAccessToken)
-	require.NoError(t, err)
-	assert.Equal(t, "gho_token", decrypted)
+	_, err = svc.SignUp(ctx, user.SignUpInput{Username: "octocat", Email: "b@example.com", Password: "hunter22"})
+	assert.ErrorIs(t, err, user.ErrUsernameTaken)
 }
 
-func TestService_UpsertFromGitHub_IsIdempotent(t *testing.T) {
+func TestService_SignUp_RejectsDuplicateEmail(t *testing.T) {
 	q := dbtest.New()
-	svc := user.NewService(q, testCipher(t))
-	ghUser := &github.User{ID: 7, Login: "octocat"}
+	svc := user.NewService(q)
+	ctx := context.Background()
 
-	first, err := svc.UpsertFromGitHub(context.Background(), ghUser, "t1")
+	_, err := svc.SignUp(ctx, user.SignUpInput{Username: "octocat", Email: "a@example.com", Password: "hunter22"})
 	require.NoError(t, err)
 
-	ghUser.Login = "octocat-renamed"
-	second, err := svc.UpsertFromGitHub(context.Background(), ghUser, "t2")
-	require.NoError(t, err)
-
-	// Same primary key, updated fields.
-	assert.Equal(t, first.ID, second.ID)
-	assert.Equal(t, "octocat-renamed", second.GithubLogin)
+	_, err = svc.SignUp(ctx, user.SignUpInput{Username: "other", Email: "a@example.com", Password: "hunter22"})
+	assert.ErrorIs(t, err, user.ErrEmailTaken)
 }
 
-func TestFromDB_DoesNotExposeToken(t *testing.T) {
+func TestService_Authenticate_Succeeds(t *testing.T) {
 	q := dbtest.New()
-	svc := user.NewService(q, testCipher(t))
-	row, err := svc.UpsertFromGitHub(context.Background(), &github.User{ID: 1, Login: "a"}, "secret")
+	svc := user.NewService(q)
+	ctx := context.Background()
+
+	created, err := svc.SignUp(ctx, user.SignUpInput{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
+	require.NoError(t, err)
+
+	byUsername, err := svc.Authenticate(ctx, "octocat", "hunter22")
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, byUsername.ID)
+
+	byEmail, err := svc.Authenticate(ctx, "octocat@example.com", "hunter22")
+	require.NoError(t, err)
+	assert.Equal(t, created.ID, byEmail.ID)
+}
+
+func TestService_Authenticate_WrongPassword(t *testing.T) {
+	q := dbtest.New()
+	svc := user.NewService(q)
+	ctx := context.Background()
+
+	_, err := svc.SignUp(ctx, user.SignUpInput{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
+	require.NoError(t, err)
+
+	_, err = svc.Authenticate(ctx, "octocat", "wrong-password")
+	assert.ErrorIs(t, err, user.ErrInvalidCredentials)
+}
+
+func TestService_Authenticate_UnknownUser(t *testing.T) {
+	q := dbtest.New()
+	svc := user.NewService(q)
+
+	_, err := svc.Authenticate(context.Background(), "nobody", "hunter22")
+	assert.ErrorIs(t, err, user.ErrInvalidCredentials)
+}
+
+func TestFromDB_DoesNotExposePasswordHash(t *testing.T) {
+	q := dbtest.New()
+	svc := user.NewService(q)
+	row, err := svc.SignUp(context.Background(), user.SignUpInput{Username: "a", Email: "a@example.com", Password: "hunter22"})
 	require.NoError(t, err)
 
 	dto := user.FromDB(row)
-	assert.Equal(t, int64(1), dto.GitHubUserID)
-	assert.Equal(t, "a", dto.GitHubLogin)
+	assert.Equal(t, "a", dto.Username)
+	assert.Equal(t, "a@example.com", dto.Email)
 	assert.NotEmpty(t, dto.ID)
 }

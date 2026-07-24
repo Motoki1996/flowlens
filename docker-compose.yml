@@ -35,10 +35,6 @@ services:
       # Inside the compose network the DB host is the service name "db".
       DATABASE_URL: postgres://flowlens:flowlens@db:5432/flowlens?sslmode=disable
       WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
-      API_BASE_URL: ${API_BASE_URL:-http://localhost:8080}
-      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
-      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
-      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
     ports:
       - "8080:8080"

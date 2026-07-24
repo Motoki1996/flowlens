@@ -1,4 +1,4 @@
-package github
+package gitlab
 
 import "context"
 
@@ -15,7 +15,7 @@ type FakeClient struct {
 }
 
 // GetAuthenticatedUser implements Client.
-func (f *FakeClient) GetAuthenticatedUser(ctx context.Context, accessToken string) (*User, error) {
+func (f *FakeClient) GetAuthenticatedUser(ctx context.Context, personalAccessToken string) (*User, error) {
 	f.Calls++
 	if f.Err != nil {
 		return nil, f.Err

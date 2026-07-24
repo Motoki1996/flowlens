@@ -11,8 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createUser = `-- name: CreateUser :one
+INSERT INTO users (
+    username, email, display_name, password_hash
+) VALUES (
+    $1, $2, $3, $4
+)
+RETURNING id, display_name, created_at, updated_at, username, email, password_hash
+`
+
+type CreateUserParams struct {
+	Username     string `json:"username"`
+	Email        string `json:"email"`
+	DisplayName  string `json:"display_name"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createUser,
+		arg.Username,
+		arg.Email,
+		arg.DisplayName,
+		arg.PasswordHash,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.DisplayName,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+	)
+	return i, err
+}
+
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, github_user_id, github_login, display_name, avatar_url, encrypted_access_token, created_at, updated_at FROM users WHERE id = $1
+SELECT id, display_name, created_at, updated_at, username, email, password_hash FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -20,58 +56,31 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	var i User
 	err := row.Scan(
 		&i.ID,
-		&i.GithubUserID,
-		&i.GithubLogin,
 		&i.DisplayName,
-		&i.AvatarUrl,
-		&i.EncryptedAccessToken,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
 	)
 	return i, err
 }
 
-const upsertUser = `-- name: UpsertUser :one
-INSERT INTO users (
-    github_user_id, github_login, display_name, avatar_url, encrypted_access_token
-) VALUES (
-    $1, $2, $3, $4, $5
-)
-ON CONFLICT (github_user_id) DO UPDATE SET
-    github_login           = EXCLUDED.github_login,
-    display_name           = EXCLUDED.display_name,
-    avatar_url             = EXCLUDED.avatar_url,
-    encrypted_access_token = EXCLUDED.encrypted_access_token,
-    updated_at             = now()
-RETURNING id, github_user_id, github_login, display_name, avatar_url, encrypted_access_token, created_at, updated_at
+const getUserByUsernameOrEmail = `-- name: GetUserByUsernameOrEmail :one
+SELECT id, display_name, created_at, updated_at, username, email, password_hash FROM users WHERE username = $1 OR email = $1
 `
 
-type UpsertUserParams struct {
-	GithubUserID         int64  `json:"github_user_id"`
-	GithubLogin          string `json:"github_login"`
-	DisplayName          string `json:"display_name"`
-	AvatarUrl            string `json:"avatar_url"`
-	EncryptedAccessToken []byte `json:"encrypted_access_token"`
-}
-
-func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, upsertUser,
-		arg.GithubUserID,
-		arg.GithubLogin,
-		arg.DisplayName,
-		arg.AvatarUrl,
-		arg.EncryptedAccessToken,
-	)
+func (q *Queries) GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByUsernameOrEmail, username)
 	var i User
 	err := row.Scan(
 		&i.ID,
-		&i.GithubUserID,
-		&i.GithubLogin,
 		&i.DisplayName,
-		&i.AvatarUrl,
-		&i.EncryptedAccessToken,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
 	)
 	return i, err
 }

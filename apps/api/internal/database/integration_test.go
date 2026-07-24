@@ -7,6 +7,7 @@ package database_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -30,44 +31,40 @@ func testDB(t *testing.T) *db.Queries {
 	return db.New(pool)
 }
 
-func TestUpsertUserAndSessionRoundTrip(t *testing.T) {
+func TestCreateUserAndSessionRoundTrip(t *testing.T) {
 	q := testDB(t)
 	ctx := context.Background()
 
-	// Unique GitHub ID per run to keep tests independent.
-	githubID := time.Now().UnixNano()
+	// Unique username/email per run to keep tests independent.
+	suffix := time.Now().UnixNano()
+	username := fmt.Sprintf("integration-user-%d", suffix)
+	email := fmt.Sprintf("integration-%d@example.com", suffix)
 
-	u, err := q.UpsertUser(ctx, db.UpsertUserParams{
-		GithubUserID:         githubID,
-		GithubLogin:          "integration-user",
-		DisplayName:          "Integration User",
-		EncryptedAccessToken: []byte("enc-token"),
+	u, err := q.CreateUser(ctx, db.CreateUserParams{
+		Username:     username,
+		Email:        email,
+		DisplayName:  "Integration User",
+		PasswordHash: "bcrypt-hash",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, githubID, u.GithubUserID)
+	assert.Equal(t, username, u.Username)
 
-	// Upsert again with a changed login -> same row updated.
-	u2, err := q.UpsertUser(ctx, db.UpsertUserParams{
-		GithubUserID:         githubID,
-		GithubLogin:          "renamed",
-		EncryptedAccessToken: []byte("enc-token-2"),
-	})
+	got, err := q.GetUserByUsernameOrEmail(ctx, email)
 	require.NoError(t, err)
-	assert.Equal(t, u.ID, u2.ID)
-	assert.Equal(t, "renamed", u2.GithubLogin)
+	assert.Equal(t, u.ID, got.ID)
 
 	// Create a session and resolve the user through the join query.
 	_, err = q.CreateSession(ctx, db.CreateSessionParams{
 		UserID:    u.ID,
-		TokenHash: "hash-" + u.GithubLogin,
+		TokenHash: "hash-" + username,
 		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	})
 	require.NoError(t, err)
 
-	row, err := q.GetUserBySessionToken(ctx, "hash-"+u.GithubLogin)
+	row, err := q.GetUserBySessionToken(ctx, "hash-"+username)
 	require.NoError(t, err)
-	assert.Equal(t, githubID, row.User.GithubUserID)
+	assert.Equal(t, username, row.User.Username)
 
 	// Cleanup.
-	require.NoError(t, q.DeleteSessionByTokenHash(ctx, "hash-"+u.GithubLogin))
+	require.NoError(t, q.DeleteSessionByTokenHash(ctx, "hash-"+username))
 }

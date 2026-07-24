@@ -9,12 +9,14 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // FakeQuerier implements db.Querier backed by maps.
 type FakeQuerier struct {
-	usersByGitHubID map[int64]db.User
+	usersByUsername map[string]db.User
+	usersByEmail    map[string]db.User
 	usersByID       map[string]db.User
 	sessions        map[string]db.Session // key: token_hash
 }
@@ -22,7 +24,8 @@ type FakeQuerier struct {
 // New returns an empty FakeQuerier.
 func New() *FakeQuerier {
 	return &FakeQuerier{
-		usersByGitHubID: map[int64]db.User{},
+		usersByUsername: map[string]db.User{},
+		usersByEmail:    map[string]db.User{},
 		usersByID:       map[string]db.User{},
 		sessions:        map[string]db.Session{},
 	}
@@ -32,27 +35,36 @@ func newUUID() pgtype.UUID {
 	return pgtype.UUID{Bytes: uuid.New(), Valid: true}
 }
 
-func (f *FakeQuerier) UpsertUser(_ context.Context, arg db.UpsertUserParams) (db.User, error) {
-	existing, ok := f.usersByGitHubID[arg.GithubUserID]
-	id := newUUID()
-	created := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	if ok {
-		id = existing.ID
-		created = existing.CreatedAt
+func (f *FakeQuerier) CreateUser(_ context.Context, arg db.CreateUserParams) (db.User, error) {
+	if _, ok := f.usersByUsername[arg.Username]; ok {
+		return db.User{}, &pgconn.PgError{Code: "23505", ConstraintName: "users_username_key"}
+	}
+	if _, ok := f.usersByEmail[arg.Email]; ok {
+		return db.User{}, &pgconn.PgError{Code: "23505", ConstraintName: "users_email_key"}
 	}
 	u := db.User{
-		ID:                   id,
-		GithubUserID:         arg.GithubUserID,
-		GithubLogin:          arg.GithubLogin,
-		DisplayName:          arg.DisplayName,
-		AvatarUrl:            arg.AvatarUrl,
-		EncryptedAccessToken: arg.EncryptedAccessToken,
-		CreatedAt:            created,
-		UpdatedAt:            pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		ID:           newUUID(),
+		Username:     arg.Username,
+		Email:        arg.Email,
+		DisplayName:  arg.DisplayName,
+		PasswordHash: arg.PasswordHash,
+		CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}
-	f.usersByGitHubID[arg.GithubUserID] = u
+	f.usersByUsername[u.Username] = u
+	f.usersByEmail[u.Email] = u
 	f.usersByID[string(u.ID.Bytes[:])] = u
 	return u, nil
+}
+
+func (f *FakeQuerier) GetUserByUsernameOrEmail(_ context.Context, username string) (db.User, error) {
+	if u, ok := f.usersByUsername[username]; ok {
+		return u, nil
+	}
+	if u, ok := f.usersByEmail[username]; ok {
+		return u, nil
+	}
+	return db.User{}, pgx.ErrNoRows
 }
 
 func (f *FakeQuerier) GetUserByID(_ context.Context, id pgtype.UUID) (db.User, error) {

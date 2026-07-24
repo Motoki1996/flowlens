@@ -12,11 +12,12 @@ import (
 
 type Querier interface {
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
-	UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error)
+	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
 }
 
 var _ Querier = (*Queries)(nil)

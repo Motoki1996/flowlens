@@ -17,10 +17,9 @@ describe("getCurrentUser", () => {
   it("returns the user on 200", async () => {
     const user = {
       id: "1",
-      githubUserId: 7,
-      githubLogin: "octocat",
+      username: "octocat",
+      email: "octocat@example.com",
       displayName: "The Octocat",
-      avatarUrl: "",
     };
     vi.stubGlobal(
       "fetch",

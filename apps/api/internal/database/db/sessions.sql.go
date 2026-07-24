@@ -55,7 +55,7 @@ func (q *Queries) DeleteSessionByTokenHash(ctx context.Context, tokenHash string
 }
 
 const getUserBySessionToken = `-- name: GetUserBySessionToken :one
-SELECT users.id, users.github_user_id, users.github_login, users.display_name, users.avatar_url, users.encrypted_access_token, users.created_at, users.updated_at
+SELECT users.id, users.display_name, users.created_at, users.updated_at, users.username, users.email, users.password_hash
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = $1
@@ -71,13 +71,12 @@ func (q *Queries) GetUserBySessionToken(ctx context.Context, tokenHash string) (
 	var i GetUserBySessionTokenRow
 	err := row.Scan(
 		&i.User.ID,
-		&i.User.GithubUserID,
-		&i.User.GithubLogin,
 		&i.User.DisplayName,
-		&i.User.AvatarUrl,
-		&i.User.EncryptedAccessToken,
 		&i.User.CreatedAt,
 		&i.User.UpdatedAt,
+		&i.User.Username,
+		&i.User.Email,
+		&i.User.PasswordHash,
 	)
 	return i, err
 }

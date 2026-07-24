@@ -22,18 +22,8 @@ export function AppHeader({ user }: { user: User }) {
         </div>
         <div className="flex items-center gap-3">
           <span className="hidden text-sm text-slate-600 sm:inline">
-            {user.displayName || user.githubLogin}
+            {user.displayName || user.username}
           </span>
-          {user.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={user.avatarUrl}
-              alt=""
-              width={28}
-              height={28}
-              className="rounded-full"
-            />
-          ) : null}
           <LogoutButton />
         </div>
       </div>

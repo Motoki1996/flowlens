@@ -4,10 +4,9 @@ import type { User } from "@/types";
 
 const user: User = {
   id: "1",
-  githubUserId: 7,
-  githubLogin: "octocat",
+  username: "octocat",
+  email: "octocat@example.com",
   displayName: "The Octocat",
-  avatarUrl: "",
 };
 
 const getCurrentUser = vi.fn();
@@ -32,7 +31,7 @@ describe("DashboardPage", () => {
       screen.getByRole("heading", { name: "Dashboard" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/No repositories connected yet/i),
+      screen.getByText(/No GitLab projects connected yet/i),
     ).toBeInTheDocument();
   });
 

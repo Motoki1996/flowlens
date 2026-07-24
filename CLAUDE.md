@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FlowLens visualizes a team's software delivery process by collecting GitHub PR/review/CI data and surfacing delivery bottlenecks. It does **not** generate or review code with AI — the focus is measuring the review → test → merge → release flow.
+FlowLens visualizes a team's software delivery process by collecting GitLab CE MR/review/CI data and surfacing delivery bottlenecks. It does **not** generate or review code with AI — the focus is measuring the review → test → merge → release flow.
 
-**Status:** Foundation phase. Only GitHub OAuth login, user persistence, and `GET /api/v1/me` are implemented. Repository selection, PR sync, and dashboard data are not built yet, but the tables and seams for them exist.
+**Status:** Foundation phase. Only local username/password login (with signup), user persistence, and `GET /api/v1/me` are implemented. Project selection, MR sync, and dashboard data are not built yet, but the tables and seams for them exist. Login is intentionally independent of any GitLab connection — a per-user GitLab CE personal access token (for MR/pipeline sync) is a separate, not-yet-built feature.
 
 Monorepo: `apps/api` (Go REST API) + `apps/web` (Next.js) + PostgreSQL.
 
@@ -32,11 +32,13 @@ Running a single test:
 
 **Request flow (authenticated):** Browser → Next.js Server Component calls `getCurrentUser()` → fetches `GET /api/v1/me` from the Go API **server-to-server**, forwarding the browser's session cookie → API `requireAuth` middleware hashes the cookie token, looks up the session joined to the user, puts user in request context → handler returns JSON.
 
+**Login flow:** the browser POSTs JSON credentials directly to the Go API (`/auth/signup`, `/auth/login`) with `credentials: "include"`; the API verifies/hashes the password with bcrypt and issues a session cookie. There is no OAuth redirect.
+
 ### API (`apps/api`) — layered, intentionally lightweight (no full Clean Architecture)
 - `internal/http` — chi router, handlers, middleware (CORS, logging, auth), cookies, response helpers
-- `internal/auth` — `TokenCipher` (interface + AES-GCM impl), session service, OAuth state/config helpers
-- `internal/user` — user domain model + upsert service
-- `internal/github` — `github.Client` interface, HTTP impl, and `FakeClient` for tests. **All GitHub calls go through this interface**; pagination/rate-limits/retries will live behind it
+- `internal/auth` — password hashing (bcrypt) and session service
+- `internal/user` — user domain model + signup/authenticate service
+- `internal/gitlab` — `gitlab.Client` interface, HTTP impl, and `FakeClient` for tests. **All GitLab CE calls go through this interface**; not yet wired into any handler — reserved for the future per-user MR/pipeline sync feature
 - `internal/database` — pgx pool + sqlc-generated code in `internal/database/db` (do not hand-edit generated files)
 - `internal/config` — env loading/validation
 - `cmd/api` — entry point, wiring, graceful shutdown
@@ -49,14 +51,15 @@ Running a single test:
 ### Database
 - Schema owned by `golang-migrate` in `apps/api/migrations`. sqlc reads **only `*.up.sql`** (see `sqlc.yaml`) as the schema source, plus hand-written queries in `internal/database/queries`
 - All tables exist from the initial migration; most are unpopulated until later phases
-- UUID PKs, `timestamptz` everywhere. Natural GitHub IDs (`github_user_id`, `github_repository_id`, `github_pull_request_id`) have `UNIQUE` constraints so upserts / duplicate webhook deliveries are idempotent. FKs cascade on delete
+- UUID PKs, `timestamptz` everywhere. Natural GitLab IDs (`gitlab_group_id`, `gitlab_project_id`, `gitlab_merge_request_id`) have `UNIQUE` constraints so upserts / duplicate webhook deliveries are idempotent. `users.username`/`users.email` are also `UNIQUE`. FKs cascade on delete
 
 ## Key conventions & security model
 
 - **Sessions are opaque and server-side.** The cookie holds a random token; only its SHA-256 hash is stored. HttpOnly, `Secure` in production. Revocable on logout, expire server-side.
-- **GitHub access tokens are never stored in plaintext** — encrypted via `TokenCipher` before persistence. The AES-GCM impl is local; an Azure Key Vault impl is planned behind the same interface.
-- OAuth CSRF defense uses a short-lived `state` cookie compared in constant time. API mutations currently rely on `SameSite=Lax` + locked CORS origin (double-submit token planned).
+- **Passwords are hashed with bcrypt** (`internal/auth/password.go`), never stored or logged in plaintext. Minimum length 8, enforced at signup.
+- API mutations currently rely on `SameSite=Lax` + locked CORS origin (double-submit token planned).
 - Secrets come only from env / `.env` (git-ignored). Never commit real credentials.
+- A future "connect GitLab" feature will need to store a per-user GitLab personal access token encrypted at rest — no such storage exists yet.
 
 ## Local ports (important)
 

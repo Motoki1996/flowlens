@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/user"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +23,7 @@ func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 	t.Helper()
 	q := dbtest.New()
 	return &Server{
+		users:      user.NewService(q),
 		sessions:   auth.NewSessionService(q, time.Hour),
 		cookies:    cookieManager{secure: false},
 		webBaseURL: "http://localhost:3000",
@@ -30,16 +33,27 @@ func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 
 func loginSession(t *testing.T, s *Server, q *dbtest.FakeQuerier) (db.User, string) {
 	t.Helper()
-	u, err := q.UpsertUser(context.Background(), db.UpsertUserParams{
-		GithubUserID:         99,
-		GithubLogin:          "tester",
-		DisplayName:          "Test User",
-		EncryptedAccessToken: []byte("enc"),
+	u, err := q.CreateUser(context.Background(), db.CreateUserParams{
+		Username:     "tester",
+		Email:        "tester@example.com",
+		DisplayName:  "Test User",
+		PasswordHash: "irrelevant-for-session-tests",
 	})
 	require.NoError(t, err)
 	token, err := s.sessions.Create(context.Background(), u.ID)
 	require.NoError(t, err)
 	return u, token
+}
+
+func postJSON(t *testing.T, s *Server, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	buf, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	return rec
 }
 
 func TestHandleMe_Authenticated(t *testing.T) {
@@ -54,10 +68,10 @@ func TestHandleMe_Authenticated(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	assert.Equal(t, "tester", body["githubLogin"])
+	assert.Equal(t, "tester", body["username"])
 	assert.Equal(t, "Test User", body["displayName"])
-	// The encrypted token must never appear in the response.
-	assert.NotContains(t, rec.Body.String(), "encrypted")
+	// The password hash must never appear in the response.
+	assert.NotContains(t, rec.Body.String(), "irrelevant-for-session-tests")
 }
 
 func TestHandleMe_NoCookie(t *testing.T) {
@@ -101,30 +115,65 @@ func TestHandleLogout_ClearsCookieAndRevokes(t *testing.T) {
 	assert.True(t, cleared, "expected session cookie to be cleared")
 }
 
-func TestHandleGitHubLogin_NotConfigured(t *testing.T) {
+func TestHandleSignup_CreatesUserAndSession(t *testing.T) {
 	s, _ := newTestServer(t)
-	s.oauth = auth.NewGitHubOAuthConfig("", "", "http://localhost:8080")
-	req := httptest.NewRequest(http.MethodGet, "/auth/github", nil)
-	rec := httptest.NewRecorder()
-	s.Router().ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
 
-func TestHandleGitHubLogin_RedirectsToGitHub(t *testing.T) {
-	s, _ := newTestServer(t)
-	s.oauth = auth.NewGitHubOAuthConfig("client-id", "secret", "http://localhost:8080")
-	req := httptest.NewRequest(http.MethodGet, "/auth/github", nil)
-	rec := httptest.NewRecorder()
-	s.Router().ServeHTTP(rec, req)
+	rec := postJSON(t, s, "/auth/signup", signupRequest{
+		Username: "octocat", Email: "octocat@example.com", Password: "hunter22",
+	})
 
-	require.Equal(t, http.StatusTemporaryRedirect, rec.Code)
-	assert.Contains(t, rec.Header().Get("Location"), "github.com/login/oauth/authorize")
-	// A state cookie must be set.
-	var hasState bool
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "octocat", body["username"])
+
+	var sessionCookie *http.Cookie
 	for _, c := range rec.Result().Cookies() {
-		if c.Name == stateCookieName && c.Value != "" {
-			hasState = true
+		if c.Name == sessionCookieName {
+			sessionCookie = c
 		}
 	}
-	assert.True(t, hasState)
+	require.NotNil(t, sessionCookie, "expected a session cookie to be set")
+	assert.NotEmpty(t, sessionCookie.Value)
+}
+
+func TestHandleSignup_DuplicateUsername(t *testing.T) {
+	s, _ := newTestServer(t)
+	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "a@example.com", Password: "hunter22"})
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	rec = postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "b@example.com", Password: "hunter22"})
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestHandleSignup_PasswordTooShort(t *testing.T) {
+	s, _ := newTestServer(t)
+	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "a@example.com", Password: "short"})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleLogin_Succeeds(t *testing.T) {
+	s, _ := newTestServer(t)
+	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	rec = postJSON(t, s, "/auth/login", loginRequest{Identifier: "octocat", Password: "hunter22"})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var sessionCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			sessionCookie = c
+		}
+	}
+	require.NotNil(t, sessionCookie)
+}
+
+func TestHandleLogin_WrongPassword(t *testing.T) {
+	s, _ := newTestServer(t)
+	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	rec = postJSON(t, s, "/auth/login", loginRequest{Identifier: "octocat", Password: "wrong-password"})
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }

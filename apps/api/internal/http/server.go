@@ -2,23 +2,21 @@
 package http
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/database/db"
-	"github.com/flowlens/api/internal/github"
 	"github.com/flowlens/api/internal/user"
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/oauth2"
 )
 
 // Server holds handler dependencies and builds the router.
 type Server struct {
 	pool       *pgxpool.Pool
-	oauth      *oauth2.Config
-	github     github.Client
 	users      *user.Service
 	sessions   *auth.SessionService
 	cookies    cookieManager
@@ -28,17 +26,11 @@ type Server struct {
 
 // NewServer constructs a Server from configuration and a database pool.
 func NewServer(cfg *config.Config, pool *pgxpool.Pool) (*Server, error) {
-	cipher, err := auth.NewAESGCMCipher(cfg.TokenEncryptionKey)
-	if err != nil {
-		return nil, err
-	}
 	queries := db.New(pool)
 
 	return &Server{
 		pool:       pool,
-		oauth:      auth.NewGitHubOAuthConfig(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.APIBaseURL),
-		github:     github.NewHTTPClient(),
-		users:      user.NewService(queries, cipher),
+		users:      user.NewService(queries),
 		sessions:   auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:    cookieManager{secure: cfg.IsProduction()},
 		webBaseURL: cfg.WebBaseURL,
@@ -55,9 +47,9 @@ func (s *Server) Router() chi.Router {
 	// Health check (unauthenticated).
 	r.Get("/healthz", s.handleHealth)
 
-	// OAuth endpoints (browser redirects, unauthenticated).
-	r.Get("/auth/github", s.handleGitHubLogin)
-	r.Get("/auth/github/callback", s.handleGitHubCallback)
+	// Local auth endpoints (JSON, unauthenticated).
+	r.Post("/auth/signup", s.handleSignup)
+	r.Post("/auth/login", s.handleLogin)
 	r.Post("/auth/logout", s.handleLogout)
 
 	// Authenticated API.
@@ -69,4 +61,14 @@ func (s *Server) Router() chi.Router {
 	})
 
 	return r
+}
+
+// startSession issues a session for userID and sets the session cookie.
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID pgtype.UUID) error {
+	token, err := s.sessions.Create(r.Context(), userID)
+	if err != nil {
+		return err
+	}
+	s.cookies.setSession(w, token, int(s.sessionTTL.Seconds()))
+	return nil
 }

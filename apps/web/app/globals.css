@@ -1,15 +1,110 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
-/* Calm, business-oriented theme. Neutral slate palette, no gradients. */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Dark-based neutral theme. FlowLens ships dark-only for now (no
+ * light/dark toggle) — see components.json / issue #3. A `.dark` class is
+ * still applied to <html> so a future next-themes toggle is a drop-in.
+ */
 :root {
-  --background: #f8fafc;
-  --foreground: #0f172a;
+  --radius: 0.625rem;
+
+  --background: #0a0a0b;
+  --foreground: #f4f4f5;
+
+  --card: #141416;
+  --card-foreground: #f4f4f5;
+
+  --popover: #18181b;
+  --popover-foreground: #f4f4f5;
+
+  --primary: #6366f1;
+  --primary-foreground: #f8fafc;
+
+  --secondary: #1f1f23;
+  --secondary-foreground: #f4f4f5;
+
+  --muted: #1f1f23;
+  --muted-foreground: #a1a1aa;
+
+  --accent: #26262b;
+  --accent-foreground: #f4f4f5;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #52525b;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
-    Arial, sans-serif;
+.dark {
+  --background: #0a0a0b;
+  --foreground: #f4f4f5;
+
+  --card: #141416;
+  --card-foreground: #f4f4f5;
+
+  --popover: #18181b;
+  --popover-foreground: #f4f4f5;
+
+  --primary: #6366f1;
+  --primary-foreground: #f8fafc;
+
+  --secondary: #1f1f23;
+  --secondary-foreground: #f4f4f5;
+
+  --muted: #1f1f23;
+  --muted-foreground: #a1a1aa;
+
+  --accent: #26262b;
+  --accent-foreground: #f4f4f5;
+
+  --destructive: #ef4444;
+  --destructive-foreground: #f8fafc;
+
+  --border: #27272a;
+  --input: #27272a;
+  --ring: #52525b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    color-scheme: dark;
+    font-family:
+      ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+      Arial, sans-serif;
+  }
 }

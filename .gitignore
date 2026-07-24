@@ -28,3 +28,6 @@ yarn-error.log*
 
 # Docker
 /postgres-data/
+
+# Claude Code (local overrides are per-developer)
+.claude/settings.local.json

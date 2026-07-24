@@ -28,6 +28,8 @@ Running a single test:
 - Go: `cd apps/api && go test ./internal/auth/ -run TestName`
 - Web: `cd apps/web && npx vitest run path/to/file.test.ts -t "test name"`
 
+**When writing or changing tests, follow [`docs/testing.md`](docs/testing.md)** — the layered strategy (integration / domain / HTTP), Fakes over Mocks, table-driven cases, and the other rules that keep the suite small and maintainable.
+
 ## Architecture
 
 **Request flow (authenticated):** Browser → Next.js Server Component calls `getCurrentUser()` → fetches `GET /api/v1/me` from the Go API **server-to-server**, forwarding the browser's session cookie → API `requireAuth` middleware hashes the cookie token, looks up the session joined to the user, puts user in request context → handler returns JSON.
@@ -69,4 +71,4 @@ Dev Container note: Makefile DB targets read `.env` (host port), so when running
 
 ## Further docs
 
-`docs/architecture.md` for detail; `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first).
+`docs/architecture.md` for detail; `docs/testing.md` for the testing strategy and rules; `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first).

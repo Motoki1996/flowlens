@@ -146,6 +146,12 @@ Design notes:
 - The production Docker image runs the API as a non-root user from a static
   binary.
 
+## Testing
+
+Tests follow a layered strategy — real-DB integration tests at the bottom,
+fake-backed domain and HTTP unit tests above — kept deliberately small and
+maintainable. See [`testing.md`](testing.md) for the full guide and rules.
+
 ## Main trade-offs
 
 - **Server-side sessions vs JWT:** sessions add a database lookup per

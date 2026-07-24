@@ -35,6 +35,25 @@ func newUUID() pgtype.UUID {
 	return pgtype.UUID{Bytes: uuid.New(), Valid: true}
 }
 
+// SeedUser inserts a ready-made user directly, bypassing password hashing.
+// Use it in tests that need a pre-existing user but don't exercise sign-up
+// (e.g. duplicate-constraint or session tests). Returns the stored row.
+func (f *FakeQuerier) SeedUser(username, email string) db.User {
+	u := db.User{
+		ID:           newUUID(),
+		Username:     username,
+		Email:        email,
+		DisplayName:  username,
+		PasswordHash: "seeded-hash",
+		CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		UpdatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}
+	f.usersByUsername[u.Username] = u
+	f.usersByEmail[u.Email] = u
+	f.usersByID[string(u.ID.Bytes[:])] = u
+	return u
+}
+
 func (f *FakeQuerier) CreateUser(_ context.Context, arg db.CreateUserParams) (db.User, error) {
 	if _, ok := f.usersByUsername[arg.Username]; ok {
 		return db.User{}, &pgconn.PgError{Code: "23505", ConstraintName: "users_username_key"}

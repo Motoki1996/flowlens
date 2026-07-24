@@ -1,0 +1,68 @@
+name: API Tests
+
+# Runs the Go API test suite: hermetic unit tests, then integration tests
+# against a real PostgreSQL with migrations applied. Mirrors `make test` and
+# `make test-integration`. See docs/testing.md for the layered strategy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/api-tests.yml"
+  pull_request:
+    paths:
+      - "apps/api/**"
+      - ".github/workflows/api-tests.yml"
+
+defaults:
+  run:
+    working-directory: apps/api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: flowlens
+          POSTGRES_PASSWORD: flowlens
+          POSTGRES_DB: flowlens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U flowlens"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://flowlens:flowlens@localhost:5432/flowlens?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Download modules
+        run: go mod download
+
+      # Unit tests are hermetic (fake-backed) and need no database.
+      - name: Unit tests
+        run: go test ./...
+
+      - name: Install golang-migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+      - name: Apply migrations
+        run: migrate -path migrations -database "$DATABASE_URL" up
+
+      # Integration tests exercise the generated queries against real Postgres.
+      - name: Integration tests
+        run: go test -tags=integration ./...

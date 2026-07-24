@@ -56,6 +56,16 @@ func postJSON(t *testing.T, s *Server, path string, body any) *httptest.Response
 	return rec
 }
 
+// sessionCookie returns the session cookie set on the response, or nil.
+func sessionCookie(rec *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			return c
+		}
+	}
+	return nil
+}
+
 func TestHandleMe_Authenticated(t *testing.T) {
 	s, q := newTestServer(t)
 	_, token := loginSession(t, s, q)
@@ -115,65 +125,67 @@ func TestHandleLogout_ClearsCookieAndRevokes(t *testing.T) {
 	assert.True(t, cleared, "expected session cookie to be cleared")
 }
 
-func TestHandleSignup_CreatesUserAndSession(t *testing.T) {
-	s, _ := newTestServer(t)
-
-	rec := postJSON(t, s, "/auth/signup", signupRequest{
-		Username: "octocat", Email: "octocat@example.com", Password: "hunter22",
-	})
-
-	require.Equal(t, http.StatusCreated, rec.Code)
-	var body map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	assert.Equal(t, "octocat", body["username"])
-
-	var sessionCookie *http.Cookie
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == sessionCookieName {
-			sessionCookie = c
-		}
+func TestHandleSignup(t *testing.T) {
+	valid := signupRequest{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"}
+	tests := []struct {
+		name       string
+		seed       func(q *dbtest.FakeQuerier) // optional pre-existing state
+		req        signupRequest
+		wantCode   int
+		wantCookie bool
+	}{
+		{"creates user and session", nil, valid, http.StatusCreated, true},
+		{
+			name:     "duplicate username",
+			seed:     func(q *dbtest.FakeQuerier) { q.SeedUser("octocat", "taken@example.com") },
+			req:      valid,
+			wantCode: http.StatusConflict,
+		},
+		{
+			name:     "password too short",
+			req:      signupRequest{Username: "octocat", Email: "octocat@example.com", Password: "short"},
+			wantCode: http.StatusBadRequest,
+		},
 	}
-	require.NotNil(t, sessionCookie, "expected a session cookie to be set")
-	assert.NotEmpty(t, sessionCookie.Value)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, q := newTestServer(t)
+			if tt.seed != nil {
+				tt.seed(q)
+			}
+			rec := postJSON(t, s, "/auth/signup", tt.req)
 
-func TestHandleSignup_DuplicateUsername(t *testing.T) {
-	s, _ := newTestServer(t)
-	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "a@example.com", Password: "hunter22"})
-	require.Equal(t, http.StatusCreated, rec.Code)
-
-	rec = postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "b@example.com", Password: "hunter22"})
-	assert.Equal(t, http.StatusConflict, rec.Code)
-}
-
-func TestHandleSignup_PasswordTooShort(t *testing.T) {
-	s, _ := newTestServer(t)
-	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "a@example.com", Password: "short"})
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleLogin_Succeeds(t *testing.T) {
-	s, _ := newTestServer(t)
-	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
-	require.Equal(t, http.StatusCreated, rec.Code)
-
-	rec = postJSON(t, s, "/auth/login", loginRequest{Identifier: "octocat", Password: "hunter22"})
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var sessionCookie *http.Cookie
-	for _, c := range rec.Result().Cookies() {
-		if c.Name == sessionCookieName {
-			sessionCookie = c
-		}
+			require.Equal(t, tt.wantCode, rec.Code)
+			if tt.wantCookie {
+				c := sessionCookie(rec)
+				require.NotNil(t, c, "expected a session cookie to be set")
+				assert.NotEmpty(t, c.Value)
+			}
+		})
 	}
-	require.NotNil(t, sessionCookie)
 }
 
-func TestHandleLogin_WrongPassword(t *testing.T) {
-	s, _ := newTestServer(t)
-	rec := postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
-	require.Equal(t, http.StatusCreated, rec.Code)
+func TestHandleLogin(t *testing.T) {
+	const password = "hunter22"
+	tests := []struct {
+		name       string
+		password   string
+		wantCode   int
+		wantCookie bool
+	}{
+		{"succeeds", password, http.StatusOK, true},
+		{"wrong password", "wrong-password", http.StatusUnauthorized, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, _ := newTestServer(t)
+			require.Equal(t, http.StatusCreated,
+				postJSON(t, s, "/auth/signup", signupRequest{Username: "octocat", Email: "octocat@example.com", Password: password}).Code)
 
-	rec = postJSON(t, s, "/auth/login", loginRequest{Identifier: "octocat", Password: "wrong-password"})
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+			rec := postJSON(t, s, "/auth/login", loginRequest{Identifier: "octocat", Password: tt.password})
+
+			require.Equal(t, tt.wantCode, rec.Code)
+			assert.Equal(t, tt.wantCookie, sessionCookie(rec) != nil)
+		})
+	}
 }

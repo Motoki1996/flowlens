@@ -1,0 +1,57 @@
+name: Web Checks
+
+# Static checks for the Next.js web app: TypeScript type checking and ESLint.
+# Mirrors `npm run typecheck` and `npm run lint` in apps/web. Jobs run in
+# parallel so a failure in one is easy to spot.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-checks.yml"
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web-checks.yml"
+
+defaults:
+  run:
+    working-directory: apps/web
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npm run lint

@@ -52,14 +52,15 @@ describe("getCurrentUser", () => {
 
   it("forwards the session cookie", async () => {
     const fetchMock = vi.fn(
-      async () => new Response(JSON.stringify({}), { status: 200 }),
+      async (_url: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify({}), { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     await getCurrentUser();
 
     const [, init] = fetchMock.mock.calls[0];
-    expect((init as RequestInit).headers).toMatchObject({
+    expect(init?.headers).toMatchObject({
       cookie: "flowlens_session=abc",
     });
   });

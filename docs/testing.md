@@ -8,6 +8,11 @@ Goal: **quality without bloat.** Tests should read like a specification, break
 only when behaviour actually changes, and add roughly one new case per new
 behaviour — not one new file per new bug.
 
+For the web app, component rendering and visual states are covered by Storybook,
+not here — see [`docs/storybook.md`](./storybook.md). The two guides partition the
+work and deliberately don't overlap: business rules and contracts in these tests,
+component appearance and interaction in stories.
+
 ## The layered strategy
 
 Each layer tests only its own concern and trusts the layers below it. The single

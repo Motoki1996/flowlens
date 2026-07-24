@@ -71,4 +71,4 @@ Dev Container note: Makefile DB targets read `.env` (host port), so when running
 
 ## Further docs
 
-`docs/architecture.md` for detail; `docs/testing.md` for the testing strategy and rules; `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first).
+`docs/architecture.md` for detail; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first).

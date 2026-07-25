@@ -28,6 +28,19 @@ Running a single test:
 - Go: `cd apps/api && go test ./internal/auth/ -run TestName`
 - Web: `cd apps/web && npx vitest run path/to/file.test.ts -t "test name"`
 
+## Working from a GitHub Issue
+
+**When the work originates from a GitHub Issue, use the `/implement-issue` slash command** (`.claude/commands/implement-issue.md`) rather than reading the issue ad hoc:
+
+```
+/implement-issue 7
+/implement-issue 7 フェーズ1のマイグレーションだけでいい
+```
+
+It pulls the issue body and comments into context up front, then follows a fixed order: understand → read the relevant design doc → propose a plan (mandatory pause for changes spanning more than 3 files or adding a migration) → implement → run `make test` / `make lint` and report the real output → branch as `claude/issue-<n>-<slug>` and open a PR **only after confirmation**. Keep the command file in sync when these conventions change.
+
+The repo also has a GitHub Actions path (`.github/workflows/claude.yml`) triggered by `@claude` in an issue or comment; that one runs on CI, so it has no local Postgres. Prefer `/implement-issue` for anything touching migrations or integration tests.
+
 **When designing or changing any web UI, follow [`docs/ui-design.md`](docs/ui-design.md)** — screens are designed object-first (OOUI), not task-first.
 
 **When writing or changing tests, follow [`docs/testing.md`](docs/testing.md)** — the layered strategy (integration / domain / HTTP), Fakes over Mocks, table-driven cases, and the other rules that keep the suite small and maintainable.
@@ -72,7 +85,7 @@ Running a single test:
 - **Passwords are hashed with bcrypt** (`internal/auth/password.go`), never stored or logged in plaintext. Minimum length 8, enforced at signup.
 - API mutations currently rely on `SameSite=Lax` + locked CORS origin (double-submit token planned).
 - Secrets come only from env / `.env` (git-ignored). Never commit real credentials.
-- A future "connect GitLab" feature will need to store a per-user GitLab personal access token encrypted at rest — no such storage exists yet.
+- The planned "connect GitLab" feature stores the access token **per app project, not per user** ([ADR-0008](docs/decisions/0008-why-per-project-gitlab-connection.md)), encrypted at rest with AES-256-GCM. No such storage exists yet.
 
 ## Local ports (important)
 
@@ -82,4 +95,6 @@ Dev Container note: Makefile DB targets read `.env` (host port), so when running
 
 ## Further docs
 
-`docs/architecture.md` for detail; `docs/ui-design.md` for the OOUI rules every web screen follows; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first).
+`docs/architecture.md` for detail; `docs/ui-design.md` for the OOUI rules every web screen follows; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first, OOUI, outbox worker, per-project GitLab connection).
+
+`docs/plans/` holds **time-limited** implementation plans, not conventions — read [`docs/plans/README.md`](docs/plans/README.md) before adding one, and delete a plan once its work ships. The current plan is the issue-sync MVP.

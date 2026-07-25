@@ -151,6 +151,10 @@ All variables are documented in [`.env.example`](.env.example). Key ones:
 | `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth App client secret                   |
 | `TOKEN_ENCRYPTION_KEY`       | base64 32-byte AES key for the local token cipher|
 | `SESSION_TTL_HOURS`          | Session lifetime                                 |
+| `ENCRYPTION_KEY`             | base64 32-byte AES-256 key encrypting secrets at rest (GitLab tokens, webhook secrets) |
+| `APP_PUBLIC_URL`             | Public URL for GitLab webhook delivery; unset skips auto-registration |
+| `SYNC_WORKER_ENABLED`        | Whether the in-process sync worker runs (default `true`) |
+| `SYNC_WORKER_POLL_INTERVAL`  | Sync worker poll interval (default `5s`)         |
 | `WEB_BASE_URL` / `API_BASE_URL` | Public URLs for redirects and CORS            |
 | `API_INTERNAL_URL`           | URL the web server uses to reach the API         |
 | `NEXT_PUBLIC_API_BASE_URL`   | URL the browser uses to reach the API            |

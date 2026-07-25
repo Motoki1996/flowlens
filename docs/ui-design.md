@@ -42,13 +42,19 @@ The objects the UI is built from, and where they live today:
 | `SyncRun` | One attempt to pull fresh data from GitLab | `sync_runs` |
 | `User` | An account of this app | `users` |
 
-Two notes on this table:
+Three notes on this table:
 
 - Most of these are unpopulated until later phases (see `CLAUDE.md`). The model
   is the target, not a description of what ships today.
 - The tables carry GitHub-era names (`repositories`, `pull_requests`,
   `github_*`) while the domain is GitLab. **The UI uses the GitLab vocabulary**
   — Project, Merge Request — and rule 1 below applies to it.
+- **`Project` is scheduled to be redefined.** The issue-sync MVP makes `Project`
+  the app-level workspace (backlogs, tasks, one GitLab connection) and renames
+  the row above to `Repository`. Until that ships, this table is still the
+  authority for the merge-request feature; see
+  [`docs/plans/issue-sync.md`](plans/issue-sync.md) for the new definition and
+  [ADR-0008](decisions/0008-why-per-project-gitlab-connection.md) for why.
 
 Objects that don't exist yet (`Pipeline`, `Release`) get added to this table
 when they get a table, not before.

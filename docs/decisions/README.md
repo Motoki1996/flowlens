@@ -18,3 +18,5 @@ that capture a significant decision, its context, and its consequences.
 | [0004](0004-why-monorepo.md) | Why a monorepo | Accepted |
 | [0005](0005-why-manual-sync-first.md) | Why manual sync for the first MVP | Accepted |
 | [0006](0006-why-ooui.md) | Why object-oriented UI (OOUI) | Accepted |
+| [0007](0007-why-outbox-worker.md) | Why a Postgres outbox and in-process worker for GitLab sync | Accepted |
+| [0008](0008-why-per-project-gitlab-connection.md) | Why the GitLab connection is per app project, and tasks link 1:1 to issues | Accepted |

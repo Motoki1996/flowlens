@@ -6,13 +6,18 @@ allowed-tools: Bash(gh issue view:*), Bash(gh issue list:*), Bash(git status:*),
 
 ## 対象 Issue
 
-!`gh issue view $1 --json number,title,body,labels,comments --jq '"#\(.number) \(.title)\n\nlabels: \(.labels|map(.name)|join(", "))\n\n\(.body)\n\n--- コメント ---\n\(.comments|map("@\(.author.login): \(.body)")|join("\n\n"))"'`
-
+Issue番号: $1
 追加指示: $ARGUMENTS
 
 ## 実装手順
 
-1. **理解フェーズ** — Issue 本文とコメントから、達成条件（受入基準）を箇条書きで自分の言葉に落とす。曖昧で、解釈によって成果物が変わる点だけ質問する。それ以外は判断して進める。
+1. **理解フェーズ** — まず以下を実行し、Issue本文・ラベル・コメントを取得する:
+
+   ```
+   gh issue view $1 --json number,title,body,labels,comments --jq '"#\(.number) \(.title)\n\nlabels: \(.labels|map(.name)|join(", "))\n\n\(.body)\n\n--- コメント ---\n\(.comments|map("@\(.author.login): \(.body)")|join("\n\n"))"'
+   ```
+
+   その内容から、達成条件（受入基準）を箇条書きで自分の言葉に落とす。曖昧で、解釈によって成果物が変わる点だけ質問する。それ以外は判断して進める。
 
 2. **調査フェーズ** — 触る範囲の既存コードを読む。関連する設計ドキュメントを必ず先に読む：
    - Web UI を触るなら `docs/ui-design.md`（OOUI。オブジェクト起点で設計し、レイアウトから始めない）

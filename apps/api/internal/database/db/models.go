@@ -8,6 +8,61 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Backlog struct {
+	ID          pgtype.UUID        `json:"id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Position    int32              `json:"position"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GitlabConnection struct {
+	ID                  pgtype.UUID        `json:"id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	BaseUrl             string             `json:"base_url"`
+	EncryptedToken      []byte             `json:"encrypted_token"`
+	TokenGitlabUserID   pgtype.Int8        `json:"token_gitlab_user_id"`
+	TokenGitlabUsername string             `json:"token_gitlab_username"`
+	LastVerifiedAt      pgtype.Timestamptz `json:"last_verified_at"`
+	LastVerifyError     string             `json:"last_verify_error"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type GitlabSyncRun struct {
+	ID                    pgtype.UUID        `json:"id"`
+	LinkedGitlabProjectID pgtype.UUID        `json:"linked_gitlab_project_id"`
+	Kind                  string             `json:"kind"`
+	Status                string             `json:"status"`
+	IssuesSeen            int32              `json:"issues_seen"`
+	IssuesCreated         int32              `json:"issues_created"`
+	IssuesUpdated         int32              `json:"issues_updated"`
+	StartedAt             pgtype.Timestamptz `json:"started_at"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
+	ErrorMessage          string             `json:"error_message"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type LinkedGitlabProject struct {
+	ID                     pgtype.UUID        `json:"id"`
+	GitlabConnectionID     pgtype.UUID        `json:"gitlab_connection_id"`
+	GitlabProjectID        int64              `json:"gitlab_project_id"`
+	PathWithNamespace      string             `json:"path_with_namespace"`
+	Name                   string             `json:"name"`
+	WebUrl                 string             `json:"web_url"`
+	SyncScope              string             `json:"sync_scope"`
+	SyncLabels             []string           `json:"sync_labels"`
+	WebhookID              pgtype.Int8        `json:"webhook_id"`
+	EncryptedWebhookSecret []byte             `json:"encrypted_webhook_secret"`
+	WebhookRegisteredAt    pgtype.Timestamptz `json:"webhook_registered_at"`
+	InitialImportStatus    string             `json:"initial_import_status"`
+	LastSyncedAt           pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Organization struct {
 	ID            pgtype.UUID        `json:"id"`
 	GitlabGroupID int64              `json:"gitlab_group_id"`
@@ -23,6 +78,25 @@ type OrganizationMember struct {
 	UserID         pgtype.UUID        `json:"user_id"`
 	Role           string             `json:"role"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type Project struct {
+	ID          pgtype.UUID        `json:"id"`
+	OwnerUserID pgtype.UUID        `json:"owner_user_id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ProjectApiToken struct {
+	ID         pgtype.UUID        `json:"id"`
+	ProjectID  pgtype.UUID        `json:"project_id"`
+	Name       string             `json:"name"`
+	TokenHash  string             `json:"token_hash"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type PullRequest struct {
@@ -79,6 +153,21 @@ type Session struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type SyncJob struct {
+	ID        pgtype.UUID        `json:"id"`
+	ProjectID pgtype.UUID        `json:"project_id"`
+	TaskID    pgtype.UUID        `json:"task_id"`
+	Kind      string             `json:"kind"`
+	Payload   []byte             `json:"payload"`
+	DedupeKey pgtype.Text        `json:"dedupe_key"`
+	Status    string             `json:"status"`
+	Attempts  int32              `json:"attempts"`
+	RunAfter  pgtype.Timestamptz `json:"run_after"`
+	LastError string             `json:"last_error"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SyncRun struct {
 	ID           pgtype.UUID        `json:"id"`
 	RepositoryID pgtype.UUID        `json:"repository_id"`
@@ -89,6 +178,46 @@ type SyncRun struct {
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
+type Task struct {
+	ID                     pgtype.UUID        `json:"id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	BacklogID              pgtype.UUID        `json:"backlog_id"`
+	Title                  string             `json:"title"`
+	Description            string             `json:"description"`
+	Status                 string             `json:"status"`
+	ClosedAt               pgtype.Timestamptz `json:"closed_at"`
+	AssigneeGitlabUserID   pgtype.Int8        `json:"assignee_gitlab_user_id"`
+	AssigneeGitlabUsername string             `json:"assignee_gitlab_username"`
+	Labels                 []string           `json:"labels"`
+	DueOn                  pgtype.Date        `json:"due_on"`
+	Position               int32              `json:"position"`
+	CreatedByUserID        pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskAiContext struct {
+	TaskID             pgtype.UUID        `json:"task_id"`
+	AcceptanceCriteria string             `json:"acceptance_criteria"`
+	AiContext          string             `json:"ai_context"`
+	AllowedScope       string             `json:"allowed_scope"`
+	ForbiddenScope     string             `json:"forbidden_scope"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskGitlabLink struct {
+	TaskID                pgtype.UUID        `json:"task_id"`
+	LinkedGitlabProjectID pgtype.UUID        `json:"linked_gitlab_project_id"`
+	GitlabIssueID         int64              `json:"gitlab_issue_id"`
+	GitlabIssueIid        int64              `json:"gitlab_issue_iid"`
+	GitlabWebUrl          string             `json:"gitlab_web_url"`
+	GitlabUpdatedAt       pgtype.Timestamptz `json:"gitlab_updated_at"`
+	LastPushedFingerprint string             `json:"last_pushed_fingerprint"`
+	SyncStatus            string             `json:"sync_status"`
+	LastError             string             `json:"last_error"`
+	LastSyncedAt          pgtype.Timestamptz `json:"last_synced_at"`
+}
+
 type User struct {
 	ID           pgtype.UUID        `json:"id"`
 	DisplayName  string             `json:"display_name"`
@@ -97,4 +226,20 @@ type User struct {
 	Username     string             `json:"username"`
 	Email        string             `json:"email"`
 	PasswordHash string             `json:"password_hash"`
+}
+
+type WebhookEvent struct {
+	ID                    pgtype.UUID        `json:"id"`
+	LinkedGitlabProjectID pgtype.UUID        `json:"linked_gitlab_project_id"`
+	DeliveryUuid          string             `json:"delivery_uuid"`
+	EventName             string             `json:"event_name"`
+	ObjectKind            string             `json:"object_kind"`
+	GitlabIssueIid        pgtype.Int8        `json:"gitlab_issue_iid"`
+	Payload               []byte             `json:"payload"`
+	GitlabUpdatedAt       pgtype.Timestamptz `json:"gitlab_updated_at"`
+	Status                string             `json:"status"`
+	SkipReason            string             `json:"skip_reason"`
+	ErrorMessage          string             `json:"error_message"`
+	ReceivedAt            pgtype.Timestamptz `json:"received_at"`
+	ProcessedAt           pgtype.Timestamptz `json:"processed_at"`
 }

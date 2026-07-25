@@ -36,6 +36,11 @@ logout button). A thin server-side API client (`lib/api.ts`) calls the Go
 API and forwards the session cookie. Client-safe config lives in
 `lib/config.ts` so client components never import server-only modules.
 
+Screens are structured object-first (OOUI): each domain object gets a
+collection view and a single view, with actions attached to the object they
+act on. See [`ui-design.md`](ui-design.md) for the rules and the object
+model, and [ADR-0006](decisions/0006-why-ooui.md) for the rationale.
+
 ### API (`apps/api`)
 
 Go REST API with clearly separated responsibilities, kept intentionally

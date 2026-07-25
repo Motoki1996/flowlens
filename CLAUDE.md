@@ -28,6 +28,8 @@ Running a single test:
 - Go: `cd apps/api && go test ./internal/auth/ -run TestName`
 - Web: `cd apps/web && npx vitest run path/to/file.test.ts -t "test name"`
 
+**When designing or changing any web UI, follow [`docs/ui-design.md`](docs/ui-design.md)** — screens are designed object-first (OOUI), not task-first.
+
 **When writing or changing tests, follow [`docs/testing.md`](docs/testing.md)** — the layered strategy (integration / domain / HTTP), Fakes over Mocks, table-driven cases, and the other rules that keep the suite small and maintainable.
 
 ## Architecture
@@ -47,6 +49,7 @@ Running a single test:
 
 ### Web (`apps/web`) — Next.js App Router
 - React Server Components by default; Client Components only where interactive (e.g. logout button)
+- Screens are structured per object (collection view / single view) — see the UI conventions below
 - `lib/api.ts` — thin server-side API client that forwards the session cookie
 - `lib/config.ts` — client-safe config kept separate so client components never import server-only modules
 
@@ -54,6 +57,14 @@ Running a single test:
 - Schema owned by `golang-migrate` in `apps/api/migrations`. sqlc reads **only `*.up.sql`** (see `sqlc.yaml`) as the schema source, plus hand-written queries in `internal/database/queries`
 - All tables exist from the initial migration; most are unpopulated until later phases
 - UUID PKs, `timestamptz` everywhere. Natural GitLab IDs (`gitlab_group_id`, `gitlab_project_id`, `gitlab_merge_request_id`) have `UNIQUE` constraints so upserts / duplicate webhook deliveries are idempotent. `users.username`/`users.email` are also `UNIQUE`. FKs cascade on delete
+
+## UI conventions (web)
+
+- **Object-oriented UI (OOUI).** Design order is: extract the domain object → decide collection view vs single view → then presentation. Never start from layout.
+- **Screens are named with nouns** and routes mirror the pair: `/merge-requests` (collection) → `/merge-requests/[id]` (single). No standalone task screens.
+- **Actions belong to the object they act on** ("Sync now" lives in the `Project` view), and one object keeps one name across UI, route, API and schema. Note the schema still carries GitHub-era names (`repositories`, `pull_requests`) while the UI vocabulary is GitLab — see the mapping table in the guide.
+- **Auth flows (login/signup) are the deliberate exception** and stay task-oriented.
+- Full rules, the object model, and a per-screen checklist: [`docs/ui-design.md`](docs/ui-design.md); rationale in [ADR-0006](docs/decisions/0006-why-ooui.md).
 
 ## Key conventions & security model
 
@@ -71,4 +82,4 @@ Dev Container note: Makefile DB targets read `.env` (host port), so when running
 
 ## Further docs
 
-`docs/architecture.md` for detail; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first).
+`docs/architecture.md` for detail; `docs/ui-design.md` for the OOUI rules every web screen follows; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first).

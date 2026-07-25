@@ -17,3 +17,4 @@ that capture a significant decision, its context, and its consequences.
 | [0003](0003-why-postgresql.md) | Why PostgreSQL | Accepted |
 | [0004](0004-why-monorepo.md) | Why a monorepo | Accepted |
 | [0005](0005-why-manual-sync-first.md) | Why manual sync for the first MVP | Accepted |
+| [0006](0006-why-ooui.md) | Why object-oriented UI (OOUI) | Accepted |

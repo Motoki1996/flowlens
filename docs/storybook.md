@@ -39,6 +39,14 @@ This is the same seam that keeps the code testable in general — it just makes
 Storybook possible as a side effect. If a screen can't be storied, that's usually
 a signal its fetching and rendering aren't separated yet.
 
+## Which screens exist is decided elsewhere
+
+Storybook covers the *states* of a screen. *Which* screens exist and what each
+one is about is decided by [`docs/ui-design.md`](./ui-design.md) — objects
+first, a collection view and a single view per object. Before writing stories,
+the screen should already be identifiable as "the collection of X" or "a single
+X"; the branches below are then the states of that view.
+
 ## What every screen must have
 
 1. **At least one story per screen** — the default, happy-path render.
@@ -98,14 +106,18 @@ order. Standard: **a new screen ships with zero a11y violations** in its stories
   `Default`, `Loading`, `Empty`, `Error`, `Forbidden`, plus branch-specific names
   (`AdminView`, `NoGitLabConnected`, …).
 - Title stories by their place in the app (e.g. `Screens/Dashboard`,
-  `Components/AppHeader`).
+  `Components/AppHeader`). For object views, name the screen after the object
+  and its view (`Screens/MergeRequests` for the collection,
+  `Screens/MergeRequest` for the single view) so the story tree reads as the
+  object model.
 
-## Relationship to `docs/testing.md`
+## Relationship to the other docs
 
 They partition, they don't overlap:
 
 | Concern | Where |
 | --- | --- |
+| Which screens exist, what object each is about | [`ui-design.md`](./ui-design.md) |
 | Business rules, authz, security invariants | Go domain / HTTP tests |
 | Component rendering across states, visual regression | Storybook stories |
 | Component interaction (clicks, form flow) | Vitest + Testing Library **or** a story play function — pick one per behaviour, don't test it in both |

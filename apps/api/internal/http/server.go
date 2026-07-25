@@ -7,6 +7,7 @@ import (
 
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/config"
+	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/user"
 	"github.com/go-chi/chi/v5"
@@ -22,10 +23,13 @@ type Server struct {
 	cookies    cookieManager
 	webBaseURL string
 	sessionTTL time.Duration
+	cipher     *crypto.Cipher
 }
 
-// NewServer constructs a Server from configuration and a database pool.
-func NewServer(cfg *config.Config, pool *pgxpool.Pool) (*Server, error) {
+// NewServer constructs a Server from configuration, a database pool, and a
+// Cipher for encrypting secrets at rest (GitLab access tokens, webhook
+// secrets — not yet used by any handler).
+func NewServer(cfg *config.Config, pool *pgxpool.Pool, cipher *crypto.Cipher) (*Server, error) {
 	queries := db.New(pool)
 
 	return &Server{
@@ -35,6 +39,7 @@ func NewServer(cfg *config.Config, pool *pgxpool.Pool) (*Server, error) {
 		cookies:    cookieManager{secure: cfg.IsProduction()},
 		webBaseURL: cfg.WebBaseURL,
 		sessionTTL: cfg.SessionTTL,
+		cipher:     cipher,
 	}, nil
 }
 

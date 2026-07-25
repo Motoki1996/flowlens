@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/config"
+	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	apihttp "github.com/flowlens/api/internal/http"
 )
@@ -41,7 +42,12 @@ func run() error {
 	}
 	defer pool.Close()
 
-	server, err := apihttp.NewServer(cfg, pool)
+	cipher, err := crypto.New(cfg.EncryptionKey)
+	if err != nil {
+		return err
+	}
+
+	server, err := apihttp.NewServer(cfg, pool, cipher)
 	if err != nil {
 		return err
 	}

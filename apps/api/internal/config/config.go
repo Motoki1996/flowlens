@@ -5,11 +5,13 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strconv"
 	"time"
 
+	"github.com/flowlens/api/internal/crypto"
 	"github.com/joho/godotenv"
 )
 
@@ -22,6 +24,17 @@ type Config struct {
 	DatabaseURL string
 
 	SessionTTL time.Duration
+
+	// EncryptionKey is the decoded 32-byte AES-256 key used to encrypt
+	// secrets at rest (GitLab access tokens, webhook secrets).
+	EncryptionKey []byte
+
+	// AppPublicURL is the URL GitLab must be able to reach to deliver
+	// webhooks. When empty, webhook auto-registration is skipped.
+	AppPublicURL string
+
+	SyncWorkerEnabled      bool
+	SyncWorkerPollInterval time.Duration
 }
 
 // IsProduction reports whether the API runs in production mode.
@@ -50,7 +63,47 @@ func Load() (*Config, error) {
 	}
 	cfg.SessionTTL = time.Duration(ttlHours) * time.Hour
 
+	encryptionKey, err := decodeEncryptionKey(os.Getenv("ENCRYPTION_KEY"))
+	if err != nil {
+		return nil, err
+	}
+	cfg.EncryptionKey = encryptionKey
+
+	cfg.AppPublicURL = os.Getenv("APP_PUBLIC_URL")
+
+	syncWorkerEnabled, err := strconv.ParseBool(getEnv("SYNC_WORKER_ENABLED", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid SYNC_WORKER_ENABLED: %w", err)
+	}
+	cfg.SyncWorkerEnabled = syncWorkerEnabled
+
+	pollInterval, err := time.ParseDuration(getEnv("SYNC_WORKER_POLL_INTERVAL", "5s"))
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid SYNC_WORKER_POLL_INTERVAL: %w", err)
+	}
+	cfg.SyncWorkerPollInterval = pollInterval
+
 	return cfg, nil
+}
+
+// decodeEncryptionKey base64-decodes ENCRYPTION_KEY and validates it is a
+// usable AES-256 key. It is required; a missing or malformed value is a
+// startup error.
+func decodeEncryptionKey(raw string) ([]byte, error) {
+	if raw == "" {
+		return nil, fmt.Errorf("config: ENCRYPTION_KEY is required")
+	}
+
+	key, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("config: ENCRYPTION_KEY must be valid base64: %w", err)
+	}
+
+	if len(key) != crypto.KeySize {
+		return nil, fmt.Errorf("config: ENCRYPTION_KEY must decode to %d bytes, got %d", crypto.KeySize, len(key))
+	}
+
+	return key, nil
 }
 
 func getEnv(key, fallback string) string {

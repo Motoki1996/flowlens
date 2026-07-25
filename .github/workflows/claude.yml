@@ -30,6 +30,26 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm ci
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
@@ -43,8 +63,9 @@ jobs:
           # Optional: Give a custom prompt to Claude. If this is not specified, Claude will perform the instructions specified in the comment that tagged it.
           # prompt: 'Update the pull request description to include a summary of changes.'
 
-          # Optional: Add claude_args to customize behavior and configuration
-          # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
-          # or https://code.claude.com/docs/en/cli-reference for available options
-          # claude_args: '--allowed-tools Bash(gh pr *)'
+          # Let Claude self-verify unit tests/lint (no integration tests: no Postgres
+          # service is defined here — see CLAUDE.md, prefer /implement-issue for
+          # migration-touching work).
+          claude_args: |
+            --allowed-tools "Bash(cd apps/api && go build ./...)" "Bash(cd apps/api && go vet ./...)" "Bash(cd apps/api && go test ./...)" "Bash(cd apps/api && gofmt -l .)" "Bash(cd apps/api && golangci-lint run ./...)" "Bash(cd apps/web && npm test -- --run)" "Bash(cd apps/web && npm run lint)" "Bash(cd apps/web && npm run typecheck)"
 

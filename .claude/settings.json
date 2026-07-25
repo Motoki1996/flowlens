@@ -16,7 +16,18 @@
       "Bash(gh pr checks*)",
       "Bash(gh run list*)",
       "Bash(gh run view*)",
-      "Bash(gh api -X GET *)"
+      "Bash(gh api -X GET *)",
+      "Bash(cd apps/api && go build ./...)",
+      "Bash(cd apps/api && go vet ./...)",
+      "Bash(cd apps/api && go test ./...)",
+      "Bash(cd apps/api && gofmt -l .)",
+      "Bash(cd apps/api && golangci-lint run ./...)",
+      "Bash(cd apps/web && npm test -- --run)",
+      "Bash(cd apps/web && npm run lint)",
+      "Bash(cd apps/web && npm run typecheck)",
+      "Bash(make test)",
+      "Bash(make lint)",
+      "Bash(make build)"
     ]
   }
 }

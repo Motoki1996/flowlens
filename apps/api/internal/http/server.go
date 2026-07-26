@@ -9,6 +9,7 @@ import (
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/user"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,6 +20,7 @@ import (
 type Server struct {
 	pool       *pgxpool.Pool
 	users      *user.Service
+	projects   *project.Service
 	sessions   *auth.SessionService
 	cookies    cookieManager
 	webBaseURL string
@@ -35,6 +37,7 @@ func NewServer(cfg *config.Config, pool *pgxpool.Pool, cipher *crypto.Cipher) (*
 	return &Server{
 		pool:       pool,
 		users:      user.NewService(queries),
+		projects:   project.NewService(queries),
 		sessions:   auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:    cookieManager{secure: cfg.IsProduction()},
 		webBaseURL: cfg.WebBaseURL,
@@ -62,6 +65,14 @@ func (s *Server) Router() chi.Router {
 		api.Group(func(protected chi.Router) {
 			protected.Use(s.requireAuth)
 			protected.Get("/me", s.handleMe)
+
+			protected.Route("/projects", func(projects chi.Router) {
+				projects.Get("/", s.handleListProjects)
+				projects.Post("/", s.handleCreateProject)
+				projects.Get("/{projectID}", s.handleGetProject)
+				projects.Patch("/{projectID}", s.handleUpdateProject)
+				projects.Delete("/{projectID}", s.handleDeleteProject)
+			})
 		})
 	})
 

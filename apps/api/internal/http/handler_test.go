@@ -12,6 +12,7 @@ import (
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/user"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +25,7 @@ func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 	q := dbtest.New()
 	return &Server{
 		users:      user.NewService(q),
+		projects:   project.NewService(q),
 		sessions:   auth.NewSessionService(q, time.Hour),
 		cookies:    cookieManager{secure: false},
 		webBaseURL: "http://localhost:3000",

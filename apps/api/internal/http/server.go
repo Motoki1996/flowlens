@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/auth"
+	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
@@ -28,6 +29,7 @@ type Server struct {
 	health     Pinger
 	users      *user.Service
 	projects   *project.Service
+	backlogs   *backlog.Service
 	sessions   *auth.SessionService
 	cookies    cookieManager
 	webBaseURL string
@@ -39,10 +41,12 @@ type Server struct {
 // a database health probe, and a Cipher for encrypting secrets at rest
 // (GitLab access tokens, webhook secrets — not yet used by any handler).
 func NewServer(cfg *config.Config, queries database.Querier, health Pinger, cipher *crypto.Cipher) (*Server, error) {
+	projects := project.NewService(queries)
 	return &Server{
 		health:     health,
 		users:      user.NewService(queries),
-		projects:   project.NewService(queries),
+		projects:   projects,
+		backlogs:   backlog.NewService(queries, projects),
 		sessions:   auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:    cookieManager{secure: cfg.IsProduction()},
 		webBaseURL: cfg.WebBaseURL,
@@ -77,6 +81,15 @@ func (s *Server) Router() chi.Router {
 				projects.Get("/{projectID}", s.handleGetProject)
 				projects.Patch("/{projectID}", s.handleUpdateProject)
 				projects.Delete("/{projectID}", s.handleDeleteProject)
+
+				projects.Get("/{projectID}/backlogs", s.handleListBacklogs)
+				projects.Post("/{projectID}/backlogs", s.handleCreateBacklog)
+			})
+
+			protected.Route("/backlogs", func(backlogs chi.Router) {
+				backlogs.Get("/{backlogID}", s.handleGetBacklog)
+				backlogs.Patch("/{backlogID}", s.handleUpdateBacklog)
+				backlogs.Delete("/{backlogID}", s.handleDeleteBacklog)
 			})
 		})
 	})

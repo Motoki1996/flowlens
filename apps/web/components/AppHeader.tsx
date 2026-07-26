@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { User } from "@/types";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogoutButton } from "./LogoutButton";
+import { AppIcon } from "./AppIcon";
 
 function initials(user: User) {
   const source = user.displayName || user.username;
@@ -14,7 +15,8 @@ export function AppHeader({ user }: { user: User }) {
     <header className="border-border bg-card border-b">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
         <div className="flex items-center gap-6">
-          <Link href="/dashboard" className="text-foreground text-lg font-semibold">
+          <Link href="/dashboard" className="text-foreground flex items-center gap-2 text-lg font-semibold">
+            <AppIcon className="size-6" />
             FlowLens
           </Link>
           <nav className="text-muted-foreground flex gap-4 text-sm">

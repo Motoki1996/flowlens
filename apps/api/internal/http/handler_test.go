@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/auth"
+	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/user"
@@ -23,9 +24,11 @@ import (
 func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 	t.Helper()
 	q := dbtest.New()
+	projects := project.NewService(q)
 	return &Server{
 		users:      user.NewService(q),
-		projects:   project.NewService(q),
+		projects:   projects,
+		backlogs:   backlog.NewService(q, projects),
 		sessions:   auth.NewSessionService(q, time.Hour),
 		cookies:    cookieManager{secure: false},
 		webBaseURL: "http://localhost:3000",

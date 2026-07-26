@@ -4,6 +4,7 @@ package dbtest
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/flowlens/api/internal/database/db"
@@ -23,6 +24,9 @@ type FakeQuerier struct {
 	projects            []db.Project // insertion order, newest last
 	projectsByID        map[uuid.UUID]db.Project
 	projectsByOwnerName map[string]db.Project // key: owner_user_id + name
+
+	backlogs     []db.Backlog // insertion order, newest last
+	backlogsByID map[uuid.UUID]db.Backlog
 }
 
 // New returns an empty FakeQuerier.
@@ -34,6 +38,7 @@ func New() *FakeQuerier {
 		sessions:            map[string]db.Session{},
 		projectsByID:        map[uuid.UUID]db.Project{},
 		projectsByOwnerName: map[string]db.Project{},
+		backlogsByID:        map[uuid.UUID]db.Backlog{},
 	}
 }
 
@@ -241,6 +246,130 @@ func (f *FakeQuerier) DeleteProjectForOwner(_ context.Context, arg db.DeleteProj
 	for i, x := range f.projects {
 		if x.ID == p.ID {
 			f.projects = append(f.projects[:i], f.projects[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
+}
+
+// SeedBacklog inserts a ready-made backlog directly, bypassing validation.
+// Use it in tests that need a pre-existing backlog but don't exercise
+// creation (e.g. authorization tests). Returns the stored row.
+func (f *FakeQuerier) SeedBacklog(projectID uuid.UUID, name string) db.Backlog {
+	b := db.Backlog{
+		ID:        uuid.New(),
+		ProjectID: projectID,
+		Name:      name,
+		Position:  f.nextBacklogPosition(projectID),
+		CreatedAt: now(),
+		UpdatedAt: now(),
+	}
+	f.backlogs = append(f.backlogs, b)
+	f.backlogsByID[b.ID] = b
+	return b
+}
+
+func (f *FakeQuerier) nextBacklogPosition(projectID uuid.UUID) int32 {
+	var max int32 = -1
+	for _, b := range f.backlogs {
+		if b.ProjectID == projectID && b.Position > max {
+			max = b.Position
+		}
+	}
+	return max + 1
+}
+
+func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParams) (db.Backlog, error) {
+	b := db.Backlog{
+		ID:          uuid.New(),
+		ProjectID:   arg.ProjectID,
+		Name:        arg.Name,
+		Description: arg.Description,
+		Position:    f.nextBacklogPosition(arg.ProjectID),
+		CreatedAt:   now(),
+		UpdatedAt:   now(),
+	}
+	f.backlogs = append(f.backlogs, b)
+	f.backlogsByID[b.ID] = b
+	return b, nil
+}
+
+func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, projectID uuid.UUID) ([]db.Backlog, error) {
+	items := []db.Backlog{}
+	for _, b := range f.backlogs {
+		if b.ProjectID == projectID {
+			items = append(items, b)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Position < items[j].Position })
+	return items, nil
+}
+
+// backlogOwner returns the owner_user_id of the project a backlog belongs
+// to, mirroring the JOIN the real query performs.
+func (f *FakeQuerier) backlogOwner(b db.Backlog) (uuid.UUID, bool) {
+	p, ok := f.projectsByID[b.ProjectID]
+	if !ok {
+		return uuid.Nil, false
+	}
+	return p.OwnerUserID, true
+}
+
+// GetBacklogForOwner mirrors the SQL: a backlog whose project belongs to
+// someone else is reported as missing, never as a distinct "forbidden"
+// outcome.
+func (f *FakeQuerier) GetBacklogForOwner(_ context.Context, arg db.GetBacklogForOwnerParams) (db.Backlog, error) {
+	b, ok := f.backlogsByID[arg.ID]
+	if !ok {
+		return db.Backlog{}, pgx.ErrNoRows
+	}
+	owner, ok := f.backlogOwner(b)
+	if !ok || owner != arg.OwnerUserID {
+		return db.Backlog{}, pgx.ErrNoRows
+	}
+	return b, nil
+}
+
+func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBacklogForOwnerParams) (db.Backlog, error) {
+	existing, ok := f.backlogsByID[arg.ID]
+	if !ok {
+		return db.Backlog{}, pgx.ErrNoRows
+	}
+	owner, ok := f.backlogOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.Backlog{}, pgx.ErrNoRows
+	}
+
+	existing.Name = arg.Name
+	existing.Description = arg.Description
+	existing.Position = arg.Position
+	existing.UpdatedAt = now()
+
+	f.backlogsByID[arg.ID] = existing
+	for i, b := range f.backlogs {
+		if b.ID == existing.ID {
+			f.backlogs[i] = existing
+			break
+		}
+	}
+	return existing, nil
+}
+
+// DeleteBacklogForOwner returns the number of rows affected, so callers can
+// tell "deleted" from "not yours / not there" exactly as Postgres does.
+func (f *FakeQuerier) DeleteBacklogForOwner(_ context.Context, arg db.DeleteBacklogForOwnerParams) (int64, error) {
+	b, ok := f.backlogsByID[arg.ID]
+	if !ok {
+		return 0, nil
+	}
+	owner, ok := f.backlogOwner(b)
+	if !ok || owner != arg.OwnerUserID {
+		return 0, nil
+	}
+	delete(f.backlogsByID, b.ID)
+	for i, x := range f.backlogs {
+		if x.ID == b.ID {
+			f.backlogs = append(f.backlogs[:i], f.backlogs[i+1:]...)
 			break
 		}
 	}

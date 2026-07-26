@@ -16,16 +16,26 @@ type Querier interface {
 	// which callers map to ErrNotFound. Handlers must never do their own
 	// ownership check, and later project-scoped tables follow the same rule.
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
+	// Backlogs have no owner column of their own; ownership is always checked
+	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
+	// caller to have already verified project ownership (e.g. via
+	// project.Service.Get), while the single-backlog queries join to projects so
+	// a foreign backlog is indistinguishable from a missing one.
+	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
+	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
+	ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
+	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 }
 

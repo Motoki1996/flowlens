@@ -33,6 +33,10 @@ type updateTaskRequest struct {
 	Position               int32      `json:"position"`
 }
 
+type assignTaskBacklogRequest struct {
+	BacklogID *uuid.UUID `json:"backlogId"`
+}
+
 type upsertTaskAIContextRequest struct {
 	AcceptanceCriteria string `json:"acceptanceCriteria"`
 	AIContext          string `json:"aiContext"`
@@ -208,6 +212,32 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleAssignTaskBacklog moves one task to a backlog (or back to unfiled,
+// 未分類, when backlogId is null), scoped to the authenticated user via its
+// project. Unlike handleUpdateTask, it only touches backlog_id, so callers
+// don't need to resend the rest of the task to move it.
+func (s *Server) handleAssignTaskBacklog(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	taskID, ok := taskIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "task not found")
+		return
+	}
+
+	var req assignTaskBacklogRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
+		return
+	}
+
+	t, err := s.tasks.AssignBacklog(r.Context(), u.ID, taskID, req.BacklogID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 // handleCloseTask closes one task, scoped to the authenticated user via its

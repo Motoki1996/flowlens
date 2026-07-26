@@ -49,24 +49,24 @@ describe("TaskDetail", () => {
   });
 
   it("shows identity, attributes and a link back to the project", () => {
-    render(<TaskDetail task={makeTask({})} project={project} backlog={backlog} />);
+    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog]} />);
     expect(screen.getByRole("heading", { name: "Fix the bug" })).toBeInTheDocument();
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText("octocat")).toBeInTheDocument();
-    expect(screen.getByText("Sprint 1")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("b1");
     expect(screen.getByRole("link", { name: "← Alpha" })).toHaveAttribute("href", "/projects/p1");
   });
 
   it("shows 未分類 when the task has no backlog", () => {
-    render(<TaskDetail task={makeTask({ backlogId: null })} project={project} backlog={null} />);
-    expect(screen.getByText("未分類")).toBeInTheDocument();
+    render(<TaskDetail task={makeTask({ backlogId: null })} project={project} backlogs={[backlog]} />);
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("unclassified");
   });
 
   it("closes an open task", async () => {
     const closed = makeTask({ status: "closed", closedAt: "2026-01-05T00:00:00Z" });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(closed), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({})} project={project} backlog={backlog} />);
+    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog]} />);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument());
@@ -80,9 +80,38 @@ describe("TaskDetail", () => {
     const reopened = makeTask({ status: "open", closedAt: null });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reopened), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({ status: "closed" })} project={project} backlog={backlog} />);
+    render(<TaskDetail task={makeTask({ status: "closed" })} project={project} backlogs={[backlog]} />);
     fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument());
+  });
+
+  it("assigns the task to a different backlog", async () => {
+    const otherBacklog: Backlog = { ...backlog, id: "b2", name: "Sprint 2" };
+    const reassigned = makeTask({ backlogId: "b2" });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reassigned), { status: 200 }));
+
+    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog, otherBacklog]} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Backlog" }), { target: { value: "b2" } });
+
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("b2"));
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b2" }) }),
+    );
+  });
+
+  it("unassigns the task back to 未分類", async () => {
+    const unassigned = makeTask({ backlogId: null });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(unassigned), { status: 200 }));
+
+    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog]} />);
+    fireEvent.change(screen.getByRole("combobox", { name: "Backlog" }), { target: { value: "unclassified" } });
+
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("unclassified"));
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: null }) }),
+    );
   });
 });

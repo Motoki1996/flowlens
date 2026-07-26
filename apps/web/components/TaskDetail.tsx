@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError, Backlog, Task } from "@/types";
@@ -64,19 +64,80 @@ function CloseReopenButton({
   );
 }
 
+const UNCLASSIFIED = "unclassified";
+
+/** BacklogSelect assigns the task to a backlog, or back to 未分類. */
+function BacklogSelect({
+  task,
+  backlogs,
+  onChanged,
+}: {
+  task: Task;
+  backlogs: Backlog[];
+  onChanged: (task: Task) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleChange(e: ChangeEvent<HTMLSelectElement>) {
+    const value = e.target.value;
+    const backlogId = value === UNCLASSIFIED ? null : value;
+
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}/assign-backlog`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backlogId }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setError(body?.error.message ?? "Failed to assign backlog.");
+        return;
+      }
+      onChanged((await res.json()) as Task);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {error ? <span className="text-destructive text-xs">{error}</span> : null}
+      <select
+        aria-label="Backlog"
+        value={task.backlogId ?? UNCLASSIFIED}
+        onChange={handleChange}
+        disabled={pending}
+        className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
+      >
+        <option value={UNCLASSIFIED}>未分類</option>
+        {backlogs.map((b) => (
+          <option key={b.id} value={b.id}>
+            {b.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 /**
  * TaskDetail is the single view for one task, per docs/ui-design.md and the
  * order fixed in the issue: identity -> attributes -> AI-facing information
- * -> related links. Close/Reopen live here, on the object they act on.
+ * -> related links. Close/Reopen and backlog assignment live here, on the
+ * object they act on.
  */
 export function TaskDetail({
   task: initial,
   project,
-  backlog,
+  backlogs,
 }: {
   task: Task;
   project: { id: string; name: string };
-  backlog: Backlog | null;
+  backlogs: Backlog[];
 }) {
   const [task, setTask] = useState(initial);
 
@@ -133,7 +194,9 @@ export function TaskDetail({
             </div>
             <div>
               <dt className="text-muted-foreground">Backlog</dt>
-              <dd className="text-foreground">{backlog ? backlog.name : "未分類"}</dd>
+              <dd className="text-foreground">
+                <BacklogSelect task={task} backlogs={backlogs} onChanged={setTask} />
+              </dd>
             </div>
           </dl>
         </CardContent>

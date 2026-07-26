@@ -19,13 +19,12 @@ export default async function TaskPage({
   if (!project) notFound();
 
   const backlogs = await getBacklogs(task.projectId);
-  const backlog = backlogs.find((b) => b.id === task.backlogId) ?? null;
 
   return (
     <>
       <AppHeader user={user} />
       <main className="mx-auto max-w-6xl px-6 py-8">
-        <TaskDetail task={task} project={project} backlog={backlog} />
+        <TaskDetail task={task} project={project} backlogs={backlogs} />
       </main>
     </>
   );

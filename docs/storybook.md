@@ -1,9 +1,9 @@
 # Storybook guide
 
 > **Status: adopted.** These are the conventions for every new web screen.
-> Storybook tooling itself is not installed yet (see the setup checklist at the
-> end) — but the rules below are the contract, so build new screens to satisfy
-> them from the start and add the stories as soon as the tooling lands.
+> Storybook tooling is installed (see the setup checklist at the end for what's
+> still outstanding) — build new screens to satisfy the rules below from the
+> start and add stories alongside them.
 
 How we use Storybook for FlowLens' web app (`apps/web`), and how to keep the
 story set useful without letting it explode.
@@ -125,14 +125,25 @@ They partition, they don't overlap:
 The `docs/testing.md` rule stands: **don't verify the same behaviour at two
 layers.** If a play function covers a click, a Vitest test shouldn't re-cover it.
 
-## Setup checklist (tooling still to land)
+## Setup checklist
 
-The conventions are adopted; the tooling that enforces them is not in place yet.
-Remaining work:
-
-- [ ] Add Storybook for the Next.js / Vite setup used by `apps/web`.
-- [ ] Wire MSW, the a11y addon, and interaction testing.
-- [ ] Add a `make storybook` (and CI build) target; decide on Chromatic or an
-      alternative for visual regression.
-- [ ] Backfill stories for the existing screens (`LoginForm`, `SignupForm`,
-      `AppHeader`, dashboard) as the reference examples.
+- [x] Add Storybook for the Next.js / Vite setup used by `apps/web`
+      (`@storybook/nextjs-vite`, config in `apps/web/.storybook`).
+- [x] Wire the a11y addon and docs addon.
+- [x] Add a `make storybook` target (`storybook dev -p 6006`).
+- [x] Wire MSW (`msw-storybook-addon`, CSF3 `mswLoader`) so stories can mock
+      `fetch` calls to the API per-story via `parameters.msw.handlers`.
+- [x] `AppHeader`, `LoginForm`, `SignupForm` have reference stories, including
+      play-function interaction tests for the error and pending-submit states.
+- [x] Add a CI build step (`storybook-build` job in `web-checks.yml` runs
+      `npm run build-storybook`).
+- [ ] Run play functions in CI as actual pass/fail tests, not just a build
+      smoke test. `@storybook/test-runner` needs a headful/CI-compatible
+      Chromium (Playwright); the sandbox this was built in has no root to
+      install Playwright's system deps (`libglib-2.0` etc.), so the play
+      functions here are verified by `storybook build` succeeding and by
+      code review, not by an actual browser run. Wire this in an environment
+      that can run Playwright, or add `@storybook/addon-vitest` (needs
+      `@vitest/browser` + a Playwright provider).
+- [ ] Decide on Chromatic or an alternative for visual regression.
+- [ ] Backfill stories for the remaining existing screens (dashboard).

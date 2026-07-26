@@ -66,3 +66,7 @@ lint: ## Lint api (golangci-lint) and web (eslint).
 build: ## Build the api binary and the web app.
 	cd $(API_DIR) && go build -o bin/api ./cmd/api
 	cd $(WEB_DIR) && npm run build
+
+.PHONY: storybook
+storybook: ## Start Storybook for the web app (http://localhost:6006).
+	cd $(WEB_DIR) && npm run storybook

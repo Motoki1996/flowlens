@@ -9,7 +9,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.2",
@@ -26,6 +28,9 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
+    "@storybook/addon-a11y": "^10.5.4",
+    "@storybook/addon-docs": "^10.5.4",
+    "@storybook/nextjs-vite": "^10.5.4",
     "@tailwindcss/postcss": "^4.1.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
@@ -36,9 +41,19 @@
     "@vitejs/plugin-react": "^4.3.4",
     "eslint": "^9.17.0",
     "eslint-config-next": "^15.5.20",
+    "eslint-plugin-storybook": "^10.5.4",
     "jsdom": "^25.0.1",
+    "msw": "^2.15.0",
+    "msw-storybook-addon": "^3.0.0",
+    "storybook": "^10.5.4",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0",
+    "vite": "^5.4.20",
     "vitest": "^2.1.8"
+  },
+  "msw": {
+    "workerDirectory": [
+      "public"
+    ]
   }
 }

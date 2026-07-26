@@ -11,6 +11,8 @@ import (
 )
 
 type Querier interface {
+	AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskBacklogForOwnerParams) (Task, error)
+	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
 	// Every project-scoped query filters on owner_user_id in SQL. Authorization
 	// is therefore enforced by the query itself: a non-owner gets "no rows",
 	// which callers map to ErrNotFound. Handlers must never do their own
@@ -23,20 +25,33 @@ type Querier interface {
 	// a foreign backlog is indistinguishable from a missing one.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
+	// Tasks are scoped through their parent project the same way backlogs are:
+	// every single-task query joins to projects and filters on owner_user_id,
+	// so a foreign task is indistinguishable from a missing one. CreateTask
+	// trusts the caller to have already verified project ownership.
+	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
+	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
+	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
 	ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
+	// ListTasksByProject takes three independent optional filters so one query
+	// serves the unfiltered, single-backlog, unassigned-only and status-scoped
+	// list views: passing false/NULL/'' for a filter disables it.
+	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
+	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
+	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
 }
 
 var _ Querier = (*Queries)(nil)

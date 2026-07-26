@@ -13,6 +13,7 @@ import (
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -25,10 +26,12 @@ func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 	t.Helper()
 	q := dbtest.New()
 	projects := project.NewService(q)
+	backlogs := backlog.NewService(q, projects)
 	return &Server{
 		users:      user.NewService(q),
 		projects:   projects,
-		backlogs:   backlog.NewService(q, projects),
+		backlogs:   backlogs,
+		tasks:      task.NewService(q, projects, backlogs),
 		sessions:   auth.NewSessionService(q, time.Hour),
 		cookies:    cookieManager{secure: false},
 		webBaseURL: "http://localhost:3000",

@@ -12,6 +12,7 @@ import (
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -30,6 +31,7 @@ type Server struct {
 	users      *user.Service
 	projects   *project.Service
 	backlogs   *backlog.Service
+	tasks      *task.Service
 	sessions   *auth.SessionService
 	cookies    cookieManager
 	webBaseURL string
@@ -42,11 +44,13 @@ type Server struct {
 // (GitLab access tokens, webhook secrets — not yet used by any handler).
 func NewServer(cfg *config.Config, queries database.Querier, health Pinger, cipher *crypto.Cipher) (*Server, error) {
 	projects := project.NewService(queries)
+	backlogs := backlog.NewService(queries, projects)
 	return &Server{
 		health:     health,
 		users:      user.NewService(queries),
 		projects:   projects,
-		backlogs:   backlog.NewService(queries, projects),
+		backlogs:   backlogs,
+		tasks:      task.NewService(queries, projects, backlogs),
 		sessions:   auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:    cookieManager{secure: cfg.IsProduction()},
 		webBaseURL: cfg.WebBaseURL,
@@ -84,12 +88,23 @@ func (s *Server) Router() chi.Router {
 
 				projects.Get("/{projectID}/backlogs", s.handleListBacklogs)
 				projects.Post("/{projectID}/backlogs", s.handleCreateBacklog)
+
+				projects.Get("/{projectID}/tasks", s.handleListTasks)
+				projects.Post("/{projectID}/tasks", s.handleCreateTask)
 			})
 
 			protected.Route("/backlogs", func(backlogs chi.Router) {
 				backlogs.Get("/{backlogID}", s.handleGetBacklog)
 				backlogs.Patch("/{backlogID}", s.handleUpdateBacklog)
 				backlogs.Delete("/{backlogID}", s.handleDeleteBacklog)
+			})
+
+			protected.Route("/tasks", func(tasks chi.Router) {
+				tasks.Get("/{taskID}", s.handleGetTask)
+				tasks.Patch("/{taskID}", s.handleUpdateTask)
+				tasks.Delete("/{taskID}", s.handleDeleteTask)
+				tasks.Post("/{taskID}/close", s.handleCloseTask)
+				tasks.Post("/{taskID}/reopen", s.handleReopenTask)
 			})
 		})
 	})

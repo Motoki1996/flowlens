@@ -8,21 +8,26 @@ package db
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 const createProject = `-- name: CreateProject :one
+
 INSERT INTO projects (owner_user_id, name, description)
 VALUES ($1, $2, $3)
 RETURNING id, owner_user_id, name, description, created_at, updated_at
 `
 
 type CreateProjectParams struct {
-	OwnerUserID pgtype.UUID `json:"owner_user_id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
 }
 
+// Every project-scoped query filters on owner_user_id in SQL. Authorization
+// is therefore enforced by the query itself: a non-owner gets "no rows",
+// which callers map to ErrNotFound. Handlers must never do their own
+// ownership check, and later project-scoped tables follow the same rule.
 func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
 	row := q.db.QueryRow(ctx, createProject, arg.OwnerUserID, arg.Name, arg.Description)
 	var i Project
@@ -37,21 +42,34 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 	return i, err
 }
 
-const deleteProject = `-- name: DeleteProject :exec
-DELETE FROM projects WHERE id = $1
+const deleteProjectForOwner = `-- name: DeleteProjectForOwner :execrows
+DELETE FROM projects WHERE id = $1 AND owner_user_id = $2
 `
 
-func (q *Queries) DeleteProject(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteProject, id)
-	return err
+type DeleteProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
 }
 
-const getProjectByID = `-- name: GetProjectByID :one
-SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE id = $1
+func (q *Queries) DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProjectForOwner, arg.ID, arg.OwnerUserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getProjectForOwner = `-- name: GetProjectForOwner :one
+SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE id = $1 AND owner_user_id = $2
 `
 
-func (q *Queries) GetProjectByID(ctx context.Context, id pgtype.UUID) (Project, error) {
-	row := q.db.QueryRow(ctx, getProjectByID, id)
+type GetProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectForOwner, arg.ID, arg.OwnerUserID)
 	var i Project
 	err := row.Scan(
 		&i.ID,
@@ -68,7 +86,7 @@ const listProjectsByOwner = `-- name: ListProjectsByOwner :many
 SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE owner_user_id = $1 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerUserID pgtype.UUID) ([]Project, error) {
+func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error) {
 	rows, err := q.db.Query(ctx, listProjectsByOwner, ownerUserID)
 	if err != nil {
 		return nil, err
@@ -95,21 +113,27 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerUserID pgtype.UU
 	return items, nil
 }
 
-const updateProject = `-- name: UpdateProject :one
+const updateProjectForOwner = `-- name: UpdateProjectForOwner :one
 UPDATE projects
-SET name = $2, description = $3, updated_at = now()
-WHERE id = $1
+SET name = $3, description = $4, updated_at = now()
+WHERE id = $1 AND owner_user_id = $2
 RETURNING id, owner_user_id, name, description, created_at, updated_at
 `
 
-type UpdateProjectParams struct {
-	ID          pgtype.UUID `json:"id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
+type UpdateProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
 }
 
-func (q *Queries) UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error) {
-	row := q.db.QueryRow(ctx, updateProject, arg.ID, arg.Name, arg.Description)
+func (q *Queries) UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, updateProjectForOwner,
+		arg.ID,
+		arg.OwnerUserID,
+		arg.Name,
+		arg.Description,
+	)
 	var i Project
 	err := row.Scan(
 		&i.ID,

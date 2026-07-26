@@ -7,10 +7,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
-	"github.com/flowlens/api/internal/project"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,9 +44,9 @@ func TestHandleListProjects_NoCookie(t *testing.T) {
 
 func TestHandleListProjects_ScopesToOwner(t *testing.T) {
 	s, q := newTestServer(t)
-	owner, ownerToken := loginSession(t, s, q)
-	q.SeedProject(owner.ID, "Alpha")
-	q.SeedProject(owner.ID, "Beta")
+	ownerID, ownerToken := loginSession(t, s, q)
+	q.SeedProject(ownerID, "Alpha")
+	q.SeedProject(ownerID, "Beta")
 
 	other := q.SeedUser("intruder", "intruder@example.com")
 	q.SeedProject(other.ID, "Gamma")
@@ -70,13 +69,20 @@ func TestHandleCreateProject(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "Alpha", body["name"])
 	assert.Equal(t, "desc", body["description"])
-	assert.NotEmpty(t, body["id"])
+
+	// IDs are serialised in the canonical UUID form, so a client can round
+	// trip one straight back into the URL.
+	id, ok := body["id"].(string)
+	require.True(t, ok)
+	_, err := uuid.Parse(id)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, doRequest(t, s, http.MethodGet, "/api/v1/projects/"+id, nil, token).Code)
 }
 
 func TestHandleCreateProject_RejectsDuplicateName(t *testing.T) {
 	s, q := newTestServer(t)
-	u, token := loginSession(t, s, q)
-	q.SeedProject(u.ID, "Alpha")
+	ownerID, token := loginSession(t, s, q)
+	q.SeedProject(ownerID, "Alpha")
 
 	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects", createProjectRequest{Name: "Alpha"}, token)
 	assert.Equal(t, http.StatusConflict, rec.Code)
@@ -92,9 +98,8 @@ func TestHandleCreateProject_RejectsInvalidName(t *testing.T) {
 
 func TestHandleGetProject(t *testing.T) {
 	s, q := newTestServer(t)
-	owner, ownerToken := loginSession(t, s, q)
-	p := q.SeedProject(owner.ID, "Alpha")
-	id := project.FromDB(p).ID
+	ownerID, ownerToken := loginSession(t, s, q)
+	id := q.SeedProject(ownerID, "Alpha").ID.String()
 
 	other := q.SeedUser("intruder", "intruder@example.com")
 	otherToken, err := s.sessions.Create(context.Background(), other.ID)
@@ -108,7 +113,8 @@ func TestHandleGetProject(t *testing.T) {
 	}{
 		{"owner can view", "/api/v1/projects/" + id, ownerToken, http.StatusOK},
 		{"other user gets 404, not 403", "/api/v1/projects/" + id, otherToken, http.StatusNotFound},
-		{"unknown id gets 404", "/api/v1/projects/" + strings.Repeat("0", 32), ownerToken, http.StatusNotFound},
+		{"unknown id gets 404", "/api/v1/projects/" + uuid.New().String(), ownerToken, http.StatusNotFound},
+		{"malformed id gets 404", "/api/v1/projects/not-a-uuid", ownerToken, http.StatusNotFound},
 		{"no auth gets 401", "/api/v1/projects/" + id, "", http.StatusUnauthorized},
 	}
 	for _, tt := range tests {
@@ -121,17 +127,22 @@ func TestHandleGetProject(t *testing.T) {
 
 func TestHandleUpdateProject(t *testing.T) {
 	s, q := newTestServer(t)
-	owner, ownerToken := loginSession(t, s, q)
-	p := q.SeedProject(owner.ID, "Alpha")
-	id := project.FromDB(p).ID
+	ownerID, ownerToken := loginSession(t, s, q)
+	id := q.SeedProject(ownerID, "Alpha").ID.String()
 
 	other := q.SeedUser("intruder", "intruder@example.com")
 	otherToken, err := s.sessions.Create(context.Background(), other.ID)
 	require.NoError(t, err)
 
-	t.Run("other user gets 404, not 403", func(t *testing.T) {
-		rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+id, updateProjectRequest{Name: "Renamed"}, otherToken)
-		assert.Equal(t, http.StatusNotFound, rec.Code)
+	t.Run("other user gets 404 and does not modify the project", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+id, updateProjectRequest{Name: "Hijacked"}, otherToken)
+		require.Equal(t, http.StatusNotFound, rec.Code)
+
+		rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+id, nil, ownerToken)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "Alpha", body["name"])
 	})
 
 	t.Run("owner can update", func(t *testing.T) {
@@ -146,18 +157,20 @@ func TestHandleUpdateProject(t *testing.T) {
 
 func TestHandleDeleteProject(t *testing.T) {
 	s, q := newTestServer(t)
-	owner, ownerToken := loginSession(t, s, q)
-	p := q.SeedProject(owner.ID, "Alpha")
-	id := project.FromDB(p).ID
+	ownerID, ownerToken := loginSession(t, s, q)
+	id := q.SeedProject(ownerID, "Alpha").ID.String()
 
 	other := q.SeedUser("intruder", "intruder@example.com")
 	otherToken, err := s.sessions.Create(context.Background(), other.ID)
 	require.NoError(t, err)
 
+	// A non-owner gets 404 and the project survives.
 	require.Equal(t, http.StatusNotFound, doRequest(t, s, http.MethodDelete, "/api/v1/projects/"+id, nil, otherToken).Code)
+	require.Equal(t, http.StatusOK, doRequest(t, s, http.MethodGet, "/api/v1/projects/"+id, nil, ownerToken).Code)
 
-	rec := doRequest(t, s, http.MethodDelete, "/api/v1/projects/"+id, nil, ownerToken)
-	require.Equal(t, http.StatusNoContent, rec.Code)
-
+	require.Equal(t, http.StatusNoContent, doRequest(t, s, http.MethodDelete, "/api/v1/projects/"+id, nil, ownerToken).Code)
 	assert.Equal(t, http.StatusNotFound, doRequest(t, s, http.MethodGet, "/api/v1/projects/"+id, nil, ownerToken).Code)
+
+	// Deleting twice is reported as "not found", not as success.
+	assert.Equal(t, http.StatusNotFound, doRequest(t, s, http.MethodDelete, "/api/v1/projects/"+id, nil, ownerToken).Code)
 }

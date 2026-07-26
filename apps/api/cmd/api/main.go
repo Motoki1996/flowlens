@@ -47,7 +47,7 @@ func run() error {
 		return err
 	}
 
-	server, err := apihttp.NewServer(cfg, pool, cipher)
+	server, err := apihttp.NewServer(cfg, database.NewQuerier(pool), pool, cipher)
 	if err != nil {
 		return err
 	}

@@ -48,15 +48,45 @@ lightweight (no heavy Clean Architecture layering yet):
 
 - `internal/http` — HTTP handlers, routing (chi), middleware (CORS, request
   logging, auth), cookie management, and response helpers.
-- `internal/auth` — token cipher (interface + AES-GCM impl), session
-  service, and OAuth config/state helpers.
-- `internal/user` — user domain model and the service that upserts users.
-- `internal/github` — the GitHub client interface, its HTTP implementation,
-  and a fake for tests.
+- `internal/auth` — the session service (opaque server-side sessions).
+- `internal/user` — user domain model, local password hashing, and the
+  signup/authenticate service.
+- `internal/project` — project domain model and its owner-scoped service.
+- `internal/crypto` — AES-256-GCM cipher for secrets at rest.
+- `internal/gitlab` — the GitLab CE client interface, its HTTP
+  implementation, and a fake for tests.
 - `internal/database` — the pgx connection pool and the sqlc-generated
   query code (`internal/database/db`).
 - `internal/config` — environment configuration loading and validation.
 - `cmd/api` — the entry point (wiring, graceful shutdown).
+
+New objects get their own package next to `user` and `project` — one
+package per domain object, never a package per architectural layer.
+
+#### Layering rules
+
+Three rules keep the packages honest. The first two are enforced by
+`depguard` in `.golangci.yml`, so breaking them fails `make lint`.
+
+1. **Domain packages know nothing about transport.** `user`, `project` and
+   `auth` must not import `net/http` or chi. Errors are returned as
+   sentinels (`project.ErrNotFound`); `internal/http` is the only place
+   that maps them to status codes.
+2. **The HTTP layer knows nothing about the database.** `internal/http`
+   must not import `internal/database/db` or `pgx`. Services accept and
+   return only domain types, so row types and `pgtype` cannot leak into a
+   JSON response. Wiring obtains the queries via `database.NewQuerier`.
+3. **Authorization lives in SQL, not in handlers.** Every project-scoped
+   query filters on `owner_user_id`, and each service method takes the
+   acting user's ID. A non-owner therefore gets "no rows", which the
+   service maps to `ErrNotFound` — indistinguishable from a project that
+   does not exist, and impossible to forget at a call site.
+
+IDs are `uuid.UUID` end to end: sqlc is configured (`sqlc.yaml`
+`overrides`) to map `NOT NULL uuid` columns to `github.com/google/uuid`,
+which pgx scans natively and which serialises to the canonical
+`8-4-4-4-12` form. There is no separate encode/decode pair to keep in
+sync. Nullable `uuid` columns keep `pgtype.UUID`, which carries `Valid`.
 
 ### Database
 

@@ -7,8 +7,19 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/flowlens/api/internal/database/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Querier is the set of generated queries the application runs. It is
+// re-exported here so wiring code can obtain one without importing the
+// generated package directly.
+type Querier = db.Querier
+
+// NewQuerier binds the generated queries to a connection pool.
+func NewQuerier(pool *pgxpool.Pool) Querier {
+	return db.New(pool)
+}
 
 // Connect opens a pgx connection pool and verifies connectivity.
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {

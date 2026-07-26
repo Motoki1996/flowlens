@@ -5,12 +5,13 @@
 package db
 
 import (
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Backlog struct {
-	ID          pgtype.UUID        `json:"id"`
-	ProjectID   pgtype.UUID        `json:"project_id"`
+	ID          uuid.UUID          `json:"id"`
+	ProjectID   uuid.UUID          `json:"project_id"`
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	Position    int32              `json:"position"`
@@ -19,8 +20,8 @@ type Backlog struct {
 }
 
 type GitlabConnection struct {
-	ID                  pgtype.UUID        `json:"id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
+	ID                  uuid.UUID          `json:"id"`
+	ProjectID           uuid.UUID          `json:"project_id"`
 	BaseUrl             string             `json:"base_url"`
 	EncryptedToken      []byte             `json:"encrypted_token"`
 	TokenGitlabUserID   pgtype.Int8        `json:"token_gitlab_user_id"`
@@ -32,8 +33,8 @@ type GitlabConnection struct {
 }
 
 type GitlabSyncRun struct {
-	ID                    pgtype.UUID        `json:"id"`
-	LinkedGitlabProjectID pgtype.UUID        `json:"linked_gitlab_project_id"`
+	ID                    uuid.UUID          `json:"id"`
+	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`
 	Kind                  string             `json:"kind"`
 	Status                string             `json:"status"`
 	IssuesSeen            int32              `json:"issues_seen"`
@@ -46,8 +47,8 @@ type GitlabSyncRun struct {
 }
 
 type LinkedGitlabProject struct {
-	ID                     pgtype.UUID        `json:"id"`
-	GitlabConnectionID     pgtype.UUID        `json:"gitlab_connection_id"`
+	ID                     uuid.UUID          `json:"id"`
+	GitlabConnectionID     uuid.UUID          `json:"gitlab_connection_id"`
 	GitlabProjectID        int64              `json:"gitlab_project_id"`
 	PathWithNamespace      string             `json:"path_with_namespace"`
 	Name                   string             `json:"name"`
@@ -64,7 +65,7 @@ type LinkedGitlabProject struct {
 }
 
 type Organization struct {
-	ID            pgtype.UUID        `json:"id"`
+	ID            uuid.UUID          `json:"id"`
 	GitlabGroupID int64              `json:"gitlab_group_id"`
 	Login         string             `json:"login"`
 	DisplayName   string             `json:"display_name"`
@@ -74,15 +75,15 @@ type Organization struct {
 }
 
 type OrganizationMember struct {
-	OrganizationID pgtype.UUID        `json:"organization_id"`
-	UserID         pgtype.UUID        `json:"user_id"`
+	OrganizationID uuid.UUID          `json:"organization_id"`
+	UserID         uuid.UUID          `json:"user_id"`
 	Role           string             `json:"role"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type Project struct {
-	ID          pgtype.UUID        `json:"id"`
-	OwnerUserID pgtype.UUID        `json:"owner_user_id"`
+	ID          uuid.UUID          `json:"id"`
+	OwnerUserID uuid.UUID          `json:"owner_user_id"`
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
@@ -90,8 +91,8 @@ type Project struct {
 }
 
 type ProjectApiToken struct {
-	ID         pgtype.UUID        `json:"id"`
-	ProjectID  pgtype.UUID        `json:"project_id"`
+	ID         uuid.UUID          `json:"id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
 	Name       string             `json:"name"`
 	TokenHash  string             `json:"token_hash"`
 	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
@@ -100,8 +101,8 @@ type ProjectApiToken struct {
 }
 
 type PullRequest struct {
-	ID                   pgtype.UUID        `json:"id"`
-	RepositoryID         pgtype.UUID        `json:"repository_id"`
+	ID                   uuid.UUID          `json:"id"`
+	RepositoryID         uuid.UUID          `json:"repository_id"`
 	GitlabMergeRequestID int64              `json:"gitlab_merge_request_id"`
 	Number               int32              `json:"number"`
 	Title                string             `json:"title"`
@@ -124,15 +125,15 @@ type PullRequest struct {
 }
 
 type PullRequestReviewer struct {
-	PullRequestID  pgtype.UUID        `json:"pull_request_id"`
+	PullRequestID  uuid.UUID          `json:"pull_request_id"`
 	GitlabUsername string             `json:"gitlab_username"`
 	AvatarUrl      string             `json:"avatar_url"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type Repository struct {
-	ID              pgtype.UUID        `json:"id"`
-	OrganizationID  pgtype.UUID        `json:"organization_id"`
+	ID              uuid.UUID          `json:"id"`
+	OrganizationID  uuid.UUID          `json:"organization_id"`
 	GitlabProjectID int64              `json:"gitlab_project_id"`
 	Name            string             `json:"name"`
 	FullName        string             `json:"full_name"`
@@ -146,16 +147,16 @@ type Repository struct {
 }
 
 type Session struct {
-	ID        pgtype.UUID        `json:"id"`
-	UserID    pgtype.UUID        `json:"user_id"`
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
 	TokenHash string             `json:"token_hash"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type SyncJob struct {
-	ID        pgtype.UUID        `json:"id"`
-	ProjectID pgtype.UUID        `json:"project_id"`
+	ID        uuid.UUID          `json:"id"`
+	ProjectID uuid.UUID          `json:"project_id"`
 	TaskID    pgtype.UUID        `json:"task_id"`
 	Kind      string             `json:"kind"`
 	Payload   []byte             `json:"payload"`
@@ -169,8 +170,8 @@ type SyncJob struct {
 }
 
 type SyncRun struct {
-	ID           pgtype.UUID        `json:"id"`
-	RepositoryID pgtype.UUID        `json:"repository_id"`
+	ID           uuid.UUID          `json:"id"`
+	RepositoryID uuid.UUID          `json:"repository_id"`
 	Status       string             `json:"status"`
 	StartedAt    pgtype.Timestamptz `json:"started_at"`
 	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
@@ -179,8 +180,8 @@ type SyncRun struct {
 }
 
 type Task struct {
-	ID                     pgtype.UUID        `json:"id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
 	BacklogID              pgtype.UUID        `json:"backlog_id"`
 	Title                  string             `json:"title"`
 	Description            string             `json:"description"`
@@ -191,13 +192,13 @@ type Task struct {
 	Labels                 []string           `json:"labels"`
 	DueOn                  pgtype.Date        `json:"due_on"`
 	Position               int32              `json:"position"`
-	CreatedByUserID        pgtype.UUID        `json:"created_by_user_id"`
+	CreatedByUserID        uuid.UUID          `json:"created_by_user_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskAiContext struct {
-	TaskID             pgtype.UUID        `json:"task_id"`
+	TaskID             uuid.UUID          `json:"task_id"`
 	AcceptanceCriteria string             `json:"acceptance_criteria"`
 	AiContext          string             `json:"ai_context"`
 	AllowedScope       string             `json:"allowed_scope"`
@@ -206,8 +207,8 @@ type TaskAiContext struct {
 }
 
 type TaskGitlabLink struct {
-	TaskID                pgtype.UUID        `json:"task_id"`
-	LinkedGitlabProjectID pgtype.UUID        `json:"linked_gitlab_project_id"`
+	TaskID                uuid.UUID          `json:"task_id"`
+	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`
 	GitlabIssueID         int64              `json:"gitlab_issue_id"`
 	GitlabIssueIid        int64              `json:"gitlab_issue_iid"`
 	GitlabWebUrl          string             `json:"gitlab_web_url"`
@@ -219,7 +220,7 @@ type TaskGitlabLink struct {
 }
 
 type User struct {
-	ID           pgtype.UUID        `json:"id"`
+	ID           uuid.UUID          `json:"id"`
 	DisplayName  string             `json:"display_name"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
@@ -229,8 +230,8 @@ type User struct {
 }
 
 type WebhookEvent struct {
-	ID                    pgtype.UUID        `json:"id"`
-	LinkedGitlabProjectID pgtype.UUID        `json:"linked_gitlab_project_id"`
+	ID                    uuid.UUID          `json:"id"`
+	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`
 	DeliveryUuid          string             `json:"delivery_uuid"`
 	EventName             string             `json:"event_name"`
 	ObjectKind            string             `json:"object_kind"`

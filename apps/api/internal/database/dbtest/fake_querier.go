@@ -17,11 +17,11 @@ import (
 type FakeQuerier struct {
 	usersByUsername map[string]db.User
 	usersByEmail    map[string]db.User
-	usersByID       map[string]db.User
+	usersByID       map[uuid.UUID]db.User
 	sessions        map[string]db.Session // key: token_hash
 
 	projects            []db.Project // insertion order, newest last
-	projectsByID        map[string]db.Project
+	projectsByID        map[uuid.UUID]db.Project
 	projectsByOwnerName map[string]db.Project // key: owner_user_id + name
 }
 
@@ -30,19 +30,19 @@ func New() *FakeQuerier {
 	return &FakeQuerier{
 		usersByUsername:     map[string]db.User{},
 		usersByEmail:        map[string]db.User{},
-		usersByID:           map[string]db.User{},
+		usersByID:           map[uuid.UUID]db.User{},
 		sessions:            map[string]db.Session{},
-		projectsByID:        map[string]db.Project{},
+		projectsByID:        map[uuid.UUID]db.Project{},
 		projectsByOwnerName: map[string]db.Project{},
 	}
 }
 
-func newUUID() pgtype.UUID {
-	return pgtype.UUID{Bytes: uuid.New(), Valid: true}
+func now() pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: time.Now(), Valid: true}
 }
 
-func projectOwnerNameKey(ownerID pgtype.UUID, name string) string {
-	return string(ownerID.Bytes[:]) + "\x00" + name
+func projectOwnerNameKey(ownerID uuid.UUID, name string) string {
+	return ownerID.String() + "\x00" + name
 }
 
 // SeedUser inserts a ready-made user directly, bypassing password hashing.
@@ -50,17 +50,17 @@ func projectOwnerNameKey(ownerID pgtype.UUID, name string) string {
 // (e.g. duplicate-constraint or session tests). Returns the stored row.
 func (f *FakeQuerier) SeedUser(username, email string) db.User {
 	u := db.User{
-		ID:           newUUID(),
+		ID:           uuid.New(),
 		Username:     username,
 		Email:        email,
 		DisplayName:  username,
 		PasswordHash: "seeded-hash",
-		CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		UpdatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt:    now(),
+		UpdatedAt:    now(),
 	}
 	f.usersByUsername[u.Username] = u
 	f.usersByEmail[u.Email] = u
-	f.usersByID[string(u.ID.Bytes[:])] = u
+	f.usersByID[u.ID] = u
 	return u
 }
 
@@ -72,17 +72,17 @@ func (f *FakeQuerier) CreateUser(_ context.Context, arg db.CreateUserParams) (db
 		return db.User{}, &pgconn.PgError{Code: "23505", ConstraintName: "users_email_key"}
 	}
 	u := db.User{
-		ID:           newUUID(),
+		ID:           uuid.New(),
 		Username:     arg.Username,
 		Email:        arg.Email,
 		DisplayName:  arg.DisplayName,
 		PasswordHash: arg.PasswordHash,
-		CreatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		UpdatedAt:    pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt:    now(),
+		UpdatedAt:    now(),
 	}
 	f.usersByUsername[u.Username] = u
 	f.usersByEmail[u.Email] = u
-	f.usersByID[string(u.ID.Bytes[:])] = u
+	f.usersByID[u.ID] = u
 	return u, nil
 }
 
@@ -96,8 +96,8 @@ func (f *FakeQuerier) GetUserByUsernameOrEmail(_ context.Context, username strin
 	return db.User{}, pgx.ErrNoRows
 }
 
-func (f *FakeQuerier) GetUserByID(_ context.Context, id pgtype.UUID) (db.User, error) {
-	u, ok := f.usersByID[string(id.Bytes[:])]
+func (f *FakeQuerier) GetUserByID(_ context.Context, id uuid.UUID) (db.User, error) {
+	u, ok := f.usersByID[id]
 	if !ok {
 		return db.User{}, pgx.ErrNoRows
 	}
@@ -106,11 +106,11 @@ func (f *FakeQuerier) GetUserByID(_ context.Context, id pgtype.UUID) (db.User, e
 
 func (f *FakeQuerier) CreateSession(_ context.Context, arg db.CreateSessionParams) (db.Session, error) {
 	s := db.Session{
-		ID:        newUUID(),
+		ID:        uuid.New(),
 		UserID:    arg.UserID,
 		TokenHash: arg.TokenHash,
 		ExpiresAt: arg.ExpiresAt,
-		CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt: now(),
 	}
 	f.sessions[arg.TokenHash] = s
 	return s, nil
@@ -121,7 +121,7 @@ func (f *FakeQuerier) GetUserBySessionToken(_ context.Context, tokenHash string)
 	if !ok || !s.ExpiresAt.Time.After(time.Now()) {
 		return db.GetUserBySessionTokenRow{}, pgx.ErrNoRows
 	}
-	u, ok := f.usersByID[string(s.UserID.Bytes[:])]
+	u, ok := f.usersByID[s.UserID]
 	if !ok {
 		return db.GetUserBySessionTokenRow{}, pgx.ErrNoRows
 	}
@@ -145,13 +145,13 @@ func (f *FakeQuerier) DeleteExpiredSessions(_ context.Context) error {
 // SeedProject inserts a ready-made project directly, bypassing validation.
 // Use it in tests that need a pre-existing project but don't exercise
 // creation (e.g. duplicate-name or authorization tests). Returns the stored row.
-func (f *FakeQuerier) SeedProject(ownerID pgtype.UUID, name string) db.Project {
+func (f *FakeQuerier) SeedProject(ownerID uuid.UUID, name string) db.Project {
 	p := db.Project{
-		ID:          newUUID(),
+		ID:          uuid.New(),
 		OwnerUserID: ownerID,
 		Name:        name,
-		CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		UpdatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt:   now(),
+		UpdatedAt:   now(),
 	}
 	f.storeProject(p)
 	return p
@@ -159,7 +159,7 @@ func (f *FakeQuerier) SeedProject(ownerID pgtype.UUID, name string) db.Project {
 
 func (f *FakeQuerier) storeProject(p db.Project) {
 	f.projects = append(f.projects, p)
-	f.projectsByID[string(p.ID.Bytes[:])] = p
+	f.projectsByID[p.ID] = p
 	f.projectsByOwnerName[projectOwnerNameKey(p.OwnerUserID, p.Name)] = p
 }
 
@@ -168,26 +168,28 @@ func (f *FakeQuerier) CreateProject(_ context.Context, arg db.CreateProjectParam
 		return db.Project{}, &pgconn.PgError{Code: "23505", ConstraintName: "projects_owner_user_id_name_key"}
 	}
 	p := db.Project{
-		ID:          newUUID(),
+		ID:          uuid.New(),
 		OwnerUserID: arg.OwnerUserID,
 		Name:        arg.Name,
 		Description: arg.Description,
-		CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		UpdatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		CreatedAt:   now(),
+		UpdatedAt:   now(),
 	}
 	f.storeProject(p)
 	return p, nil
 }
 
-func (f *FakeQuerier) GetProjectByID(_ context.Context, id pgtype.UUID) (db.Project, error) {
-	p, ok := f.projectsByID[string(id.Bytes[:])]
-	if !ok {
+// GetProjectForOwner mirrors the SQL: a project owned by someone else is
+// reported as missing, never as a distinct "forbidden" outcome.
+func (f *FakeQuerier) GetProjectForOwner(_ context.Context, arg db.GetProjectForOwnerParams) (db.Project, error) {
+	p, ok := f.projectsByID[arg.ID]
+	if !ok || p.OwnerUserID != arg.OwnerUserID {
 		return db.Project{}, pgx.ErrNoRows
 	}
 	return p, nil
 }
 
-func (f *FakeQuerier) ListProjectsByOwner(_ context.Context, ownerUserID pgtype.UUID) ([]db.Project, error) {
+func (f *FakeQuerier) ListProjectsByOwner(_ context.Context, ownerUserID uuid.UUID) ([]db.Project, error) {
 	items := []db.Project{}
 	for i := len(f.projects) - 1; i >= 0; i-- {
 		if p := f.projects[i]; p.OwnerUserID == ownerUserID {
@@ -197,10 +199,9 @@ func (f *FakeQuerier) ListProjectsByOwner(_ context.Context, ownerUserID pgtype.
 	return items, nil
 }
 
-func (f *FakeQuerier) UpdateProject(_ context.Context, arg db.UpdateProjectParams) (db.Project, error) {
-	idKey := string(arg.ID.Bytes[:])
-	existing, ok := f.projectsByID[idKey]
-	if !ok {
+func (f *FakeQuerier) UpdateProjectForOwner(_ context.Context, arg db.UpdateProjectForOwnerParams) (db.Project, error) {
+	existing, ok := f.projectsByID[arg.ID]
+	if !ok || existing.OwnerUserID != arg.OwnerUserID {
 		return db.Project{}, pgx.ErrNoRows
 	}
 
@@ -215,9 +216,9 @@ func (f *FakeQuerier) UpdateProject(_ context.Context, arg db.UpdateProjectParam
 
 	existing.Name = arg.Name
 	existing.Description = arg.Description
-	existing.UpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	existing.UpdatedAt = now()
 
-	f.projectsByID[idKey] = existing
+	f.projectsByID[arg.ID] = existing
 	f.projectsByOwnerName[newKey] = existing
 	for i, p := range f.projects {
 		if p.ID == existing.ID {
@@ -228,13 +229,14 @@ func (f *FakeQuerier) UpdateProject(_ context.Context, arg db.UpdateProjectParam
 	return existing, nil
 }
 
-func (f *FakeQuerier) DeleteProject(_ context.Context, id pgtype.UUID) error {
-	idKey := string(id.Bytes[:])
-	p, ok := f.projectsByID[idKey]
-	if !ok {
-		return nil
+// DeleteProjectForOwner returns the number of rows affected, so callers can
+// tell "deleted" from "not yours / not there" exactly as Postgres does.
+func (f *FakeQuerier) DeleteProjectForOwner(_ context.Context, arg db.DeleteProjectForOwnerParams) (int64, error) {
+	p, ok := f.projectsByID[arg.ID]
+	if !ok || p.OwnerUserID != arg.OwnerUserID {
+		return 0, nil
 	}
-	delete(f.projectsByID, idKey)
+	delete(f.projectsByID, arg.ID)
 	delete(f.projectsByOwnerName, projectOwnerNameKey(p.OwnerUserID, p.Name))
 	for i, x := range f.projects {
 		if x.ID == p.ID {
@@ -242,5 +244,5 @@ func (f *FakeQuerier) DeleteProject(_ context.Context, id pgtype.UUID) error {
 			break
 		}
 	}
-	return nil
+	return 1, nil
 }

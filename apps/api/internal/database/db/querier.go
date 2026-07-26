@@ -7,22 +7,26 @@ package db
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
 )
 
 type Querier interface {
+	// Every project-scoped query filters on owner_user_id in SQL. Authorization
+	// is therefore enforced by the query itself: a non-owner gets "no rows",
+	// which callers map to ErrNotFound. Handlers must never do their own
+	// ownership check, and later project-scoped tables follow the same rule.
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredSessions(ctx context.Context) error
-	DeleteProject(ctx context.Context, id pgtype.UUID) error
+	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
-	GetProjectByID(ctx context.Context, id pgtype.UUID) (Project, error)
-	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
+	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
+	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
-	ListProjectsByOwner(ctx context.Context, ownerUserID pgtype.UUID) ([]Project, error)
-	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
+	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
+	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 }
 
 var _ Querier = (*Queries)(nil)

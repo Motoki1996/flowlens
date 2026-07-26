@@ -12,3 +12,15 @@ sql:
         emit_json_tags: true
         emit_interface: true
         emit_empty_slices: true
+        overrides:
+          # NOT NULL uuid columns map to google/uuid.UUID, which pgx scans
+          # natively (it is a [16]byte underneath) and which formats/parses
+          # the canonical 8-4-4-4-12 form. This keeps a single ID
+          # representation across domain, HTTP and logs — no hand-written
+          # hex encode/decode pair to keep in sync.
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          # Nullable uuid columns keep pgtype.UUID, which carries Valid.
+          - db_type: "uuid"
+            nullable: true
+            go_type: "github.com/jackc/pgx/v5/pgtype.UUID"

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/user"
 )
 
@@ -34,7 +33,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	row, err := s.users.SignUp(ctx, user.SignUpInput{
+	u, err := s.users.SignUp(ctx, user.SignUpInput{
 		Username: req.Username,
 		Email:    req.Email,
 		Password: req.Password,
@@ -45,7 +44,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "username_taken", "username is already taken")
 		case errors.Is(err, user.ErrEmailTaken):
 			writeError(w, http.StatusConflict, "email_taken", "email is already registered")
-		case errors.Is(err, auth.ErrPasswordTooShort):
+		case errors.Is(err, user.ErrPasswordTooShort):
 			writeError(w, http.StatusBadRequest, "password_too_short", "password must be at least 8 characters")
 		default:
 			slog.Error("sign up", "error", err)
@@ -54,12 +53,12 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.startSession(w, r, row.ID); err != nil {
+	if err := s.startSession(w, r, u.ID); err != nil {
 		slog.Error("create session", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, user.FromDB(row))
+	writeJSON(w, http.StatusCreated, u)
 }
 
 // handleLogin verifies credentials and starts a session.
@@ -71,7 +70,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	row, err := s.users.Authenticate(ctx, req.Identifier, req.Password)
+	u, err := s.users.Authenticate(ctx, req.Identifier, req.Password)
 	if err != nil {
 		if errors.Is(err, user.ErrInvalidCredentials) {
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid username/email or password")
@@ -82,12 +81,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.startSession(w, r, row.ID); err != nil {
+	if err := s.startSession(w, r, u.ID); err != nil {
 		slog.Error("create session", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
-	writeJSON(w, http.StatusOK, user.FromDB(row))
+	writeJSON(w, http.StatusOK, u)
 }
 
 // handleLogout revokes the current session and clears the cookie.

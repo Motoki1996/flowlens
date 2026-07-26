@@ -3,11 +3,40 @@ version: "2"
 linters:
   default: standard
   enable:
+    - depguard
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
+  settings:
+    # The layering rules the packages are written against, enforced
+    # mechanically rather than in review. See docs/architecture.md.
+    depguard:
+      rules:
+        # Domain packages own business rules; they must stay ignorant of the
+        # transport. (internal/gitlab is excluded: it *is* an HTTP client.)
+        domain-knows-no-transport:
+          files:
+            - "**/internal/user/**"
+            - "**/internal/project/**"
+            - "**/internal/auth/**"
+          deny:
+            - pkg: "net/http"
+              desc: "domain packages must not know about HTTP; map errors to status codes in internal/http"
+            - pkg: "github.com/go-chi/chi/v5"
+              desc: "routing belongs in internal/http"
+        # The HTTP layer talks to services, never to the database. Keeping
+        # db/pgtype out of it is what stops row types leaking into responses.
+        http-knows-no-database:
+          files:
+            - "**/internal/http/**"
+            - "!**/*_test.go" # tests wire the in-memory querier directly
+          deny:
+            - pkg: "github.com/flowlens/api/internal/database/db"
+              desc: "handlers must go through a service; use database.NewQuerier for wiring"
+            - pkg: "github.com/jackc/pgx/v5"
+              desc: "database types must not reach the HTTP layer"
   exclusions:
     generated: lax
     paths:

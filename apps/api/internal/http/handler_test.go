@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/auth"
-	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/user"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// newTestServer builds a Server wired to an in-memory querier. The pool is
+// newTestServer builds a Server wired to an in-memory querier. health is
 // nil because these tests never exercise the health handler.
 func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 	t.Helper()
@@ -33,18 +33,14 @@ func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 	}, q
 }
 
-func loginSession(t *testing.T, s *Server, q *dbtest.FakeQuerier) (db.User, string) {
+// loginSession seeds a user and issues a session for it, returning the
+// user's ID and the raw session token.
+func loginSession(t *testing.T, s *Server, q *dbtest.FakeQuerier) (uuid.UUID, string) {
 	t.Helper()
-	u, err := q.CreateUser(context.Background(), db.CreateUserParams{
-		Username:     "tester",
-		Email:        "tester@example.com",
-		DisplayName:  "Test User",
-		PasswordHash: "irrelevant-for-session-tests",
-	})
-	require.NoError(t, err)
+	u := q.SeedUser("tester", "tester@example.com")
 	token, err := s.sessions.Create(context.Background(), u.ID)
 	require.NoError(t, err)
-	return u, token
+	return u.ID, token
 }
 
 func postJSON(t *testing.T, s *Server, path string, body any) *httptest.ResponseRecorder {
@@ -81,9 +77,9 @@ func TestHandleMe_Authenticated(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "tester", body["username"])
-	assert.Equal(t, "Test User", body["displayName"])
+	assert.Equal(t, "tester", body["displayName"])
 	// The password hash must never appear in the response.
-	assert.NotContains(t, rec.Body.String(), "irrelevant-for-session-tests")
+	assert.NotContains(t, rec.Body.String(), "seeded-hash")
 }
 
 func TestHandleMe_NoCookie(t *testing.T) {

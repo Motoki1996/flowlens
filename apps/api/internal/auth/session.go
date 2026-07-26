@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/user"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -34,7 +36,7 @@ func NewSessionService(q db.Querier, ttl time.Duration) *SessionService {
 
 // Create issues a new session for a user and returns the raw token that
 // belongs in the cookie.
-func (s *SessionService) Create(ctx context.Context, userID pgtype.UUID) (string, error) {
+func (s *SessionService) Create(ctx context.Context, userID uuid.UUID) (string, error) {
 	rawToken, err := randomToken()
 	if err != nil {
 		return "", err
@@ -50,19 +52,21 @@ func (s *SessionService) Create(ctx context.Context, userID pgtype.UUID) (string
 	return rawToken, nil
 }
 
-// Authenticate resolves a raw session token to its user.
-func (s *SessionService) Authenticate(ctx context.Context, rawToken string) (db.User, error) {
+// Authenticate resolves a raw session token to its user. The session and
+// the user are fetched in one joined query, so callers get the domain
+// user without a second round trip.
+func (s *SessionService) Authenticate(ctx context.Context, rawToken string) (user.User, error) {
 	if rawToken == "" {
-		return db.User{}, ErrSessionNotFound
+		return user.User{}, ErrSessionNotFound
 	}
 	row, err := s.q.GetUserBySessionToken(ctx, hashToken(rawToken))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.User{}, ErrSessionNotFound
+			return user.User{}, ErrSessionNotFound
 		}
-		return db.User{}, fmt.Errorf("auth: authenticate: %w", err)
+		return user.User{}, fmt.Errorf("auth: authenticate: %w", err)
 	}
-	return row.User, nil
+	return user.FromRow(row.User), nil
 }
 
 // Revoke deletes a session by its raw token. Revoking an unknown token is

@@ -2,23 +2,30 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/crypto"
-	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/user"
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/google/uuid"
 )
+
+// Pinger reports whether the database is reachable. It is the only thing
+// this package needs from the connection pool, so it takes the narrow
+// interface rather than the pool type.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
 
 // Server holds handler dependencies and builds the router.
 type Server struct {
-	pool       *pgxpool.Pool
+	health     Pinger
 	users      *user.Service
 	projects   *project.Service
 	sessions   *auth.SessionService
@@ -28,14 +35,12 @@ type Server struct {
 	cipher     *crypto.Cipher
 }
 
-// NewServer constructs a Server from configuration, a database pool, and a
-// Cipher for encrypting secrets at rest (GitLab access tokens, webhook
-// secrets — not yet used by any handler).
-func NewServer(cfg *config.Config, pool *pgxpool.Pool, cipher *crypto.Cipher) (*Server, error) {
-	queries := db.New(pool)
-
+// NewServer constructs a Server from configuration, the generated queries,
+// a database health probe, and a Cipher for encrypting secrets at rest
+// (GitLab access tokens, webhook secrets — not yet used by any handler).
+func NewServer(cfg *config.Config, queries database.Querier, health Pinger, cipher *crypto.Cipher) (*Server, error) {
 	return &Server{
-		pool:       pool,
+		health:     health,
 		users:      user.NewService(queries),
 		projects:   project.NewService(queries),
 		sessions:   auth.NewSessionService(queries, cfg.SessionTTL),
@@ -80,7 +85,7 @@ func (s *Server) Router() chi.Router {
 }
 
 // startSession issues a session for userID and sets the session cookie.
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID pgtype.UUID) error {
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID uuid.UUID) error {
 	token, err := s.sessions.Create(r.Context(), userID)
 	if err != nil {
 		return err

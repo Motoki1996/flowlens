@@ -1,11 +1,18 @@
 // Package project contains the project domain model and the service that
-// creates and manages a user's app-level projects. It keeps database types
-// (pgtype) from leaking into HTTP responses.
+// creates and manages a user's app-level projects.
+//
+// Two rules hold for every method here and for every project-scoped service
+// added later:
+//
+//   - Service accepts and returns only types declared here (Project,
+//     uuid.UUID). Database row types never cross the package boundary.
+//   - Every method takes the acting user's ID and enforces ownership in the
+//     SQL WHERE clause. Callers never perform their own ownership check, and
+//     a non-owner is indistinguishable from a missing project (ErrNotFound).
 package project
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -13,9 +20,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Sentinel errors returned by Service. Handlers map these to HTTP status
@@ -29,17 +36,17 @@ var (
 
 // Project is the API-facing representation of a FlowLens project.
 type Project struct {
-	ID          string    `json:"id"`
+	ID          uuid.UUID `json:"id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
-// FromDB maps a database row to the domain model.
-func FromDB(row db.Project) Project {
+// fromRow maps a database row to the domain model.
+func fromRow(row db.Project) Project {
 	return Project{
-		ID:          hex.EncodeToString(row.ID.Bytes[:]),
+		ID:          row.ID,
 		Name:        row.Name,
 		Description: row.Description,
 		CreatedAt:   row.CreatedAt.Time,
@@ -67,10 +74,10 @@ func normalizeName(raw string) (string, error) {
 }
 
 // Create validates name and creates a project owned by ownerID.
-func (s *Service) Create(ctx context.Context, ownerID pgtype.UUID, name, description string) (db.Project, error) {
+func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, name, description string) (Project, error) {
 	normalized, err := normalizeName(name)
 	if err != nil {
-		return db.Project{}, err
+		return Project{}, err
 	}
 	row, err := s.q.CreateProject(ctx, db.CreateProjectParams{
 		OwnerUserID: ownerID,
@@ -78,70 +85,87 @@ func (s *Service) Create(ctx context.Context, ownerID pgtype.UUID, name, descrip
 		Description: description,
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return db.Project{}, ErrNameTaken
+		if isUniqueViolation(err) {
+			return Project{}, ErrNameTaken
 		}
-		return db.Project{}, fmt.Errorf("project: create: %w", err)
+		return Project{}, fmt.Errorf("project: create: %w", err)
 	}
-	return row, nil
+	return fromRow(row), nil
 }
 
 // List returns every project owned by ownerID.
-func (s *Service) List(ctx context.Context, ownerID pgtype.UUID) ([]db.Project, error) {
+func (s *Service) List(ctx context.Context, ownerID uuid.UUID) ([]Project, error) {
 	rows, err := s.q.ListProjectsByOwner(ctx, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("project: list: %w", err)
 	}
-	return rows, nil
+	out := make([]Project, len(rows))
+	for i, row := range rows {
+		out[i] = fromRow(row)
+	}
+	return out, nil
 }
 
-// Get returns the project by ID, scoped to ownerID. It returns ErrNotFound
-// both when the project does not exist and when it belongs to another user.
-func (s *Service) Get(ctx context.Context, ownerID, projectID pgtype.UUID) (db.Project, error) {
-	row, err := s.q.GetProjectByID(ctx, projectID)
+// Get returns the project by ID. It returns ErrNotFound both when the
+// project does not exist and when it belongs to another user.
+func (s *Service) Get(ctx context.Context, ownerID, projectID uuid.UUID) (Project, error) {
+	row, err := s.q.GetProjectForOwner(ctx, db.GetProjectForOwnerParams{
+		ID:          projectID,
+		OwnerUserID: ownerID,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.Project{}, ErrNotFound
+			return Project{}, ErrNotFound
 		}
-		return db.Project{}, fmt.Errorf("project: get: %w", err)
+		return Project{}, fmt.Errorf("project: get: %w", err)
 	}
-	if row.OwnerUserID != ownerID {
-		return db.Project{}, ErrNotFound
-	}
-	return row, nil
+	return fromRow(row), nil
 }
 
-// Update overwrites name and description. Callers are responsible for
-// verifying ownership first; Update does not check it.
-func (s *Service) Update(ctx context.Context, projectID pgtype.UUID, name, description string) (db.Project, error) {
+// Update overwrites name and description. Ownership is enforced by the
+// query, so a non-owner gets ErrNotFound and nothing is written.
+func (s *Service) Update(ctx context.Context, ownerID, projectID uuid.UUID, name, description string) (Project, error) {
 	normalized, err := normalizeName(name)
 	if err != nil {
-		return db.Project{}, err
+		return Project{}, err
 	}
-	row, err := s.q.UpdateProject(ctx, db.UpdateProjectParams{
+	row, err := s.q.UpdateProjectForOwner(ctx, db.UpdateProjectForOwnerParams{
 		ID:          projectID,
+		OwnerUserID: ownerID,
 		Name:        normalized,
 		Description: description,
 	})
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return db.Project{}, ErrNameTaken
+		if isUniqueViolation(err) {
+			return Project{}, ErrNameTaken
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.Project{}, ErrNotFound
+			return Project{}, ErrNotFound
 		}
-		return db.Project{}, fmt.Errorf("project: update: %w", err)
+		return Project{}, fmt.Errorf("project: update: %w", err)
 	}
-	return row, nil
+	return fromRow(row), nil
 }
 
-// Delete removes the project. Callers are responsible for verifying
-// ownership first; Delete does not check it.
-func (s *Service) Delete(ctx context.Context, projectID pgtype.UUID) error {
-	if err := s.q.DeleteProject(ctx, projectID); err != nil {
+// Delete removes the project. Ownership is enforced by the query, so a
+// non-owner gets ErrNotFound and nothing is deleted.
+func (s *Service) Delete(ctx context.Context, ownerID, projectID uuid.UUID) error {
+	affected, err := s.q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{
+		ID:          projectID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
 		return fmt.Errorf("project: delete: %w", err)
 	}
+	if affected == 0 {
+		return ErrNotFound
+	}
 	return nil
+}
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation, which for projects can only be (owner_user_id, name).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

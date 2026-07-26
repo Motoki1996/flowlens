@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/auth"
-	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/user"
 )
 
 type contextKey string
@@ -87,7 +87,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 }
 
 // userFromContext returns the authenticated user set by requireAuth.
-func userFromContext(ctx context.Context) (db.User, bool) {
-	u, ok := ctx.Value(userContextKey).(db.User)
+func userFromContext(ctx context.Context) (user.User, bool) {
+	u, ok := ctx.Value(userContextKey).(user.User)
 	return u, ok
 }

@@ -2,10 +2,13 @@ package user_test
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 	"testing"
 
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/user"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -13,16 +16,33 @@ import (
 func TestService_SignUp_HashesPassword(t *testing.T) {
 	q := dbtest.New()
 	svc := user.NewService(q)
+	ctx := context.Background()
 
-	row, err := svc.SignUp(context.Background(), user.SignUpInput{
+	u, err := svc.SignUp(ctx, user.SignUpInput{
 		Username: "octocat", Email: "octocat@example.com", Password: "hunter22",
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "octocat", row.Username)
-	assert.Equal(t, "octocat@example.com", row.Email)
-	assert.Equal(t, "octocat", row.DisplayName) // defaults to username
-	assert.NotEqual(t, "hunter22", row.PasswordHash)
+	assert.Equal(t, "octocat", u.Username)
+	assert.Equal(t, "octocat@example.com", u.Email)
+	assert.Equal(t, "octocat", u.DisplayName) // defaults to username
+
+	// The stored row must hold a hash, not the plaintext password. Reading
+	// it back through the querier is the only way to see it: the domain
+	// User type has no field for it.
+	stored, err := q.GetUserByUsernameOrEmail(ctx, "octocat")
+	require.NoError(t, err)
+	assert.NotEqual(t, "hunter22", stored.PasswordHash)
+	assert.NotEmpty(t, stored.PasswordHash)
+}
+
+func TestService_SignUp_RejectsShortPassword(t *testing.T) {
+	svc := user.NewService(dbtest.New())
+
+	_, err := svc.SignUp(context.Background(), user.SignUpInput{
+		Username: "octocat", Email: "octocat@example.com", Password: "short",
+	})
+	assert.ErrorIs(t, err, user.ErrPasswordTooShort)
 }
 
 func TestService_SignUp_RejectsDuplicateUsername(t *testing.T) {
@@ -86,14 +106,44 @@ func TestService_Authenticate_UnknownUser(t *testing.T) {
 	assert.ErrorIs(t, err, user.ErrInvalidCredentials)
 }
 
-func TestFromDB_DoesNotExposePasswordHash(t *testing.T) {
+func TestService_ByID(t *testing.T) {
 	q := dbtest.New()
 	svc := user.NewService(q)
-	row, err := svc.SignUp(context.Background(), user.SignUpInput{Username: "a", Email: "a@example.com", Password: "hunter22"})
+	ctx := context.Background()
+
+	created, err := svc.SignUp(ctx, user.SignUpInput{Username: "a", Email: "a@example.com", Password: "hunter22"})
 	require.NoError(t, err)
 
-	dto := user.FromDB(row)
-	assert.Equal(t, "a", dto.Username)
-	assert.Equal(t, "a@example.com", dto.Email)
-	assert.NotEmpty(t, dto.ID)
+	got, err := svc.ByID(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created, got)
+
+	_, err = svc.ByID(ctx, uuid.New())
+	assert.ErrorIs(t, err, user.ErrNotFound)
+}
+
+// The JSON sent to clients must never carry a password hash, and the ID
+// must be the canonical UUID form.
+func TestUser_JSONShape(t *testing.T) {
+	q := dbtest.New()
+	svc := user.NewService(q)
+	u, err := svc.SignUp(context.Background(), user.SignUpInput{Username: "a", Email: "a@example.com", Password: "hunter22"})
+	require.NoError(t, err)
+
+	encoded, err := json.Marshal(u)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	assert.Equal(t, []string{"displayName", "email", "id", "username"}, sortedKeys(decoded))
+	assert.Equal(t, u.ID.String(), decoded["id"])
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

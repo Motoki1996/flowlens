@@ -101,11 +101,10 @@ components:
     User:
       type: object
       properties:
-        id: { type: string }
-        githubUserId: { type: integer, format: int64 }
-        githubLogin: { type: string }
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string, format: email }
         displayName: { type: string }
-        avatarUrl: { type: string }
     Error:
       type: object
       properties:

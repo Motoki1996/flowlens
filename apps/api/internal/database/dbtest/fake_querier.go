@@ -30,6 +30,8 @@ type FakeQuerier struct {
 
 	tasks     []db.Task // insertion order, newest last
 	tasksByID map[uuid.UUID]db.Task
+
+	taskAIContextsByTaskID map[uuid.UUID]db.TaskAiContext
 }
 
 // New returns an empty FakeQuerier.
@@ -43,6 +45,8 @@ func New() *FakeQuerier {
 		projectsByOwnerName: map[string]db.Project{},
 		backlogsByID:        map[uuid.UUID]db.Backlog{},
 		tasksByID:           map[uuid.UUID]db.Task{},
+
+		taskAIContextsByTaskID: map[uuid.UUID]db.TaskAiContext{},
 	}
 }
 
@@ -595,4 +599,27 @@ func (f *FakeQuerier) DeleteTaskForOwner(_ context.Context, arg db.DeleteTaskFor
 		}
 	}
 	return 1, nil
+}
+
+// UpsertTaskAIContext mirrors the SQL's ON CONFLICT DO UPDATE: the first
+// call creates the row, later calls overwrite it and bump updated_at.
+func (f *FakeQuerier) UpsertTaskAIContext(_ context.Context, arg db.UpsertTaskAIContextParams) (db.TaskAiContext, error) {
+	c := db.TaskAiContext{
+		TaskID:             arg.TaskID,
+		AcceptanceCriteria: arg.AcceptanceCriteria,
+		AiContext:          arg.AiContext,
+		AllowedScope:       arg.AllowedScope,
+		ForbiddenScope:     arg.ForbiddenScope,
+		UpdatedAt:          now(),
+	}
+	f.taskAIContextsByTaskID[arg.TaskID] = c
+	return c, nil
+}
+
+func (f *FakeQuerier) GetTaskAIContext(_ context.Context, taskID uuid.UUID) (db.TaskAiContext, error) {
+	c, ok := f.taskAIContextsByTaskID[taskID]
+	if !ok {
+		return db.TaskAiContext{}, pgx.ErrNoRows
+	}
+	return c, nil
 }

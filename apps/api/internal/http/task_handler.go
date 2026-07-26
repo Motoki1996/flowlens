@@ -33,6 +33,13 @@ type updateTaskRequest struct {
 	Position               int32      `json:"position"`
 }
 
+type upsertTaskAIContextRequest struct {
+	AcceptanceCriteria string `json:"acceptanceCriteria"`
+	AIContext          string `json:"aiContext"`
+	AllowedScope       string `json:"allowedScope"`
+	ForbiddenScope     string `json:"forbiddenScope"`
+}
+
 // taskIDFromURL parses the {taskID} path parameter. A malformed ID is
 // reported as "not found" so it is indistinguishable from an unknown one.
 func taskIDFromURL(r *http.Request) (uuid.UUID, bool) {
@@ -142,6 +149,12 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		writeTaskError(w, err)
 		return
 	}
+	aiContext, err := s.tasks.GetAIContext(r.Context(), u.ID, taskID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	t.AIContext = aiContext
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -233,6 +246,36 @@ func (s *Server) handleReopenTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// handleUpsertTaskAIContext creates or overwrites one task's AI context,
+// scoped to the authenticated user via its project. These fields are
+// app-only and are never sent to GitLab (docs/plans/issue-sync.md).
+func (s *Server) handleUpsertTaskAIContext(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	taskID, ok := taskIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "task not found")
+		return
+	}
+
+	var req upsertTaskAIContextRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
+		return
+	}
+
+	aiContext, err := s.tasks.UpsertAIContext(r.Context(), u.ID, taskID, task.AIContextParams{
+		AcceptanceCriteria: req.AcceptanceCriteria,
+		AIContext:          req.AIContext,
+		AllowedScope:       req.AllowedScope,
+		ForbiddenScope:     req.ForbiddenScope,
+	})
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, aiContext)
+}
+
 // writeTaskError maps a task domain error to its HTTP response.
 func writeTaskError(w http.ResponseWriter, err error) {
 	switch {
@@ -240,6 +283,8 @@ func writeTaskError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_title", "title must be 1-255 characters")
 	case errors.Is(err, task.ErrBacklogNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_backlog", "backlog belongs to a different project")
+	case errors.Is(err, task.ErrAIContextFieldTooLong):
+		writeError(w, http.StatusBadRequest, "ai_context_field_too_long", "AI context fields must be at most 20000 characters")
 	case errors.Is(err, task.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "task not found")
 	default:

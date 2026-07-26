@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -272,6 +273,107 @@ func TestHandleCloseAndReopenTask_AreIdempotent(t *testing.T) {
 	var reopenedAgain map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &reopenedAgain))
 	assert.Equal(t, "open", reopenedAgain["status"])
+}
+
+func TestHandleGetTask_IncludesAIContext(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Contains(t, body, "aiContext")
+	aiContext, ok := body["aiContext"].(map[string]any)
+	require.True(t, ok, "aiContext must be an object even before it is ever set")
+	assert.Equal(t, "", aiContext["acceptanceCriteria"])
+	assert.Nil(t, aiContext["updatedAt"])
+}
+
+func TestHandleUpsertTaskAIContext(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	first := doRequest(t, s, http.MethodPut, "/api/v1/tasks/"+id+"/ai-context", upsertTaskAIContextRequest{
+		AcceptanceCriteria: "Given/When/Then",
+		AIContext:          "Legacy payments module",
+		AllowedScope:       "internal/payments/**",
+		ForbiddenScope:     "internal/auth/**",
+	}, token)
+	require.Equal(t, http.StatusOK, first.Code)
+	var firstBody map[string]any
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstBody))
+	assert.Equal(t, "Given/When/Then", firstBody["acceptanceCriteria"])
+	assert.Equal(t, "internal/payments/**", firstBody["allowedScope"])
+
+	// A second call overwrites, it doesn't merge.
+	second := doRequest(t, s, http.MethodPut, "/api/v1/tasks/"+id+"/ai-context", upsertTaskAIContextRequest{
+		AcceptanceCriteria: "Updated",
+	}, token)
+	require.Equal(t, http.StatusOK, second.Code)
+	var secondBody map[string]any
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &secondBody))
+	assert.Equal(t, "Updated", secondBody["acceptanceCriteria"])
+	assert.Equal(t, "", secondBody["allowedScope"])
+
+	getRec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, token)
+	require.Equal(t, http.StatusOK, getRec.Code)
+	var taskBody map[string]any
+	require.NoError(t, json.Unmarshal(getRec.Body.Bytes(), &taskBody))
+	aiContext := taskBody["aiContext"].(map[string]any)
+	assert.Equal(t, "Updated", aiContext["acceptanceCriteria"])
+}
+
+func TestHandleUpsertTaskAIContext_DoesNotChangeTaskUpdatedAt(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	before := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, token)
+	require.Equal(t, http.StatusOK, before.Code)
+	var beforeBody map[string]any
+	require.NoError(t, json.Unmarshal(before.Body.Bytes(), &beforeBody))
+
+	rec := doRequest(t, s, http.MethodPut, "/api/v1/tasks/"+id+"/ai-context", upsertTaskAIContextRequest{
+		AcceptanceCriteria: "Given/When/Then",
+	}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	after := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, token)
+	require.Equal(t, http.StatusOK, after.Code)
+	var afterBody map[string]any
+	require.NoError(t, json.Unmarshal(after.Body.Bytes(), &afterBody))
+
+	assert.Equal(t, beforeBody["updatedAt"], afterBody["updatedAt"])
+}
+
+func TestHandleUpsertTaskAIContext_RejectsFieldOverLengthLimit(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodPut, "/api/v1/tasks/"+id+"/ai-context", upsertTaskAIContextRequest{
+		AcceptanceCriteria: strings.Repeat("a", 20001),
+	}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleUpsertTaskAIContext_ForeignTaskGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	id := q.SeedTask(p.ID, owner.ID, "Fix bug").ID.String()
+
+	_, intruderToken := loginSession(t, s, q)
+	rec := doRequest(t, s, http.MethodPut, "/api/v1/tasks/"+id+"/ai-context",
+		upsertTaskAIContextRequest{AcceptanceCriteria: "Hijacked"}, intruderToken)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestHandleCloseTask_ForeignTaskGets404(t *testing.T) {

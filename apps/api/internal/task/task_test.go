@@ -2,6 +2,7 @@ package task_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -242,6 +243,155 @@ func TestService_Delete_ReturnsNotFoundForMissingTask(t *testing.T) {
 	owner := q.SeedUser("octocat", "octocat@example.com").ID
 
 	assert.ErrorIs(t, svc.Delete(context.Background(), owner, uuid.New()), task.ErrNotFound)
+}
+
+func TestService_UpsertAIContext_CreatesThenUpdates(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	ctx := context.Background()
+
+	created, err := svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
+		AcceptanceCriteria: "Given/When/Then",
+		AIContext:          "Legacy payments module",
+		AllowedScope:       "internal/payments/**",
+		ForbiddenScope:     "internal/auth/**",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Given/When/Then", created.AcceptanceCriteria)
+	assert.Equal(t, "Legacy payments module", created.AIContext)
+	assert.Equal(t, "internal/payments/**", created.AllowedScope)
+	assert.Equal(t, "internal/auth/**", created.ForbiddenScope)
+	require.NotNil(t, created.UpdatedAt)
+
+	got, err := svc.GetAIContext(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, created, got)
+
+	updated, err := svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
+		AcceptanceCriteria: "Updated criteria",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "Updated criteria", updated.AcceptanceCriteria)
+	// Fields omitted from the second call overwrite, they don't merge.
+	assert.Equal(t, "", updated.AIContext)
+	assert.Equal(t, "", updated.AllowedScope)
+	assert.Equal(t, "", updated.ForbiddenScope)
+
+	got, err = svc.GetAIContext(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, updated, got)
+}
+
+func TestService_GetAIContext_ReturnsZeroValueWhenNeverSet(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	got, err := svc.GetAIContext(context.Background(), owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task.AIContext{}, got)
+}
+
+func TestService_UpsertAIContext_RejectsFieldOverLengthLimit(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	_, err := svc.UpsertAIContext(context.Background(), owner, tsk.ID, task.AIContextParams{
+		AcceptanceCriteria: strings.Repeat("a", 20001),
+	})
+	assert.ErrorIs(t, err, task.ErrAIContextFieldTooLong)
+}
+
+func TestService_UpsertAIContext_ForeignTaskGetsNotFound(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	other := q.SeedUser("hubot", "hubot@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	_, err := svc.UpsertAIContext(context.Background(), other, tsk.ID, task.AIContextParams{AcceptanceCriteria: "x"})
+	assert.ErrorIs(t, err, task.ErrNotFound)
+
+	got, err := svc.GetAIContext(context.Background(), owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task.AIContext{}, got, "a rejected write from a non-owner must not land")
+}
+
+// This is the invariant the sync feature depends on: an AI-context-only edit
+// must never look like a task edit, or it would spuriously enqueue a sync
+// job once the outbox worker ships (docs/plans/issue-sync.md).
+func TestService_UpsertAIContext_DoesNotChangeTaskUpdatedAt(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	ctx := context.Background()
+
+	before, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+
+	_, err = svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
+		AcceptanceCriteria: "Given/When/Then",
+		AIContext:          "Legacy payments module",
+		AllowedScope:       "internal/payments/**",
+		ForbiddenScope:     "internal/auth/**",
+	})
+	require.NoError(t, err)
+
+	after, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.UpdatedAt.UnixNano(), after.UpdatedAt.UnixNano())
+}
+
+// BuildGitlabIssuePayload must never reference task_ai_contexts fields, since
+// they are app-only and must never be sent to GitLab (docs/plans/issue-sync.md,
+// "Why the task is split across three tables"). This is pinned as a
+// prerequisite for the GitLab issue sync feature.
+func TestBuildGitlabIssuePayload_NeverReferencesAIContextFields(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	ctx := context.Background()
+
+	tk, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
+		Title:       "Fix bug",
+		Description: "does not mention acceptance criteria",
+		Labels:      []string{"bug"},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
+		AcceptanceCriteria: "SECRET_ACCEPTANCE_CRITERIA",
+		AIContext:          "SECRET_AI_CONTEXT",
+		AllowedScope:       "SECRET_ALLOWED_SCOPE",
+		ForbiddenScope:     "SECRET_FORBIDDEN_SCOPE",
+	})
+	require.NoError(t, err)
+
+	payload := task.BuildGitlabIssuePayload(tk)
+
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+	for _, secret := range []string{
+		"SECRET_ACCEPTANCE_CRITERIA", "SECRET_AI_CONTEXT", "SECRET_ALLOWED_SCOPE", "SECRET_FORBIDDEN_SCOPE",
+	} {
+		assert.NotContains(t, string(body), secret)
+	}
+	assert.Equal(t, "Fix bug", payload.Title)
+	assert.Equal(t, "does not mention acceptance criteria", payload.Description)
+	assert.Equal(t, []string{"bug"}, payload.Labels)
 }
 
 // Ownership is enforced through the parent project, so a non-owner is told

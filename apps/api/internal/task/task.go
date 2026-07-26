@@ -15,6 +15,7 @@ import (
 
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/project"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,10 +27,14 @@ import (
 // another user (via its project), so callers never leak existence to
 // non-owners.
 var (
-	ErrInvalidTitle        = errors.New("task: title must be 1-255 characters")
-	ErrNotFound            = errors.New("task: not found")
-	ErrBacklogNotInProject = errors.New("task: backlog belongs to a different project")
+	ErrInvalidTitle          = errors.New("task: title must be 1-255 characters")
+	ErrNotFound              = errors.New("task: not found")
+	ErrBacklogNotInProject   = errors.New("task: backlog belongs to a different project")
+	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
 )
+
+// maxAIContextFieldLength bounds each of the four task_ai_contexts fields.
+const maxAIContextFieldLength = 20000
 
 const (
 	StatusOpen   = "open"
@@ -41,6 +46,53 @@ const (
 // (docs/plans/issue-sync.md phase 3+). It is always nil until then, so every
 // task response already carries the "gitlab" key clients will need to read.
 type GitlabInfo struct{}
+
+// AIContext holds the app-only fields that describe a task for an AI agent:
+// acceptance criteria, free-form context, and the allowed/forbidden change
+// scope. These fields live in task_ai_contexts, never in tasks, and must
+// never be sent to GitLab (see "Why the task is split across three tables"
+// in docs/plans/issue-sync.md). A task with no task_ai_contexts row yet
+// reports as the zero value rather than nil, so callers never need a nil
+// check.
+type AIContext struct {
+	AcceptanceCriteria string     `json:"acceptanceCriteria"`
+	AIContext          string     `json:"aiContext"`
+	AllowedScope       string     `json:"allowedScope"`
+	ForbiddenScope     string     `json:"forbiddenScope"`
+	UpdatedAt          *time.Time `json:"updatedAt"`
+}
+
+// AIContextParams holds the fields accepted when upserting a task's AI
+// context. Every field is optional (the empty string is valid).
+type AIContextParams struct {
+	AcceptanceCriteria string
+	AIContext          string
+	AllowedScope       string
+	ForbiddenScope     string
+}
+
+func aiContextFromRow(row db.TaskAiContext) AIContext {
+	return AIContext{
+		AcceptanceCriteria: row.AcceptanceCriteria,
+		AIContext:          row.AiContext,
+		AllowedScope:       row.AllowedScope,
+		ForbiddenScope:     row.ForbiddenScope,
+		UpdatedAt:          timePtr(row.UpdatedAt),
+	}
+}
+
+// validateAIContextParams enforces the length cap on each field. Unlike
+// title, empty is always valid: acceptance criteria, AI context, and the
+// allowed/forbidden scope are all optional.
+func validateAIContextParams(params AIContextParams) error {
+	fields := []string{params.AcceptanceCriteria, params.AIContext, params.AllowedScope, params.ForbiddenScope}
+	for _, f := range fields {
+		if utf8.RuneCountInString(f) > maxAIContextFieldLength {
+			return ErrAIContextFieldTooLong
+		}
+	}
+	return nil
+}
 
 // Task is the API-facing representation of a task.
 type Task struct {
@@ -60,6 +112,7 @@ type Task struct {
 	CreatedAt              time.Time   `json:"createdAt"`
 	UpdatedAt              time.Time   `json:"updatedAt"`
 	Gitlab                 *GitlabInfo `json:"gitlab"`
+	AIContext              AIContext   `json:"aiContext"`
 }
 
 // fromRow maps a database row to the domain model.
@@ -161,6 +214,27 @@ type UpdateParams struct {
 	Labels                 []string
 	DueOn                  *time.Time
 	Position               int32
+}
+
+// BuildGitlabIssuePayload converts a task's mirrored fields into the payload
+// FlowLens will push to GitLab. It takes only a Task, which structurally
+// cannot carry the task_ai_contexts fields (acceptance criteria, AI context,
+// allowed/forbidden scope) — those live on AIContext, a separate type this
+// function never accepts. This is the guarantee the sync feature is built
+// against; see "Why the task is split across three tables" in
+// docs/plans/issue-sync.md.
+func BuildGitlabIssuePayload(t Task) gitlab.IssuePayload {
+	var assigneeIDs []int64
+	if t.AssigneeGitlabUserID != nil {
+		assigneeIDs = []int64{*t.AssigneeGitlabUserID}
+	}
+	return gitlab.IssuePayload{
+		Title:       t.Title,
+		Description: t.Description,
+		Labels:      t.Labels,
+		DueDate:     t.DueOn,
+		AssigneeIDs: assigneeIDs,
+	}
 }
 
 // Service manages tasks inside projects owned by a single user.
@@ -419,4 +493,49 @@ func (s *Service) Delete(ctx context.Context, ownerID, taskID uuid.UUID) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// UpsertAIContext creates or overwrites taskID's AI context in one call: the
+// first call creates the task_ai_contexts row, later calls fully overwrite
+// it. It never touches the task row itself, so tasks.updated_at is left
+// untouched and no sync job is ever triggered by an AI-context-only edit.
+// Ownership is enforced via Get, so a non-owner gets ErrNotFound and nothing
+// is written.
+func (s *Service) UpsertAIContext(ctx context.Context, ownerID, taskID uuid.UUID, params AIContextParams) (AIContext, error) {
+	if _, err := s.Get(ctx, ownerID, taskID); err != nil {
+		return AIContext{}, err
+	}
+	if err := validateAIContextParams(params); err != nil {
+		return AIContext{}, err
+	}
+
+	row, err := s.q.UpsertTaskAIContext(ctx, db.UpsertTaskAIContextParams{
+		TaskID:             taskID,
+		AcceptanceCriteria: params.AcceptanceCriteria,
+		AiContext:          params.AIContext,
+		AllowedScope:       params.AllowedScope,
+		ForbiddenScope:     params.ForbiddenScope,
+	})
+	if err != nil {
+		return AIContext{}, fmt.Errorf("task: upsert ai context: %w", err)
+	}
+	return aiContextFromRow(row), nil
+}
+
+// GetAIContext returns taskID's AI context, scoped through its project's
+// owner like Get. A task with no task_ai_contexts row yet (no AI context set
+// so far) returns the zero value, not an error.
+func (s *Service) GetAIContext(ctx context.Context, ownerID, taskID uuid.UUID) (AIContext, error) {
+	if _, err := s.Get(ctx, ownerID, taskID); err != nil {
+		return AIContext{}, err
+	}
+
+	row, err := s.q.GetTaskAIContext(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return AIContext{}, nil
+		}
+		return AIContext{}, fmt.Errorf("task: get ai context: %w", err)
+	}
+	return aiContextFromRow(row), nil
 }

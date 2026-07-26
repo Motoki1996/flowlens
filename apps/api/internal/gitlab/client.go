@@ -29,6 +29,20 @@ type Client interface {
 	GetAuthenticatedUser(ctx context.Context, personalAccessToken string) (*User, error)
 }
 
+// IssuePayload is the exact set of fields FlowLens pushes to a GitLab CE
+// issue on task create/update (docs/plans/issue-sync.md phase 4+). It is
+// built only from a task's mirrored fields (title, description, labels,
+// assignee, due date) — never from task_ai_contexts, which is app-only and
+// must never reach GitLab. See task.BuildGitlabIssuePayload, the single seam
+// that constructs a value of this type.
+type IssuePayload struct {
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Labels      []string   `json:"labels"`
+	DueDate     *time.Time `json:"due_date,omitempty"`
+	AssigneeIDs []int64    `json:"assignee_ids,omitempty"`
+}
+
 // APIError represents a non-2xx response from GitLab.
 type APIError struct {
 	StatusCode int

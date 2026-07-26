@@ -38,6 +38,11 @@ type Querier interface {
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
+	// task_ai_contexts is app-only and must never be sent to GitLab (see "Why
+	// the task is split across three tables" in docs/plans/issue-sync.md).
+	// Callers verify task ownership via task.Service.Get before either query
+	// runs, the same way CreateTask trusts an already-verified project.
+	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
@@ -52,6 +57,7 @@ type Querier interface {
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
+	UpsertTaskAIContext(ctx context.Context, arg UpsertTaskAIContextParams) (TaskAiContext, error)
 }
 
 var _ Querier = (*Queries)(nil)

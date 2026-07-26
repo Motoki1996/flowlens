@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS project_api_tokens;
+DROP TABLE IF EXISTS sync_jobs;
+DROP TABLE IF EXISTS webhook_events;
+DROP TABLE IF EXISTS gitlab_sync_runs;
+DROP TABLE IF EXISTS task_gitlab_links;
+DROP TABLE IF EXISTS linked_gitlab_projects;
+DROP TABLE IF EXISTS gitlab_connections;
+DROP TABLE IF EXISTS task_ai_contexts;
+DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS backlogs;
+DROP TABLE IF EXISTS projects;

@@ -3,7 +3,7 @@
 // browser's session cookie so the API can authenticate the request.
 
 import { cookies } from "next/headers";
-import type { User } from "@/types";
+import type { Project, User } from "@/types";
 
 // Base URL the Next.js server uses to reach the API.
 const API_INTERNAL_URL =
@@ -38,4 +38,37 @@ export async function getCurrentUser(): Promise<User | null> {
     throw new Error(`Failed to load current user: ${res.status}`);
   }
   return (await res.json()) as User;
+}
+
+/**
+ * getProjects returns every project owned by the current user. Callers must
+ * already know the request is authenticated (e.g. via getCurrentUser).
+ */
+export async function getProjects(): Promise<Project[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load projects: ${res.status}`);
+  }
+  return (await res.json()) as Project[];
+}
+
+/**
+ * getProject returns one project, or null when it doesn't exist or isn't
+ * owned by the current user (the API reports both cases as 404).
+ */
+export async function getProject(id: string): Promise<Project | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${id}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load project: ${res.status}`);
+  }
+  return (await res.json()) as Project;
 }

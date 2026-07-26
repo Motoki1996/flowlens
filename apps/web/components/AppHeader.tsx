@@ -23,6 +23,9 @@ export function AppHeader({ user }: { user: User }) {
             <Link href="/dashboard" className="hover:text-foreground">
               Dashboard
             </Link>
+            <Link href="/projects" className="hover:text-foreground">
+              Projects
+            </Link>
             <Link href="/settings" className="hover:text-foreground">
               Settings
             </Link>

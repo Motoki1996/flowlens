@@ -10,6 +10,13 @@ const preview: Preview = {
        date: /Date$/i,
       },
     },
+    // apps/web is App Router only; components using next/navigation (e.g.
+    // LogoutButton's useRouter) need Storybook's app-dir router mock enabled,
+    // otherwise the real next/navigation hook throws for lack of a mounted
+    // AppRouterContext.
+    nextjs: {
+      appDirectory: true,
+    },
   },
   loaders: [mswLoader()],
 };

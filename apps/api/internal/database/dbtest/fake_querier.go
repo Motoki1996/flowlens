@@ -27,6 +27,9 @@ type FakeQuerier struct {
 
 	backlogs     []db.Backlog // insertion order, newest last
 	backlogsByID map[uuid.UUID]db.Backlog
+
+	tasks     []db.Task // insertion order, newest last
+	tasksByID map[uuid.UUID]db.Task
 }
 
 // New returns an empty FakeQuerier.
@@ -39,6 +42,7 @@ func New() *FakeQuerier {
 		projectsByID:        map[uuid.UUID]db.Project{},
 		projectsByOwnerName: map[string]db.Project{},
 		backlogsByID:        map[uuid.UUID]db.Backlog{},
+		tasksByID:           map[uuid.UUID]db.Task{},
 	}
 }
 
@@ -370,6 +374,223 @@ func (f *FakeQuerier) DeleteBacklogForOwner(_ context.Context, arg db.DeleteBack
 	for i, x := range f.backlogs {
 		if x.ID == b.ID {
 			f.backlogs = append(f.backlogs[:i], f.backlogs[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
+}
+
+// SeedTask inserts a ready-made, unfiled (backlog_id = NULL) task directly,
+// bypassing validation. Use it in tests that need a pre-existing task but
+// don't exercise creation. Returns the stored row.
+func (f *FakeQuerier) SeedTask(projectID, createdByUserID uuid.UUID, title string) db.Task {
+	return f.seedTask(projectID, createdByUserID, title, pgtype.UUID{})
+}
+
+// SeedTaskInBacklog inserts a ready-made task assigned to backlogID,
+// bypassing validation. Returns the stored row.
+func (f *FakeQuerier) SeedTaskInBacklog(projectID, backlogID, createdByUserID uuid.UUID, title string) db.Task {
+	return f.seedTask(projectID, createdByUserID, title, pgtype.UUID{Bytes: backlogID, Valid: true})
+}
+
+func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title string, backlogID pgtype.UUID) db.Task {
+	t := db.Task{
+		ID:              uuid.New(),
+		ProjectID:       projectID,
+		BacklogID:       backlogID,
+		Title:           title,
+		Status:          "open",
+		Labels:          []string{},
+		Position:        f.nextTaskPosition(projectID, backlogID),
+		CreatedByUserID: createdByUserID,
+		CreatedAt:       now(),
+		UpdatedAt:       now(),
+	}
+	f.storeTask(t)
+	return t
+}
+
+// storeTask inserts t if it is new, or overwrites the existing row in place
+// (preserving its position in f.tasks) otherwise.
+func (f *FakeQuerier) storeTask(t db.Task) {
+	f.tasksByID[t.ID] = t
+	for i, x := range f.tasks {
+		if x.ID == t.ID {
+			f.tasks[i] = t
+			return
+		}
+	}
+	f.tasks = append(f.tasks, t)
+}
+
+func (f *FakeQuerier) nextTaskPosition(projectID uuid.UUID, backlogID pgtype.UUID) int32 {
+	var max int32 = -1
+	for _, t := range f.tasks {
+		if t.ProjectID != projectID {
+			continue
+		}
+		if t.BacklogID.Valid != backlogID.Valid || (t.BacklogID.Valid && t.BacklogID.Bytes != backlogID.Bytes) {
+			continue
+		}
+		if t.Position > max {
+			max = t.Position
+		}
+	}
+	return max + 1
+}
+
+func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db.Task, error) {
+	t := db.Task{
+		ID:                     uuid.New(),
+		ProjectID:              arg.ProjectID,
+		BacklogID:              arg.BacklogID,
+		Title:                  arg.Title,
+		Description:            arg.Description,
+		Status:                 "open",
+		AssigneeGitlabUserID:   arg.AssigneeGitlabUserID,
+		AssigneeGitlabUsername: arg.AssigneeGitlabUsername,
+		Labels:                 arg.Labels,
+		DueOn:                  arg.DueOn,
+		Position:               f.nextTaskPosition(arg.ProjectID, arg.BacklogID),
+		CreatedByUserID:        arg.CreatedByUserID,
+		CreatedAt:              now(),
+		UpdatedAt:              now(),
+	}
+	f.storeTask(t)
+	return t, nil
+}
+
+func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByProjectParams) ([]db.Task, error) {
+	items := []db.Task{}
+	for _, t := range f.tasks {
+		if t.ProjectID != arg.ProjectID {
+			continue
+		}
+		if arg.Unassigned && t.BacklogID.Valid {
+			continue
+		}
+		if arg.BacklogID.Valid && (!t.BacklogID.Valid || t.BacklogID.Bytes != arg.BacklogID.Bytes) {
+			continue
+		}
+		if arg.Status != "" && t.Status != arg.Status {
+			continue
+		}
+		items = append(items, t)
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Position < items[j].Position })
+	return items, nil
+}
+
+// taskOwner returns the owner_user_id of the project a task belongs to,
+// mirroring the JOIN the real query performs.
+func (f *FakeQuerier) taskOwner(t db.Task) (uuid.UUID, bool) {
+	p, ok := f.projectsByID[t.ProjectID]
+	if !ok {
+		return uuid.Nil, false
+	}
+	return p.OwnerUserID, true
+}
+
+// GetTaskForOwner mirrors the SQL: a task whose project belongs to someone
+// else is reported as missing, never as a distinct "forbidden" outcome.
+func (f *FakeQuerier) GetTaskForOwner(_ context.Context, arg db.GetTaskForOwnerParams) (db.Task, error) {
+	t, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	owner, ok := f.taskOwner(t)
+	if !ok || owner != arg.OwnerUserID {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	return t, nil
+}
+
+func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskForOwnerParams) (db.Task, error) {
+	existing, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	owner, ok := f.taskOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.Task{}, pgx.ErrNoRows
+	}
+
+	existing.BacklogID = arg.BacklogID
+	existing.Title = arg.Title
+	existing.Description = arg.Description
+	existing.AssigneeGitlabUserID = arg.AssigneeGitlabUserID
+	existing.AssigneeGitlabUsername = arg.AssigneeGitlabUsername
+	existing.Labels = arg.Labels
+	existing.DueOn = arg.DueOn
+	existing.Position = arg.Position
+	existing.UpdatedAt = now()
+
+	f.storeTask(existing)
+	return existing, nil
+}
+
+func (f *FakeQuerier) AssignTaskBacklogForOwner(_ context.Context, arg db.AssignTaskBacklogForOwnerParams) (db.Task, error) {
+	existing, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	owner, ok := f.taskOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	existing.BacklogID = arg.BacklogID
+	existing.UpdatedAt = now()
+	f.storeTask(existing)
+	return existing, nil
+}
+
+func (f *FakeQuerier) CloseTaskForOwner(_ context.Context, arg db.CloseTaskForOwnerParams) (db.Task, error) {
+	existing, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	owner, ok := f.taskOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	existing.Status = "closed"
+	existing.ClosedAt = now()
+	existing.UpdatedAt = now()
+	f.storeTask(existing)
+	return existing, nil
+}
+
+func (f *FakeQuerier) ReopenTaskForOwner(_ context.Context, arg db.ReopenTaskForOwnerParams) (db.Task, error) {
+	existing, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	owner, ok := f.taskOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	existing.Status = "open"
+	existing.ClosedAt = pgtype.Timestamptz{}
+	existing.UpdatedAt = now()
+	f.storeTask(existing)
+	return existing, nil
+}
+
+// DeleteTaskForOwner returns the number of rows affected, so callers can
+// tell "deleted" from "not yours / not there" exactly as Postgres does.
+func (f *FakeQuerier) DeleteTaskForOwner(_ context.Context, arg db.DeleteTaskForOwnerParams) (int64, error) {
+	t, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return 0, nil
+	}
+	owner, ok := f.taskOwner(t)
+	if !ok || owner != arg.OwnerUserID {
+		return 0, nil
+	}
+	delete(f.tasksByID, t.ID)
+	for i, x := range f.tasks {
+		if x.ID == t.ID {
+			f.tasks = append(f.tasks[:i], f.tasks[i+1:]...)
 			break
 		}
 	}

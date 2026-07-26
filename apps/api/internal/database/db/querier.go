@@ -11,13 +11,18 @@ import (
 )
 
 type Querier interface {
+	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteExpiredSessions(ctx context.Context) error
+	DeleteProject(ctx context.Context, id pgtype.UUID) error
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
+	GetProjectByID(ctx context.Context, id pgtype.UUID) (Project, error)
 	GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
+	ListProjectsByOwner(ctx context.Context, ownerUserID pgtype.UUID) ([]Project, error)
+	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
 }
 
 var _ Querier = (*Queries)(nil)

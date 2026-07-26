@@ -1,0 +1,152 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import type { Backlog, Task, TaskStatus } from "@/types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+
+const UNCLASSIFIED = "unclassified";
+const UNCLASSIFIED_LABEL = "未分類";
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function StatusBadge({ status }: { status: TaskStatus }) {
+  return (
+    <Badge variant={status === "open" ? "default" : "secondary"}>
+      {status === "open" ? "Open" : "Closed"}
+    </Badge>
+  );
+}
+
+/**
+ * TaskListSection is the task collection view, embedded in the project
+ * single view per docs/ui-design.md (no standalone "unclassified" screen).
+ * Tasks are grouped by backlog, with a trailing 未分類 group for tasks that
+ * have no backlog. Filters narrow which tasks appear within those groups.
+ */
+export function TaskListSection({
+  tasks,
+  backlogs,
+  error = false,
+}: {
+  tasks: Task[];
+  backlogs: Backlog[];
+  error?: boolean;
+}) {
+  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
+  const [backlogFilter, setBacklogFilter] = useState<"all" | string>("all");
+
+  const filtered = useMemo(() => {
+    return tasks.filter((t) => {
+      if (statusFilter !== "all" && t.status !== statusFilter) return false;
+      if (backlogFilter !== "all") {
+        const key = t.backlogId ?? UNCLASSIFIED;
+        if (key !== backlogFilter) return false;
+      }
+      return true;
+    });
+  }, [tasks, statusFilter, backlogFilter]);
+
+  const groups = useMemo(() => {
+    const byBacklog = new Map<string, Task[]>();
+    for (const t of filtered) {
+      const key = t.backlogId ?? UNCLASSIFIED;
+      const list = byBacklog.get(key) ?? [];
+      list.push(t);
+      byBacklog.set(key, list);
+    }
+    const ordered: { key: string; name: string; tasks: Task[] }[] = [];
+    for (const backlog of backlogs) {
+      const list = byBacklog.get(backlog.id);
+      if (list) ordered.push({ key: backlog.id, name: backlog.name, tasks: list });
+    }
+    const unclassified = byBacklog.get(UNCLASSIFIED);
+    if (unclassified) {
+      ordered.push({ key: UNCLASSIFIED, name: UNCLASSIFIED_LABEL, tasks: unclassified });
+    }
+    return ordered;
+  }, [filtered, backlogs]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="text-base font-medium">Tasks</CardTitle>
+          {!error && tasks.length > 0 ? (
+            <div className="flex gap-2">
+              <select
+                aria-label="Status"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as "all" | TaskStatus)}
+                className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
+              >
+                <option value="all">All statuses</option>
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+              </select>
+              <select
+                aria-label="Backlog"
+                value={backlogFilter}
+                onChange={(e) => setBacklogFilter(e.target.value)}
+                className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
+              >
+                <option value="all">All backlogs</option>
+                {backlogs.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+                <option value={UNCLASSIFIED}>{UNCLASSIFIED_LABEL}</option>
+              </select>
+            </div>
+          ) : null}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {error ? (
+          <p className="text-destructive text-sm">Failed to load tasks. Try refreshing the page.</p>
+        ) : tasks.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No tasks yet.</p>
+        ) : groups.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No tasks match the current filters.</p>
+        ) : (
+          <div className="space-y-6">
+            {groups.map((group) => (
+              <div key={group.key}>
+                <h3 className="text-muted-foreground mb-2 text-sm font-medium">
+                  {group.name} ({group.tasks.length})
+                </h3>
+                <ul className="space-y-2">
+                  {group.tasks.map((task) => (
+                    <li key={task.id}>
+                      <Link
+                        href={`/tasks/${task.id}`}
+                        className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
+                      >
+                        <span className="text-foreground">{task.title}</span>
+                        <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
+                          {task.assigneeGitlabUsername ? (
+                            <span>{task.assigneeGitlabUsername}</span>
+                          ) : null}
+                          {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
+                          <StatusBadge status={task.status} />
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

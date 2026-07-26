@@ -3,12 +3,13 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, Project } from "@/types";
+import type { ApiError, Backlog, Project, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { TaskListSection } from "@/components/TaskListSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -164,7 +165,17 @@ function DeleteProjectButton({ project }: { project: Project }) {
  * collections. Edit and delete actions live here rather than on a separate
  * "manage" screen.
  */
-export function ProjectDetail({ project: initial }: { project: Project }) {
+export function ProjectDetail({
+  project: initial,
+  tasks = [],
+  backlogs = [],
+  tasksError = false,
+}: {
+  project: Project;
+  tasks?: Task[];
+  backlogs?: Backlog[];
+  tasksError?: boolean;
+}) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
 
@@ -216,19 +227,11 @@ export function ProjectDetail({ project: initial }: { project: Project }) {
         </CardContent>
       </Card>
 
+      <div className="mt-8">
+        <TaskListSection tasks={tasks} backlogs={backlogs} error={tasksError} />
+      </div>
+
       <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card className="border-dashed">
-          <CardHeader>
-            <CardTitle className="text-base font-medium">Backlog</CardTitle>
-            <CardDescription>Coming soon.</CardDescription>
-          </CardHeader>
-        </Card>
-        <Card className="border-dashed">
-          <CardHeader>
-            <CardTitle className="text-base font-medium">Tasks</CardTitle>
-            <CardDescription>Coming soon.</CardDescription>
-          </CardHeader>
-        </Card>
         <Card className="border-dashed">
           <CardHeader>
             <CardTitle className="text-base font-medium">GitLab connection</CardTitle>

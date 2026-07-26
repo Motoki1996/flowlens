@@ -3,7 +3,7 @@
 // browser's session cookie so the API can authenticate the request.
 
 import { cookies } from "next/headers";
-import type { Project, User } from "@/types";
+import type { Backlog, Project, Task, User } from "@/types";
 
 // Base URL the Next.js server uses to reach the API.
 const API_INTERNAL_URL =
@@ -71,4 +71,54 @@ export async function getProject(id: string): Promise<Project | null> {
     throw new Error(`Failed to load project: ${res.status}`);
   }
   return (await res.json()) as Project;
+}
+
+/**
+ * getBacklogs returns every backlog in the project, ordered by position.
+ * Callers must already know the request is authenticated.
+ */
+export async function getBacklogs(projectId: string): Promise<Backlog[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/backlogs`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load backlogs: ${res.status}`);
+  }
+  return (await res.json()) as Backlog[];
+}
+
+/**
+ * getTasks returns every task in the project, ordered by position. Callers
+ * must already know the request is authenticated.
+ */
+export async function getTasks(projectId: string): Promise<Task[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/tasks`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load tasks: ${res.status}`);
+  }
+  return (await res.json()) as Task[];
+}
+
+/**
+ * getTask returns one task including its AI context, or null when it
+ * doesn't exist or isn't owned by the current user (the API reports both
+ * cases as 404).
+ */
+export async function getTask(id: string): Promise<Task | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/tasks/${id}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load task: ${res.status}`);
+  }
+  return (await res.json()) as Task;
 }

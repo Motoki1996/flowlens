@@ -1,0 +1,163 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { API_PUBLIC_URL } from "@/lib/config";
+import type { ApiError, TaskAIContext } from "@/types";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+
+type FieldKey = "acceptanceCriteria" | "aiContext" | "allowedScope" | "forbiddenScope";
+
+const FIELDS: { key: FieldKey; label: string; placeholder: string }[] = [
+  { key: "acceptanceCriteria", label: "完了条件", placeholder: "No acceptance criteria set." },
+  { key: "aiContext", label: "AIコンテキスト", placeholder: "No AI context set." },
+  { key: "allowedScope", label: "変更可能範囲", placeholder: "No allowed scope set." },
+  { key: "forbiddenScope", label: "変更禁止範囲", placeholder: "No forbidden scope set." },
+];
+
+/**
+ * AIContextField edits and saves a single task_ai_contexts field. Saving
+ * always PUTs the full ai-context payload (the API upserts all four fields
+ * together), but only this field's value ever changes: the other three are
+ * taken from the current, already-saved context.
+ */
+function AIContextField({
+  taskId,
+  fieldKey,
+  label,
+  placeholder,
+  value,
+  context,
+  onSaved,
+}: {
+  taskId: string;
+  fieldKey: FieldKey;
+  label: string;
+  placeholder: string;
+  value: string;
+  context: TaskAIContext;
+  onSaved: (updated: TaskAIContext) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/ai-context`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          acceptanceCriteria: context.acceptanceCriteria,
+          aiContext: context.aiContext,
+          allowedScope: context.allowedScope,
+          forbiddenScope: context.forbiddenScope,
+          [fieldKey]: draft,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setError(body?.error.message ?? "Failed to save.");
+        return;
+      }
+      onSaved((await res.json()) as TaskAIContext);
+      setEditing(false);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-4">
+        <h4 className="text-foreground text-sm font-medium">{label}</h4>
+        {!editing ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setDraft(value);
+              setError(null);
+              setEditing(true);
+            }}
+          >
+            Edit
+          </Button>
+        ) : null}
+      </div>
+
+      {editing ? (
+        <form onSubmit={handleSubmit} className="mt-2 space-y-2" aria-label={`Edit ${label}`}>
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+          <Textarea
+            aria-label={label}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            rows={4}
+          />
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={pending}>
+              {pending ? "Saving…" : "Save"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setEditing(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <p className="text-foreground mt-1 text-sm whitespace-pre-wrap">
+          {value || <span className="text-muted-foreground">{placeholder}</span>}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * AIContextSection is the AI-facing information block on the task single
+ * view: acceptance criteria, free-form AI context, and the allowed/forbidden
+ * change scope, each independently editable and saved.
+ */
+export function AIContextSection({
+  taskId,
+  aiContext: initial,
+}: {
+  taskId: string;
+  aiContext: TaskAIContext;
+}) {
+  const [context, setContext] = useState(initial);
+
+  return (
+    <div className="space-y-6">
+      {FIELDS.map((field) => (
+        <AIContextField
+          key={field.key}
+          taskId={taskId}
+          fieldKey={field.key}
+          label={field.label}
+          placeholder={field.placeholder}
+          value={context[field.key]}
+          context={context}
+          onSaved={setContext}
+        />
+      ))}
+    </div>
+  );
+}

@@ -94,7 +94,7 @@ describe("TaskPage", () => {
     getProject.mockResolvedValue(project);
     render(await TaskPage({ params: Promise.resolve({ taskId: "t1" }) }));
     expect(screen.getByRole("heading", { name: "Fix the bug" })).toBeInTheDocument();
-    expect(screen.getByText("Sprint 1")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("b1");
     expect(getTask).toHaveBeenCalledWith("t1");
   });
 

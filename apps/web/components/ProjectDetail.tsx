@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { TaskListSection } from "@/components/TaskListSection";
+import { BacklogListSection } from "@/components/BacklogListSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -226,6 +227,10 @@ export function ProjectDetail({
           </dl>
         </CardContent>
       </Card>
+
+      <div className="mt-8">
+        <BacklogListSection projectId={project.id} backlogs={backlogs} tasks={tasks} />
+      </div>
 
       <div className="mt-8">
         <TaskListSection tasks={tasks} backlogs={backlogs} error={tasksError} />

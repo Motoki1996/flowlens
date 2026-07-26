@@ -242,6 +242,53 @@ func TestHandleDeleteTask(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, doRequest(t, s, http.MethodDelete, "/api/v1/tasks/"+id, nil, ownerToken).Code)
 }
 
+func TestHandleAssignTaskBacklog(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/assign-backlog",
+		assignTaskBacklogRequest{BacklogID: &b.ID}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, b.ID.String(), body["backlogId"])
+
+	rec = doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/assign-backlog",
+		assignTaskBacklogRequest{BacklogID: nil}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Nil(t, body["backlogId"])
+}
+
+func TestHandleAssignTaskBacklog_RejectsBacklogFromAnotherProject(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	otherProject := q.SeedProject(ownerID, "Beta")
+	foreignBacklog := q.SeedBacklog(otherProject.ID, "Sprint 1")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/assign-backlog",
+		assignTaskBacklogRequest{BacklogID: &foreignBacklog.ID}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleAssignTaskBacklog_ForeignTaskGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	id := q.SeedTask(p.ID, owner.ID, "Fix bug").ID.String()
+
+	_, intruderToken := loginSession(t, s, q)
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/assign-backlog",
+		assignTaskBacklogRequest{BacklogID: &b.ID}, intruderToken)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 func TestHandleCloseAndReopenTask_AreIdempotent(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

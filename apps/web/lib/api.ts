@@ -90,6 +90,23 @@ export async function getBacklogs(projectId: string): Promise<Backlog[]> {
 }
 
 /**
+ * getBacklog returns one backlog, or null when it doesn't exist or isn't
+ * owned by the current user (the API reports both cases as 404).
+ */
+export async function getBacklog(id: string): Promise<Backlog | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/backlogs/${id}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load backlog: ${res.status}`);
+  }
+  return (await res.json()) as Backlog;
+}
+
+/**
  * getTasks returns every task in the project, ordered by position. Callers
  * must already know the request is authenticated.
  */

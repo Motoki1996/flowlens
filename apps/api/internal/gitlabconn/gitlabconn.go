@@ -284,6 +284,22 @@ func (s *Service) Delete(ctx context.Context, ownerID, projectID uuid.UUID) erro
 	return nil
 }
 
+// Dial returns a ready gitlab.Client for projectID's connection, the
+// decrypted personal access token to call it with, and the connection's own
+// ID. It exists for packages like internal/linkedproject that need to call
+// the GitLab API directly rather than go through Service's own methods.
+func (s *Service) Dial(ctx context.Context, ownerID, projectID uuid.UUID) (gitlab.Client, string, uuid.UUID, error) {
+	row, err := s.getRow(ctx, ownerID, projectID)
+	if err != nil {
+		return nil, "", uuid.Nil, err
+	}
+	token, err := s.cipher.Decrypt(row.EncryptedToken)
+	if err != nil {
+		return nil, "", uuid.Nil, fmt.Errorf("gitlabconn: dial: %w", err)
+	}
+	return s.clientFactory(row.BaseUrl), token, row.ID, nil
+}
+
 // getRow fetches the raw database row for projectID, scoped to ownerID,
 // mapping "no rows" (missing or foreign) to ErrNotFound.
 func (s *Service) getRow(ctx context.Context, ownerID, projectID uuid.UUID) (db.GitlabConnection, error) {

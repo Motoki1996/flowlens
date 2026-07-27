@@ -32,6 +32,7 @@ func (q *Queries) GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskA
 }
 
 const upsertTaskAIContext = `-- name: UpsertTaskAIContext :one
+
 INSERT INTO task_ai_contexts (task_id, acceptance_criteria, ai_context, allowed_scope, forbidden_scope)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (task_id) DO UPDATE
@@ -51,6 +52,11 @@ type UpsertTaskAIContextParams struct {
 	ForbiddenScope     string    `json:"forbidden_scope"`
 }
 
+// task_ai_contexts is app-only: acceptance criteria, AI context, and the
+// allowed/forbidden change scope must never be sent to GitLab (see "Why the
+// task is split across three tables" in docs/plans/issue-sync.md). Ownership
+// is verified by the caller via task.Service.Get before either query runs,
+// the same way CreateTask trusts an already-verified project.
 func (q *Queries) UpsertTaskAIContext(ctx context.Context, arg UpsertTaskAIContextParams) (TaskAiContext, error) {
 	row := q.db.QueryRow(ctx, upsertTaskAIContext,
 		arg.TaskID,

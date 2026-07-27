@@ -110,6 +110,7 @@ func (q *Queries) UpdateGitlabConnectionVerificationForOwner(ctx context.Context
 }
 
 const upsertGitlabConnection = `-- name: UpsertGitlabConnection :one
+
 INSERT INTO gitlab_connections (
     project_id, base_url, encrypted_token,
     token_gitlab_user_id, token_gitlab_username, last_verified_at, last_verify_error
@@ -135,12 +136,12 @@ type UpsertGitlabConnectionParams struct {
 }
 
 // gitlab_connections has no owner column of its own; ownership is always
-// checked through the parent project. UpsertGitlabConnection trusts the
-// caller to have already verified project ownership (e.g. via
-// project.Service.Get) before running, while the other queries join to
-// projects so a foreign connection is indistinguishable from a missing one.
-// The access token is only ever handled encrypted here; see internal/crypto
-// and internal/gitlabconn.
+// checked through the parent project, the same way backlogs and tasks are.
+// UpsertGitlabConnection trusts the caller to have already verified project
+// ownership (e.g. via project.Service.Get) before running, while the other
+// queries join to projects so a foreign connection is indistinguishable from
+// a missing one. The access token is only ever handled encrypted here; see
+// internal/crypto and internal/gitlabconn.
 func (q *Queries) UpsertGitlabConnection(ctx context.Context, arg UpsertGitlabConnectionParams) (GitlabConnection, error) {
 	row := q.db.QueryRow(ctx, upsertGitlabConnection,
 		arg.ProjectID,

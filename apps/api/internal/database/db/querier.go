@@ -12,62 +12,86 @@ import (
 
 type Querier interface {
 	AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskBacklogForOwnerParams) (Task, error)
+	// Unsets is_default on every other link in the same connection as linkID,
+	// so SetDefaultLinkedGitlabProjectForOwner can set exactly one.
+	ClearDefaultLinkedGitlabProjectsForOwner(ctx context.Context, arg ClearDefaultLinkedGitlabProjectsForOwnerParams) error
 	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
-	// Every project-scoped query filters on owner_user_id in SQL. Authorization
-	// is therefore enforced by the query itself: a non-owner gets "no rows",
-	// which callers map to ErrNotFound. Handlers must never do their own
-	// ownership check, and later project-scoped tables follow the same rule.
-	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
 	// caller to have already verified project ownership (e.g. via
 	// project.Service.Get), while the single-backlog queries join to projects so
 	// a foreign backlog is indistinguishable from a missing one.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
+	// linked_gitlab_projects has no owner column of its own; ownership is always
+	// checked by joining through gitlab_connections to projects, the same way
+	// gitlab_connections is checked through projects. A link belonging to
+	// another user's project is indistinguishable from a missing one.
+	// is_default is computed here, not by the caller: the first project linked
+	// to a connection becomes its default, later ones do not.
+	CreateLinkedGitlabProject(ctx context.Context, arg CreateLinkedGitlabProjectParams) (LinkedGitlabProject, error)
+	// Every project-scoped query filters on owner_user_id in SQL. Authorization
+	// is therefore enforced by the query itself: a non-owner gets "no rows",
+	// which callers map to ErrNotFound. Handlers must never do their own
+	// ownership check, and later project-scoped tables follow the same rule.
+	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	// Tasks are scoped through their parent project the same way backlogs are:
-	// every single-task query joins to projects and filters on owner_user_id,
-	// so a foreign task is indistinguishable from a missing one. CreateTask
-	// trusts the caller to have already verified project ownership.
+	// every single-task query joins to projects and filters on
+	// owner_user_id, so a foreign task is indistinguishable from a missing one.
+	// CreateTask trusts the caller to have already verified project ownership
+	// (e.g. via project.Service.Get), like CreateBacklog.
+	//
+	// ListTasksByProject takes three independent optional filters so one query
+	// serves the unfiltered, single-backlog, unassigned-only and status-scoped
+	// list views: passing false/NULL/'' for a filter disables it.
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
-	// gitlab_connections has no owner column of its own; ownership is always
-	// checked through the parent project. UpsertGitlabConnection trusts the
-	// caller to have already verified project ownership (e.g. via
-	// project.Service.Get) before running, while the other queries join to
-	// projects so a foreign connection is indistinguishable from a missing one.
-	// The access token is only ever handled encrypted here; see internal/crypto
-	// and internal/gitlabconn.
 	DeleteGitlabConnectionForOwner(ctx context.Context, arg DeleteGitlabConnectionForOwnerParams) (int64, error)
+	// Returns the deleted row (rather than an affected-row count) so the
+	// service can tell whether it removed the default link and needs to
+	// promote another one.
+	DeleteLinkedGitlabProjectForOwner(ctx context.Context, arg DeleteLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
+	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
-	// task_ai_contexts is app-only and must never be sent to GitLab (see "Why
-	// the task is split across three tables" in docs/plans/issue-sync.md).
-	// Callers verify task ownership via task.Service.Get before either query
-	// runs, the same way CreateTask trusts an already-verified project.
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
 	ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error)
+	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
-	// ListTasksByProject takes three independent optional filters so one query
-	// serves the unfiltered, single-backlog, unassigned-only and status-scoped
-	// list views: passing false/NULL/'' for a filter disables it.
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
+	// Used after deleting the default link: makes the oldest remaining link in
+	// the same connection the new default. A no-op if none remain.
+	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
+	SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg SetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
+	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
+	// gitlab_connections has no owner column of its own; ownership is always
+	// checked through the parent project, the same way backlogs and tasks are.
+	// UpsertGitlabConnection trusts the caller to have already verified project
+	// ownership (e.g. via project.Service.Get) before running, while the other
+	// queries join to projects so a foreign connection is indistinguishable from
+	// a missing one. The access token is only ever handled encrypted here; see
+	// internal/crypto and internal/gitlabconn.
 	UpsertGitlabConnection(ctx context.Context, arg UpsertGitlabConnectionParams) (GitlabConnection, error)
+	// task_ai_contexts is app-only: acceptance criteria, AI context, and the
+	// allowed/forbidden change scope must never be sent to GitLab (see "Why the
+	// task is split across three tables" in docs/plans/issue-sync.md). Ownership
+	// is verified by the caller via task.Service.Get before either query runs,
+	// the same way CreateTask trusts an already-verified project.
 	UpsertTaskAIContext(ctx context.Context, arg UpsertTaskAIContextParams) (TaskAiContext, error)
 }
 

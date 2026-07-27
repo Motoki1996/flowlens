@@ -15,6 +15,7 @@ import (
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
+	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
@@ -47,17 +48,19 @@ func newTestServerWithGitlabClient(t *testing.T, fake *gitlab.FakeClient) (*Serv
 	}
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
+	gitlabConns := gitlabconn.NewService(q, projects, cipher, func(string) gitlab.Client { return fake })
 	return &Server{
-		users:       user.NewService(q),
-		projects:    projects,
-		backlogs:    backlogs,
-		tasks:       task.NewService(q, projects, backlogs),
-		gitlabConns: gitlabconn.NewService(q, projects, cipher, func(string) gitlab.Client { return fake }),
-		sessions:    auth.NewSessionService(q, time.Hour),
-		cookies:     cookieManager{secure: false},
-		webBaseURL:  "http://localhost:3000",
-		sessionTTL:  time.Hour,
-		cipher:      cipher,
+		users:          user.NewService(q),
+		projects:       projects,
+		backlogs:       backlogs,
+		tasks:          task.NewService(q, projects, backlogs),
+		gitlabConns:    gitlabConns,
+		linkedProjects: linkedproject.NewService(q, projects, gitlabConns),
+		sessions:       auth.NewSessionService(q, time.Hour),
+		cookies:        cookieManager{secure: false},
+		webBaseURL:     "http://localhost:3000",
+		sessionTTL:     time.Hour,
+		cipher:         cipher,
 	}, q
 }
 

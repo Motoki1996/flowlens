@@ -326,3 +326,135 @@ func TestGitlabConnectionQueries_TokenIsStoredEncrypted(t *testing.T) {
 		assert.Equal(t, int64(0), affected)
 	})
 }
+
+// seedLinkedGitlabProject links a GitLab connection to a fake GitLab
+// project, for tests that only care about linked_gitlab_projects itself.
+func seedLinkedGitlabProject(t *testing.T, q *db.Queries, connID uuid.UUID, gitlabProjectID int64) db.LinkedGitlabProject {
+	t.Helper()
+	l, err := q.CreateLinkedGitlabProject(context.Background(), db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: connID,
+		GitlabProjectID:    gitlabProjectID,
+		PathWithNamespace:  fmt.Sprintf("group/demo-%d", gitlabProjectID),
+		Name:               fmt.Sprintf("demo-%d", gitlabProjectID),
+		WebUrl:             "https://gitlab.example.com/group/demo",
+		SyncScope:          "all",
+		SyncLabels:         []string{},
+	})
+	require.NoError(t, err)
+	return l
+}
+
+func TestLinkedGitlabProjectQueries_DefaultPromotionAndOwnership(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	intruder := createUser(t, q, "intruder")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	conn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:           p.ID,
+		BaseUrl:             "https://gitlab.example.com",
+		EncryptedToken:      []byte("ciphertext"),
+		TokenGitlabUserID:   pgtype.Int8{Int64: 99, Valid: true},
+		TokenGitlabUsername: "octocat",
+	})
+	require.NoError(t, err)
+
+	first := seedLinkedGitlabProject(t, q, conn.ID, 1)
+	assert.True(t, first.IsDefault, "the first project linked to a connection must become its default")
+
+	second := seedLinkedGitlabProject(t, q, conn.ID, 2)
+	assert.False(t, second.IsDefault, "a second link must not also be default")
+
+	t.Run("linking the same gitlab project twice is a conflict", func(t *testing.T) {
+		_, err := q.CreateLinkedGitlabProject(ctx, db.CreateLinkedGitlabProjectParams{
+			GitlabConnectionID: conn.ID,
+			GitlabProjectID:    1,
+			PathWithNamespace:  "group/demo-1",
+			Name:               "demo-1",
+			SyncScope:          "all",
+			SyncLabels:         []string{},
+		})
+		assert.Error(t, err)
+	})
+
+	t.Run("non-owner cannot read or write a link", func(t *testing.T) {
+		_, err := q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{ID: first.ID, OwnerUserID: intruder.ID})
+		assert.ErrorIs(t, err, pgx.ErrNoRows)
+
+		_, err = q.UpdateLinkedGitlabProjectSyncScopeForOwner(ctx, db.UpdateLinkedGitlabProjectSyncScopeForOwnerParams{
+			ID: first.ID, OwnerUserID: intruder.ID, SyncScope: "labels", SyncLabels: []string{"bug"},
+		})
+		assert.ErrorIs(t, err, pgx.ErrNoRows)
+	})
+
+	t.Run("deleting the default link promotes the oldest remaining one", func(t *testing.T) {
+		deleted, err := q.DeleteLinkedGitlabProjectForOwner(ctx, db.DeleteLinkedGitlabProjectForOwnerParams{ID: first.ID, OwnerUserID: owner.ID})
+		require.NoError(t, err)
+		assert.True(t, deleted.IsDefault)
+
+		require.NoError(t, q.PromoteOldestLinkedGitlabProjectAsDefault(ctx, conn.ID))
+
+		got, err := q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{ID: second.ID, OwnerUserID: owner.ID})
+		require.NoError(t, err)
+		assert.True(t, got.IsDefault, "the only remaining link must become the default")
+	})
+}
+
+// Unlinking a GitLab project must never delete the app's own tasks: only
+// the sync bookkeeping (task_gitlab_links, via its FK to
+// linked_gitlab_projects) is cleaned up. task_gitlab_links has no Go
+// queries yet (sync isn't wired up until docs/plans/issue-sync.md phase 4+),
+// so this exercises the schema's ON DELETE behaviour directly with SQL.
+func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	conn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:           p.ID,
+		BaseUrl:             "https://gitlab.example.com",
+		EncryptedToken:      []byte("ciphertext"),
+		TokenGitlabUserID:   pgtype.Int8{Int64: 99, Valid: true},
+		TokenGitlabUsername: "octocat",
+	})
+	require.NoError(t, err)
+	link := seedLinkedGitlabProject(t, q, conn.ID, 1)
+
+	task, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID:       p.ID,
+		Title:           "Task synced with GitLab",
+		Labels:          []string{},
+		CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO task_gitlab_links (task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid)
+		VALUES ($1, $2, $3, $4)`, task.ID, link.ID, int64(101), int64(7))
+	require.NoError(t, err)
+
+	_, err = q.DeleteLinkedGitlabProjectForOwner(ctx, db.DeleteLinkedGitlabProjectForOwnerParams{ID: link.ID, OwnerUserID: owner.ID})
+	require.NoError(t, err)
+
+	stillThere, err := q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: task.ID, OwnerUserID: owner.ID})
+	require.NoError(t, err, "the task must survive unlinking its GitLab project")
+	assert.Equal(t, task.ID, stillThere.ID)
+
+	var linkCount int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM task_gitlab_links WHERE task_id = $1`, task.ID).Scan(&linkCount))
+	assert.Equal(t, 0, linkCount, "the gitlab sync link row must be gone")
+}

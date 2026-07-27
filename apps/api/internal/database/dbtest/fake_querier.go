@@ -34,6 +34,10 @@ type FakeQuerier struct {
 	taskAIContextsByTaskID map[uuid.UUID]db.TaskAiContext
 
 	gitlabConnectionsByProjectID map[uuid.UUID]db.GitlabConnection
+	gitlabConnectionsByID        map[uuid.UUID]db.GitlabConnection
+
+	linkedGitlabProjects     []db.LinkedGitlabProject // insertion order, newest last
+	linkedGitlabProjectsByID map[uuid.UUID]db.LinkedGitlabProject
 }
 
 // New returns an empty FakeQuerier.
@@ -51,6 +55,9 @@ func New() *FakeQuerier {
 		taskAIContextsByTaskID: map[uuid.UUID]db.TaskAiContext{},
 
 		gitlabConnectionsByProjectID: map[uuid.UUID]db.GitlabConnection{},
+		gitlabConnectionsByID:        map[uuid.UUID]db.GitlabConnection{},
+
+		linkedGitlabProjectsByID: map[uuid.UUID]db.LinkedGitlabProject{},
 	}
 }
 
@@ -660,6 +667,7 @@ func (f *FakeQuerier) UpsertGitlabConnection(_ context.Context, arg db.UpsertGit
 		c.CreatedAt = existing.CreatedAt
 	}
 	f.gitlabConnectionsByProjectID[arg.ProjectID] = c
+	f.gitlabConnectionsByID[c.ID] = c
 	return c, nil
 }
 
@@ -711,5 +719,213 @@ func (f *FakeQuerier) DeleteGitlabConnectionForOwner(_ context.Context, arg db.D
 		return 0, nil
 	}
 	delete(f.gitlabConnectionsByProjectID, arg.ProjectID)
+	delete(f.gitlabConnectionsByID, c.ID)
 	return 1, nil
+}
+
+// SeedGitlabConnection inserts a ready-made GitLab connection directly,
+// bypassing verification. encryptedToken must be a value a caller's Cipher
+// can decrypt, since services that read it back through gitlabconn.Dial
+// decrypt it. Use it in tests that need a pre-existing connection to link
+// GitLab projects against. Returns the stored row.
+func (f *FakeQuerier) SeedGitlabConnection(projectID uuid.UUID, encryptedToken []byte) db.GitlabConnection {
+	c := db.GitlabConnection{
+		ID:             uuid.New(),
+		ProjectID:      projectID,
+		BaseUrl:        "https://gitlab.example.com",
+		EncryptedToken: encryptedToken,
+		CreatedAt:      now(),
+		UpdatedAt:      now(),
+	}
+	f.gitlabConnectionsByProjectID[projectID] = c
+	f.gitlabConnectionsByID[c.ID] = c
+	return c
+}
+
+// linkedProjectOwner returns the owner_user_id of the project a linked
+// GitLab project belongs to (through its connection), mirroring the JOIN
+// chain the real queries perform.
+func (f *FakeQuerier) linkedProjectOwner(l db.LinkedGitlabProject) (uuid.UUID, bool) {
+	conn, ok := f.gitlabConnectionsByID[l.GitlabConnectionID]
+	if !ok {
+		return uuid.Nil, false
+	}
+	p, ok := f.projectsByID[conn.ProjectID]
+	if !ok {
+		return uuid.Nil, false
+	}
+	return p.OwnerUserID, true
+}
+
+// storeLinkedGitlabProject inserts l if it is new, or overwrites the
+// existing row in place (preserving its position in
+// f.linkedGitlabProjects) otherwise.
+func (f *FakeQuerier) storeLinkedGitlabProject(l db.LinkedGitlabProject) {
+	f.linkedGitlabProjectsByID[l.ID] = l
+	for i, x := range f.linkedGitlabProjects {
+		if x.ID == l.ID {
+			f.linkedGitlabProjects[i] = l
+			return
+		}
+	}
+	f.linkedGitlabProjects = append(f.linkedGitlabProjects, l)
+}
+
+// CreateLinkedGitlabProject mirrors the SQL: the first link created for a
+// connection becomes its default, and a (gitlab_connection_id,
+// gitlab_project_id) duplicate is a unique-constraint violation.
+func (f *FakeQuerier) CreateLinkedGitlabProject(_ context.Context, arg db.CreateLinkedGitlabProjectParams) (db.LinkedGitlabProject, error) {
+	isDefault := true
+	for _, l := range f.linkedGitlabProjects {
+		if l.GitlabConnectionID != arg.GitlabConnectionID {
+			continue
+		}
+		if l.GitlabProjectID == arg.GitlabProjectID {
+			return db.LinkedGitlabProject{}, &pgconn.PgError{Code: "23505", ConstraintName: "linked_gitlab_projects_gitlab_connection_id_gitlab_project_id_key"}
+		}
+		isDefault = false
+	}
+
+	l := db.LinkedGitlabProject{
+		ID:                  uuid.New(),
+		GitlabConnectionID:  arg.GitlabConnectionID,
+		GitlabProjectID:     arg.GitlabProjectID,
+		PathWithNamespace:   arg.PathWithNamespace,
+		Name:                arg.Name,
+		WebUrl:              arg.WebUrl,
+		SyncScope:           arg.SyncScope,
+		SyncLabels:          arg.SyncLabels,
+		InitialImportStatus: "pending",
+		IsDefault:           isDefault,
+		CreatedAt:           now(),
+		UpdatedAt:           now(),
+	}
+	f.storeLinkedGitlabProject(l)
+	return l, nil
+}
+
+func (f *FakeQuerier) ListLinkedGitlabProjectsForOwner(_ context.Context, arg db.ListLinkedGitlabProjectsForOwnerParams) ([]db.LinkedGitlabProject, error) {
+	items := []db.LinkedGitlabProject{}
+	for _, l := range f.linkedGitlabProjects {
+		conn, ok := f.gitlabConnectionsByID[l.GitlabConnectionID]
+		if !ok || conn.ProjectID != arg.ID {
+			continue
+		}
+		p, ok := f.projectsByID[conn.ProjectID]
+		if !ok || p.OwnerUserID != arg.OwnerUserID {
+			continue
+		}
+		items = append(items, l)
+	}
+	return items, nil
+}
+
+// GetLinkedGitlabProjectForOwner mirrors the SQL: a link whose project
+// belongs to someone else is reported as missing, never as a distinct
+// "forbidden" outcome.
+func (f *FakeQuerier) GetLinkedGitlabProjectForOwner(_ context.Context, arg db.GetLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	l, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	owner, ok := f.linkedProjectOwner(l)
+	if !ok || owner != arg.OwnerUserID {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+func (f *FakeQuerier) UpdateLinkedGitlabProjectSyncScopeForOwner(_ context.Context, arg db.UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (db.LinkedGitlabProject, error) {
+	existing, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	owner, ok := f.linkedProjectOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	existing.SyncScope = arg.SyncScope
+	existing.SyncLabels = arg.SyncLabels
+	existing.UpdatedAt = now()
+	f.storeLinkedGitlabProject(existing)
+	return existing, nil
+}
+
+// ClearDefaultLinkedGitlabProjectsForOwner unsets is_default on every other
+// link in the same connection as arg.ID, mirroring the SQL.
+func (f *FakeQuerier) ClearDefaultLinkedGitlabProjectsForOwner(_ context.Context, arg db.ClearDefaultLinkedGitlabProjectsForOwnerParams) error {
+	target, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return nil
+	}
+	owner, ok := f.linkedProjectOwner(target)
+	if !ok || owner != arg.OwnerUserID {
+		return nil
+	}
+	for _, l := range f.linkedGitlabProjects {
+		if l.ID != target.ID && l.GitlabConnectionID == target.GitlabConnectionID && l.IsDefault {
+			l.IsDefault = false
+			l.UpdatedAt = now()
+			f.storeLinkedGitlabProject(l)
+		}
+	}
+	return nil
+}
+
+func (f *FakeQuerier) SetDefaultLinkedGitlabProjectForOwner(_ context.Context, arg db.SetDefaultLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	existing, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	owner, ok := f.linkedProjectOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	existing.IsDefault = true
+	existing.UpdatedAt = now()
+	f.storeLinkedGitlabProject(existing)
+	return existing, nil
+}
+
+// DeleteLinkedGitlabProjectForOwner returns the deleted row, mirroring the
+// SQL, so the caller can tell whether the removed link was the default one.
+func (f *FakeQuerier) DeleteLinkedGitlabProjectForOwner(_ context.Context, arg db.DeleteLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	existing, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	owner, ok := f.linkedProjectOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	delete(f.linkedGitlabProjectsByID, existing.ID)
+	for i, x := range f.linkedGitlabProjects {
+		if x.ID == existing.ID {
+			f.linkedGitlabProjects = append(f.linkedGitlabProjects[:i], f.linkedGitlabProjects[i+1:]...)
+			break
+		}
+	}
+	return existing, nil
+}
+
+// PromoteOldestLinkedGitlabProjectAsDefault makes the oldest remaining link
+// in gitlabConnectionID the new default. A no-op if none remain.
+func (f *FakeQuerier) PromoteOldestLinkedGitlabProjectAsDefault(_ context.Context, gitlabConnectionID uuid.UUID) error {
+	var oldest *db.LinkedGitlabProject
+	for i := range f.linkedGitlabProjects {
+		l := &f.linkedGitlabProjects[i]
+		if l.GitlabConnectionID != gitlabConnectionID {
+			continue
+		}
+		if oldest == nil || l.CreatedAt.Time.Before(oldest.CreatedAt.Time) {
+			oldest = l
+		}
+	}
+	if oldest == nil {
+		return nil
+	}
+	oldest.IsDefault = true
+	oldest.UpdatedAt = now()
+	f.linkedGitlabProjectsByID[oldest.ID] = *oldest
+	return nil
 }

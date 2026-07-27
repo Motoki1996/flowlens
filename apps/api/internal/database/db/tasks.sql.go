@@ -86,6 +86,7 @@ func (q *Queries) CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerPa
 }
 
 const createTask = `-- name: CreateTask :one
+
 INSERT INTO tasks (
     project_id, backlog_id, title, description,
     assignee_gitlab_user_id, assignee_gitlab_username,
@@ -110,6 +111,15 @@ type CreateTaskParams struct {
 	CreatedByUserID        uuid.UUID   `json:"created_by_user_id"`
 }
 
+// Tasks are scoped through their parent project the same way backlogs are:
+// every single-task query joins to projects and filters on
+// owner_user_id, so a foreign task is indistinguishable from a missing one.
+// CreateTask trusts the caller to have already verified project ownership
+// (e.g. via project.Service.Get), like CreateBacklog.
+//
+// ListTasksByProject takes three independent optional filters so one query
+// serves the unfiltered, single-backlog, unassigned-only and status-scoped
+// list views: passing false/NULL/” for a filter disables it.
 func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error) {
 	row := q.db.QueryRow(ctx, createTask,
 		arg.ProjectID,

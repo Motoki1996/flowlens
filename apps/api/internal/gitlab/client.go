@@ -63,10 +63,13 @@ type ProjectHook struct {
 	PipelineEvents      bool   `json:"pipeline_events"`
 }
 
-// ListOptions is the pagination input shared by every list endpoint.
+// ListOptions is the pagination input shared by every list endpoint. Search,
+// when set, is sent as GitLab's `search` query parameter (used by
+// ListMemberProjects to let a user filter which project to link).
 type ListOptions struct {
 	Page    int
 	PerPage int
+	Search  string
 }
 
 func (o ListOptions) addTo(q url.Values) {
@@ -75,6 +78,9 @@ func (o ListOptions) addTo(q url.Values) {
 	}
 	if o.PerPage > 0 {
 		q.Set("per_page", strconv.Itoa(o.PerPage))
+	}
+	if o.Search != "" {
+		q.Set("search", o.Search)
 	}
 }
 

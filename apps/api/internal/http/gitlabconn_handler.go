@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/flowlens/api/internal/gitlabconn"
+	"github.com/flowlens/api/internal/linkedproject"
 )
 
 type putGitlabConnectionRequest struct {
@@ -78,13 +79,31 @@ func (s *Server) handleTestGitlabConnection(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, conn)
 }
 
-// handleDeleteGitlabConnection removes a project's GitLab connection.
+// handleDeleteGitlabConnection removes a project's GitLab connection. Every
+// GitLab project linked to it is unlinked first (linkedProjects.Delete),
+// which deregisters each one's webhook on the GitLab side (issue #18)
+// before the connection — and, via cascade, the now-webhook-less link
+// rows — is removed.
 func (s *Server) handleDeleteGitlabConnection(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	projectID, ok := projectIDFromURL(r)
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "gitlab connection not found")
 		return
+	}
+
+	links, err := s.linkedProjects.List(r.Context(), u.ID, projectID)
+	if err != nil && !errors.Is(err, linkedproject.ErrNotFound) {
+		slog.Error("gitlab connection delete: list linked projects", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+	for _, link := range links {
+		if err := s.linkedProjects.Delete(r.Context(), u.ID, link.ID); err != nil {
+			slog.Error("gitlab connection delete: unlink", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+			return
+		}
 	}
 
 	if err := s.gitlabConns.Delete(r.Context(), u.ID, projectID); err != nil {

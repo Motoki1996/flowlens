@@ -85,3 +85,29 @@ WHERE id = (
     ORDER BY candidate.created_at
     LIMIT 1
 );
+
+-- name: SetLinkedGitlabProjectWebhookForOwner :one
+-- Records a successful webhook registration or rotation (issue #18) and
+-- clears any earlier registration error.
+UPDATE linked_gitlab_projects lgp
+SET webhook_id = $3,
+    encrypted_webhook_secret = $4,
+    webhook_registered_at = now(),
+    webhook_registration_error = '',
+    updated_at = now()
+FROM gitlab_connections gc, projects p
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
+    AND p.owner_user_id = $2
+RETURNING lgp.*;
+
+-- name: SetLinkedGitlabProjectWebhookErrorForOwner :one
+-- Records why registering or repairing a webhook failed (most commonly
+-- insufficient GitLab permissions) without touching any existing
+-- webhook_id, so the link stays usable via manual sync.
+UPDATE linked_gitlab_projects lgp
+SET webhook_registration_error = $3,
+    updated_at = now()
+FROM gitlab_connections gc, projects p
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
+    AND p.owner_user_id = $2
+RETURNING lgp.*;

@@ -57,6 +57,12 @@ type Querier interface {
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
+	// Same as GetGitlabConnectionForOwner, but keyed by the connection's own ID
+	// rather than by its project. internal/linkedproject uses this to dial
+	// GitLab (issue #18's webhook registration/repair/delete) starting from a
+	// linked_gitlab_projects row, which carries gitlab_connection_id but not the
+	// app project ID.
+	GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGitlabConnectionByIDForOwnerParams) (GitlabConnection, error)
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
 	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
@@ -74,6 +80,13 @@ type Querier interface {
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
 	SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg SetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
+	// Records why registering or repairing a webhook failed (most commonly
+	// insufficient GitLab permissions) without touching any existing
+	// webhook_id, so the link stays usable via manual sync.
+	SetLinkedGitlabProjectWebhookErrorForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookErrorForOwnerParams) (LinkedGitlabProject, error)
+	// Records a successful webhook registration or rotation (issue #18) and
+	// clears any earlier registration error.
+	SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error)
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
 	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)

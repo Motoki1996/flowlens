@@ -1,19 +1,25 @@
 // Package linkedproject contains the domain model and service that manage
-// which GitLab CE projects a FlowLens project syncs issues with, and each
-// link's sync scope (docs/plans/issue-sync.md, "Sync scope").
+// which GitLab CE projects a FlowLens project syncs issues with, each
+// link's sync scope (docs/plans/issue-sync.md, "Sync scope"), and its
+// FlowLens webhook registration (issue #18).
 //
-// A link never carries webhook state: registering and unregistering the
-// FlowLens webhook on the GitLab side is a separate concern (issue-sync
-// phase 3+) built on top of this package once it lands.
+// The webhook secret is encrypted at rest (internal/crypto) and never
+// crosses into an API response; LinkedProject exposes only a status
+// ("registered" / "not_registered" / "failed") and, on failure, a reason.
 package linkedproject
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
@@ -21,6 +27,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Sync scope values for LinkedProject.SyncScope.
@@ -39,7 +46,27 @@ var (
 	ErrSyncLabelsRequired       = errors.New(`linkedproject: sync_labels must have at least one label when sync_scope is "labels"`)
 	ErrAlreadyLinked            = errors.New("linkedproject: gitlab project is already linked")
 	ErrGitlabProjectUnavailable = errors.New("linkedproject: could not fetch the gitlab project")
+
+	// ErrWebhookForbidden classifies a webhook registration failure caused by
+	// the connection's personal access token belonging to a user below
+	// Maintainer on the GitLab project (the minimum role GitLab CE requires
+	// to manage project webhooks).
+	ErrWebhookForbidden = errors.New("linkedproject: gitlab rejected the webhook registration; the personal access token's user needs at least the Maintainer role on this project")
+	// ErrWebhookRegistrationFailed classifies any other webhook registration
+	// failure (GitLab unreachable, unexpected response, ...).
+	ErrWebhookRegistrationFailed = errors.New("linkedproject: could not register the webhook with gitlab")
 )
+
+// Webhook status values for LinkedProject.WebhookStatus.
+const (
+	WebhookStatusNotRegistered = "not_registered"
+	WebhookStatusRegistered    = "registered"
+	WebhookStatusFailed        = "failed"
+)
+
+// webhookSecretBytes is the size of the random webhook secret FlowLens
+// generates for each link (docs/issue-sync.md's "32-byte random").
+const webhookSecretBytes = 32
 
 // LinkedProject is the API-facing representation of a GitLab project linked
 // to sync issues with a FlowLens project.
@@ -55,6 +82,12 @@ type LinkedProject struct {
 	IsDefault           bool       `json:"isDefault"`
 	InitialImportStatus string     `json:"initialImportStatus"`
 	LastSyncedAt        *time.Time `json:"lastSyncedAt,omitempty"`
+	// WebhookStatus is one of the WebhookStatus* constants. The webhook
+	// secret itself is never exposed, only this derived status and, when it
+	// is WebhookStatusFailed, WebhookError explaining why.
+	WebhookStatus       string     `json:"webhookStatus"`
+	WebhookRegisteredAt *time.Time `json:"webhookRegisteredAt,omitempty"`
+	WebhookError        string     `json:"webhookError,omitempty"`
 	CreatedAt           time.Time  `json:"createdAt"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
 }
@@ -72,12 +105,22 @@ func fromRow(row db.LinkedGitlabProject) LinkedProject {
 		SyncLabels:          row.SyncLabels,
 		IsDefault:           row.IsDefault,
 		InitialImportStatus: row.InitialImportStatus,
+		WebhookStatus:       WebhookStatusNotRegistered,
 		CreatedAt:           row.CreatedAt.Time,
 		UpdatedAt:           row.UpdatedAt.Time,
 	}
 	if row.LastSyncedAt.Valid {
 		t := row.LastSyncedAt.Time
 		lp.LastSyncedAt = &t
+	}
+	switch {
+	case row.WebhookRegistrationError != "":
+		lp.WebhookStatus = WebhookStatusFailed
+		lp.WebhookError = row.WebhookRegistrationError
+	case row.WebhookRegisteredAt.Valid:
+		lp.WebhookStatus = WebhookStatusRegistered
+		t := row.WebhookRegisteredAt.Time
+		lp.WebhookRegisteredAt = &t
 	}
 	return lp
 }
@@ -144,14 +187,20 @@ type UpdateParams struct {
 // Service manages the GitLab projects linked to a project's GitLab
 // connection, owned by a single user.
 type Service struct {
-	q           db.Querier
-	projects    *project.Service
-	gitlabConns *gitlabconn.Service
+	q            db.Querier
+	projects     *project.Service
+	gitlabConns  *gitlabconn.Service
+	cipher       *crypto.Cipher
+	appPublicURL string
 }
 
-// NewService constructs a linkedproject Service.
-func NewService(q db.Querier, projects *project.Service, gitlabConns *gitlabconn.Service) *Service {
-	return &Service{q: q, projects: projects, gitlabConns: gitlabConns}
+// NewService constructs a linkedproject Service. cipher encrypts/decrypts
+// each link's webhook secret at rest. appPublicURL is the URL GitLab must be
+// able to reach to deliver webhooks (config.Config.AppPublicURL); when
+// empty, webhook registration is skipped and every link stays
+// WebhookStatusNotRegistered.
+func NewService(q db.Querier, projects *project.Service, gitlabConns *gitlabconn.Service, cipher *crypto.Cipher, appPublicURL string) *Service {
+	return &Service{q: q, projects: projects, gitlabConns: gitlabConns, cipher: cipher, appPublicURL: appPublicURL}
 }
 
 // mapConnErr maps a gitlabconn error (raised while dialing a project's
@@ -218,6 +267,18 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 			return LinkedProject{}, ErrAlreadyLinked
 		}
 		return LinkedProject{}, fmt.Errorf("linkedproject: create: %w", err)
+	}
+
+	// Registering the webhook never fails Create: with APP_PUBLIC_URL unset
+	// the link stays WebhookStatusNotRegistered, and a GitLab-side failure
+	// (typically insufficient permission) is recorded as WebhookStatusFailed
+	// instead — either way the link is usable via manual sync
+	// (docs/plans/issue-sync.md).
+	if s.appPublicURL != "" {
+		row, err = s.establishWebhook(ctx, ownerID, client, token, row)
+		if err != nil {
+			return LinkedProject{}, err
+		}
 	}
 	return fromRow(row), nil
 }
@@ -290,10 +351,14 @@ func (s *Service) Update(ctx context.Context, ownerID, linkID uuid.UUID, params 
 // Delete unlinks linkID. This never touches GitLab-side issues, only
 // FlowLens's own bookkeeping — any tasks that were mirroring issues through
 // this link keep existing as local tasks (task_gitlab_links cascades away
-// with the link; tasks does not). If the deleted link was its connection's
-// default, the oldest remaining link is promoted so a default always exists
-// while any link does. Ownership is enforced by the query, so a non-owner
-// gets ErrNotFound and nothing is deleted.
+// with the link; tasks does not). If linkID has a registered webhook, its
+// removal from GitLab is attempted but never blocks the unlink: GitLab
+// reporting it already gone counts as success, per issue #18, and so does
+// any other failure (best-effort — this is app-side bookkeeping). If the
+// deleted link was its connection's default, the oldest remaining link is
+// promoted so a default always exists while any link does. Ownership is
+// enforced by the query, so a non-owner gets ErrNotFound and nothing is
+// deleted.
 func (s *Service) Delete(ctx context.Context, ownerID, linkID uuid.UUID) error {
 	deleted, err := s.q.DeleteLinkedGitlabProjectForOwner(ctx, db.DeleteLinkedGitlabProjectForOwnerParams{
 		ID:          linkID,
@@ -305,12 +370,158 @@ func (s *Service) Delete(ctx context.Context, ownerID, linkID uuid.UUID) error {
 		}
 		return fmt.Errorf("linkedproject: delete: %w", err)
 	}
+	s.deleteWebhookBestEffort(ctx, ownerID, deleted)
 	if deleted.IsDefault {
 		if err := s.q.PromoteOldestLinkedGitlabProjectAsDefault(ctx, deleted.GitlabConnectionID); err != nil {
 			return fmt.Errorf("linkedproject: delete: promote default: %w", err)
 		}
 	}
 	return nil
+}
+
+// RegisterWebhook (repair) creates linkID's FlowLens webhook on GitLab if
+// none exists yet, or rotates its secret if one does — see establishWebhook.
+// Retrying it never creates a duplicate hook. Returns ErrNotFound if linkID
+// does not exist or belongs to another user. When APP_PUBLIC_URL is unset
+// the link is returned unchanged, still WebhookStatusNotRegistered.
+func (s *Service) RegisterWebhook(ctx context.Context, ownerID, linkID uuid.UUID) (LinkedProject, error) {
+	link, err := s.q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{
+		ID:          linkID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return LinkedProject{}, ErrNotFound
+		}
+		return LinkedProject{}, fmt.Errorf("linkedproject: register webhook: %w", err)
+	}
+	if s.appPublicURL == "" {
+		return fromRow(link), nil
+	}
+
+	client, token, err := s.gitlabConns.DialByConnectionID(ctx, ownerID, link.GitlabConnectionID)
+	if err != nil {
+		return LinkedProject{}, mapConnErr(err)
+	}
+	updated, err := s.establishWebhook(ctx, ownerID, client, token, link)
+	if err != nil {
+		return LinkedProject{}, err
+	}
+	return fromRow(updated), nil
+}
+
+// establishWebhook registers or rotates link's FlowLens webhook against
+// GitLab: it lists the project's existing hooks and updates the one at
+// FlowLens's webhook URL if found (rotating its secret), or creates a new
+// one otherwise. This list-then-create-or-update path is shared by Create
+// and RegisterWebhook, so a repair retry never creates a duplicate hook.
+//
+// A GitLab-side failure (most commonly insufficient Maintainer permission)
+// is recorded on the row via recordWebhookError rather than returned, so the
+// caller (Create or RegisterWebhook) still succeeds — the link stays usable
+// via manual sync either way (docs/plans/issue-sync.md). Only a database or
+// encryption failure is returned as an error.
+func (s *Service) establishWebhook(ctx context.Context, ownerID uuid.UUID, client gitlab.Client, token string, link db.LinkedGitlabProject) (db.LinkedGitlabProject, error) {
+	secret, err := generateWebhookSecret()
+	if err != nil {
+		return db.LinkedGitlabProject{}, fmt.Errorf("linkedproject: generate webhook secret: %w", err)
+	}
+	hookURL := webhookURL(s.appPublicURL, link.ID)
+	payload := gitlab.ProjectHook{URL: hookURL, Token: secret, IssuesEvents: true}
+
+	existingHooks, err := client.ListProjectHooks(ctx, token, link.GitlabProjectID)
+	if err != nil {
+		return s.recordWebhookError(ctx, ownerID, link, err)
+	}
+
+	var hook *gitlab.ProjectHook
+	for _, h := range existingHooks {
+		if h.URL == hookURL {
+			hook, err = client.UpdateProjectHook(ctx, token, link.GitlabProjectID, h.ID, payload)
+			break
+		}
+	}
+	if hook == nil && err == nil {
+		hook, err = client.CreateProjectHook(ctx, token, link.GitlabProjectID, payload)
+	}
+	if err != nil {
+		return s.recordWebhookError(ctx, ownerID, link, err)
+	}
+
+	encryptedSecret, err := s.cipher.Encrypt(secret)
+	if err != nil {
+		return db.LinkedGitlabProject{}, fmt.Errorf("linkedproject: encrypt webhook secret: %w", err)
+	}
+
+	updated, err := s.q.SetLinkedGitlabProjectWebhookForOwner(ctx, db.SetLinkedGitlabProjectWebhookForOwnerParams{
+		ID:                     link.ID,
+		OwnerUserID:            ownerID,
+		WebhookID:              pgtype.Int8{Int64: hook.ID, Valid: true},
+		EncryptedWebhookSecret: encryptedSecret,
+	})
+	if err != nil {
+		return db.LinkedGitlabProject{}, fmt.Errorf("linkedproject: save webhook: %w", err)
+	}
+	return updated, nil
+}
+
+// recordWebhookError persists a GitLab-side webhook registration failure on
+// link without returning it as an error to the caller.
+func (s *Service) recordWebhookError(ctx context.Context, ownerID uuid.UUID, link db.LinkedGitlabProject, cause error) (db.LinkedGitlabProject, error) {
+	updated, err := s.q.SetLinkedGitlabProjectWebhookErrorForOwner(ctx, db.SetLinkedGitlabProjectWebhookErrorForOwnerParams{
+		ID:                       link.ID,
+		OwnerUserID:              ownerID,
+		WebhookRegistrationError: classifyWebhookError(cause).Error(),
+	})
+	if err != nil {
+		return db.LinkedGitlabProject{}, fmt.Errorf("linkedproject: record webhook error: %w", err)
+	}
+	return updated, nil
+}
+
+// deleteWebhookBestEffort removes link's webhook from GitLab if one was ever
+// registered. Every failure — dialing the connection, GitLab reporting the
+// hook already gone, or anything else — is swallowed: this is best-effort
+// GitLab-side cleanup and must never block unlinking (Delete's own doc
+// comment).
+func (s *Service) deleteWebhookBestEffort(ctx context.Context, ownerID uuid.UUID, link db.LinkedGitlabProject) {
+	if !link.WebhookID.Valid {
+		return
+	}
+	client, token, err := s.gitlabConns.DialByConnectionID(ctx, ownerID, link.GitlabConnectionID)
+	if err != nil {
+		return
+	}
+	_ = client.DeleteProjectHook(ctx, token, link.GitlabProjectID, link.WebhookID.Int64)
+}
+
+// classifyWebhookError maps a GitLab API failure encountered while
+// registering a webhook to a sentinel that distinguishes "the token's user
+// lacks Maintainer access" from any other failure, so the reason stored on
+// the row (and surfaced via LinkedProject.WebhookError) is meaningful.
+func classifyWebhookError(err error) error {
+	var apiErr *gitlab.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden {
+		return ErrWebhookForbidden
+	}
+	return fmt.Errorf("%w: %v", ErrWebhookRegistrationFailed, err)
+}
+
+// generateWebhookSecret returns a fresh random secret, hex-encoded, used as
+// the GitLab webhook token that authenticates inbound deliveries
+// (docs/plans/issue-sync.md, "Inbound").
+func generateWebhookSecret() (string, error) {
+	raw := make([]byte, webhookSecretBytes)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+// webhookURL is the exact URL FlowLens registers as linkID's GitLab
+// webhook, matching the inbound route in docs/plans/issue-sync.md.
+func webhookURL(appPublicURL string, linkID uuid.UUID) string {
+	return strings.TrimRight(appPublicURL, "/") + "/webhooks/gitlab/" + linkID.String()
 }
 
 // isUniqueViolation reports whether err is a Postgres unique-constraint

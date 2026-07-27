@@ -266,10 +266,11 @@ func (s *Service) Test(ctx context.Context, ownerID, projectID uuid.UUID) (Conne
 }
 
 // Delete removes projectID's GitLab connection. Linked GitLab projects
-// cascade-delete with it (schema FK); unregistering their webhooks on the
-// GitLab side is wired up once #18 (linked project sync) lands. Ownership
-// is enforced by the query, so a non-owner gets ErrNotFound and nothing is
-// deleted.
+// cascade-delete with it (schema FK); the caller (internal/http) unlinks
+// each one via linkedproject.Service.Delete first, which deregisters its
+// webhook on the GitLab side (issue #18) before this runs, so the cascade
+// itself never needs to reach GitLab. Ownership is enforced by the query,
+// so a non-owner gets ErrNotFound and nothing is deleted.
 func (s *Service) Delete(ctx context.Context, ownerID, projectID uuid.UUID) error {
 	affected, err := s.q.DeleteGitlabConnectionForOwner(ctx, db.DeleteGitlabConnectionForOwnerParams{
 		ProjectID:   projectID,
@@ -298,6 +299,29 @@ func (s *Service) Dial(ctx context.Context, ownerID, projectID uuid.UUID) (gitla
 		return nil, "", uuid.Nil, fmt.Errorf("gitlabconn: dial: %w", err)
 	}
 	return s.clientFactory(row.BaseUrl), token, row.ID, nil
+}
+
+// DialByConnectionID is Dial, but keyed by the GitLab connection's own ID
+// rather than by its owning project's ID. internal/linkedproject uses this
+// for webhook registration/repair/delete (issue #18): a linked_gitlab_projects
+// row carries gitlab_connection_id but not the app project ID Dial normally
+// requires.
+func (s *Service) DialByConnectionID(ctx context.Context, ownerID, connectionID uuid.UUID) (gitlab.Client, string, error) {
+	row, err := s.q.GetGitlabConnectionByIDForOwner(ctx, db.GetGitlabConnectionByIDForOwnerParams{
+		ID:          connectionID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", ErrNotFound
+		}
+		return nil, "", fmt.Errorf("gitlabconn: dial by connection: %w", err)
+	}
+	token, err := s.cipher.Decrypt(row.EncryptedToken)
+	if err != nil {
+		return nil, "", fmt.Errorf("gitlabconn: dial by connection: %w", err)
+	}
+	return s.clientFactory(row.BaseUrl), token, nil
 }
 
 // getRow fetches the raw database row for projectID, scoped to ownerID,

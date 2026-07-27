@@ -58,7 +58,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, ciph
 		backlogs:       backlogs,
 		tasks:          task.NewService(queries, projects, backlogs),
 		gitlabConns:    gitlabConns,
-		linkedProjects: linkedproject.NewService(queries, projects, gitlabConns),
+		linkedProjects: linkedproject.NewService(queries, projects, gitlabConns, cipher, cfg.AppPublicURL),
 		sessions:       auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:        cookieManager{secure: cfg.IsProduction()},
 		webBaseURL:     cfg.WebBaseURL,
@@ -113,6 +113,7 @@ func (s *Server) Router() chi.Router {
 			protected.Route("/linked-gitlab-projects", func(linked chi.Router) {
 				linked.Patch("/{linkID}", s.handleUpdateLinkedGitlabProject)
 				linked.Delete("/{linkID}", s.handleDeleteLinkedGitlabProject)
+				linked.Post("/{linkID}/webhook", s.handleRegisterLinkedGitlabProjectWebhook)
 			})
 
 			protected.Route("/backlogs", func(backlogs chi.Router) {

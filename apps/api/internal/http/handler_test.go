@@ -38,8 +38,18 @@ func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 // newTestServerWithGitlabClient is newTestServer, but every GitLab
 // connection the server verifies goes through fake instead of a fresh,
 // empty FakeClient — letting gitlab connection tests control what
-// "verification" returns without a real GitLab CE instance.
+// "verification" returns without a real GitLab CE instance. APP_PUBLIC_URL
+// is unset, so linked GitLab projects never attempt webhook registration;
+// use newTestServerWithAppPublicURL for tests that need it.
 func newTestServerWithGitlabClient(t *testing.T, fake *gitlab.FakeClient) (*Server, *dbtest.FakeQuerier) {
+	t.Helper()
+	return newTestServerWithAppPublicURL(t, fake, "")
+}
+
+// newTestServerWithAppPublicURL is newTestServerWithGitlabClient, but with
+// APP_PUBLIC_URL set to appPublicURL, so linked GitLab projects attempt
+// webhook registration against fake.
+func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPublicURL string) (*Server, *dbtest.FakeQuerier) {
 	t.Helper()
 	q := dbtest.New()
 	cipher, err := crypto.New(testEncryptionKey)
@@ -55,7 +65,7 @@ func newTestServerWithGitlabClient(t *testing.T, fake *gitlab.FakeClient) (*Serv
 		backlogs:       backlogs,
 		tasks:          task.NewService(q, projects, backlogs),
 		gitlabConns:    gitlabConns,
-		linkedProjects: linkedproject.NewService(q, projects, gitlabConns),
+		linkedProjects: linkedproject.NewService(q, projects, gitlabConns, cipher, appPublicURL),
 		sessions:       auth.NewSessionService(q, time.Hour),
 		cookies:        cookieManager{secure: false},
 		webBaseURL:     "http://localhost:3000",

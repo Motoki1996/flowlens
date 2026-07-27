@@ -1,0 +1,1 @@
+ALTER TABLE linked_gitlab_projects DROP COLUMN webhook_registration_error;

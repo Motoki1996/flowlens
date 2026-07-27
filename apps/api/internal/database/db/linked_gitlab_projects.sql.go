@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const clearDefaultLinkedGitlabProjectsForOwner = `-- name: ClearDefaultLinkedGitlabProjectsForOwner :exec
@@ -46,7 +47,7 @@ VALUES (
     $1, $2, $3, $4, $5, $6, $7,
     NOT EXISTS (SELECT 1 FROM linked_gitlab_projects WHERE gitlab_connection_id = $1)
 )
-RETURNING id, gitlab_connection_id, gitlab_project_id, path_with_namespace, name, web_url, sync_scope, sync_labels, webhook_id, encrypted_webhook_secret, webhook_registered_at, initial_import_status, last_synced_at, created_at, updated_at, is_default
+RETURNING id, gitlab_connection_id, gitlab_project_id, path_with_namespace, name, web_url, sync_scope, sync_labels, webhook_id, encrypted_webhook_secret, webhook_registered_at, initial_import_status, last_synced_at, created_at, updated_at, is_default, webhook_registration_error
 `
 
 type CreateLinkedGitlabProjectParams struct {
@@ -93,6 +94,7 @@ func (q *Queries) CreateLinkedGitlabProject(ctx context.Context, arg CreateLinke
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDefault,
+		&i.WebhookRegistrationError,
 	)
 	return i, err
 }
@@ -102,7 +104,7 @@ DELETE FROM linked_gitlab_projects lgp
 USING gitlab_connections gc, projects p
 WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
     AND p.owner_user_id = $2
-RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default
+RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 `
 
 type DeleteLinkedGitlabProjectForOwnerParams struct {
@@ -133,12 +135,13 @@ func (q *Queries) DeleteLinkedGitlabProjectForOwner(ctx context.Context, arg Del
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDefault,
+		&i.WebhookRegistrationError,
 	)
 	return i, err
 }
 
 const getLinkedGitlabProjectForOwner = `-- name: GetLinkedGitlabProjectForOwner :one
-SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default
+SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
 JOIN projects p ON p.id = gc.project_id
@@ -170,12 +173,13 @@ func (q *Queries) GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLin
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDefault,
+		&i.WebhookRegistrationError,
 	)
 	return i, err
 }
 
 const listLinkedGitlabProjectsForOwner = `-- name: ListLinkedGitlabProjectsForOwner :many
-SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default
+SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
 JOIN projects p ON p.id = gc.project_id
@@ -214,6 +218,7 @@ func (q *Queries) ListLinkedGitlabProjectsForOwner(ctx context.Context, arg List
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsDefault,
+			&i.WebhookRegistrationError,
 		); err != nil {
 			return nil, err
 		}
@@ -250,7 +255,7 @@ SET is_default = true,
 FROM gitlab_connections gc, projects p
 WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
     AND p.owner_user_id = $2
-RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default
+RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 `
 
 type SetDefaultLinkedGitlabProjectForOwnerParams struct {
@@ -278,6 +283,103 @@ func (q *Queries) SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
+const setLinkedGitlabProjectWebhookErrorForOwner = `-- name: SetLinkedGitlabProjectWebhookErrorForOwner :one
+UPDATE linked_gitlab_projects lgp
+SET webhook_registration_error = $3,
+    updated_at = now()
+FROM gitlab_connections gc, projects p
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
+    AND p.owner_user_id = $2
+RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
+`
+
+type SetLinkedGitlabProjectWebhookErrorForOwnerParams struct {
+	ID                       uuid.UUID `json:"id"`
+	OwnerUserID              uuid.UUID `json:"owner_user_id"`
+	WebhookRegistrationError string    `json:"webhook_registration_error"`
+}
+
+// Records why registering or repairing a webhook failed (most commonly
+// insufficient GitLab permissions) without touching any existing
+// webhook_id, so the link stays usable via manual sync.
+func (q *Queries) SetLinkedGitlabProjectWebhookErrorForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookErrorForOwnerParams) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, setLinkedGitlabProjectWebhookErrorForOwner, arg.ID, arg.OwnerUserID, arg.WebhookRegistrationError)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
+const setLinkedGitlabProjectWebhookForOwner = `-- name: SetLinkedGitlabProjectWebhookForOwner :one
+UPDATE linked_gitlab_projects lgp
+SET webhook_id = $3,
+    encrypted_webhook_secret = $4,
+    webhook_registered_at = now(),
+    webhook_registration_error = '',
+    updated_at = now()
+FROM gitlab_connections gc, projects p
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
+    AND p.owner_user_id = $2
+RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
+`
+
+type SetLinkedGitlabProjectWebhookForOwnerParams struct {
+	ID                     uuid.UUID   `json:"id"`
+	OwnerUserID            uuid.UUID   `json:"owner_user_id"`
+	WebhookID              pgtype.Int8 `json:"webhook_id"`
+	EncryptedWebhookSecret []byte      `json:"encrypted_webhook_secret"`
+}
+
+// Records a successful webhook registration or rotation (issue #18) and
+// clears any earlier registration error.
+func (q *Queries) SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, setLinkedGitlabProjectWebhookForOwner,
+		arg.ID,
+		arg.OwnerUserID,
+		arg.WebhookID,
+		arg.EncryptedWebhookSecret,
+	)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
 	)
 	return i, err
 }
@@ -290,7 +392,7 @@ SET sync_scope = $3,
 FROM gitlab_connections gc, projects p
 WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
     AND p.owner_user_id = $2
-RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default
+RETURNING lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 `
 
 type UpdateLinkedGitlabProjectSyncScopeForOwnerParams struct {
@@ -325,6 +427,7 @@ func (q *Queries) UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDefault,
+		&i.WebhookRegistrationError,
 	)
 	return i, err
 }

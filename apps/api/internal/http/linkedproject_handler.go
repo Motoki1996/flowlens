@@ -170,6 +170,25 @@ func (s *Server) handleUpdateLinkedGitlabProject(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, link)
 }
 
+// handleRegisterLinkedGitlabProjectWebhook (re)registers linkID's FlowLens
+// webhook on GitLab: creates it if none exists yet, or rotates its secret
+// if one does. Retrying this endpoint never creates a duplicate hook.
+func (s *Server) handleRegisterLinkedGitlabProjectWebhook(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	linkID, ok := linkIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "linked gitlab project not found")
+		return
+	}
+
+	link, err := s.linkedProjects.RegisterWebhook(r.Context(), u.ID, linkID)
+	if err != nil {
+		writeLinkedProjectError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, link)
+}
+
 // handleDeleteLinkedGitlabProject unlinks a GitLab project, scoped to the
 // authenticated user. It never deletes anything on the GitLab side and
 // never deletes the app's own tasks — only this bookkeeping row.

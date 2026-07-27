@@ -11,6 +11,8 @@ import (
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
+	"github.com/flowlens/api/internal/gitlab"
+	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
@@ -27,35 +29,37 @@ type Pinger interface {
 
 // Server holds handler dependencies and builds the router.
 type Server struct {
-	health     Pinger
-	users      *user.Service
-	projects   *project.Service
-	backlogs   *backlog.Service
-	tasks      *task.Service
-	sessions   *auth.SessionService
-	cookies    cookieManager
-	webBaseURL string
-	sessionTTL time.Duration
-	cipher     *crypto.Cipher
+	health      Pinger
+	users       *user.Service
+	projects    *project.Service
+	backlogs    *backlog.Service
+	tasks       *task.Service
+	gitlabConns *gitlabconn.Service
+	sessions    *auth.SessionService
+	cookies     cookieManager
+	webBaseURL  string
+	sessionTTL  time.Duration
+	cipher      *crypto.Cipher
 }
 
 // NewServer constructs a Server from configuration, the generated queries,
 // a database health probe, and a Cipher for encrypting secrets at rest
-// (GitLab access tokens, webhook secrets — not yet used by any handler).
+// (GitLab access tokens, webhook secrets).
 func NewServer(cfg *config.Config, queries database.Querier, health Pinger, cipher *crypto.Cipher) (*Server, error) {
 	projects := project.NewService(queries)
 	backlogs := backlog.NewService(queries, projects)
 	return &Server{
-		health:     health,
-		users:      user.NewService(queries),
-		projects:   projects,
-		backlogs:   backlogs,
-		tasks:      task.NewService(queries, projects, backlogs),
-		sessions:   auth.NewSessionService(queries, cfg.SessionTTL),
-		cookies:    cookieManager{secure: cfg.IsProduction()},
-		webBaseURL: cfg.WebBaseURL,
-		sessionTTL: cfg.SessionTTL,
-		cipher:     cipher,
+		health:      health,
+		users:       user.NewService(queries),
+		projects:    projects,
+		backlogs:    backlogs,
+		tasks:       task.NewService(queries, projects, backlogs),
+		gitlabConns: gitlabconn.NewService(queries, projects, cipher, func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }),
+		sessions:    auth.NewSessionService(queries, cfg.SessionTTL),
+		cookies:     cookieManager{secure: cfg.IsProduction()},
+		webBaseURL:  cfg.WebBaseURL,
+		sessionTTL:  cfg.SessionTTL,
+		cipher:      cipher,
 	}, nil
 }
 
@@ -91,6 +95,11 @@ func (s *Server) Router() chi.Router {
 
 				projects.Get("/{projectID}/tasks", s.handleListTasks)
 				projects.Post("/{projectID}/tasks", s.handleCreateTask)
+
+				projects.Put("/{projectID}/gitlab-connection", s.handlePutGitlabConnection)
+				projects.Get("/{projectID}/gitlab-connection", s.handleGetGitlabConnection)
+				projects.Delete("/{projectID}/gitlab-connection", s.handleDeleteGitlabConnection)
+				projects.Post("/{projectID}/gitlab-connection/test", s.handleTestGitlabConnection)
 			})
 
 			protected.Route("/backlogs", func(backlogs chi.Router) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import type { Project } from "@/types";
 import { ProjectDetail } from "./ProjectDetail";
 
@@ -53,8 +53,9 @@ describe("ProjectDetail", () => {
     render(<ProjectDetail project={project} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Renamed" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    const editForm = screen.getByRole("form", { name: "Edit project" });
+    fireEvent.change(within(editForm).getByLabelText("Name"), { target: { value: "Renamed" } });
+    fireEvent.click(within(editForm).getByRole("button", { name: "Save" }));
 
     expect(await screen.findByRole("heading", { name: "Renamed" })).toBeInTheDocument();
   });

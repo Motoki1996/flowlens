@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, Backlog, Project, Task } from "@/types";
+import type { ApiError, Backlog, GitlabConnection, LinkedGitlabProject, Project, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { TaskListSection } from "@/components/TaskListSection";
 import { BacklogListSection } from "@/components/BacklogListSection";
+import { GitlabConnectionSection } from "@/components/GitlabConnectionSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -171,11 +172,15 @@ export function ProjectDetail({
   tasks = [],
   backlogs = [],
   tasksError = false,
+  gitlabConnection = null,
+  linkedGitlabProjects = [],
 }: {
   project: Project;
   tasks?: Task[];
   backlogs?: Backlog[];
   tasksError?: boolean;
+  gitlabConnection?: GitlabConnection | null;
+  linkedGitlabProjects?: LinkedGitlabProject[];
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -236,13 +241,15 @@ export function ProjectDetail({
         <TaskListSection tasks={tasks} backlogs={backlogs} error={tasksError} />
       </div>
 
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Card className="border-dashed">
-          <CardHeader>
-            <CardTitle className="text-base font-medium">GitLab connection</CardTitle>
-            <CardDescription>Coming soon.</CardDescription>
-          </CardHeader>
-        </Card>
+      <div className="mt-8">
+        <GitlabConnectionSection
+          projectId={project.id}
+          connection={gitlabConnection}
+          linkedProjects={linkedGitlabProjects}
+        />
+      </div>
+
+      <div className="mt-8">
         <Card className="border-dashed">
           <CardHeader>
             <CardTitle className="text-base font-medium">Sync history</CardTitle>

@@ -1,5 +1,12 @@
 import { redirect, notFound } from "next/navigation";
-import { getBacklogs, getCurrentUser, getProject, getTasks } from "@/lib/api";
+import {
+  getBacklogs,
+  getCurrentUser,
+  getGitlabConnection,
+  getLinkedGitlabProjects,
+  getProject,
+  getTasks,
+} from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
 import { ProjectDetail } from "@/components/ProjectDetail";
 
@@ -24,11 +31,30 @@ export default async function ProjectPage({
     tasksError = true;
   }
 
+  let gitlabConnection: Awaited<ReturnType<typeof getGitlabConnection>> = null;
+  let linkedGitlabProjects: Awaited<ReturnType<typeof getLinkedGitlabProjects>> = [];
+  try {
+    [gitlabConnection, linkedGitlabProjects] = await Promise.all([
+      getGitlabConnection(projectId),
+      getLinkedGitlabProjects(projectId),
+    ]);
+  } catch {
+    // Left as their defaults (disconnected, no links); the section still
+    // renders and lets the user retry via its own actions.
+  }
+
   return (
     <>
       <AppHeader user={user} />
       <main className="mx-auto max-w-6xl px-6 py-8">
-        <ProjectDetail project={project} tasks={tasks} backlogs={backlogs} tasksError={tasksError} />
+        <ProjectDetail
+          project={project}
+          tasks={tasks}
+          backlogs={backlogs}
+          tasksError={tasksError}
+          gitlabConnection={gitlabConnection}
+          linkedGitlabProjects={linkedGitlabProjects}
+        />
       </main>
     </>
   );

@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/flowlens/api/internal/gitlab"
@@ -134,6 +135,110 @@ func TestHandleDeleteLinkedGitlabProject_RemovesLinkOnly(t *testing.T) {
 	var links []map[string]any
 	require.NoError(t, json.Unmarshal(listRec.Body.Bytes(), &links))
 	assert.Empty(t, links)
+}
+
+// TestHandleCreateLinkedGitlabProject_RegistersWebhookWithoutExposingSecret
+// covers issue #18's acceptance criteria: creating a link with
+// APP_PUBLIC_URL configured registers its webhook, and the secret never
+// appears in the response.
+func TestHandleCreateLinkedGitlabProject_RegistersWebhookWithoutExposingSecret(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},
+		Project:           &gitlab.Project{ID: 42, Name: "demo", PathWithNamespace: "group/demo"},
+		Hook:              &gitlab.ProjectHook{ID: 501},
+	}
+	s, q := newTestServerWithAppPublicURL(t, fake, "https://flowlens.example.com")
+	ownerID, token := loginSession(t, s, q)
+	projectID := q.SeedProject(ownerID, "Alpha").ID.String()
+	setUpConnectedProject(t, s, token, projectID)
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+projectID+"/linked-gitlab-projects",
+		createLinkedGitlabProjectRequest{GitlabProjectID: 42, SyncScope: "all"}, token)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.NotContains(t, strings.ToLower(rec.Body.String()), "secret")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "registered", body["webhookStatus"])
+	assert.NotEmpty(t, body["webhookRegisteredAt"])
+}
+
+// TestHandleRegisterLinkedGitlabProjectWebhook_RepairIsIdempotent covers
+// issue #18's acceptance criterion that repeating the repair endpoint never
+// duplicates the GitLab-side hook.
+func TestHandleRegisterLinkedGitlabProjectWebhook_RepairIsIdempotent(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},
+		Project:           &gitlab.Project{ID: 42, Name: "demo", PathWithNamespace: "group/demo"},
+		Hook:              &gitlab.ProjectHook{ID: 501},
+	}
+	appPublicURL := "https://flowlens.example.com"
+	s, q := newTestServerWithAppPublicURL(t, fake, appPublicURL)
+	ownerID, token := loginSession(t, s, q)
+	projectID := q.SeedProject(ownerID, "Alpha").ID.String()
+	setUpConnectedProject(t, s, token, projectID)
+
+	createRec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+projectID+"/linked-gitlab-projects",
+		createLinkedGitlabProjectRequest{GitlabProjectID: 42, SyncScope: "all"}, token)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	linkID := created["id"].(string)
+
+	// Simulate the hook now existing on GitLab, as ListProjectHooks would
+	// report after the create above.
+	fake.Hooks = []gitlab.ProjectHook{{ID: 501, URL: appPublicURL + "/webhooks/gitlab/" + linkID}}
+
+	for i := 0; i < 2; i++ {
+		rec := doRequest(t, s, http.MethodPost, "/api/v1/linked-gitlab-projects/"+linkID+"/webhook", nil, token)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "registered", body["webhookStatus"])
+	}
+
+	var createCalls, updateCalls int
+	for _, call := range fake.CallLog {
+		switch call.Method {
+		case "CreateProjectHook":
+			createCalls++
+		case "UpdateProjectHook":
+			updateCalls++
+		}
+	}
+	assert.Equal(t, 1, createCalls, "repairing an already-registered webhook must never create a duplicate hook")
+	assert.Equal(t, 2, updateCalls)
+}
+
+// TestHandleDeleteGitlabConnection_DeregistersEveryLinkedWebhook covers
+// issue #18's requirement that disconnecting GitLab entirely deregisters
+// the webhooks of every GitLab project linked through it.
+func TestHandleDeleteGitlabConnection_DeregistersEveryLinkedWebhook(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},
+		Project:           &gitlab.Project{ID: 42, Name: "demo", PathWithNamespace: "group/demo"},
+		Hook:              &gitlab.ProjectHook{ID: 501},
+	}
+	s, q := newTestServerWithAppPublicURL(t, fake, "https://flowlens.example.com")
+	ownerID, token := loginSession(t, s, q)
+	projectID := q.SeedProject(ownerID, "Alpha").ID.String()
+	setUpConnectedProject(t, s, token, projectID)
+
+	createRec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+projectID+"/linked-gitlab-projects",
+		createLinkedGitlabProjectRequest{GitlabProjectID: 42, SyncScope: "all"}, token)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+
+	rec := doRequest(t, s, http.MethodDelete, "/api/v1/projects/"+projectID+"/gitlab-connection", nil, token)
+	require.Equal(t, http.StatusNoContent, rec.Code)
+
+	var sawDeleteHook bool
+	for _, call := range fake.CallLog {
+		if call.Method == "DeleteProjectHook" {
+			sawDeleteHook = true
+		}
+	}
+	assert.True(t, sawDeleteHook, "deleting the gitlab connection must deregister its linked projects' webhooks")
 }
 
 func TestHandleListAvailableGitlabProjects_ReturnsGitlabProjects(t *testing.T) {

@@ -31,6 +31,42 @@ func (q *Queries) DeleteGitlabConnectionForOwner(ctx context.Context, arg Delete
 	return result.RowsAffected(), nil
 }
 
+const getGitlabConnectionByIDForOwner = `-- name: GetGitlabConnectionByIDForOwner :one
+SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
+    gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at
+FROM gitlab_connections gc
+JOIN projects p ON p.id = gc.project_id
+WHERE gc.id = $1 AND p.owner_user_id = $2
+`
+
+type GetGitlabConnectionByIDForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// Same as GetGitlabConnectionForOwner, but keyed by the connection's own ID
+// rather than by its project. internal/linkedproject uses this to dial
+// GitLab (issue #18's webhook registration/repair/delete) starting from a
+// linked_gitlab_projects row, which carries gitlab_connection_id but not the
+// app project ID.
+func (q *Queries) GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGitlabConnectionByIDForOwnerParams) (GitlabConnection, error) {
+	row := q.db.QueryRow(ctx, getGitlabConnectionByIDForOwner, arg.ID, arg.OwnerUserID)
+	var i GitlabConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BaseUrl,
+		&i.EncryptedToken,
+		&i.TokenGitlabUserID,
+		&i.TokenGitlabUsername,
+		&i.LastVerifiedAt,
+		&i.LastVerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getGitlabConnectionForOwner = `-- name: GetGitlabConnectionForOwner :one
 SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at

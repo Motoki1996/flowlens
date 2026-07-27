@@ -1,9 +1,9 @@
 // Package gitlab wraps the parts of the GitLab CE REST API that FlowLens
 // needs. It is defined as an interface so a fake implementation can be used
 // in tests and so future concerns (pagination, rate limiting, retries) live
-// behind a single seam. It is not wired into any handler yet — a later
-// phase uses it to sync issues, members, and webhooks once a user connects a
-// GitLab personal access token.
+// behind a single seam. internal/linkedproject wires up the webhook methods
+// (issue #18); the issue/member methods are reserved for the sync engine
+// phases in docs/plans/issue-sync.md.
 package gitlab
 
 import (

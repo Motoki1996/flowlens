@@ -686,6 +686,20 @@ func (f *FakeQuerier) GetGitlabConnectionForOwner(_ context.Context, arg db.GetG
 	return c, nil
 }
 
+// GetGitlabConnectionByIDForOwner mirrors the SQL: same lookup as
+// GetGitlabConnectionForOwner, but keyed by the connection's own ID.
+func (f *FakeQuerier) GetGitlabConnectionByIDForOwner(_ context.Context, arg db.GetGitlabConnectionByIDForOwnerParams) (db.GitlabConnection, error) {
+	c, ok := f.gitlabConnectionsByID[arg.ID]
+	if !ok {
+		return db.GitlabConnection{}, pgx.ErrNoRows
+	}
+	owner, ok := f.gitlabConnectionOwner(c)
+	if !ok || owner != arg.OwnerUserID {
+		return db.GitlabConnection{}, pgx.ErrNoRows
+	}
+	return c, nil
+}
+
 func (f *FakeQuerier) UpdateGitlabConnectionVerificationForOwner(_ context.Context, arg db.UpdateGitlabConnectionVerificationForOwnerParams) (db.GitlabConnection, error) {
 	existing, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
 	if !ok {
@@ -703,6 +717,7 @@ func (f *FakeQuerier) UpdateGitlabConnectionVerificationForOwner(_ context.Conte
 	existing.UpdatedAt = now()
 
 	f.gitlabConnectionsByProjectID[arg.ProjectID] = existing
+	f.gitlabConnectionsByID[existing.ID] = existing
 	return existing, nil
 }
 
@@ -928,4 +943,43 @@ func (f *FakeQuerier) PromoteOldestLinkedGitlabProjectAsDefault(_ context.Contex
 	oldest.UpdatedAt = now()
 	f.linkedGitlabProjectsByID[oldest.ID] = *oldest
 	return nil
+}
+
+// SetLinkedGitlabProjectWebhookForOwner mirrors the SQL: records a
+// successful webhook registration or rotation and clears any earlier
+// registration error.
+func (f *FakeQuerier) SetLinkedGitlabProjectWebhookForOwner(_ context.Context, arg db.SetLinkedGitlabProjectWebhookForOwnerParams) (db.LinkedGitlabProject, error) {
+	existing, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	owner, ok := f.linkedProjectOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	existing.WebhookID = arg.WebhookID
+	existing.EncryptedWebhookSecret = arg.EncryptedWebhookSecret
+	existing.WebhookRegisteredAt = now()
+	existing.WebhookRegistrationError = ""
+	existing.UpdatedAt = now()
+	f.storeLinkedGitlabProject(existing)
+	return existing, nil
+}
+
+// SetLinkedGitlabProjectWebhookErrorForOwner mirrors the SQL: records why a
+// webhook registration or repair attempt failed, leaving any existing
+// webhook_id untouched.
+func (f *FakeQuerier) SetLinkedGitlabProjectWebhookErrorForOwner(_ context.Context, arg db.SetLinkedGitlabProjectWebhookErrorForOwnerParams) (db.LinkedGitlabProject, error) {
+	existing, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	owner, ok := f.linkedProjectOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	existing.WebhookRegistrationError = arg.WebhookRegistrationError
+	existing.UpdatedAt = now()
+	f.storeLinkedGitlabProject(existing)
+	return existing, nil
 }

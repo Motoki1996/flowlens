@@ -29,6 +29,18 @@ FROM gitlab_connections gc
 JOIN projects p ON p.id = gc.project_id
 WHERE gc.project_id = $1 AND p.owner_user_id = $2;
 
+-- name: GetGitlabConnectionByIDForOwner :one
+-- Same as GetGitlabConnectionForOwner, but keyed by the connection's own ID
+-- rather than by its project. internal/linkedproject uses this to dial
+-- GitLab (issue #18's webhook registration/repair/delete) starting from a
+-- linked_gitlab_projects row, which carries gitlab_connection_id but not the
+-- app project ID.
+SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
+    gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at
+FROM gitlab_connections gc
+JOIN projects p ON p.id = gc.project_id
+WHERE gc.id = $1 AND p.owner_user_id = $2;
+
 -- name: UpdateGitlabConnectionVerificationForOwner :one
 UPDATE gitlab_connections gc
 SET token_gitlab_user_id = $3,

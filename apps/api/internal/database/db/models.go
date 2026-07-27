@@ -47,22 +47,23 @@ type GitlabSyncRun struct {
 }
 
 type LinkedGitlabProject struct {
-	ID                     uuid.UUID          `json:"id"`
-	GitlabConnectionID     uuid.UUID          `json:"gitlab_connection_id"`
-	GitlabProjectID        int64              `json:"gitlab_project_id"`
-	PathWithNamespace      string             `json:"path_with_namespace"`
-	Name                   string             `json:"name"`
-	WebUrl                 string             `json:"web_url"`
-	SyncScope              string             `json:"sync_scope"`
-	SyncLabels             []string           `json:"sync_labels"`
-	WebhookID              pgtype.Int8        `json:"webhook_id"`
-	EncryptedWebhookSecret []byte             `json:"encrypted_webhook_secret"`
-	WebhookRegisteredAt    pgtype.Timestamptz `json:"webhook_registered_at"`
-	InitialImportStatus    string             `json:"initial_import_status"`
-	LastSyncedAt           pgtype.Timestamptz `json:"last_synced_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	IsDefault              bool               `json:"is_default"`
+	ID                       uuid.UUID          `json:"id"`
+	GitlabConnectionID       uuid.UUID          `json:"gitlab_connection_id"`
+	GitlabProjectID          int64              `json:"gitlab_project_id"`
+	PathWithNamespace        string             `json:"path_with_namespace"`
+	Name                     string             `json:"name"`
+	WebUrl                   string             `json:"web_url"`
+	SyncScope                string             `json:"sync_scope"`
+	SyncLabels               []string           `json:"sync_labels"`
+	WebhookID                pgtype.Int8        `json:"webhook_id"`
+	EncryptedWebhookSecret   []byte             `json:"encrypted_webhook_secret"`
+	WebhookRegisteredAt      pgtype.Timestamptz `json:"webhook_registered_at"`
+	InitialImportStatus      string             `json:"initial_import_status"`
+	LastSyncedAt             pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	IsDefault                bool               `json:"is_default"`
+	WebhookRegistrationError string             `json:"webhook_registration_error"`
 }
 
 type Organization struct {

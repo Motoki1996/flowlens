@@ -11,7 +11,10 @@ import (
 
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/backlog"
+	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/gitlab"
+	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
@@ -20,22 +23,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testEncryptionKey is a fixed 32-byte AES-256 key for tests; it never
+// protects real secrets.
+var testEncryptionKey = []byte("01234567890123456789012345678901"[:32])
+
 // newTestServer builds a Server wired to an in-memory querier. health is
 // nil because these tests never exercise the health handler.
 func newTestServer(t *testing.T) (*Server, *dbtest.FakeQuerier) {
 	t.Helper()
+	return newTestServerWithGitlabClient(t, &gitlab.FakeClient{})
+}
+
+// newTestServerWithGitlabClient is newTestServer, but every GitLab
+// connection the server verifies goes through fake instead of a fresh,
+// empty FakeClient — letting gitlab connection tests control what
+// "verification" returns without a real GitLab CE instance.
+func newTestServerWithGitlabClient(t *testing.T, fake *gitlab.FakeClient) (*Server, *dbtest.FakeQuerier) {
+	t.Helper()
 	q := dbtest.New()
+	cipher, err := crypto.New(testEncryptionKey)
+	if err != nil {
+		t.Fatalf("crypto.New: %v", err)
+	}
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
 	return &Server{
-		users:      user.NewService(q),
-		projects:   projects,
-		backlogs:   backlogs,
-		tasks:      task.NewService(q, projects, backlogs),
-		sessions:   auth.NewSessionService(q, time.Hour),
-		cookies:    cookieManager{secure: false},
-		webBaseURL: "http://localhost:3000",
-		sessionTTL: time.Hour,
+		users:       user.NewService(q),
+		projects:    projects,
+		backlogs:    backlogs,
+		tasks:       task.NewService(q, projects, backlogs),
+		gitlabConns: gitlabconn.NewService(q, projects, cipher, func(string) gitlab.Client { return fake }),
+		sessions:    auth.NewSessionService(q, time.Hour),
+		cookies:     cookieManager{secure: false},
+		webBaseURL:  "http://localhost:3000",
+		sessionTTL:  time.Hour,
+		cipher:      cipher,
 	}, q
 }
 

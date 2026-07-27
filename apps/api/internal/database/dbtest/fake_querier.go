@@ -32,6 +32,8 @@ type FakeQuerier struct {
 	tasksByID map[uuid.UUID]db.Task
 
 	taskAIContextsByTaskID map[uuid.UUID]db.TaskAiContext
+
+	gitlabConnectionsByProjectID map[uuid.UUID]db.GitlabConnection
 }
 
 // New returns an empty FakeQuerier.
@@ -47,6 +49,8 @@ func New() *FakeQuerier {
 		tasksByID:           map[uuid.UUID]db.Task{},
 
 		taskAIContextsByTaskID: map[uuid.UUID]db.TaskAiContext{},
+
+		gitlabConnectionsByProjectID: map[uuid.UUID]db.GitlabConnection{},
 	}
 }
 
@@ -622,4 +626,90 @@ func (f *FakeQuerier) GetTaskAIContext(_ context.Context, taskID uuid.UUID) (db.
 		return db.TaskAiContext{}, pgx.ErrNoRows
 	}
 	return c, nil
+}
+
+// gitlabConnectionOwner returns the owner_user_id of the project a GitLab
+// connection belongs to, mirroring the JOIN the real query performs.
+func (f *FakeQuerier) gitlabConnectionOwner(c db.GitlabConnection) (uuid.UUID, bool) {
+	p, ok := f.projectsByID[c.ProjectID]
+	if !ok {
+		return uuid.Nil, false
+	}
+	return p.OwnerUserID, true
+}
+
+// UpsertGitlabConnection mirrors the SQL's ON CONFLICT (project_id) DO
+// UPDATE: the first call creates the row, later calls overwrite it and
+// reset the verification fields to a fresh success.
+func (f *FakeQuerier) UpsertGitlabConnection(_ context.Context, arg db.UpsertGitlabConnectionParams) (db.GitlabConnection, error) {
+	existing, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
+	c := db.GitlabConnection{
+		ID:                  uuid.New(),
+		ProjectID:           arg.ProjectID,
+		BaseUrl:             arg.BaseUrl,
+		EncryptedToken:      arg.EncryptedToken,
+		TokenGitlabUserID:   arg.TokenGitlabUserID,
+		TokenGitlabUsername: arg.TokenGitlabUsername,
+		LastVerifiedAt:      now(),
+		LastVerifyError:     "",
+		CreatedAt:           now(),
+		UpdatedAt:           now(),
+	}
+	if ok {
+		c.ID = existing.ID
+		c.CreatedAt = existing.CreatedAt
+	}
+	f.gitlabConnectionsByProjectID[arg.ProjectID] = c
+	return c, nil
+}
+
+// GetGitlabConnectionForOwner mirrors the SQL: a connection whose project
+// belongs to someone else is reported as missing, never as a distinct
+// "forbidden" outcome.
+func (f *FakeQuerier) GetGitlabConnectionForOwner(_ context.Context, arg db.GetGitlabConnectionForOwnerParams) (db.GitlabConnection, error) {
+	c, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
+	if !ok {
+		return db.GitlabConnection{}, pgx.ErrNoRows
+	}
+	owner, ok := f.gitlabConnectionOwner(c)
+	if !ok || owner != arg.OwnerUserID {
+		return db.GitlabConnection{}, pgx.ErrNoRows
+	}
+	return c, nil
+}
+
+func (f *FakeQuerier) UpdateGitlabConnectionVerificationForOwner(_ context.Context, arg db.UpdateGitlabConnectionVerificationForOwnerParams) (db.GitlabConnection, error) {
+	existing, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
+	if !ok {
+		return db.GitlabConnection{}, pgx.ErrNoRows
+	}
+	owner, ok := f.gitlabConnectionOwner(existing)
+	if !ok || owner != arg.OwnerUserID {
+		return db.GitlabConnection{}, pgx.ErrNoRows
+	}
+
+	existing.TokenGitlabUserID = arg.TokenGitlabUserID
+	existing.TokenGitlabUsername = arg.TokenGitlabUsername
+	existing.LastVerifiedAt = arg.LastVerifiedAt
+	existing.LastVerifyError = arg.LastVerifyError
+	existing.UpdatedAt = now()
+
+	f.gitlabConnectionsByProjectID[arg.ProjectID] = existing
+	return existing, nil
+}
+
+// DeleteGitlabConnectionForOwner returns the number of rows affected, so
+// callers can tell "deleted" from "not yours / not there" exactly as
+// Postgres does.
+func (f *FakeQuerier) DeleteGitlabConnectionForOwner(_ context.Context, arg db.DeleteGitlabConnectionForOwnerParams) (int64, error) {
+	c, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
+	if !ok {
+		return 0, nil
+	}
+	owner, ok := f.gitlabConnectionOwner(c)
+	if !ok || owner != arg.OwnerUserID {
+		return 0, nil
+	}
+	delete(f.gitlabConnectionsByProjectID, arg.ProjectID)
+	return 1, nil
 }

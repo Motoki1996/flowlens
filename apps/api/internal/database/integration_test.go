@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/google/uuid"
@@ -237,4 +238,91 @@ func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
 	// Cleanup: the task outlives its backlog, so it is not removed by cascade.
 	_, err = pool.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, taskID)
 	require.NoError(t, err)
+}
+
+// The GitLab access token must never reach the database in plaintext (see
+// the Security section of docs/plans/issue-sync.md and internal/crypto).
+// This drives the real encrypted_token BYTEA column, not the fake querier's
+// approximation of it, and also exercises ownership enforcement and the
+// ON CONFLICT (project_id) upsert real ownership through the JOIN queries.
+func TestGitlabConnectionQueries_TokenIsStoredEncrypted(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	cipher, err := crypto.New([]byte("01234567890123456789012345678901"[:32]))
+	require.NoError(t, err)
+
+	owner := createUser(t, q, "owner")
+	intruder := createUser(t, q, "intruder")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	const plaintextToken = "glpat-super-secret-token-value"
+	encrypted, err := cipher.Encrypt(plaintextToken)
+	require.NoError(t, err)
+
+	created, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:           p.ID,
+		BaseUrl:             "https://gitlab.example.com",
+		EncryptedToken:      encrypted,
+		TokenGitlabUserID:   pgtype.Int8{Int64: 99, Valid: true},
+		TokenGitlabUsername: "octocat",
+	})
+	require.NoError(t, err)
+
+	t.Run("the stored bytes are not the plaintext token", func(t *testing.T) {
+		var raw []byte
+		require.NoError(t, pool.QueryRow(ctx, `SELECT encrypted_token FROM gitlab_connections WHERE id = $1`, created.ID).Scan(&raw))
+		assert.NotEqual(t, []byte(plaintextToken), raw)
+		assert.NotContains(t, string(raw), plaintextToken)
+
+		decrypted, err := cipher.Decrypt(raw)
+		require.NoError(t, err)
+		assert.Equal(t, plaintextToken, decrypted, "the cipher must still recover the original token")
+	})
+
+	t.Run("owner reads its own connection", func(t *testing.T) {
+		got, err := q.GetGitlabConnectionForOwner(ctx, db.GetGitlabConnectionForOwnerParams{ProjectID: p.ID, OwnerUserID: owner.ID})
+		require.NoError(t, err)
+		assert.Equal(t, created.ID, got.ID)
+	})
+
+	t.Run("non-owner gets no rows", func(t *testing.T) {
+		_, err := q.GetGitlabConnectionForOwner(ctx, db.GetGitlabConnectionForOwnerParams{ProjectID: p.ID, OwnerUserID: intruder.ID})
+		assert.ErrorIs(t, err, pgx.ErrNoRows)
+	})
+
+	t.Run("non-owner delete affects no rows", func(t *testing.T) {
+		affected, err := q.DeleteGitlabConnectionForOwner(ctx, db.DeleteGitlabConnectionForOwnerParams{ProjectID: p.ID, OwnerUserID: intruder.ID})
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), affected)
+	})
+
+	t.Run("re-saving upserts in place instead of duplicating the row", func(t *testing.T) {
+		reEncrypted, err := cipher.Encrypt("glpat-rotated-token-value")
+		require.NoError(t, err)
+		updated, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+			ProjectID:           p.ID,
+			BaseUrl:             "https://gitlab.example.com",
+			EncryptedToken:      reEncrypted,
+			TokenGitlabUserID:   pgtype.Int8{Int64: 99, Valid: true},
+			TokenGitlabUsername: "octocat",
+		})
+		require.NoError(t, err)
+		assert.Equal(t, created.ID, updated.ID, "upsert must replace the single row, not insert a second one")
+	})
+
+	t.Run("owner delete affects one row, and a repeat affects none", func(t *testing.T) {
+		affected, err := q.DeleteGitlabConnectionForOwner(ctx, db.DeleteGitlabConnectionForOwnerParams{ProjectID: p.ID, OwnerUserID: owner.ID})
+		require.NoError(t, err)
+		require.Equal(t, int64(1), affected)
+
+		affected, err = q.DeleteGitlabConnectionForOwner(ctx, db.DeleteGitlabConnectionForOwnerParams{ProjectID: p.ID, OwnerUserID: owner.ID})
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), affected)
+	})
 }

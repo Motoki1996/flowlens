@@ -33,10 +33,19 @@ type Querier interface {
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
+	// gitlab_connections has no owner column of its own; ownership is always
+	// checked through the parent project. UpsertGitlabConnection trusts the
+	// caller to have already verified project ownership (e.g. via
+	// project.Service.Get) before running, while the other queries join to
+	// projects so a foreign connection is indistinguishable from a missing one.
+	// The access token is only ever handled encrypted here; see internal/crypto
+	// and internal/gitlabconn.
+	DeleteGitlabConnectionForOwner(ctx context.Context, arg DeleteGitlabConnectionForOwnerParams) (int64, error)
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
+	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
 	// task_ai_contexts is app-only and must never be sent to GitLab (see "Why
 	// the task is split across three tables" in docs/plans/issue-sync.md).
@@ -55,8 +64,10 @@ type Querier interface {
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
+	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
+	UpsertGitlabConnection(ctx context.Context, arg UpsertGitlabConnectionParams) (GitlabConnection, error)
 	UpsertTaskAIContext(ctx context.Context, arg UpsertTaskAIContextParams) (TaskAiContext, error)
 }
 

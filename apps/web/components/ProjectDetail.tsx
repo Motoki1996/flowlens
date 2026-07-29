@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, Backlog, GitlabConnection, LinkedGitlabProject, Project, Task } from "@/types";
+import type { ApiError, Backlog, GitlabConnection, LinkedGitlabProject, Project, SyncRun, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { TaskListSection } from "@/components/TaskListSection";
 import { BacklogListSection } from "@/components/BacklogListSection";
 import { GitlabConnectionSection } from "@/components/GitlabConnectionSection";
+import { SyncRunSection } from "@/components/SyncRunSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -174,6 +175,7 @@ export function ProjectDetail({
   tasksError = false,
   gitlabConnection = null,
   linkedGitlabProjects = [],
+  syncRunsByLink = {},
 }: {
   project: Project;
   tasks?: Task[];
@@ -181,6 +183,7 @@ export function ProjectDetail({
   tasksError?: boolean;
   gitlabConnection?: GitlabConnection | null;
   linkedGitlabProjects?: LinkedGitlabProject[];
+  syncRunsByLink?: Record<string, SyncRun[]>;
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -258,12 +261,7 @@ export function ProjectDetail({
       </div>
 
       <div className="mt-8">
-        <Card className="border-dashed">
-          <CardHeader>
-            <CardTitle className="text-base font-medium">Sync history</CardTitle>
-            <CardDescription>Coming soon.</CardDescription>
-          </CardHeader>
-        </Card>
+        <SyncRunSection linkedProjects={linkedGitlabProjects} syncRunsByLink={syncRunsByLink} />
       </div>
     </>
   );

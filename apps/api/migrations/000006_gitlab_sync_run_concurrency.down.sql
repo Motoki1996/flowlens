@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_gitlab_sync_runs_one_running_per_link;

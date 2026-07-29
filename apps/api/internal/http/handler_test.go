@@ -17,6 +17,7 @@ import (
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
 	"github.com/flowlens/api/internal/webhookevent"
@@ -59,14 +60,17 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 	}
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
-	gitlabConns := gitlabconn.NewService(q, projects, cipher, func(string) gitlab.Client { return fake })
+	txRunner := dbtest.FakeTxRunner{Q: q}
+	clientFactory := func(string) gitlab.Client { return fake }
+	gitlabConns := gitlabconn.NewService(q, projects, cipher, clientFactory)
 	return &Server{
 		users:          user.NewService(q),
 		projects:       projects,
 		backlogs:       backlogs,
-		tasks:          task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs),
+		tasks:          task.NewService(q, txRunner, projects, backlogs),
 		gitlabConns:    gitlabConns,
-		linkedProjects: linkedproject.NewService(q, projects, gitlabConns, cipher, appPublicURL),
+		linkedProjects: linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),
+		projectSync:    projectsync.NewService(q, txRunner, cipher, clientFactory),
 		webhookEvents:  webhookevent.NewService(q, cipher),
 		webhookLimiter: newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		sessions:       auth.NewSessionService(q, time.Hour),

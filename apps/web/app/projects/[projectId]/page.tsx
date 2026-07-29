@@ -1,10 +1,12 @@
 import { redirect, notFound } from "next/navigation";
+import type { SyncRun } from "@/types";
 import {
   getBacklogs,
   getCurrentUser,
   getGitlabConnection,
   getLinkedGitlabProjects,
   getProject,
+  getSyncRuns,
   getTasks,
 } from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
@@ -43,6 +45,17 @@ export default async function ProjectPage({
     // renders and lets the user retry via its own actions.
   }
 
+  let syncRunsByLink: Record<string, SyncRun[]> = {};
+  try {
+    const entries = await Promise.all(
+      linkedGitlabProjects.map(async (link) => [link.id, await getSyncRuns(link.id)] as const),
+    );
+    syncRunsByLink = Object.fromEntries(entries);
+  } catch {
+    // Left empty; the section still renders with no history and lets the
+    // user retry via "Sync now".
+  }
+
   return (
     <>
       <AppHeader user={user} />
@@ -54,6 +67,7 @@ export default async function ProjectPage({
           tasksError={tasksError}
           gitlabConnection={gitlabConnection}
           linkedGitlabProjects={linkedGitlabProjects}
+          syncRunsByLink={syncRunsByLink}
         />
       </main>
     </>

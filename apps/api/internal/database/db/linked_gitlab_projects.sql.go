@@ -459,6 +459,83 @@ func (q *Queries) SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg
 	return i, err
 }
 
+const updateLinkedGitlabProjectInitialImportStatus = `-- name: UpdateLinkedGitlabProjectInitialImportStatus :one
+
+UPDATE linked_gitlab_projects
+SET initial_import_status = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, gitlab_connection_id, gitlab_project_id, path_with_namespace, name, web_url, sync_scope, sync_labels, webhook_id, encrypted_webhook_secret, webhook_registered_at, initial_import_status, last_synced_at, created_at, updated_at, is_default, webhook_registration_error
+`
+
+type UpdateLinkedGitlabProjectInitialImportStatusParams struct {
+	ID                  uuid.UUID `json:"id"`
+	InitialImportStatus string    `json:"initial_import_status"`
+}
+
+// Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.
+// Values used: "pending" (default), "completed", "failed"
+// (internal/projectsync).
+func (q *Queries) UpdateLinkedGitlabProjectInitialImportStatus(ctx context.Context, arg UpdateLinkedGitlabProjectInitialImportStatusParams) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, updateLinkedGitlabProjectInitialImportStatus, arg.ID, arg.InitialImportStatus)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
+const updateLinkedGitlabProjectLastSyncedAt = `-- name: UpdateLinkedGitlabProjectLastSyncedAt :one
+
+UPDATE linked_gitlab_projects
+SET last_synced_at = now(), updated_at = now()
+WHERE id = $1
+RETURNING id, gitlab_connection_id, gitlab_project_id, path_with_namespace, name, web_url, sync_scope, sync_labels, webhook_id, encrypted_webhook_secret, webhook_registered_at, initial_import_status, last_synced_at, created_at, updated_at, is_default, webhook_registration_error
+`
+
+// Unscoped, like GetLinkedGitlabProjectByID: called by the background
+// worker (internal/projectsync) after a project.import/project.resync run
+// finishes, which has no acting user to scope through.
+func (q *Queries) UpdateLinkedGitlabProjectLastSyncedAt(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, updateLinkedGitlabProjectLastSyncedAt, id)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
 const updateLinkedGitlabProjectSyncScopeForOwner = `-- name: UpdateLinkedGitlabProjectSyncScopeForOwner :one
 UPDATE linked_gitlab_projects lgp
 SET sync_scope = $3,

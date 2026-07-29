@@ -17,6 +17,7 @@ import (
 	"github.com/flowlens/api/internal/gitlab"
 	apihttp "github.com/flowlens/api/internal/http"
 	"github.com/flowlens/api/internal/issuesync"
+	"github.com/flowlens/api/internal/projectsync"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/webhookapply"
 )
@@ -64,12 +65,21 @@ func run() error {
 
 	// Outbound issue sync job handlers (docs/plans/issue-sync.md,
 	// "Outbound"); internal/task enqueues the jobs they execute.
-	issueSync := issuesync.NewService(database.NewQuerier(pool), cipher, func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) })
+	clientFactory := func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
+	issueSync := issuesync.NewService(database.NewQuerier(pool), cipher, clientFactory)
 	registry := syncpkg.NewRegistry()
 	registry.Register(issuesync.KindIssueCreate, issueSync.HandleIssueCreate)
 	registry.Register(issuesync.KindIssueUpdate, issueSync.HandleIssueUpdate)
 	registry.Register(issuesync.KindIssueClose, issueSync.HandleIssueClose)
 	registry.Register(issuesync.KindIssueReopen, issueSync.HandleIssueReopen)
+
+	// project.import / project.resync job handlers (issue #25): initial
+	// import (auto-enqueued by internal/linkedproject.Service.Create) and
+	// manual re-sync (POST /linked-gitlab-projects/{linkID}/sync-runs).
+	projectSync := projectsync.NewService(database.NewQuerier(pool), database.NewTxRunner(pool), cipher, clientFactory)
+	registry.Register(projectsync.KindProjectImport, projectSync.HandleImport)
+	registry.Register(projectsync.KindProjectResync, projectSync.HandleResync)
+
 	worker := syncpkg.NewWorker(database.NewQuerier(pool), registry, syncpkg.WithPollInterval(cfg.SyncWorkerPollInterval))
 	if cfg.SyncWorkerEnabled {
 		go func() {

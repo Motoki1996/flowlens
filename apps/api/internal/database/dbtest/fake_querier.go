@@ -48,6 +48,9 @@ type FakeQuerier struct {
 	webhookEvents      []db.WebhookEvent // insertion order, newest last
 	webhookEventsByKey map[string]db.WebhookEvent
 	webhookEventsByID  map[uuid.UUID]db.WebhookEvent
+
+	gitlabSyncRuns     []db.GitlabSyncRun // insertion order, newest last
+	gitlabSyncRunsByID map[uuid.UUID]db.GitlabSyncRun
 }
 
 // New returns an empty FakeQuerier.
@@ -76,6 +79,8 @@ func New() *FakeQuerier {
 
 		webhookEventsByKey: map[string]db.WebhookEvent{},
 		webhookEventsByID:  map[uuid.UUID]db.WebhookEvent{},
+
+		gitlabSyncRunsByID: map[uuid.UUID]db.GitlabSyncRun{},
 	}
 }
 
@@ -1116,6 +1121,32 @@ func (f *FakeQuerier) SetLinkedGitlabProjectWebhookErrorForOwner(_ context.Conte
 	return existing, nil
 }
 
+// UpdateLinkedGitlabProjectLastSyncedAt mirrors the SQL: unscoped, called by
+// the background worker (internal/projectsync).
+func (f *FakeQuerier) UpdateLinkedGitlabProjectLastSyncedAt(_ context.Context, id uuid.UUID) (db.LinkedGitlabProject, error) {
+	existing, ok := f.linkedGitlabProjectsByID[id]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	existing.LastSyncedAt = now()
+	existing.UpdatedAt = now()
+	f.storeLinkedGitlabProject(existing)
+	return existing, nil
+}
+
+// UpdateLinkedGitlabProjectInitialImportStatus mirrors the SQL: unscoped,
+// called by the background worker (internal/projectsync).
+func (f *FakeQuerier) UpdateLinkedGitlabProjectInitialImportStatus(_ context.Context, arg db.UpdateLinkedGitlabProjectInitialImportStatusParams) (db.LinkedGitlabProject, error) {
+	existing, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	existing.InitialImportStatus = arg.InitialImportStatus
+	existing.UpdatedAt = now()
+	f.storeLinkedGitlabProject(existing)
+	return existing, nil
+}
+
 // storeSyncJob inserts j if it is new, or overwrites the existing row in
 // place (preserving its position in f.syncJobs) otherwise.
 func (f *FakeQuerier) storeSyncJob(j db.SyncJob) {
@@ -1658,4 +1689,95 @@ func (f *FakeQuerier) WebhookEventsForLink(linkedGitlabProjectID uuid.UUID) []db
 		}
 	}
 	return items
+}
+
+// storeGitlabSyncRun inserts r if it is new, or overwrites the existing row
+// in place (preserving its position in f.gitlabSyncRuns) otherwise.
+func (f *FakeQuerier) storeGitlabSyncRun(r db.GitlabSyncRun) {
+	f.gitlabSyncRunsByID[r.ID] = r
+	for i, x := range f.gitlabSyncRuns {
+		if x.ID == r.ID {
+			f.gitlabSyncRuns[i] = r
+			return
+		}
+	}
+	f.gitlabSyncRuns = append(f.gitlabSyncRuns, r)
+}
+
+// CreateGitlabSyncRun mirrors the SQL: the partial UNIQUE index on
+// (linked_gitlab_project_id) WHERE completed_at IS NULL (migration 000006)
+// means a second run for a link that already has one in flight is a
+// unique-constraint violation, which internal/projectsync maps to
+// ErrRunInProgress (HTTP 409).
+func (f *FakeQuerier) CreateGitlabSyncRun(_ context.Context, arg db.CreateGitlabSyncRunParams) (db.GitlabSyncRun, error) {
+	for _, r := range f.gitlabSyncRuns {
+		if r.LinkedGitlabProjectID == arg.LinkedGitlabProjectID && !r.CompletedAt.Valid {
+			return db.GitlabSyncRun{}, &pgconn.PgError{Code: "23505", ConstraintName: "idx_gitlab_sync_runs_one_running_per_link"}
+		}
+	}
+	r := db.GitlabSyncRun{
+		ID:                    uuid.New(),
+		LinkedGitlabProjectID: arg.LinkedGitlabProjectID,
+		Kind:                  arg.Kind,
+		Status:                "running",
+		StartedAt:             now(),
+		CreatedAt:             now(),
+	}
+	f.storeGitlabSyncRun(r)
+	return r, nil
+}
+
+// CompleteGitlabSyncRun mirrors the SQL.
+func (f *FakeQuerier) CompleteGitlabSyncRun(_ context.Context, arg db.CompleteGitlabSyncRunParams) (db.GitlabSyncRun, error) {
+	r, ok := f.gitlabSyncRunsByID[arg.ID]
+	if !ok {
+		return db.GitlabSyncRun{}, pgx.ErrNoRows
+	}
+	r.Status = "succeeded"
+	r.IssuesSeen = arg.IssuesSeen
+	r.IssuesCreated = arg.IssuesCreated
+	r.IssuesUpdated = arg.IssuesUpdated
+	r.CompletedAt = now()
+	f.storeGitlabSyncRun(r)
+	return r, nil
+}
+
+// FailGitlabSyncRun mirrors the SQL.
+func (f *FakeQuerier) FailGitlabSyncRun(_ context.Context, arg db.FailGitlabSyncRunParams) (db.GitlabSyncRun, error) {
+	r, ok := f.gitlabSyncRunsByID[arg.ID]
+	if !ok {
+		return db.GitlabSyncRun{}, pgx.ErrNoRows
+	}
+	r.Status = "failed"
+	r.IssuesSeen = arg.IssuesSeen
+	r.IssuesCreated = arg.IssuesCreated
+	r.IssuesUpdated = arg.IssuesUpdated
+	r.ErrorMessage = arg.ErrorMessage
+	r.CompletedAt = now()
+	f.storeGitlabSyncRun(r)
+	return r, nil
+}
+
+// GetGitlabSyncRunByID mirrors the SQL: unscoped, for the background worker.
+func (f *FakeQuerier) GetGitlabSyncRunByID(_ context.Context, id uuid.UUID) (db.GitlabSyncRun, error) {
+	r, ok := f.gitlabSyncRunsByID[id]
+	if !ok {
+		return db.GitlabSyncRun{}, pgx.ErrNoRows
+	}
+	return r, nil
+}
+
+// ListGitlabSyncRunsByLinkedGitlabProjectID mirrors the SQL's ORDER BY
+// created_at DESC.
+func (f *FakeQuerier) ListGitlabSyncRunsByLinkedGitlabProjectID(_ context.Context, linkedGitlabProjectID uuid.UUID) ([]db.GitlabSyncRun, error) {
+	items := []db.GitlabSyncRun{}
+	for _, r := range f.gitlabSyncRuns {
+		if r.LinkedGitlabProjectID == linkedGitlabProjectID {
+			items = append(items, r)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.Time.After(items[j].CreatedAt.Time)
+	})
+	return items, nil
 }

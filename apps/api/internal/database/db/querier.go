@@ -36,6 +36,7 @@ type Querier interface {
 	// so SetDefaultLinkedGitlabProjectForOwner can set exactly one.
 	ClearDefaultLinkedGitlabProjectsForOwner(ctx context.Context, arg ClearDefaultLinkedGitlabProjectsForOwnerParams) error
 	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
+	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
 	// Backs the project single view's sync warning: a task counts as failed the
 	// same way internal/task derives a single task's sync_status, from
 	// task_gitlab_links when a link exists or from its most recent sync_jobs
@@ -47,6 +48,16 @@ type Querier interface {
 	// project.Service.Get), while the single-backlog queries join to projects so
 	// a foreign backlog is indistinguishable from a missing one.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
+	// gitlab_sync_runs records one project.import / project.resync execution
+	// against a linked GitLab project (docs/plans/issue-sync.md's SyncRun
+	// object, issue #25). Concurrency is enforced at the database level, not
+	// by a check-then-insert race in Go: a partial UNIQUE index on
+	// (linked_gitlab_project_id) WHERE completed_at IS NULL (migration
+	// 000006) means CreateGitlabSyncRun itself fails with a
+	// unique-constraint violation when a run is already in progress for the
+	// same link, which internal/projectsync maps to ErrRunInProgress (HTTP
+	// 409).
+	CreateGitlabSyncRun(ctx context.Context, arg CreateGitlabSyncRunParams) (GitlabSyncRun, error)
 	// linked_gitlab_projects has no owner column of its own; ownership is always
 	// checked by joining through gitlab_connections to projects, the same way
 	// gitlab_connections is checked through projects. A link belonging to
@@ -100,6 +111,7 @@ type Querier interface {
 	// row untouched and returns no rows, so internal/sync.Enqueue falls back
 	// to GetSyncJobByDedupeKey and reuses it as-is.
 	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
+	FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunParams) (GitlabSyncRun, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	// internal/task uses this at task-create time to decide whether the
 	// project has anywhere to push a new issue, and if so, where
@@ -116,6 +128,12 @@ type Querier interface {
 	// app project ID.
 	GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGitlabConnectionByIDForOwnerParams) (GitlabConnection, error)
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
+	// Unscoped, like GetLinkedGitlabProjectByID: the background worker
+	// (internal/projectsync) reads this with no acting user of its own —
+	// the job row that names this run's ID was already authorized when it
+	// was created (either automatically at link creation, or by an
+	// owner-scoped HTTP request).
+	GetGitlabSyncRunByID(ctx context.Context, id uuid.UUID) (GitlabSyncRun, error)
 	// Backs a task's sync status (internal/task) when it has no
 	// task_gitlab_links row yet — its issue.create job hasn't succeeded (or has
 	// permanently failed). Before a link exists, a task can only ever have
@@ -152,6 +170,9 @@ type Querier interface {
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
 	ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error)
+	// Ownership of linkID must already be verified by the caller via
+	// GetLinkedGitlabProjectForOwner before this runs.
+	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
@@ -205,6 +226,14 @@ type Querier interface {
 	SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error)
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
+	// Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.
+	// Values used: "pending" (default), "completed", "failed"
+	// (internal/projectsync).
+	UpdateLinkedGitlabProjectInitialImportStatus(ctx context.Context, arg UpdateLinkedGitlabProjectInitialImportStatusParams) (LinkedGitlabProject, error)
+	// Unscoped, like GetLinkedGitlabProjectByID: called by the background
+	// worker (internal/projectsync) after a project.import/project.resync
+	// run finishes, which has no acting user to scope through.
+	UpdateLinkedGitlabProjectLastSyncedAt(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)

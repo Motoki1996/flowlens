@@ -35,8 +35,14 @@ type FakeClient struct {
 	// MembersErr, when set, is returned by ListProjectMembers.
 	MembersErr error
 
-	// Issues is returned by ListIssues.
+	// Issues is returned by ListIssues. Ignored once IssuesPages is set.
 	Issues []Issue
+	// IssuesPages, when set, overrides Issues so a test can exercise a
+	// multi-page ListIssues walk (internal/projectsync): index 0 is
+	// returned for opts.Page <= 1, index 1 for opts.Page == 2, and so on.
+	// The last page reports PageInfo.NextPage 0; every earlier page reports
+	// the following page number, mirroring GitLab's X-Next-Page header.
+	IssuesPages [][]Issue
 	// IssuesErr, when set, is returned by ListIssues.
 	IssuesErr error
 	// Issue is returned by GetIssue, CreateIssue, and UpdateIssue.
@@ -116,6 +122,21 @@ func (f *FakeClient) ListIssues(ctx context.Context, personalAccessToken string,
 	f.record("ListIssues", personalAccessToken, projectID, opts)
 	if f.IssuesErr != nil {
 		return nil, PageInfo{}, f.IssuesErr
+	}
+	if f.IssuesPages != nil {
+		page := opts.Page
+		if page < 1 {
+			page = 1
+		}
+		idx := page - 1
+		if idx >= len(f.IssuesPages) {
+			return nil, PageInfo{}, nil
+		}
+		next := 0
+		if idx+1 < len(f.IssuesPages) {
+			next = page + 1
+		}
+		return f.IssuesPages[idx], PageInfo{NextPage: next}, nil
 	}
 	return f.Issues, PageInfo{NextPage: f.NextPage}, nil
 }

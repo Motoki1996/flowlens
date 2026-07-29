@@ -48,3 +48,29 @@ SET sync_status = 'pending',
     last_error = ''
 WHERE task_id = $1
 RETURNING *;
+
+-- GetTaskGitlabLinkByLinkedProjectAndIID looks up a task already linked to a
+-- specific GitLab issue, keyed by the same columns as the 1:1 UNIQUE
+-- constraint. The inbound apply pipeline (internal/webhookapply,
+-- docs/plans/issue-sync.md "Inbound") uses this to tell a known issue
+-- (update an existing task) from an unknown one (create a new unclassified
+-- task).
+
+-- name: GetTaskGitlabLinkByLinkedProjectAndIID :one
+SELECT * FROM task_gitlab_links
+WHERE linked_gitlab_project_id = $1 AND gitlab_issue_iid = $2;
+
+-- MarkTaskGitlabLinkAppliedForTask records a successful inbound apply
+-- (internal/webhookapply): only gitlab_updated_at advances and
+-- sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask (the
+-- outbound counterpart), it never touches last_pushed_fingerprint — that
+-- field records what FlowLens itself last pushed, and an inbound apply is by
+-- definition not that.
+
+-- name: MarkTaskGitlabLinkAppliedForTask :one
+UPDATE task_gitlab_links
+SET gitlab_updated_at = $2,
+    sync_status = 'synced',
+    last_error = ''
+WHERE task_id = $1
+RETURNING *;

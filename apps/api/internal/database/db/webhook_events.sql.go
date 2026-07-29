@@ -78,3 +78,86 @@ func (q *Queries) CreateWebhookEvent(ctx context.Context, arg CreateWebhookEvent
 	)
 	return i, err
 }
+
+const claimNextPendingWebhookEvent = `-- name: ClaimNextPendingWebhookEvent :one
+
+SELECT id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at FROM webhook_events
+WHERE status = 'pending'
+ORDER BY received_at ASC
+LIMIT 1
+FOR UPDATE SKIP LOCKED
+`
+
+// The inbound apply pipeline (internal/webhookapply, docs/plans/issue-sync.md
+// "Inbound"). ClaimNextPendingWebhookEvent must be called through a
+// transaction-scoped Querier (database.TxRunner): FOR UPDATE SKIP LOCKED only
+// holds its lock for the life of the transaction, so the claim and the
+// resulting task write and status update need to commit together — that is
+// what lets a crash mid-apply leave the event 'pending' for a clean retry
+// instead of stuck half-applied. SKIP LOCKED also means two workers polling
+// concurrently never claim the same row. ORDER BY received_at ASC processes
+// deliveries oldest-first, which combined with the stale-event guard means
+// out-of-order redelivery can never apply a newer event before an older one.
+func (q *Queries) ClaimNextPendingWebhookEvent(ctx context.Context) (WebhookEvent, error) {
+	row := q.db.QueryRow(ctx, claimNextPendingWebhookEvent)
+	var i WebhookEvent
+	err := row.Scan(
+		&i.ID,
+		&i.LinkedGitlabProjectID,
+		&i.DeliveryUuid,
+		&i.EventName,
+		&i.ObjectKind,
+		&i.GitlabIssueIid,
+		&i.Payload,
+		&i.GitlabUpdatedAt,
+		&i.Status,
+		&i.SkipReason,
+		&i.ErrorMessage,
+		&i.ReceivedAt,
+		&i.ProcessedAt,
+	)
+	return i, err
+}
+
+const markWebhookEventFailed = `-- name: MarkWebhookEventFailed :exec
+UPDATE webhook_events
+SET status = 'failed', error_message = $2, processed_at = now()
+WHERE id = $1
+`
+
+type MarkWebhookEventFailedParams struct {
+	ID           uuid.UUID `json:"id"`
+	ErrorMessage string    `json:"error_message"`
+}
+
+func (q *Queries) MarkWebhookEventFailed(ctx context.Context, arg MarkWebhookEventFailedParams) error {
+	_, err := q.db.Exec(ctx, markWebhookEventFailed, arg.ID, arg.ErrorMessage)
+	return err
+}
+
+const markWebhookEventProcessed = `-- name: MarkWebhookEventProcessed :exec
+UPDATE webhook_events
+SET status = 'processed', error_message = '', processed_at = now()
+WHERE id = $1
+`
+
+func (q *Queries) MarkWebhookEventProcessed(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markWebhookEventProcessed, id)
+	return err
+}
+
+const markWebhookEventSkipped = `-- name: MarkWebhookEventSkipped :exec
+UPDATE webhook_events
+SET status = 'skipped', skip_reason = $2, processed_at = now()
+WHERE id = $1
+`
+
+type MarkWebhookEventSkippedParams struct {
+	ID         uuid.UUID `json:"id"`
+	SkipReason string    `json:"skip_reason"`
+}
+
+func (q *Queries) MarkWebhookEventSkipped(ctx context.Context, arg MarkWebhookEventSkippedParams) error {
+	_, err := q.db.Exec(ctx, markWebhookEventSkipped, arg.ID, arg.SkipReason)
+	return err
+}

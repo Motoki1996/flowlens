@@ -12,6 +12,75 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const applyWebhookTaskFields = `-- name: ApplyWebhookTaskFields :one
+
+UPDATE tasks
+SET title = $2,
+    description = $3,
+    assignee_gitlab_user_id = $4,
+    assignee_gitlab_username = $5,
+    labels = $6,
+    due_on = $7,
+    status = $8,
+    closed_at = CASE WHEN $8 = 'closed' THEN COALESCE(closed_at, now()) ELSE NULL END,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+`
+
+type ApplyWebhookTaskFieldsParams struct {
+	ID                     uuid.UUID   `json:"id"`
+	Title                  string      `json:"title"`
+	Description            string      `json:"description"`
+	AssigneeGitlabUserID   pgtype.Int8 `json:"assignee_gitlab_user_id"`
+	AssigneeGitlabUsername string      `json:"assignee_gitlab_username"`
+	Labels                 []string    `json:"labels"`
+	DueOn                  pgtype.Date `json:"due_on"`
+	Status                 string      `json:"status"`
+}
+
+// ApplyWebhookTaskFields is the inbound apply pipeline's write to tasks
+// (internal/webhookapply, docs/plans/issue-sync.md "Inbound"): unscoped, like
+// GetLinkedGitlabProjectByID, because the task_gitlab_links row that names
+// this task ID was already authorized when the link was first created (or,
+// for a brand-new unclassified task, in the same transaction that just
+// created it). It never touches backlog_id or position, which are app-only.
+// closed_at only advances when status transitions into 'closed' — the CASE
+// reads the pre-update closed_at (every SET expression in one UPDATE sees
+// the same original row), so re-applying while already closed never moves
+// the timestamp, mirroring internal/task.Service.Close's own no-op rule.
+func (q *Queries) ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTaskFieldsParams) (Task, error) {
+	row := q.db.QueryRow(ctx, applyWebhookTaskFields,
+		arg.ID,
+		arg.Title,
+		arg.Description,
+		arg.AssigneeGitlabUserID,
+		arg.AssigneeGitlabUsername,
+		arg.Labels,
+		arg.DueOn,
+		arg.Status,
+	)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BacklogID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.ClosedAt,
+		&i.AssigneeGitlabUserID,
+		&i.AssigneeGitlabUsername,
+		&i.Labels,
+		&i.DueOn,
+		&i.Position,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const assignTaskBacklogForOwner = `-- name: AssignTaskBacklogForOwner :one
 UPDATE tasks t
 SET backlog_id = $3, updated_at = now()

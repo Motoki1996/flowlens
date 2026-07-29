@@ -47,6 +47,7 @@ type FakeQuerier struct {
 
 	webhookEvents      []db.WebhookEvent // insertion order, newest last
 	webhookEventsByKey map[string]db.WebhookEvent
+	webhookEventsByID  map[uuid.UUID]db.WebhookEvent
 }
 
 // New returns an empty FakeQuerier.
@@ -74,6 +75,7 @@ func New() *FakeQuerier {
 		taskGitlabLinksByTaskID: map[uuid.UUID]db.TaskGitlabLink{},
 
 		webhookEventsByKey: map[string]db.WebhookEvent{},
+		webhookEventsByID:  map[uuid.UUID]db.WebhookEvent{},
 	}
 }
 
@@ -224,6 +226,17 @@ func (f *FakeQuerier) CreateProject(_ context.Context, arg db.CreateProjectParam
 func (f *FakeQuerier) GetProjectForOwner(_ context.Context, arg db.GetProjectForOwnerParams) (db.Project, error) {
 	p, ok := f.projectsByID[arg.ID]
 	if !ok || p.OwnerUserID != arg.OwnerUserID {
+		return db.Project{}, pgx.ErrNoRows
+	}
+	return p, nil
+}
+
+// GetProjectByID is unscoped, mirroring the SQL used by the inbound webhook
+// apply pipeline (internal/webhookapply), which has no acting user to check
+// against.
+func (f *FakeQuerier) GetProjectByID(_ context.Context, id uuid.UUID) (db.Project, error) {
+	p, ok := f.projectsByID[id]
+	if !ok {
 		return db.Project{}, pgx.ErrNoRows
 	}
 	return p, nil
@@ -489,6 +502,35 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 	}
 	f.storeTask(t)
 	return t, nil
+}
+
+// ApplyWebhookTaskFields mirrors the SQL: an unscoped write by task ID only,
+// used by the inbound webhook apply pipeline (internal/webhookapply).
+// closed_at only advances on a transition into 'closed' — re-applying while
+// already closed never moves it — mirroring the real query's CASE, which
+// reads the pre-update value.
+func (f *FakeQuerier) ApplyWebhookTaskFields(_ context.Context, arg db.ApplyWebhookTaskFieldsParams) (db.Task, error) {
+	existing, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	existing.Title = arg.Title
+	existing.Description = arg.Description
+	existing.AssigneeGitlabUserID = arg.AssigneeGitlabUserID
+	existing.AssigneeGitlabUsername = arg.AssigneeGitlabUsername
+	existing.Labels = arg.Labels
+	existing.DueOn = arg.DueOn
+	existing.Status = arg.Status
+	if arg.Status == "closed" {
+		if !existing.ClosedAt.Valid {
+			existing.ClosedAt = now()
+		}
+	} else {
+		existing.ClosedAt = pgtype.Timestamptz{}
+	}
+	existing.UpdatedAt = now()
+	f.storeTask(existing)
+	return existing, nil
 }
 
 func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByProjectParams) ([]db.Task, error) {
@@ -1380,6 +1422,34 @@ func (f *FakeQuerier) GetTaskGitlabLinkByTaskID(_ context.Context, taskID uuid.U
 	return l, nil
 }
 
+// GetTaskGitlabLinkByLinkedProjectAndIID mirrors the SQL: a lookup keyed by
+// the same columns as the 1:1 UNIQUE constraint, used by the inbound webhook
+// apply pipeline (internal/webhookapply) to tell a known issue from an
+// unknown one.
+func (f *FakeQuerier) GetTaskGitlabLinkByLinkedProjectAndIID(_ context.Context, arg db.GetTaskGitlabLinkByLinkedProjectAndIIDParams) (db.TaskGitlabLink, error) {
+	for _, l := range f.taskGitlabLinksByTaskID {
+		if l.LinkedGitlabProjectID == arg.LinkedGitlabProjectID && l.GitlabIssueIid == arg.GitlabIssueIid {
+			return l, nil
+		}
+	}
+	return db.TaskGitlabLink{}, pgx.ErrNoRows
+}
+
+// MarkTaskGitlabLinkAppliedForTask mirrors the SQL: records a successful
+// inbound apply (internal/webhookapply) without touching
+// last_pushed_fingerprint, unlike MarkTaskGitlabLinkSyncedForTask.
+func (f *FakeQuerier) MarkTaskGitlabLinkAppliedForTask(_ context.Context, arg db.MarkTaskGitlabLinkAppliedForTaskParams) (db.TaskGitlabLink, error) {
+	l, ok := f.taskGitlabLinksByTaskID[arg.TaskID]
+	if !ok {
+		return db.TaskGitlabLink{}, pgx.ErrNoRows
+	}
+	l.GitlabUpdatedAt = arg.GitlabUpdatedAt
+	l.SyncStatus = "synced"
+	l.LastError = ""
+	f.taskGitlabLinksByTaskID[arg.TaskID] = l
+	return l, nil
+}
+
 func (f *FakeQuerier) MarkTaskGitlabLinkSyncedForTask(_ context.Context, arg db.MarkTaskGitlabLinkSyncedForTaskParams) (db.TaskGitlabLink, error) {
 	l, ok := f.taskGitlabLinksByTaskID[arg.TaskID]
 	if !ok {
@@ -1458,6 +1528,20 @@ func webhookEventKey(linkedGitlabProjectID uuid.UUID, deliveryUUID string) strin
 	return linkedGitlabProjectID.String() + "\x00" + deliveryUUID
 }
 
+// storeWebhookEvent inserts e if it is new, or overwrites the existing row
+// in place (preserving its position in f.webhookEvents) otherwise.
+func (f *FakeQuerier) storeWebhookEvent(e db.WebhookEvent) {
+	f.webhookEventsByID[e.ID] = e
+	f.webhookEventsByKey[webhookEventKey(e.LinkedGitlabProjectID, e.DeliveryUuid)] = e
+	for i, x := range f.webhookEvents {
+		if x.ID == e.ID {
+			f.webhookEvents[i] = e
+			return
+		}
+	}
+	f.webhookEvents = append(f.webhookEvents, e)
+}
+
 // CreateWebhookEvent mirrors the SQL: ON CONFLICT (linked_gitlab_project_id,
 // delivery_uuid) DO NOTHING makes a duplicate delivery a no-op, reported as
 // pgx.ErrNoRows exactly like the real driver does for a zero-row RETURNING.
@@ -1480,9 +1564,88 @@ func (f *FakeQuerier) CreateWebhookEvent(_ context.Context, arg db.CreateWebhook
 		SkipReason:            arg.SkipReason,
 		ReceivedAt:            now(),
 	}
-	f.webhookEventsByKey[key] = e
-	f.webhookEvents = append(f.webhookEvents, e)
+	f.storeWebhookEvent(e)
 	return e, nil
+}
+
+// ClaimNextPendingWebhookEvent mirrors the SQL's ordering (oldest
+// received_at first); f.webhookEvents is kept in insertion order, so the
+// first 'pending' row scanning from the start is the oldest one. The fake
+// has no real row locking (SKIP LOCKED), which is fine: that guarantee is
+// verified against real Postgres in internal/webhookapply's integration
+// test, not here (docs/testing.md).
+func (f *FakeQuerier) ClaimNextPendingWebhookEvent(_ context.Context) (db.WebhookEvent, error) {
+	for _, e := range f.webhookEvents {
+		if e.Status == "pending" {
+			return e, nil
+		}
+	}
+	return db.WebhookEvent{}, pgx.ErrNoRows
+}
+
+// MarkWebhookEventProcessed mirrors the SQL.
+func (f *FakeQuerier) MarkWebhookEventProcessed(_ context.Context, id uuid.UUID) error {
+	e, ok := f.webhookEventsByID[id]
+	if !ok {
+		return nil
+	}
+	e.Status = "processed"
+	e.ErrorMessage = ""
+	e.ProcessedAt = now()
+	f.storeWebhookEvent(e)
+	return nil
+}
+
+// MarkWebhookEventSkipped mirrors the SQL.
+func (f *FakeQuerier) MarkWebhookEventSkipped(_ context.Context, arg db.MarkWebhookEventSkippedParams) error {
+	e, ok := f.webhookEventsByID[arg.ID]
+	if !ok {
+		return nil
+	}
+	e.Status = "skipped"
+	e.SkipReason = arg.SkipReason
+	e.ProcessedAt = now()
+	f.storeWebhookEvent(e)
+	return nil
+}
+
+// MarkWebhookEventFailed mirrors the SQL.
+func (f *FakeQuerier) MarkWebhookEventFailed(_ context.Context, arg db.MarkWebhookEventFailedParams) error {
+	e, ok := f.webhookEventsByID[arg.ID]
+	if !ok {
+		return nil
+	}
+	e.Status = "failed"
+	e.ErrorMessage = arg.ErrorMessage
+	e.ProcessedAt = now()
+	f.storeWebhookEvent(e)
+	return nil
+}
+
+// SeedWebhookEvent inserts a ready-made pending webhook_events row directly,
+// bypassing the receiver's Record path, for tests that exercise the apply
+// pipeline (internal/webhookapply) in isolation. Returns the stored row.
+func (f *FakeQuerier) SeedWebhookEvent(linkedGitlabProjectID uuid.UUID, payload []byte) db.WebhookEvent {
+	e := db.WebhookEvent{
+		ID:                    uuid.New(),
+		LinkedGitlabProjectID: linkedGitlabProjectID,
+		DeliveryUuid:          uuid.NewString(),
+		EventName:             "Issue Hook",
+		ObjectKind:            "issue",
+		Payload:               payload,
+		Status:                "pending",
+		ReceivedAt:            now(),
+	}
+	f.storeWebhookEvent(e)
+	return e
+}
+
+// GetWebhookEvent returns the webhook event stored under id, so tests can
+// assert on the apply pipeline's outcome (status, skip_reason,
+// error_message) directly.
+func (f *FakeQuerier) GetWebhookEvent(id uuid.UUID) (db.WebhookEvent, bool) {
+	e, ok := f.webhookEventsByID[id]
+	return e, ok
 }
 
 // WebhookEventsForLink returns every recorded webhook_events row for

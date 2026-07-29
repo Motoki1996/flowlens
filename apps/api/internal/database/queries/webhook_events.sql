@@ -19,3 +19,36 @@ INSERT INTO webhook_events (
 )
 ON CONFLICT (linked_gitlab_project_id, delivery_uuid) DO NOTHING
 RETURNING *;
+
+-- The inbound apply pipeline (internal/webhookapply, docs/plans/issue-sync.md
+-- "Inbound"). ClaimNextPendingWebhookEvent must be called through a
+-- transaction-scoped Querier (database.TxRunner): FOR UPDATE SKIP LOCKED only
+-- holds its lock for the life of the transaction, so the claim and the
+-- resulting task write and status update need to commit together — that is
+-- what lets a crash mid-apply leave the event 'pending' for a clean retry
+-- instead of stuck half-applied. SKIP LOCKED also means two workers polling
+-- concurrently never claim the same row. ORDER BY received_at ASC processes
+-- deliveries oldest-first, which combined with the stale-event guard means
+-- out-of-order redelivery can never apply a newer event before an older one.
+
+-- name: ClaimNextPendingWebhookEvent :one
+SELECT * FROM webhook_events
+WHERE status = 'pending'
+ORDER BY received_at ASC
+LIMIT 1
+FOR UPDATE SKIP LOCKED;
+
+-- name: MarkWebhookEventProcessed :exec
+UPDATE webhook_events
+SET status = 'processed', error_message = '', processed_at = now()
+WHERE id = $1;
+
+-- name: MarkWebhookEventSkipped :exec
+UPDATE webhook_events
+SET status = 'skipped', skip_reason = $2, processed_at = now()
+WHERE id = $1;
+
+-- name: MarkWebhookEventFailed :exec
+UPDATE webhook_events
+SET status = 'failed', error_message = $2, processed_at = now()
+WHERE id = $1;

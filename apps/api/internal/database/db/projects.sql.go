@@ -82,6 +82,30 @@ func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwner
 	return i, err
 }
 
+const getProjectByID = `-- name: GetProjectByID :one
+
+SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE id = $1
+`
+
+// GetProjectByID is unscoped, for the inbound webhook apply pipeline
+// (internal/webhookapply, docs/plans/issue-sync.md "Inbound"), which
+// resolves a new unclassified task's created_by_user_id from the project's
+// owner and has no acting user of its own to scope through — the same
+// reasoning as GetLinkedGitlabProjectByID.
+func (q *Queries) GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectByID, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many
 SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE owner_user_id = $1 ORDER BY created_at DESC
 `

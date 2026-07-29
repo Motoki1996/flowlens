@@ -276,6 +276,25 @@ func (s *Server) handleReopenTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// handleRetryTaskSync re-enqueues one task's most recent failed GitLab push,
+// scoped to the authenticated user via its project. It returns 409 unless
+// the task's current sync status is "failed".
+func (s *Server) handleRetryTaskSync(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	taskID, ok := taskIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "task not found")
+		return
+	}
+
+	t, err := s.tasks.RetrySync(r.Context(), u.ID, taskID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
 // handleUpsertTaskAIContext creates or overwrites one task's AI context,
 // scoped to the authenticated user via its project. These fields are
 // app-only and are never sent to GitLab (docs/plans/issue-sync.md).
@@ -315,6 +334,8 @@ func writeTaskError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_backlog", "backlog belongs to a different project")
 	case errors.Is(err, task.ErrAIContextFieldTooLong):
 		writeError(w, http.StatusBadRequest, "ai_context_field_too_long", "AI context fields must be at most 20000 characters")
+	case errors.Is(err, task.ErrSyncNotFailed):
+		writeError(w, http.StatusConflict, "sync_not_failed", "gitlab sync is not currently failed")
 	case errors.Is(err, task.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "task not found")
 	default:

@@ -20,6 +20,9 @@ export interface Project {
   description: string;
   createdAt: string;
   updatedAt: string;
+  // Only populated by the single-project fetch; the collection view's list
+  // fetch always reports 0 (see apps/api/internal/project.Project).
+  failedSyncTaskCount: number;
 }
 
 export interface Backlog {
@@ -42,6 +45,16 @@ export interface TaskAIContext {
   updatedAt: string | null;
 }
 
+export type TaskSyncStatus = "synced" | "pending" | "failed";
+
+export interface TaskGitlabInfo {
+  syncStatus: TaskSyncStatus;
+  lastError: string;
+  lastSyncedAt: string | null;
+  issueIid: number | null;
+  webUrl: string;
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -58,9 +71,9 @@ export interface Task {
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
-  // gitlab carries GitLab issue sync fields once that feature ships; always
-  // null until then (see apps/api/internal/task.GitlabInfo).
-  gitlab: Record<string, never> | null;
+  // null: the task's project has never had a linked GitLab project, so it is
+  // purely local (see apps/api/internal/task.GitlabInfo).
+  gitlab: TaskGitlabInfo | null;
   aiContext: TaskAIContext;
 }
 

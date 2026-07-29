@@ -69,3 +69,22 @@ RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.
 DELETE FROM tasks t
 USING projects p
 WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2;
+
+-- CountFailedSyncTasksByProjectForOwner backs the project single view's sync
+-- warning (docs/plans/issue-sync.md's "gitlab" fields, surfaced per-task by
+-- internal/task). A task counts as failed the same way internal/task derives
+-- a single task's sync_status: from task_gitlab_links when a link exists, or
+-- from its most recent sync_jobs row (necessarily an issue.create, see
+-- GetLatestSyncJobForTask) when it doesn't.
+
+-- name: CountFailedSyncTasksByProjectForOwner :one
+SELECT COUNT(*) FROM tasks t
+JOIN projects p ON p.id = t.project_id
+LEFT JOIN task_gitlab_links tgl ON tgl.task_id = t.id
+WHERE t.project_id = $1 AND p.owner_user_id = $2
+  AND (
+    tgl.sync_status = 'failed'
+    OR (tgl.task_id IS NULL AND EXISTS (
+      SELECT 1 FROM sync_jobs sj WHERE sj.task_id = t.id AND sj.status = 'failed'
+    ))
+  );

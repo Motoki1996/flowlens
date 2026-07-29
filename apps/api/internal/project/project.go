@@ -35,12 +35,18 @@ var (
 )
 
 // Project is the API-facing representation of a FlowLens project.
+//
+// FailedSyncTaskCount is zero unless a caller explicitly sets it from
+// Service.FailedSyncTaskCount — only the single-project HTTP handler does,
+// for the single view's warning banner (docs/plans/issue-sync.md). Get and
+// List never populate it themselves; see Get's doc comment for why.
 type Project struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID                  uuid.UUID `json:"id"`
+	Name                string    `json:"name"`
+	Description         string    `json:"description"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
+	FailedSyncTaskCount int64     `json:"failedSyncTaskCount"`
 }
 
 // fromRow maps a database row to the domain model.
@@ -108,6 +114,14 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID) ([]Project, error
 
 // Get returns the project by ID. It returns ErrNotFound both when the
 // project does not exist and when it belongs to another user.
+//
+// Get never populates FailedSyncTaskCount itself: Get is also used
+// internally, by this package's own callers and others (internal/task,
+// internal/backlog, internal/gitlabconn, internal/linkedproject), purely as
+// an ownership check whose Project value is discarded. Running the count
+// query on every one of those would be silent, unwanted overhead. Only the
+// single-project HTTP handler needs the count, so it calls
+// FailedSyncTaskCount itself after Get succeeds.
 func (s *Service) Get(ctx context.Context, ownerID, projectID uuid.UUID) (Project, error) {
 	row, err := s.q.GetProjectForOwner(ctx, db.GetProjectForOwnerParams{
 		ID:          projectID,
@@ -120,6 +134,22 @@ func (s *Service) Get(ctx context.Context, ownerID, projectID uuid.UUID) (Projec
 		return Project{}, fmt.Errorf("project: get: %w", err)
 	}
 	return fromRow(row), nil
+}
+
+// FailedSyncTaskCount returns how many of projectID's tasks currently have a
+// failed GitLab sync (docs/plans/issue-sync.md), for the project single
+// view's warning banner. It returns 0, not ErrNotFound, for a project that
+// doesn't exist or belongs to another user — callers are expected to have
+// already confirmed the project via Get.
+func (s *Service) FailedSyncTaskCount(ctx context.Context, ownerID, projectID uuid.UUID) (int64, error) {
+	count, err := s.q.CountFailedSyncTasksByProjectForOwner(ctx, db.CountFailedSyncTasksByProjectForOwnerParams{
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("project: count failed sync tasks: %w", err)
+	}
+	return count, nil
 }
 
 // Update overwrites name and description. Ownership is enforced by the

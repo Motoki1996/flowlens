@@ -531,6 +531,38 @@ func (f *FakeQuerier) GetTaskForOwner(_ context.Context, arg db.GetTaskForOwnerP
 	return t, nil
 }
 
+// CountFailedSyncTasksByProjectForOwner mirrors the SQL: a task counts as
+// failed the same way internal/task derives a single task's sync_status,
+// from task_gitlab_links when a link exists or from its most recent sync_jobs
+// row (necessarily issue.create) when it doesn't.
+func (f *FakeQuerier) CountFailedSyncTasksByProjectForOwner(_ context.Context, arg db.CountFailedSyncTasksByProjectForOwnerParams) (int64, error) {
+	p, ok := f.projectsByID[arg.ProjectID]
+	if !ok || p.OwnerUserID != arg.OwnerUserID {
+		return 0, nil
+	}
+
+	var count int64
+	for _, t := range f.tasks {
+		if t.ProjectID != arg.ProjectID {
+			continue
+		}
+		if link, ok := f.taskGitlabLinksByTaskID[t.ID]; ok {
+			if link.SyncStatus == "failed" {
+				count++
+			}
+			continue
+		}
+		for i := len(f.syncJobs) - 1; i >= 0; i-- {
+			j := f.syncJobs[i]
+			if j.TaskID.Valid && j.TaskID.Bytes == t.ID && j.Status == "failed" {
+				count++
+				break
+			}
+		}
+	}
+	return count, nil
+}
+
 func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskForOwnerParams) (db.Task, error) {
 	existing, ok := f.tasksByID[arg.ID]
 	if !ok {
@@ -1203,6 +1235,43 @@ func (f *FakeQuerier) ReclaimStaleRunningSyncJobs(_ context.Context, updatedBefo
 	return affected, nil
 }
 
+// GetLatestSyncJobForTask returns taskID's most recently created sync job,
+// mirroring the SQL's ORDER BY created_at DESC LIMIT 1. f.syncJobs is kept in
+// insertion order, so the last match found scanning from the end is the most
+// recent one.
+func (f *FakeQuerier) GetLatestSyncJobForTask(_ context.Context, taskID uuid.UUID) (db.SyncJob, error) {
+	for i := len(f.syncJobs) - 1; i >= 0; i-- {
+		j := f.syncJobs[i]
+		if j.TaskID.Valid && j.TaskID.Bytes == taskID {
+			return j, nil
+		}
+	}
+	return db.SyncJob{}, pgx.ErrNoRows
+}
+
+// RetryFailedSyncJobForTask mirrors the SQL: it finds taskID's most recent
+// pending-or-failed job (same scan order as GetLatestSyncJobForTask) and
+// resets it to a fresh pending attempt. No match is reported as pgx.ErrNoRows,
+// which internal/task.Service.RetrySync maps to ErrSyncNotFailed.
+func (f *FakeQuerier) RetryFailedSyncJobForTask(_ context.Context, taskID uuid.UUID) (db.SyncJob, error) {
+	for i := len(f.syncJobs) - 1; i >= 0; i-- {
+		j := f.syncJobs[i]
+		if !j.TaskID.Valid || j.TaskID.Bytes != taskID {
+			continue
+		}
+		if j.Status != "pending" && j.Status != "failed" {
+			continue
+		}
+		j.Status = "pending"
+		j.Attempts = 0
+		j.RunAfter = now()
+		j.LastError = ""
+		f.storeSyncJob(j)
+		return j, nil
+	}
+	return db.SyncJob{}, pgx.ErrNoRows
+}
+
 // SeedSyncJob inserts a ready-made sync job directly in the given status,
 // bypassing Enqueue/Claim. Use it in tests that need a pre-existing job in a
 // specific state (e.g. a stale 'running' job for reclaim tests) without
@@ -1217,6 +1286,27 @@ func (f *FakeQuerier) SeedSyncJob(projectID uuid.UUID, kind, status string, upda
 		RunAfter:  now(),
 		CreatedAt: now(),
 		UpdatedAt: pgtype.Timestamptz{Time: updatedAt, Valid: true},
+	}
+	f.storeSyncJob(j)
+	return j
+}
+
+// SeedSyncJobForTask is SeedSyncJob for a job tied to a task (e.g. an
+// issue.create job for a task with no task_gitlab_links row yet), so tests
+// can exercise gitlabInfoForTask's fallback to sync_jobs without running a
+// real worker.
+func (f *FakeQuerier) SeedSyncJobForTask(taskID, projectID uuid.UUID, kind, status, lastError string) db.SyncJob {
+	j := db.SyncJob{
+		ID:        uuid.New(),
+		ProjectID: projectID,
+		TaskID:    pgtype.UUID{Bytes: taskID, Valid: true},
+		Kind:      kind,
+		Payload:   []byte("{}"),
+		Status:    status,
+		LastError: lastError,
+		RunAfter:  now(),
+		CreatedAt: now(),
+		UpdatedAt: now(),
 	}
 	f.storeSyncJob(j)
 	return j
@@ -1307,6 +1397,17 @@ func (f *FakeQuerier) MarkTaskGitlabLinkFailedForTask(_ context.Context, arg db.
 	l.SyncStatus = "failed"
 	l.LastError = arg.LastError
 	f.taskGitlabLinksByTaskID[arg.TaskID] = l
+	return l, nil
+}
+
+func (f *FakeQuerier) MarkTaskGitlabLinkPendingForTask(_ context.Context, taskID uuid.UUID) (db.TaskGitlabLink, error) {
+	l, ok := f.taskGitlabLinksByTaskID[taskID]
+	if !ok {
+		return db.TaskGitlabLink{}, pgx.ErrNoRows
+	}
+	l.SyncStatus = "pending"
+	l.LastError = ""
+	f.taskGitlabLinksByTaskID[taskID] = l
 	return l, nil
 }
 

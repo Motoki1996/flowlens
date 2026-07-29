@@ -752,3 +752,171 @@ func TestService_Delete_NeverEnqueuesSyncJob(t *testing.T) {
 	require.NoError(t, svc.Delete(ctx, owner, tsk.ID))
 	assert.Zero(t, q.SyncJobCount())
 }
+
+func TestService_Get_ReportsGitlabNil_WhenTaskNeverLinked(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	got, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.Gitlab, "a task whose project never had a linked GitLab project is purely local")
+}
+
+func TestService_Get_ReportsSyncedFromLink(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	got, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Gitlab)
+	assert.Equal(t, task.SyncStatusSynced, got.Gitlab.SyncStatus)
+	require.NotNil(t, got.Gitlab.IssueIID)
+	assert.Equal(t, int64(7), *got.Gitlab.IssueIID)
+}
+
+func TestService_Get_ReportsPending_WhenIssueCreateJobStillPending(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	q.SeedSyncJobForTask(tsk.ID, p.ID, issuesync.KindIssueCreate, "pending", "")
+
+	got, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Gitlab)
+	assert.Equal(t, task.SyncStatusPending, got.Gitlab.SyncStatus)
+}
+
+func TestService_Get_ReportsFailed_WhenIssueCreateJobExhausted(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	q.SeedSyncJobForTask(tsk.ID, p.ID, issuesync.KindIssueCreate, "failed", "gitlab unreachable")
+
+	got, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Gitlab)
+	assert.Equal(t, task.SyncStatusFailed, got.Gitlab.SyncStatus)
+	assert.Equal(t, "gitlab unreachable", got.Gitlab.LastError)
+}
+
+func TestService_Get_ReportsFailedFromLink_WhenPushFailed(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+	_, err := q.MarkTaskGitlabLinkFailedForTask(ctx, db.MarkTaskGitlabLinkFailedForTaskParams{
+		TaskID: tsk.ID, LastError: "gitlab rejected the update",
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Gitlab)
+	assert.Equal(t, task.SyncStatusFailed, got.Gitlab.SyncStatus)
+	assert.Equal(t, "gitlab rejected the update", got.Gitlab.LastError)
+}
+
+func TestService_RetrySync_ReturnsConflict_WhenNotFailed(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, err := svc.RetrySync(ctx, owner, tsk.ID)
+	assert.ErrorIs(t, err, task.ErrSyncNotFailed)
+}
+
+func TestService_RetrySync_ReturnsConflict_WhenNeverLinkedOrEnqueued(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	_, err := svc.RetrySync(ctx, owner, tsk.ID)
+	assert.ErrorIs(t, err, task.ErrSyncNotFailed)
+}
+
+func TestService_RetrySync_ReturnsNotFoundForForeignTask(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	other := q.SeedUser("hubot", "hubot@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	_, err := svc.RetrySync(ctx, other, tsk.ID)
+	assert.ErrorIs(t, err, task.ErrNotFound)
+}
+
+func TestService_RetrySync_ResetsAlreadyLinkedTaskToPending(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+	_, err := q.MarkTaskGitlabLinkFailedForTask(ctx, db.MarkTaskGitlabLinkFailedForTaskParams{
+		TaskID: tsk.ID, LastError: "gitlab rejected the update",
+	})
+	require.NoError(t, err)
+	job := q.SeedSyncJobForTask(tsk.ID, p.ID, issuesync.KindIssueUpdate, "failed", "gitlab rejected the update")
+
+	got, err := svc.RetrySync(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Gitlab)
+	assert.Equal(t, task.SyncStatusPending, got.Gitlab.SyncStatus, "the UI must reflect the retry immediately, not wait for the worker")
+	assert.Empty(t, got.Gitlab.LastError)
+
+	reset, ok := q.GetSyncJob(job.ID)
+	require.True(t, ok)
+	assert.Equal(t, "pending", reset.Status)
+	assert.Zero(t, reset.Attempts, "retry gives the job a fresh attempt budget")
+}
+
+func TestService_RetrySync_ResetsNeverLinkedTaskToPending(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	q.SeedSyncJobForTask(tsk.ID, p.ID, issuesync.KindIssueCreate, "failed", "gitlab unreachable")
+
+	got, err := svc.RetrySync(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Gitlab)
+	assert.Equal(t, task.SyncStatusPending, got.Gitlab.SyncStatus)
+}

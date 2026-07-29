@@ -8,6 +8,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AIContextSection } from "@/components/AIContextSection";
+import { SyncBadge } from "@/components/SyncBadge";
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -125,6 +126,69 @@ function BacklogSelect({
 }
 
 /**
+ * GitlabSyncSection shows a task's sync badge, a link to its GitLab issue
+ * once one exists, and — only while failed — the error text plus a retry
+ * action. The retry action belongs here, on the task, per docs/ui-design.md.
+ */
+function GitlabSyncSection({
+  task,
+  onChanged,
+}: {
+  task: Task;
+  onChanged: (task: Task) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const gitlab = task.gitlab;
+
+  async function handleRetry() {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}/sync-retry`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setError(body?.error.message ?? "Failed to retry sync.");
+        return;
+      }
+      onChanged((await res.json()) as Task);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <SyncBadge gitlab={gitlab} />
+      {gitlab?.webUrl ? (
+        <a
+          href={gitlab.webUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary text-xs hover:underline"
+        >
+          View issue{gitlab.issueIid ? ` #${gitlab.issueIid}` : ""}
+        </a>
+      ) : null}
+      {gitlab?.syncStatus === "failed" ? (
+        <div className="border-destructive/50 bg-destructive/5 mt-1 flex w-full flex-col items-start gap-2 rounded-md border p-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-destructive">{gitlab.lastError || "Sync failed."}</p>
+          <div className="flex items-center gap-2">
+            {error ? <span className="text-destructive">{error}</span> : null}
+            <Button variant="outline" size="sm" onClick={handleRetry} disabled={pending}>
+              {pending ? "Retrying…" : "Retry"}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * TaskDetail is the single view for one task, per docs/ui-design.md and the
  * order fixed in the issue: identity -> attributes -> AI-facing information
  * -> related links. Close/Reopen and backlog assignment live here, on the
@@ -154,14 +218,15 @@ export function TaskDetail({
                 <Badge variant={task.status === "open" ? "default" : "secondary"}>
                   {task.status === "open" ? "Open" : "Closed"}
                 </Badge>
-                {/* Placeholder until GitLab issue sync ships (task.gitlab is always null today). */}
-                <Badge variant="outline">Not synced to GitLab</Badge>
               </div>
               {task.description ? (
                 <CardDescription className="mt-1.5 whitespace-pre-wrap">
                   {task.description}
                 </CardDescription>
               ) : null}
+              <div className="mt-2">
+                <GitlabSyncSection task={task} onChanged={setTask} />
+              </div>
             </div>
             <CloseReopenButton task={task} onChanged={setTask} />
           </div>

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/flowlens/api/internal/issuesync"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,6 +124,23 @@ func TestHandleGetProject(t *testing.T) {
 			assert.Equal(t, tt.wantCode, rec.Code)
 		})
 	}
+}
+
+func TestHandleGetProject_IncludesFailedSyncTaskCount(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	okTask := q.SeedTask(p.ID, ownerID, "Fine")
+	failedTask := q.SeedTask(p.ID, ownerID, "Broken")
+	q.SeedSyncJobForTask(failedTask.ID, p.ID, issuesync.KindIssueCreate, "failed", "gitlab unreachable")
+	_ = okTask
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String(), nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, float64(1), body["failedSyncTaskCount"])
 }
 
 func TestHandleUpdateProject(t *testing.T) {

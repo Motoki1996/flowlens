@@ -13,6 +13,7 @@ const project: Project = {
   description: "The first project",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
+  failedSyncTaskCount: 0,
 };
 
 describe("ProjectsView", () => {

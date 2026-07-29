@@ -37,6 +37,7 @@ var (
 	ErrNotFound              = errors.New("task: not found")
 	ErrBacklogNotInProject   = errors.New("task: backlog belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
+	ErrSyncNotFailed         = errors.New("task: gitlab sync is not currently failed")
 )
 
 // maxAIContextFieldLength bounds each of the four task_ai_contexts fields.
@@ -47,11 +48,28 @@ const (
 	StatusClosed = "closed"
 )
 
-// GitlabInfo will carry the GitLab issue sync fields (sync_status,
-// gitlab_web_url, last_error, ...) once GitLab connection sync ships
-// (docs/plans/issue-sync.md phase 3+). It is always nil until then, so every
-// task response already carries the "gitlab" key clients will need to read.
-type GitlabInfo struct{}
+// GitLab sync status values, mirroring task_gitlab_links.sync_status
+// (docs/plans/issue-sync.md). SyncStatusPending also covers a task whose
+// issue.create job hasn't run yet — it has no task_gitlab_links row at all,
+// so gitlabInfoForTask derives it from the job instead (see there).
+const (
+	SyncStatusSynced  = "synced"
+	SyncStatusPending = "pending"
+	SyncStatusFailed  = "failed"
+)
+
+// GitlabInfo carries a task's GitLab issue sync state: whether it pushed
+// cleanly, is still in flight, or failed and why, plus enough to link to the
+// issue itself. A nil *GitlabInfo (not this struct's zero value) means the
+// task has never had a linked GitLab project to sync to at all — a purely
+// local task, per docs/plans/issue-sync.md.
+type GitlabInfo struct {
+	SyncStatus   string     `json:"syncStatus"`
+	LastError    string     `json:"lastError"`
+	LastSyncedAt *time.Time `json:"lastSyncedAt"`
+	IssueIID     *int64     `json:"issueIid"`
+	WebURL       string     `json:"webUrl"`
+}
 
 // AIContext holds the app-only fields that describe a task for an AI agent:
 // acceptance criteria, free-form context, and the allowed/forbidden change
@@ -476,7 +494,13 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	}
 	out := make([]Task, len(rows))
 	for i, row := range rows {
-		out[i] = fromRow(row)
+		t := fromRow(row)
+		info, err := s.gitlabInfoForTask(ctx, row.ID)
+		if err != nil {
+			return nil, err
+		}
+		t.Gitlab = info
+		out[i] = t
 	}
 	return out, nil
 }
@@ -492,7 +516,100 @@ func (s *Service) Get(ctx context.Context, ownerID, taskID uuid.UUID) (Task, err
 		}
 		return Task{}, fmt.Errorf("task: get: %w", err)
 	}
-	return fromRow(row), nil
+	t := fromRow(row)
+	info, err := s.gitlabInfoForTask(ctx, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	t.Gitlab = info
+	return t, nil
+}
+
+// gitlabInfoFromLink builds a task's GitlabInfo from its task_gitlab_links
+// row: the common case once a task has ever successfully pushed to GitLab.
+func gitlabInfoFromLink(link db.TaskGitlabLink) *GitlabInfo {
+	issueIID := link.GitlabIssueIid
+	return &GitlabInfo{
+		SyncStatus:   link.SyncStatus,
+		LastError:    link.LastError,
+		LastSyncedAt: timePtr(link.LastSyncedAt),
+		IssueIID:     &issueIID,
+		WebURL:       link.GitlabWebUrl,
+	}
+}
+
+// gitlabInfoForTask resolves taskID's GitlabInfo for API responses. A task
+// with a task_gitlab_links row reads its sync state directly from there. A
+// task with none yet — its issue.create job hasn't succeeded — falls back to
+// that job's own status: still pending/running reports as
+// SyncStatusPending, permanently failed reports as SyncStatusFailed with the
+// job's error. A task with neither a link nor any sync job never had a
+// linked GitLab project to push to, and reports as nil (untracked, purely
+// local, per docs/plans/issue-sync.md).
+func (s *Service) gitlabInfoForTask(ctx context.Context, taskID uuid.UUID) (*GitlabInfo, error) {
+	link, err := s.q.GetTaskGitlabLinkByTaskID(ctx, taskID)
+	if err == nil {
+		return gitlabInfoFromLink(link), nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("task: get gitlab link: %w", err)
+	}
+
+	job, err := s.q.GetLatestSyncJobForTask(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("task: get latest sync job: %w", err)
+	}
+	switch job.Status {
+	case "pending", "running":
+		return &GitlabInfo{SyncStatus: SyncStatusPending}, nil
+	case "failed":
+		return &GitlabInfo{SyncStatus: SyncStatusFailed, LastError: job.LastError}, nil
+	default:
+		// "succeeded" without a link row is unexpected (HandleIssueCreate
+		// always creates the link before reporting success); treat it the
+		// same as "never had a linked GitLab project" rather than guessing.
+		return nil, nil
+	}
+}
+
+// RetrySync re-enqueues a task's most recent failed GitLab push. It returns
+// ErrSyncNotFailed (mapped to 409 by the HTTP layer) unless the task's
+// current gitlab.syncStatus is SyncStatusFailed — the check the UI itself
+// uses to decide whether to show the retry button, so the two can never
+// disagree. On success, the task's link (if any) is put back to 'pending'
+// immediately, and its job is reset to run again with a fresh attempt
+// budget, so the outbox worker picks it up on its next poll.
+func (s *Service) RetrySync(ctx context.Context, ownerID, taskID uuid.UUID) (Task, error) {
+	if _, err := s.Get(ctx, ownerID, taskID); err != nil {
+		return Task{}, err
+	}
+	info, err := s.gitlabInfoForTask(ctx, taskID)
+	if err != nil {
+		return Task{}, fmt.Errorf("task: retry sync: %w", err)
+	}
+	if info == nil || info.SyncStatus != SyncStatusFailed {
+		return Task{}, ErrSyncNotFailed
+	}
+
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		if _, err := q.RetryFailedSyncJobForTask(ctx, taskID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrSyncNotFailed
+			}
+			return fmt.Errorf("task: retry sync: reset job: %w", err)
+		}
+		if _, err := q.MarkTaskGitlabLinkPendingForTask(ctx, taskID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("task: retry sync: mark link pending: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return Task{}, err
+	}
+	return s.Get(ctx, ownerID, taskID)
 }
 
 // Update overwrites title, description, assignee, labels, due date, backlog

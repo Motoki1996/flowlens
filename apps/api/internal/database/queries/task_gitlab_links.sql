@@ -32,3 +32,19 @@ SET sync_status = 'failed',
     last_error = $2
 WHERE task_id = $1
 RETURNING *;
+
+-- MarkTaskGitlabLinkPendingForTask is the other half of a sync retry
+-- (internal/task.Service.RetrySync, alongside RetryFailedSyncJobForTask in
+-- sync_jobs.sql): it puts an already-linked task's sync status back to
+-- 'pending' so the UI reflects the retry immediately, without waiting for
+-- the worker to pick the job back up. A task whose issue.create never
+-- succeeded has no row here yet, so a no-match (no rows returned) is
+-- expected and not an error — the caller falls back to sync_jobs alone for
+-- that case.
+
+-- name: MarkTaskGitlabLinkPendingForTask :one
+UPDATE task_gitlab_links
+SET sync_status = 'pending',
+    last_error = ''
+WHERE task_id = $1
+RETURNING *;

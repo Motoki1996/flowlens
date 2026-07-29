@@ -74,6 +74,13 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 		writeProjectError(w, err)
 		return
 	}
+	failedCount, err := s.projects.FailedSyncTaskCount(r.Context(), u.ID, projectID)
+	if err != nil {
+		slog.Error("get project", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+	p.FailedSyncTaskCount = failedCount
 	writeJSON(w, http.StatusOK, p)
 }
 

@@ -3,7 +3,7 @@
 // browser's session cookie so the API can authenticate the request.
 
 import { cookies } from "next/headers";
-import type { Backlog, GitlabConnection, LinkedGitlabProject, Project, Task, User } from "@/types";
+import type { Backlog, GitlabConnection, LinkedGitlabProject, Project, SyncRun, Task, User } from "@/types";
 
 // Base URL the Next.js server uses to reach the API.
 const API_INTERNAL_URL =
@@ -173,4 +173,20 @@ export async function getLinkedGitlabProjects(projectId: string): Promise<Linked
     throw new Error(`Failed to load linked gitlab projects: ${res.status}`);
   }
   return (await res.json()) as LinkedGitlabProject[];
+}
+
+/**
+ * getSyncRuns returns a linked GitLab project's sync run history, newest
+ * first. Callers must already know the request is authenticated.
+ */
+export async function getSyncRuns(linkId: string): Promise<SyncRun[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/sync-runs`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load sync runs: ${res.status}`);
+  }
+  return (await res.json()) as SyncRun[];
 }

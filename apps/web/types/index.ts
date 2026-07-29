@@ -120,3 +120,22 @@ export interface GitlabProjectOption {
   pathWithNamespace: string;
   webUrl: string;
 }
+
+export type SyncRunKind = "initial_import" | "manual_resync";
+
+export type SyncRunStatus = "running" | "succeeded" | "failed";
+
+/** SyncRun is one project.import/project.resync attempt against a linked GitLab project. */
+export interface SyncRun {
+  id: string;
+  linkedGitlabProjectId: string;
+  kind: SyncRunKind;
+  status: SyncRunStatus;
+  issuesSeen: number;
+  issuesCreated: number;
+  issuesUpdated: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  errorMessage: string;
+  createdAt: string;
+}

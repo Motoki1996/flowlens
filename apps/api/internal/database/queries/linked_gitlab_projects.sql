@@ -128,3 +128,21 @@ FROM gitlab_connections gc, projects p
 WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
     AND p.owner_user_id = $2
 RETURNING lgp.*;
+
+-- name: UpdateLinkedGitlabProjectLastSyncedAt :one
+-- Unscoped, like GetLinkedGitlabProjectByID: called by the background
+-- worker (internal/projectsync) after a project.import/project.resync run
+-- finishes, which has no acting user to scope through.
+UPDATE linked_gitlab_projects
+SET last_synced_at = now(), updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateLinkedGitlabProjectInitialImportStatus :one
+-- Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.
+-- Values used: "pending" (default), "completed", "failed"
+-- (internal/projectsync).
+UPDATE linked_gitlab_projects
+SET initial_import_status = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;

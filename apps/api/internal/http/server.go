@@ -15,6 +15,7 @@ import (
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
 	"github.com/flowlens/api/internal/webhookevent"
@@ -38,6 +39,7 @@ type Server struct {
 	tasks          *task.Service
 	gitlabConns    *gitlabconn.Service
 	linkedProjects *linkedproject.Service
+	projectSync    *projectsync.Service
 	webhookEvents  *webhookevent.Service
 	webhookLimiter *simpleRateLimiter
 	sessions       *auth.SessionService
@@ -55,7 +57,8 @@ type Server struct {
 func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRunner database.TxRunner, cipher *crypto.Cipher) (*Server, error) {
 	projects := project.NewService(queries)
 	backlogs := backlog.NewService(queries, projects)
-	gitlabConns := gitlabconn.NewService(queries, projects, cipher, func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) })
+	clientFactory := func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
+	gitlabConns := gitlabconn.NewService(queries, projects, cipher, clientFactory)
 	return &Server{
 		health:         health,
 		users:          user.NewService(queries),
@@ -63,7 +66,8 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		backlogs:       backlogs,
 		tasks:          task.NewService(queries, txRunner, projects, backlogs),
 		gitlabConns:    gitlabConns,
-		linkedProjects: linkedproject.NewService(queries, projects, gitlabConns, cipher, cfg.AppPublicURL),
+		linkedProjects: linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
+		projectSync:    projectsync.NewService(queries, txRunner, cipher, clientFactory),
 		webhookEvents:  webhookevent.NewService(queries, cipher),
 		webhookLimiter: newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		sessions:       auth.NewSessionService(queries, cfg.SessionTTL),
@@ -124,6 +128,8 @@ func (s *Server) Router() chi.Router {
 				linked.Patch("/{linkID}", s.handleUpdateLinkedGitlabProject)
 				linked.Delete("/{linkID}", s.handleDeleteLinkedGitlabProject)
 				linked.Post("/{linkID}/webhook", s.handleRegisterLinkedGitlabProjectWebhook)
+				linked.Get("/{linkID}/sync-runs", s.handleListSyncRuns)
+				linked.Post("/{linkID}/sync-runs", s.handleCreateSyncRun)
 			})
 
 			protected.Route("/backlogs", func(backlogs chi.Router) {

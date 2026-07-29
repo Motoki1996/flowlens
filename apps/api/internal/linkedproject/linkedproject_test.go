@@ -56,7 +56,7 @@ func newFixtureWithAppURL(t *testing.T, fake *gitlab.FakeClient, appPublicURL st
 
 	projects := project.NewService(q)
 	gitlabConns := gitlabconn.NewService(q, projects, cipher, func(string) gitlab.Client { return fake })
-	svc := linkedproject.NewService(q, projects, gitlabConns, cipher, appPublicURL)
+	svc := linkedproject.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, gitlabConns, cipher, appPublicURL)
 
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")

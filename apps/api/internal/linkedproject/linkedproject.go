@@ -14,16 +14,19 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/flowlens/api/internal/crypto"
+	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/projectsync"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -188,6 +191,7 @@ type UpdateParams struct {
 // connection, owned by a single user.
 type Service struct {
 	q            db.Querier
+	txRunner     database.TxRunner
 	projects     *project.Service
 	gitlabConns  *gitlabconn.Service
 	cipher       *crypto.Cipher
@@ -198,9 +202,10 @@ type Service struct {
 // each link's webhook secret at rest. appPublicURL is the URL GitLab must be
 // able to reach to deliver webhooks (config.Config.AppPublicURL); when
 // empty, webhook registration is skipped and every link stays
-// WebhookStatusNotRegistered.
-func NewService(q db.Querier, projects *project.Service, gitlabConns *gitlabconn.Service, cipher *crypto.Cipher, appPublicURL string) *Service {
-	return &Service{q: q, projects: projects, gitlabConns: gitlabConns, cipher: cipher, appPublicURL: appPublicURL}
+// WebhookStatusNotRegistered. txRunner backs Create's automatic
+// project.import enqueue (projectsync.EnqueueImport, issue #25).
+func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service, gitlabConns *gitlabconn.Service, cipher *crypto.Cipher, appPublicURL string) *Service {
+	return &Service{q: q, txRunner: txRunner, projects: projects, gitlabConns: gitlabConns, cipher: cipher, appPublicURL: appPublicURL}
 }
 
 // mapConnErr maps a gitlabconn error (raised while dialing a project's
@@ -280,6 +285,15 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 			return LinkedProject{}, err
 		}
 	}
+
+	// Automatic initial import (issue #25): best-effort, like the webhook
+	// registration above — a failure here is logged, not returned, since
+	// the link is still fully usable via manual resync
+	// (docs/plans/issue-sync.md).
+	if _, err := projectsync.EnqueueImport(ctx, s.txRunner, row.ID, projectID); err != nil {
+		slog.Error("linked gitlab project: enqueue initial import", "linked_gitlab_project_id", row.ID, "error", err)
+	}
+
 	return fromRow(row), nil
 }
 

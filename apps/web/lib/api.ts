@@ -3,7 +3,7 @@
 // browser's session cookie so the API can authenticate the request.
 
 import { cookies } from "next/headers";
-import type { Backlog, Project, Task, User } from "@/types";
+import type { Backlog, GitlabConnection, LinkedGitlabProject, Project, Task, User } from "@/types";
 
 // Base URL the Next.js server uses to reach the API.
 const API_INTERNAL_URL =
@@ -138,4 +138,39 @@ export async function getTask(id: string): Promise<Task | null> {
     throw new Error(`Failed to load task: ${res.status}`);
   }
   return (await res.json()) as Task;
+}
+
+/**
+ * getGitlabConnection returns the project's GitLab connection, or null when
+ * none has been configured yet (the API reports both "none" and "not owned"
+ * as 404).
+ */
+export async function getGitlabConnection(projectId: string): Promise<GitlabConnection | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/gitlab-connection`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load gitlab connection: ${res.status}`);
+  }
+  return (await res.json()) as GitlabConnection;
+}
+
+/**
+ * getLinkedGitlabProjects returns every GitLab project linked to the
+ * project's GitLab connection. Callers must already know the request is
+ * authenticated.
+ */
+export async function getLinkedGitlabProjects(projectId: string): Promise<LinkedGitlabProject[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/linked-gitlab-projects`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load linked gitlab projects: ${res.status}`);
+  }
+  return (await res.json()) as LinkedGitlabProject[];
 }

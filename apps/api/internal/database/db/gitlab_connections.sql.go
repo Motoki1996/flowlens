@@ -67,6 +67,31 @@ func (q *Queries) GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGi
 	return i, err
 }
 
+const getGitlabConnectionByID = `-- name: GetGitlabConnectionByID :one
+SELECT id, project_id, base_url, encrypted_token, token_gitlab_user_id, token_gitlab_username, last_verified_at, last_verify_error, created_at, updated_at FROM gitlab_connections WHERE id = $1
+`
+
+// Unscoped, for the outbox worker (internal/issuesync): a linked_gitlab_projects
+// row carries gitlab_connection_id but the worker has no acting user to
+// scope through, the same reasoning as GetLinkedGitlabProjectByID.
+func (q *Queries) GetGitlabConnectionByID(ctx context.Context, id uuid.UUID) (GitlabConnection, error) {
+	row := q.db.QueryRow(ctx, getGitlabConnectionByID, id)
+	var i GitlabConnection
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BaseUrl,
+		&i.EncryptedToken,
+		&i.TokenGitlabUserID,
+		&i.TokenGitlabUsername,
+		&i.LastVerifiedAt,
+		&i.LastVerifyError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getGitlabConnectionForOwner = `-- name: GetGitlabConnectionForOwner :one
 SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at

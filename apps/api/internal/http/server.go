@@ -44,10 +44,12 @@ type Server struct {
 	cipher         *crypto.Cipher
 }
 
-// NewServer constructs a Server from configuration, the generated queries,
-// a database health probe, and a Cipher for encrypting secrets at rest
-// (GitLab access tokens, webhook secrets).
-func NewServer(cfg *config.Config, queries database.Querier, health Pinger, cipher *crypto.Cipher) (*Server, error) {
+// NewServer constructs a Server from configuration, the generated queries, a
+// database health probe, a TxRunner (so task writes that must enqueue an
+// outbound sync job commit atomically, per docs/plans/issue-sync.md), and a
+// Cipher for encrypting secrets at rest (GitLab access tokens, webhook
+// secrets).
+func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRunner database.TxRunner, cipher *crypto.Cipher) (*Server, error) {
 	projects := project.NewService(queries)
 	backlogs := backlog.NewService(queries, projects)
 	gitlabConns := gitlabconn.NewService(queries, projects, cipher, func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) })
@@ -56,7 +58,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, ciph
 		users:          user.NewService(queries),
 		projects:       projects,
 		backlogs:       backlogs,
-		tasks:          task.NewService(queries, projects, backlogs),
+		tasks:          task.NewService(queries, txRunner, projects, backlogs),
 		gitlabConns:    gitlabConns,
 		linkedProjects: linkedproject.NewService(queries, projects, gitlabConns, cipher, cfg.AppPublicURL),
 		sessions:       auth.NewSessionService(queries, cfg.SessionTTL),

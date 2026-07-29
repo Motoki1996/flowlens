@@ -50,6 +50,12 @@ type Querier interface {
 	// serves the unfiltered, single-backlog, unassigned-only and status-scoped
 	// list views: passing false/NULL/'' for a filter disables it.
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
+	// task_gitlab_links has no owner column and is never queried through a
+	// project/owner join: only the outbox worker (internal/issuesync) reads and
+	// writes it, and the job row that drives it was already authorized when
+	// internal/task enqueued it in the same transaction as the task write. See
+	// docs/plans/issue-sync.md, "Outbound".
+	CreateTaskGitlabLink(ctx context.Context, arg CreateTaskGitlabLinkParams) (TaskGitlabLink, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
@@ -68,6 +74,14 @@ type Querier interface {
 	// to GetSyncJobByDedupeKey and reuses it as-is.
 	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
+	// internal/task uses this at task-create time to decide whether the
+	// project has anywhere to push a new issue, and if so, where
+	// (docs/plans/issue-sync.md, "Outbound").
+	GetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg GetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
+	// Unscoped, for the outbox worker (internal/issuesync): a linked_gitlab_projects
+	// row carries gitlab_connection_id but the worker has no acting user to
+	// scope through, the same reasoning as GetLinkedGitlabProjectByID.
+	GetGitlabConnectionByID(ctx context.Context, id uuid.UUID) (GitlabConnection, error)
 	// Same as GetGitlabConnectionForOwner, but keyed by the connection's own ID
 	// rather than by its project. internal/linkedproject uses this to dial
 	// GitLab (issue #18's webhook registration/repair/delete) starting from a
@@ -75,11 +89,21 @@ type Querier interface {
 	// app project ID.
 	GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGitlabConnectionByIDForOwnerParams) (GitlabConnection, error)
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
+	// Unscoped: the outbox worker (internal/issuesync) has no acting user. The
+	// sync_jobs row that names this linked project's ID was already authorized
+	// when internal/task enqueued it, so the job's execution needs no further
+	// ownership check.
+	GetLinkedGitlabProjectByID(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
+	// task_gitlab_links has no owner column and is never queried through a
+	// project/owner join: only the outbox worker (internal/issuesync) reads and
+	// writes it, and the job row that drives it was already authorized when
+	// internal/task enqueued it.
+	GetTaskGitlabLinkByTaskID(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
@@ -92,6 +116,13 @@ type Querier interface {
 	// Also clears dedupe_key so a later edit is never permanently blocked by a
 	// job that already reached a terminal state.
 	MarkSyncJobSucceeded(ctx context.Context, id uuid.UUID) error
+	// Records why an outbound push failed, so a subsequent successful push can
+	// clear it (internal/sync's generic retry/backoff drives the retry itself;
+	// this only records the task_gitlab_links-side outcome).
+	MarkTaskGitlabLinkFailedForTask(ctx context.Context, arg MarkTaskGitlabLinkFailedForTaskParams) (TaskGitlabLink, error)
+	// Records a successful outbound push: sync_status='synced', last_error
+	// cleared, gitlab_updated_at and last_synced_at refreshed.
+	MarkTaskGitlabLinkSyncedForTask(ctx context.Context, arg MarkTaskGitlabLinkSyncedForTaskParams) (TaskGitlabLink, error)
 	// Used after deleting the default link: makes the oldest remaining link in
 	// the same connection the new default. A no-op if none remain.
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error

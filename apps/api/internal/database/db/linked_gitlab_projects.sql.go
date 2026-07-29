@@ -140,6 +140,81 @@ func (q *Queries) DeleteLinkedGitlabProjectForOwner(ctx context.Context, arg Del
 	return i, err
 }
 
+const getDefaultLinkedGitlabProjectForOwner = `-- name: GetDefaultLinkedGitlabProjectForOwner :one
+
+SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
+FROM linked_gitlab_projects lgp
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+JOIN projects p ON p.id = gc.project_id
+WHERE p.id = $1 AND p.owner_user_id = $2 AND lgp.is_default = true
+`
+
+type GetDefaultLinkedGitlabProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// internal/task uses this at task-create time to decide whether the
+// project has anywhere to push a new issue, and if so, where
+// (docs/plans/issue-sync.md, "Outbound").
+func (q *Queries) GetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg GetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, getDefaultLinkedGitlabProjectForOwner, arg.ID, arg.OwnerUserID)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
+const getLinkedGitlabProjectByID = `-- name: GetLinkedGitlabProjectByID :one
+SELECT id, gitlab_connection_id, gitlab_project_id, path_with_namespace, name, web_url, sync_scope, sync_labels, webhook_id, encrypted_webhook_secret, webhook_registered_at, initial_import_status, last_synced_at, created_at, updated_at, is_default, webhook_registration_error FROM linked_gitlab_projects WHERE id = $1
+`
+
+// Unscoped: the outbox worker (internal/issuesync) has no acting user. The
+// sync_jobs row that names this linked project's ID was already authorized
+// when internal/task enqueued it, so the job's execution needs no further
+// ownership check.
+func (q *Queries) GetLinkedGitlabProjectByID(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, getLinkedGitlabProjectByID, id)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
 const getLinkedGitlabProjectForOwner = `-- name: GetLinkedGitlabProjectForOwner :one
 SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 FROM linked_gitlab_projects lgp

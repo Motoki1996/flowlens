@@ -1,22 +1,28 @@
 // Package task contains the task domain model and the service that creates
-// and manages tasks inside a project's backlog. GitLab issue sync does not
-// exist yet (see docs/plans/issue-sync.md); deleting a task is therefore
-// trivially local-only today, but the rule holds regardless: delete must
-// never reach out to GitLab, even once sync ships.
+// and manages tasks inside a project's backlog. Create/Update/Close/Reopen
+// enqueue outbound GitLab issue sync jobs (internal/issuesync) in the same
+// transaction as the task write, per docs/plans/issue-sync.md's "Outbound"
+// section; Delete never does — deleting a task must never reach out to
+// GitLab, so its link is simply forgotten (cascade), not resynced.
 package task
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/flowlens/api/internal/backlog"
+	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
+	"github.com/flowlens/api/internal/issuesync"
 	"github.com/flowlens/api/internal/project"
+	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -237,17 +243,43 @@ func BuildGitlabIssuePayload(t Task) gitlab.IssuePayload {
 	}
 }
 
+// BuildGitlabUpdateIssuePayload is BuildGitlabIssuePayload for an
+// already-linked task: the same mirrored fields (title, description,
+// labels, due date, assignee), shaped for GitLab's partial-update issue
+// endpoint. Every field is always sent — FlowLens has no notion of "this
+// field didn't change" at push time, since a job's payload already carries
+// the task's full current state (see internal/issuesync.UpdatePayload).
+func BuildGitlabUpdateIssuePayload(t Task) gitlab.UpdateIssuePayload {
+	var assigneeIDs []int64
+	if t.AssigneeGitlabUserID != nil {
+		assigneeIDs = []int64{*t.AssigneeGitlabUserID}
+	}
+	title := t.Title
+	description := t.Description
+	return gitlab.UpdateIssuePayload{
+		Title:       &title,
+		Description: &description,
+		Labels:      t.Labels,
+		DueDate:     t.DueOn,
+		AssigneeIDs: assigneeIDs,
+	}
+}
+
 // Service manages tasks inside projects owned by a single user.
 type Service struct {
 	q        db.Querier
+	txRunner database.TxRunner
 	projects *project.Service
 	backlogs *backlog.Service
 }
 
 // NewService constructs a task Service. projects and backlogs are used to
 // verify project ownership and backlog membership before any write.
-func NewService(q db.Querier, projects *project.Service, backlogs *backlog.Service) *Service {
-	return &Service{q: q, projects: projects, backlogs: backlogs}
+// txRunner runs each write that must enqueue an outbound sync job (Create,
+// Update, Close, Reopen) atomically with that enqueue, per
+// docs/plans/issue-sync.md's "Outbound" section.
+func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service, backlogs *backlog.Service) *Service {
+	return &Service{q: q, txRunner: txRunner, projects: projects, backlogs: backlogs}
 }
 
 // normalizeTitle trims raw and enforces the 1-255 character rule.
@@ -290,6 +322,15 @@ func normalizeLabels(labels []string) []string {
 // Create validates title and backlog membership, then creates a task at the
 // end of its backlog's (or the unfiled group's) position order. It returns
 // ErrNotFound if projectID does not exist or belongs to another user.
+//
+// If projectID has a default linked GitLab project, an issue.create sync
+// job is enqueued in the same transaction as the task write, so the task is
+// always eventually pushed (docs/plans/issue-sync.md, "Outbound"); a
+// project with no linked GitLab project yet creates a purely local task. An
+// unspecified assignee defaults to the project's GitLab connection's own
+// token identity — the MVP has one token per project, not per user
+// (ADR-0008), so that token's account stands in for "the creator's GitLab
+// account".
 func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, params CreateParams) (Task, error) {
 	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
 		if errors.Is(err, project.ErrNotFound) {
@@ -306,21 +347,103 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 		return Task{}, err
 	}
 
-	row, err := s.q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID:              projectID,
-		BacklogID:              toUUID(params.BacklogID),
-		Title:                  title,
-		Description:            params.Description,
-		AssigneeGitlabUserID:   toInt8(params.AssigneeGitlabUserID),
-		AssigneeGitlabUsername: params.AssigneeGitlabUsername,
-		Labels:                 normalizeLabels(params.Labels),
-		DueOn:                  toDate(params.DueOn),
-		CreatedByUserID:        ownerID,
+	var result Task
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		assigneeID := params.AssigneeGitlabUserID
+		assigneeUsername := params.AssigneeGitlabUsername
+
+		defaultLink, hasLink, err := getDefaultLinkedGitlabProject(ctx, q, ownerID, projectID)
+		if err != nil {
+			return fmt.Errorf("task: create: %w", err)
+		}
+		if hasLink && assigneeID == nil {
+			assigneeID, assigneeUsername, err = defaultAssignee(ctx, q, ownerID, projectID)
+			if err != nil {
+				return fmt.Errorf("task: create: %w", err)
+			}
+		}
+
+		row, err := q.CreateTask(ctx, db.CreateTaskParams{
+			ProjectID:              projectID,
+			BacklogID:              toUUID(params.BacklogID),
+			Title:                  title,
+			Description:            params.Description,
+			AssigneeGitlabUserID:   toInt8(assigneeID),
+			AssigneeGitlabUsername: assigneeUsername,
+			Labels:                 normalizeLabels(params.Labels),
+			DueOn:                  toDate(params.DueOn),
+			CreatedByUserID:        ownerID,
+		})
+		if err != nil {
+			return fmt.Errorf("task: create: %w", err)
+		}
+		result = fromRow(row)
+
+		if !hasLink {
+			return nil
+		}
+		payload, err := json.Marshal(issuesync.CreatePayload{
+			LinkedGitlabProjectID: defaultLink.ID,
+			IssuePayload:          BuildGitlabIssuePayload(result),
+		})
+		if err != nil {
+			return fmt.Errorf("task: create: encode sync payload: %w", err)
+		}
+		taskID := result.ID
+		if _, err := syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{
+			ProjectID: projectID,
+			TaskID:    &taskID,
+			Kind:      issuesync.KindIssueCreate,
+			Payload:   payload,
+		}); err != nil {
+			return fmt.Errorf("task: create: enqueue sync job: %w", err)
+		}
+		return nil
 	})
 	if err != nil {
-		return Task{}, fmt.Errorf("task: create: %w", err)
+		return Task{}, err
 	}
-	return fromRow(row), nil
+	return result, nil
+}
+
+// getDefaultLinkedGitlabProject looks up projectID's default linked GitLab
+// project, if any, scoped to ownerID like every other task query. A project
+// with no linked GitLab project yet is not an error: the task is created as
+// a purely local one.
+func getDefaultLinkedGitlabProject(ctx context.Context, q db.Querier, ownerID, projectID uuid.UUID) (db.LinkedGitlabProject, bool, error) {
+	link, err := q.GetDefaultLinkedGitlabProjectForOwner(ctx, db.GetDefaultLinkedGitlabProjectForOwnerParams{
+		ID:          projectID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.LinkedGitlabProject{}, false, nil
+		}
+		return db.LinkedGitlabProject{}, false, err
+	}
+	return link, true, nil
+}
+
+// defaultAssignee resolves the GitLab identity a newly created task is
+// assigned to when the caller does not specify one, per Create's doc
+// comment. A project with no GitLab connection, or a connection whose token
+// identity is not yet known, defaults to no assignee.
+func defaultAssignee(ctx context.Context, q db.Querier, ownerID, projectID uuid.UUID) (*int64, string, error) {
+	conn, err := q.GetGitlabConnectionForOwner(ctx, db.GetGitlabConnectionForOwnerParams{
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, "", nil
+		}
+		return nil, "", err
+	}
+	if !conn.TokenGitlabUserID.Valid {
+		return nil, "", nil
+	}
+	id := conn.TokenGitlabUserID.Int64
+	return &id, conn.TokenGitlabUsername, nil
 }
 
 // ListFilter narrows List to a subset of a project's tasks. The zero value
@@ -375,6 +498,12 @@ func (s *Service) Get(ctx context.Context, ownerID, taskID uuid.UUID) (Task, err
 // Update overwrites title, description, assignee, labels, due date, backlog
 // and position. Ownership is enforced by the query, so a non-owner gets
 // ErrNotFound and nothing is written.
+//
+// If title, description, assignee, labels or due date actually change and
+// the task already has a GitLab link, an issue.update sync job is enqueued
+// in the same transaction, deduped per task so rapid repeated edits
+// collapse into one pending push (docs/plans/issue-sync.md, "Outbound"). A
+// backlog/position-only edit, or a task with no link, enqueues nothing.
 func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params UpdateParams) (Task, error) {
 	current, err := s.Get(ctx, ownerID, taskID)
 	if err != nil {
@@ -389,25 +518,104 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 		return Task{}, err
 	}
 
-	row, err := s.q.UpdateTaskForOwner(ctx, db.UpdateTaskForOwnerParams{
-		ID:                     taskID,
-		OwnerUserID:            ownerID,
-		BacklogID:              toUUID(params.BacklogID),
-		Title:                  title,
-		Description:            params.Description,
-		AssigneeGitlabUserID:   toInt8(params.AssigneeGitlabUserID),
-		AssigneeGitlabUsername: params.AssigneeGitlabUsername,
-		Labels:                 normalizeLabels(params.Labels),
-		DueOn:                  toDate(params.DueOn),
-		Position:               params.Position,
+	mirroredChanged := mirroredFieldsChanged(current, title, params)
+
+	var result Task
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		row, err := q.UpdateTaskForOwner(ctx, db.UpdateTaskForOwnerParams{
+			ID:                     taskID,
+			OwnerUserID:            ownerID,
+			BacklogID:              toUUID(params.BacklogID),
+			Title:                  title,
+			Description:            params.Description,
+			AssigneeGitlabUserID:   toInt8(params.AssigneeGitlabUserID),
+			AssigneeGitlabUsername: params.AssigneeGitlabUsername,
+			Labels:                 normalizeLabels(params.Labels),
+			DueOn:                  toDate(params.DueOn),
+			Position:               params.Position,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("task: update: %w", err)
+		}
+		result = fromRow(row)
+
+		if !mirroredChanged {
+			return nil
+		}
+		payload, err := json.Marshal(issuesync.UpdatePayload{UpdateIssuePayload: BuildGitlabUpdateIssuePayload(result)})
+		if err != nil {
+			return fmt.Errorf("task: update: encode sync payload: %w", err)
+		}
+		return enqueueIfLinked(ctx, q, taskID, result.ProjectID, issuesync.KindIssueUpdate,
+			fmt.Sprintf("issue.update:%s", taskID), payload)
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Task{}, ErrNotFound
-		}
-		return Task{}, fmt.Errorf("task: update: %w", err)
+		return Task{}, err
 	}
-	return fromRow(row), nil
+	return result, nil
+}
+
+// mirroredFieldsChanged reports whether any of the fields FlowLens mirrors
+// to GitLab (title, description, assignee, labels, due date) differ between
+// current and the incoming update — the trigger for enqueueing
+// issue.update. Backlog and position are app-only and never compared here.
+func mirroredFieldsChanged(current Task, title string, params UpdateParams) bool {
+	if current.Title != title || current.Description != params.Description {
+		return true
+	}
+	if !equalInt64Ptr(current.AssigneeGitlabUserID, params.AssigneeGitlabUserID) {
+		return true
+	}
+	if current.AssigneeGitlabUsername != params.AssigneeGitlabUsername {
+		return true
+	}
+	if !slices.Equal(current.Labels, normalizeLabels(params.Labels)) {
+		return true
+	}
+	if !equalTimePtr(current.DueOn, params.DueOn) {
+		return true
+	}
+	return false
+}
+
+func equalInt64Ptr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func equalTimePtr(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
+}
+
+// enqueueIfLinked enqueues a sync job for taskID only if it already has a
+// GitLab link — a task with none is purely local
+// (docs/plans/issue-sync.md), so there is nothing to push. payload may be
+// nil (issue.close/issue.reopen carry no payload).
+func enqueueIfLinked(ctx context.Context, q db.Querier, taskID, projectID uuid.UUID, kind, dedupeKey string, payload []byte) error {
+	if _, err := q.GetTaskGitlabLinkByTaskID(ctx, taskID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("task: check gitlab link: %w", err)
+	}
+	if _, err := syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{
+		ProjectID: projectID,
+		TaskID:    &taskID,
+		Kind:      kind,
+		Payload:   payload,
+		DedupeKey: dedupeKey,
+	}); err != nil {
+		return fmt.Errorf("task: enqueue sync job: %w", err)
+	}
+	return nil
 }
 
 // AssignBacklog moves the task to backlogID, or back to unfiled (未分類)
@@ -438,7 +646,9 @@ func (s *Service) AssignBacklog(ctx context.Context, ownerID, taskID uuid.UUID, 
 
 // Close marks the task closed and stamps closed_at. Closing an
 // already-closed task is a no-op: closed_at is left untouched so re-closing
-// never moves the timestamp.
+// never moves the timestamp, and — since nothing changed — no sync job is
+// enqueued either. Otherwise, a linked task enqueues issue.close in the
+// same transaction as the status write.
 func (s *Service) Close(ctx context.Context, ownerID, taskID uuid.UUID) (Task, error) {
 	current, err := s.Get(ctx, ownerID, taskID)
 	if err != nil {
@@ -448,18 +658,27 @@ func (s *Service) Close(ctx context.Context, ownerID, taskID uuid.UUID) (Task, e
 		return current, nil
 	}
 
-	row, err := s.q.CloseTaskForOwner(ctx, db.CloseTaskForOwnerParams{ID: taskID, OwnerUserID: ownerID})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Task{}, ErrNotFound
+	var result Task
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		row, err := q.CloseTaskForOwner(ctx, db.CloseTaskForOwnerParams{ID: taskID, OwnerUserID: ownerID})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("task: close: %w", err)
 		}
-		return Task{}, fmt.Errorf("task: close: %w", err)
+		result = fromRow(row)
+		return enqueueIfLinked(ctx, q, taskID, result.ProjectID, issuesync.KindIssueClose, "", nil)
+	})
+	if err != nil {
+		return Task{}, err
 	}
-	return fromRow(row), nil
+	return result, nil
 }
 
 // Reopen marks the task open and clears closed_at. Reopening an
-// already-open task is a no-op.
+// already-open task is a no-op, the same as Close. Otherwise, a linked task
+// enqueues issue.reopen in the same transaction as the status write.
 func (s *Service) Reopen(ctx context.Context, ownerID, taskID uuid.UUID) (Task, error) {
 	current, err := s.Get(ctx, ownerID, taskID)
 	if err != nil {
@@ -469,20 +688,28 @@ func (s *Service) Reopen(ctx context.Context, ownerID, taskID uuid.UUID) (Task, 
 		return current, nil
 	}
 
-	row, err := s.q.ReopenTaskForOwner(ctx, db.ReopenTaskForOwnerParams{ID: taskID, OwnerUserID: ownerID})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Task{}, ErrNotFound
+	var result Task
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		row, err := q.ReopenTaskForOwner(ctx, db.ReopenTaskForOwnerParams{ID: taskID, OwnerUserID: ownerID})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("task: reopen: %w", err)
 		}
-		return Task{}, fmt.Errorf("task: reopen: %w", err)
+		result = fromRow(row)
+		return enqueueIfLinked(ctx, q, taskID, result.ProjectID, issuesync.KindIssueReopen, "", nil)
+	})
+	if err != nil {
+		return Task{}, err
 	}
-	return fromRow(row), nil
+	return result, nil
 }
 
-// Delete removes the task. It never touches GitLab: this issue predates any
-// GitLab connection, and later sync work must keep that guarantee (deleting
-// a task remembers nothing to resurrect on re-sync, per
-// docs/plans/issue-sync.md). Ownership is enforced by the query, so a
+// Delete removes the task and never touches GitLab, even for a linked task:
+// the ON DELETE CASCADE on task_gitlab_links/sync_jobs simply forgets the
+// link, so a later re-sync does not resurrect it, per
+// docs/plans/issue-sync.md. Ownership is enforced by the query, so a
 // non-owner gets ErrNotFound and nothing is deleted.
 func (s *Service) Delete(ctx context.Context, ownerID, taskID uuid.UUID) error {
 	affected, err := s.q.DeleteTaskForOwner(ctx, db.DeleteTaskForOwnerParams{ID: taskID, OwnerUserID: ownerID})

@@ -131,6 +131,7 @@ func (s *Server) Router() chi.Router {
 				tasks.Post("/{taskID}/close", s.handleCloseTask)
 				tasks.Post("/{taskID}/reopen", s.handleReopenTask)
 				tasks.Post("/{taskID}/assign-backlog", s.handleAssignTaskBacklog)
+				tasks.Post("/{taskID}/sync-retry", s.handleRetryTaskSync)
 				tasks.Put("/{taskID}/ai-context", s.handleUpsertTaskAIContext)
 			})
 		})

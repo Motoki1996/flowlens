@@ -21,6 +21,11 @@ type Querier interface {
 	// so SetDefaultLinkedGitlabProjectForOwner can set exactly one.
 	ClearDefaultLinkedGitlabProjectsForOwner(ctx context.Context, arg ClearDefaultLinkedGitlabProjectsForOwnerParams) error
 	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
+	// Backs the project single view's sync warning: a task counts as failed the
+	// same way internal/task derives a single task's sync_status, from
+	// task_gitlab_links when a link exists or from its most recent sync_jobs
+	// row otherwise.
+	CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
 	// caller to have already verified project ownership (e.g. via
@@ -89,6 +94,11 @@ type Querier interface {
 	// app project ID.
 	GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGitlabConnectionByIDForOwnerParams) (GitlabConnection, error)
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
+	// Backs a task's sync status (internal/task) when it has no
+	// task_gitlab_links row yet — its issue.create job hasn't succeeded (or has
+	// permanently failed). Before a link exists, a task can only ever have
+	// enqueued issue.create jobs, so "latest" is unambiguous.
+	GetLatestSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error)
 	// Unscoped: the outbox worker (internal/issuesync) has no acting user. The
 	// sync_jobs row that names this linked project's ID was already authorized
 	// when internal/task enqueued it, so the job's execution needs no further
@@ -120,6 +130,11 @@ type Querier interface {
 	// clear it (internal/sync's generic retry/backoff drives the retry itself;
 	// this only records the task_gitlab_links-side outcome).
 	MarkTaskGitlabLinkFailedForTask(ctx context.Context, arg MarkTaskGitlabLinkFailedForTaskParams) (TaskGitlabLink, error)
+	// The other half of a sync retry, alongside RetryFailedSyncJobForTask: puts
+	// an already-linked task's sync status back to 'pending' so the UI reflects
+	// the retry immediately. No matching row (task never linked) is not an
+	// error.
+	MarkTaskGitlabLinkPendingForTask(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error)
 	// Records a successful outbound push: sync_status='synced', last_error
 	// cleared, gitlab_updated_at and last_synced_at refreshed.
 	MarkTaskGitlabLinkSyncedForTask(ctx context.Context, arg MarkTaskGitlabLinkSyncedForTaskParams) (TaskGitlabLink, error)
@@ -131,6 +146,11 @@ type Querier interface {
 	// mid-execution, so it is returned to 'pending' for another worker to pick up.
 	ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgtype.Timestamptz) (int64, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
+	// Forces the task's most recent pending-or-failed job to run again
+	// immediately with a fresh attempt budget, for POST
+	// /tasks/{taskID}/sync-retry. No matching row (nothing to retry) is not an
+	// error; internal/task maps it to ErrSyncNotFailed.
+	RetryFailedSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error)
 	SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg SetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// Records why registering or repairing a webhook failed (most commonly
 	// insufficient GitLab permissions) without touching any existing

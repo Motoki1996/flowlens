@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flowlens/api/internal/issuesync"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -432,4 +433,42 @@ func TestHandleCloseTask_ForeignTaskGets404(t *testing.T) {
 	_, intruderToken := loginSession(t, s, q)
 	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/close", nil, intruderToken)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleRetryTaskSync_ReturnsConflictWhenNotFailed(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/sync-retry", nil, token)
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+func TestHandleRetryTaskSync_ForeignTaskGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	id := q.SeedTask(p.ID, owner.ID, "Fix bug").ID.String()
+
+	_, intruderToken := loginSession(t, s, q)
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/sync-retry", nil, intruderToken)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleRetryTaskSync_ResetsFailedTaskToPending(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	tsk := q.SeedTask(p.ID, ownerID, "Fix bug")
+	q.SeedSyncJobForTask(tsk.ID, p.ID, issuesync.KindIssueCreate, "failed", "gitlab unreachable")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+tsk.ID.String()+"/sync-retry", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	gitlab, ok := body["gitlab"].(map[string]any)
+	require.True(t, ok, "gitlab must be an object once the task has a sync job")
+	assert.Equal(t, "pending", gitlab["syncStatus"])
 }

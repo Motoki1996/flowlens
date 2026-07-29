@@ -220,6 +220,14 @@ export function ProjectDetail({
           )}
         </CardHeader>
         <CardContent>
+          {project.failedSyncTaskCount > 0 ? (
+            <Alert variant="destructive" className="mb-4">
+              <AlertDescription>
+                {project.failedSyncTaskCount} task{project.failedSyncTaskCount > 1 ? "s" : ""} failed
+                to sync with GitLab. Open a task below to see the error and retry.
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
             <div>
               <dt className="text-muted-foreground">Created</dt>

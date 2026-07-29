@@ -116,6 +116,41 @@ func (q *Queries) EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) 
 	return i, err
 }
 
+const getLatestSyncJobForTask = `-- name: GetLatestSyncJobForTask :one
+
+SELECT id, project_id, task_id, kind, payload, dedupe_key, status, attempts, run_after, last_error, created_at, updated_at
+FROM sync_jobs
+WHERE task_id = $1::uuid
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// GetLatestSyncJobForTask backs a task's sync status (internal/task) when it
+// has no task_gitlab_links row yet — i.e. its issue.create job hasn't
+// succeeded (or has permanently failed), so there is nothing in
+// task_gitlab_links to read sync_status from. Before a link exists, a task
+// can only ever have enqueued issue.create jobs (issue.update/close/reopen
+// all require an existing link), so "latest" is unambiguous.
+func (q *Queries) GetLatestSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error) {
+	row := q.db.QueryRow(ctx, getLatestSyncJobForTask, taskID)
+	var i SyncJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.Kind,
+		&i.Payload,
+		&i.DedupeKey,
+		&i.Status,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getSyncJobByDedupeKey = `-- name: GetSyncJobByDedupeKey :one
 SELECT id, project_id, task_id, kind, payload, dedupe_key, status, attempts, run_after, last_error, created_at, updated_at
 FROM sync_jobs
@@ -198,4 +233,47 @@ func (q *Queries) ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgt
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const retryFailedSyncJobForTask = `-- name: RetryFailedSyncJobForTask :one
+
+UPDATE sync_jobs
+SET status = 'pending', attempts = 0, run_after = now(), last_error = ''
+WHERE id = (
+    SELECT id FROM sync_jobs
+    WHERE task_id = $1::uuid AND status IN ('pending', 'failed')
+    ORDER BY created_at DESC
+    LIMIT 1
+)
+RETURNING id, project_id, task_id, kind, payload, dedupe_key, status, attempts, run_after, last_error, created_at, updated_at
+`
+
+// RetryFailedSyncJobForTask powers POST /tasks/{taskID}/sync-retry: it
+// forces the task's most recent pending-or-failed job to run again
+// immediately with a fresh attempt budget. 'pending' is included alongside
+// 'failed' because task_gitlab_links.sync_status can already read 'failed'
+// (set on the first failed push attempt) while the job itself is still
+// mid-backoff, not yet exhausted — internal/task.Service.RetrySync checks
+// that sync_status first, so by the time this query runs the caller already
+// knows a retry is warranted. Returns no rows if the task has no
+// pending/failed job (e.g. it never had one, or it already succeeded),
+// which internal/task maps to ErrSyncNotFailed.
+func (q *Queries) RetryFailedSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error) {
+	row := q.db.QueryRow(ctx, retryFailedSyncJobForTask, taskID)
+	var i SyncJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.Kind,
+		&i.Payload,
+		&i.DedupeKey,
+		&i.Status,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

@@ -120,4 +120,24 @@ describe("TaskListSection", () => {
     render(<TaskListSection tasks={tasks} backlogs={[backlog]} />);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
+
+  it("shows a sync badge per task row", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Local task", gitlab: null }),
+      makeTask({
+        id: "t2",
+        title: "Failed task",
+        gitlab: {
+          syncStatus: "failed",
+          lastError: "gitlab rejected the update",
+          lastSyncedAt: null,
+          issueIid: null,
+          webUrl: "",
+        },
+      }),
+    ];
+    render(<TaskListSection tasks={tasks} backlogs={[]} />);
+    expect(screen.getByText("Local only")).toBeInTheDocument();
+    expect(screen.getByText("Sync failed")).toBeInTheDocument();
+  });
 });

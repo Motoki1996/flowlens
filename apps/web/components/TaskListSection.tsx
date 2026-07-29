@@ -8,6 +8,7 @@ import type { ApiError, Backlog, Task, TaskStatus } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SyncBadge } from "@/components/SyncBadge";
 
 const UNCLASSIFIED = "unclassified";
 const UNCLASSIFIED_LABEL = "未分類";
@@ -228,6 +229,7 @@ export function TaskListSection({
                             ) : null}
                             {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
                             <StatusBadge status={task.status} />
+                            <SyncBadge gitlab={task.gitlab} />
                           </span>
                         </Link>
                       </li>

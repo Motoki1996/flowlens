@@ -119,6 +119,41 @@ func (q *Queries) MarkTaskGitlabLinkFailedForTask(ctx context.Context, arg MarkT
 	return i, err
 }
 
+const markTaskGitlabLinkPendingForTask = `-- name: MarkTaskGitlabLinkPendingForTask :one
+
+UPDATE task_gitlab_links
+SET sync_status = 'pending',
+    last_error = ''
+WHERE task_id = $1
+RETURNING task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at
+`
+
+// MarkTaskGitlabLinkPendingForTask is the other half of a sync retry
+// (internal/task.Service.RetrySync, alongside RetryFailedSyncJobForTask in
+// sync_jobs.sql): it puts an already-linked task's sync status back to
+// 'pending' so the UI reflects the retry immediately, without waiting for
+// the worker to pick the job back up. A task whose issue.create never
+// succeeded has no row here yet, so a no-match (no rows returned) is
+// expected and not an error — the caller falls back to sync_jobs alone for
+// that case.
+func (q *Queries) MarkTaskGitlabLinkPendingForTask(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error) {
+	row := q.db.QueryRow(ctx, markTaskGitlabLinkPendingForTask, taskID)
+	var i TaskGitlabLink
+	err := row.Scan(
+		&i.TaskID,
+		&i.LinkedGitlabProjectID,
+		&i.GitlabIssueID,
+		&i.GitlabIssueIid,
+		&i.GitlabWebUrl,
+		&i.GitlabUpdatedAt,
+		&i.LastPushedFingerprint,
+		&i.SyncStatus,
+		&i.LastError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
 const markTaskGitlabLinkSyncedForTask = `-- name: MarkTaskGitlabLinkSyncedForTask :one
 UPDATE task_gitlab_links
 SET gitlab_updated_at = $2,

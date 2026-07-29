@@ -85,6 +85,38 @@ func (q *Queries) CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerPa
 	return i, err
 }
 
+const countFailedSyncTasksByProjectForOwner = `-- name: CountFailedSyncTasksByProjectForOwner :one
+
+SELECT COUNT(*) FROM tasks t
+JOIN projects p ON p.id = t.project_id
+LEFT JOIN task_gitlab_links tgl ON tgl.task_id = t.id
+WHERE t.project_id = $1 AND p.owner_user_id = $2
+  AND (
+    tgl.sync_status = 'failed'
+    OR (tgl.task_id IS NULL AND EXISTS (
+      SELECT 1 FROM sync_jobs sj WHERE sj.task_id = t.id AND sj.status = 'failed'
+    ))
+  )
+`
+
+type CountFailedSyncTasksByProjectForOwnerParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// CountFailedSyncTasksByProjectForOwner backs the project single view's sync
+// warning (docs/plans/issue-sync.md's "gitlab" fields, surfaced per-task by
+// internal/task). A task counts as failed the same way internal/task derives
+// a single task's sync_status: from task_gitlab_links when a link exists, or
+// from its most recent sync_jobs row (necessarily an issue.create, see
+// GetLatestSyncJobForTask) when it doesn't.
+func (q *Queries) CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countFailedSyncTasksByProjectForOwner, arg.ProjectID, arg.OwnerUserID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createTask = `-- name: CreateTask :one
 
 INSERT INTO tasks (

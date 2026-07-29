@@ -114,4 +114,96 @@ describe("TaskDetail", () => {
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: null }) }),
     );
   });
+
+  it("shows Local only when the task has never been linked to GitLab", () => {
+    render(<TaskDetail task={makeTask({ gitlab: null })} project={project} backlogs={[backlog]} />);
+    expect(screen.getByText("Local only")).toBeInTheDocument();
+  });
+
+  it("shows a link to the GitLab issue once synced", () => {
+    const task = makeTask({
+      gitlab: {
+        syncStatus: "synced",
+        lastError: "",
+        lastSyncedAt: "2026-01-05T00:00:00Z",
+        issueIid: 42,
+        webUrl: "https://gitlab.example.com/group/demo/-/issues/42",
+      },
+    });
+    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    expect(screen.getByText("Synced")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View issue #42" })).toHaveAttribute(
+      "href",
+      "https://gitlab.example.com/group/demo/-/issues/42",
+    );
+  });
+
+  it("shows the sync error and a retry button when sync failed", () => {
+    const task = makeTask({
+      gitlab: {
+        syncStatus: "failed",
+        lastError: "gitlab rejected the update",
+        lastSyncedAt: null,
+        issueIid: null,
+        webUrl: "",
+      },
+    });
+    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    expect(screen.getByText("Sync failed")).toBeInTheDocument();
+    expect(screen.getByText("gitlab rejected the update")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("retries a failed sync", async () => {
+    const retried = makeTask({
+      gitlab: {
+        syncStatus: "pending",
+        lastError: "",
+        lastSyncedAt: null,
+        issueIid: null,
+        webUrl: "",
+      },
+    });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(retried), { status: 200 }));
+
+    const task = makeTask({
+      gitlab: {
+        syncStatus: "failed",
+        lastError: "gitlab rejected the update",
+        lastSyncedAt: null,
+        issueIid: null,
+        webUrl: "",
+      },
+    });
+    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(screen.getByText("Syncing…")).toBeInTheDocument());
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/tasks/t1/sync-retry",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("shows an error when retry fails", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "sync_not_failed", message: "gitlab sync is not currently failed" } }), {
+        status: 409,
+      }),
+    );
+
+    const task = makeTask({
+      gitlab: {
+        syncStatus: "failed",
+        lastError: "gitlab rejected the update",
+        lastSyncedAt: null,
+        issueIid: null,
+        webUrl: "",
+      },
+    });
+    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    expect(await screen.findByText("gitlab sync is not currently failed")).toBeInTheDocument();
+  });
 });

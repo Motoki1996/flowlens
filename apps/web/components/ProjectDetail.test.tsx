@@ -15,6 +15,7 @@ const project: Project = {
   description: "The first project",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
+  failedSyncTaskCount: 0,
 };
 
 describe("ProjectDetail", () => {
@@ -32,6 +33,16 @@ describe("ProjectDetail", () => {
     expect(screen.getByText("Updated")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+  });
+
+  it("shows no sync warning when no tasks have failed to sync", () => {
+    render(<ProjectDetail project={project} />);
+    expect(screen.queryByText(/failed to sync with GitLab/)).not.toBeInTheDocument();
+  });
+
+  it("warns when tasks have failed to sync with GitLab", () => {
+    render(<ProjectDetail project={{ ...project, failedSyncTaskCount: 2 }} />);
+    expect(screen.getByText("2 tasks failed to sync with GitLab. Open a task below to see the error and retry.")).toBeInTheDocument();
   });
 
   it("requires a confirmation step before deleting", async () => {

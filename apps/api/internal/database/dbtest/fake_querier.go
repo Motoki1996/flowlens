@@ -38,6 +38,10 @@ type FakeQuerier struct {
 
 	linkedGitlabProjects     []db.LinkedGitlabProject // insertion order, newest last
 	linkedGitlabProjectsByID map[uuid.UUID]db.LinkedGitlabProject
+
+	syncJobs            []db.SyncJob // insertion order, newest last
+	syncJobsByID        map[uuid.UUID]db.SyncJob
+	syncJobsByDedupeKey map[string]uuid.UUID
 }
 
 // New returns an empty FakeQuerier.
@@ -58,6 +62,9 @@ func New() *FakeQuerier {
 		gitlabConnectionsByID:        map[uuid.UUID]db.GitlabConnection{},
 
 		linkedGitlabProjectsByID: map[uuid.UUID]db.LinkedGitlabProject{},
+
+		syncJobsByID:        map[uuid.UUID]db.SyncJob{},
+		syncJobsByDedupeKey: map[string]uuid.UUID{},
 	}
 }
 
@@ -982,4 +989,204 @@ func (f *FakeQuerier) SetLinkedGitlabProjectWebhookErrorForOwner(_ context.Conte
 	existing.UpdatedAt = now()
 	f.storeLinkedGitlabProject(existing)
 	return existing, nil
+}
+
+// storeSyncJob inserts j if it is new, or overwrites the existing row in
+// place (preserving its position in f.syncJobs) otherwise.
+func (f *FakeQuerier) storeSyncJob(j db.SyncJob) {
+	f.syncJobsByID[j.ID] = j
+	if j.DedupeKey.Valid {
+		f.syncJobsByDedupeKey[j.DedupeKey.String] = j.ID
+	}
+	for i, x := range f.syncJobs {
+		if x.ID == j.ID {
+			f.syncJobs[i] = j
+			return
+		}
+	}
+	f.syncJobs = append(f.syncJobs, j)
+}
+
+// EnqueueSyncJob mirrors the SQL's ON CONFLICT (dedupe_key) DO UPDATE ...
+// WHERE status = 'pending': a collision with a pending job refreshes its
+// payload in place, while a collision with a running/succeeded/failed job is
+// left untouched and reported as pgx.ErrNoRows, matching what Postgres
+// returns when the WHERE clause suppresses the update. internal/sync.Enqueue
+// handles that by re-reading the existing row via GetSyncJobByDedupeKey.
+func (f *FakeQuerier) EnqueueSyncJob(_ context.Context, arg db.EnqueueSyncJobParams) (db.SyncJob, error) {
+	if arg.DedupeKey.Valid {
+		if id, ok := f.syncJobsByDedupeKey[arg.DedupeKey.String]; ok {
+			existing := f.syncJobsByID[id]
+			if existing.Status != "pending" {
+				return db.SyncJob{}, pgx.ErrNoRows
+			}
+			existing.Payload = arg.Payload
+			existing.UpdatedAt = now()
+			f.storeSyncJob(existing)
+			return existing, nil
+		}
+	}
+
+	j := db.SyncJob{
+		ID:        uuid.New(),
+		ProjectID: arg.ProjectID,
+		TaskID:    arg.TaskID,
+		Kind:      arg.Kind,
+		Payload:   arg.Payload,
+		DedupeKey: arg.DedupeKey,
+		Status:    "pending",
+		Attempts:  0,
+		RunAfter:  now(),
+		CreatedAt: now(),
+		UpdatedAt: now(),
+	}
+	f.storeSyncJob(j)
+	return j, nil
+}
+
+func (f *FakeQuerier) GetSyncJobByDedupeKey(_ context.Context, dedupeKey pgtype.Text) (db.SyncJob, error) {
+	if !dedupeKey.Valid {
+		return db.SyncJob{}, pgx.ErrNoRows
+	}
+	id, ok := f.syncJobsByDedupeKey[dedupeKey.String]
+	if !ok {
+		return db.SyncJob{}, pgx.ErrNoRows
+	}
+	return f.syncJobsByID[id], nil
+}
+
+// ClaimPendingSyncJobs mirrors the SQL's SKIP LOCKED claim: due pending jobs
+// are selected oldest-run_after-first, up to limit, and flipped to 'running'
+// in the same call.
+func (f *FakeQuerier) ClaimPendingSyncJobs(_ context.Context, limit int32) ([]db.SyncJob, error) {
+	candidates := []db.SyncJob{}
+	for _, j := range f.syncJobs {
+		if j.Status == "pending" && !j.RunAfter.Time.After(time.Now()) {
+			candidates = append(candidates, j)
+		}
+	}
+	sort.SliceStable(candidates, func(i, k int) bool {
+		return candidates[i].RunAfter.Time.Before(candidates[k].RunAfter.Time)
+	})
+	if int32(len(candidates)) > limit {
+		candidates = candidates[:limit]
+	}
+
+	claimed := make([]db.SyncJob, 0, len(candidates))
+	for _, j := range candidates {
+		j.Status = "running"
+		j.UpdatedAt = now()
+		f.storeSyncJob(j)
+		claimed = append(claimed, j)
+	}
+	return claimed, nil
+}
+
+// MarkSyncJobSucceeded also clears dedupe_key, mirroring the SQL, so a later
+// enqueue with the same key is never permanently blocked by a job that
+// already reached a terminal state.
+func (f *FakeQuerier) MarkSyncJobSucceeded(_ context.Context, id uuid.UUID) error {
+	j, ok := f.syncJobsByID[id]
+	if !ok {
+		return nil
+	}
+	f.clearSyncJobDedupeKey(j)
+	j.Status = "succeeded"
+	j.DedupeKey = pgtype.Text{}
+	j.LastError = ""
+	j.UpdatedAt = now()
+	f.storeSyncJob(j)
+	return nil
+}
+
+func (f *FakeQuerier) MarkSyncJobRetry(_ context.Context, arg db.MarkSyncJobRetryParams) error {
+	j, ok := f.syncJobsByID[arg.ID]
+	if !ok {
+		return nil
+	}
+	j.Status = "pending"
+	j.Attempts++
+	j.RunAfter = arg.RunAfter
+	j.LastError = arg.LastError
+	j.UpdatedAt = now()
+	f.storeSyncJob(j)
+	return nil
+}
+
+// MarkSyncJobFailed also clears dedupe_key, mirroring the SQL, so a later
+// enqueue with the same key is never permanently blocked by a job that
+// already reached a terminal state.
+func (f *FakeQuerier) MarkSyncJobFailed(_ context.Context, arg db.MarkSyncJobFailedParams) error {
+	j, ok := f.syncJobsByID[arg.ID]
+	if !ok {
+		return nil
+	}
+	f.clearSyncJobDedupeKey(j)
+	j.Status = "failed"
+	j.Attempts++
+	j.DedupeKey = pgtype.Text{}
+	j.LastError = arg.LastError
+	j.UpdatedAt = now()
+	f.storeSyncJob(j)
+	return nil
+}
+
+// clearSyncJobDedupeKey drops j's dedupe-key index entry before its terminal
+// status is stored, keeping syncJobsByDedupeKey pointed only at jobs a
+// caller can still collapse into.
+func (f *FakeQuerier) clearSyncJobDedupeKey(j db.SyncJob) {
+	if j.DedupeKey.Valid {
+		delete(f.syncJobsByDedupeKey, j.DedupeKey.String)
+	}
+}
+
+// ReclaimStaleRunningSyncJobs mirrors the SQL: a 'running' job whose
+// updated_at predates updatedBefore was left behind by a process that died
+// mid-execution, so it is returned to 'pending'.
+func (f *FakeQuerier) ReclaimStaleRunningSyncJobs(_ context.Context, updatedBefore pgtype.Timestamptz) (int64, error) {
+	var affected int64
+	for _, j := range f.syncJobs {
+		if j.Status != "running" || !j.UpdatedAt.Time.Before(updatedBefore.Time) {
+			continue
+		}
+		j.Status = "pending"
+		j.UpdatedAt = now()
+		f.storeSyncJob(j)
+		affected++
+	}
+	return affected, nil
+}
+
+// SeedSyncJob inserts a ready-made sync job directly in the given status,
+// bypassing Enqueue/Claim. Use it in tests that need a pre-existing job in a
+// specific state (e.g. a stale 'running' job for reclaim tests) without
+// exercising the transition that would normally produce it.
+func (f *FakeQuerier) SeedSyncJob(projectID uuid.UUID, kind, status string, updatedAt time.Time) db.SyncJob {
+	j := db.SyncJob{
+		ID:        uuid.New(),
+		ProjectID: projectID,
+		Kind:      kind,
+		Payload:   []byte("{}"),
+		Status:    status,
+		RunAfter:  now(),
+		CreatedAt: now(),
+		UpdatedAt: pgtype.Timestamptz{Time: updatedAt, Valid: true},
+	}
+	f.storeSyncJob(j)
+	return j
+}
+
+// SyncJobCount returns the number of sync_jobs rows currently stored, so
+// tests can assert a dedupe collision reused a row instead of creating a
+// duplicate.
+func (f *FakeQuerier) SyncJobCount() int {
+	return len(f.syncJobs)
+}
+
+// GetSyncJob returns the sync job stored under id, so tests can assert on
+// worker-driven state transitions (status, attempts, last_error, ...)
+// directly.
+func (f *FakeQuerier) GetSyncJob(id uuid.UUID) (db.SyncJob, bool) {
+	j, ok := f.syncJobsByID[id]
+	return j, ok
 }

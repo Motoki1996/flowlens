@@ -8,10 +8,15 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
 	AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskBacklogForOwnerParams) (Task, error)
+	// The outbox worker's SKIP LOCKED claim (internal/sync): atomically
+	// selects and flips due pending jobs to 'running' in one statement, so
+	// two workers polling concurrently never claim the same row.
+	ClaimPendingSyncJobs(ctx context.Context, limit int32) ([]SyncJob, error)
 	// Unsets is_default on every other link in the same connection as linkID,
 	// so SetDefaultLinkedGitlabProjectForOwner can set exactly one.
 	ClearDefaultLinkedGitlabProjectsForOwner(ctx context.Context, arg ClearDefaultLinkedGitlabProjectsForOwnerParams) error
@@ -56,6 +61,12 @@ type Querier interface {
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
+	// Upserts on dedupe_key: a colliding insert only overwrites the existing
+	// row while it is still 'pending' (collapsing rapid repeated edits into
+	// one job); a collision with a running/succeeded/failed row leaves that
+	// row untouched and returns no rows, so internal/sync.Enqueue falls back
+	// to GetSyncJobByDedupeKey and reuses it as-is.
+	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	// Same as GetGitlabConnectionForOwner, but keyed by the connection's own ID
 	// rather than by its project. internal/linkedproject uses this to dial
@@ -66,6 +77,7 @@ type Querier interface {
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
 	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
+	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
@@ -75,9 +87,18 @@ type Querier interface {
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
+	MarkSyncJobFailed(ctx context.Context, arg MarkSyncJobFailedParams) error
+	MarkSyncJobRetry(ctx context.Context, arg MarkSyncJobRetryParams) error
+	// Also clears dedupe_key so a later edit is never permanently blocked by a
+	// job that already reached a terminal state.
+	MarkSyncJobSucceeded(ctx context.Context, id uuid.UUID) error
 	// Used after deleting the default link: makes the oldest remaining link in
 	// the same connection the new default. A no-op if none remain.
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error
+	// Startup stale-reclaim (internal/sync): a 'running' job whose updated_at
+	// predates the caller's cutoff was left behind by a process that died
+	// mid-execution, so it is returned to 'pending' for another worker to pick up.
+	ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgtype.Timestamptz) (int64, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
 	SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg SetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// Records why registering or repairing a webhook failed (most commonly

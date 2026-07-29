@@ -15,6 +15,7 @@ import (
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	apihttp "github.com/flowlens/api/internal/http"
+	syncpkg "github.com/flowlens/api/internal/sync"
 )
 
 func main() {
@@ -58,6 +59,19 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// Job handlers (the actual GitLab calls) are registered on this registry
+	// by a later issue; the worker runs with an empty one until then.
+	registry := syncpkg.NewRegistry()
+	worker := syncpkg.NewWorker(database.NewQuerier(pool), registry, syncpkg.WithPollInterval(cfg.SyncWorkerPollInterval))
+	if cfg.SyncWorkerEnabled {
+		go func() {
+			slog.Info("sync worker starting", "poll_interval", cfg.SyncWorkerPollInterval)
+			if err := worker.Run(context.Background()); err != nil {
+				slog.Error("sync worker stopped", "error", err)
+			}
+		}()
+	}
+
 	// Start serving in a goroutine so we can wait for shutdown signals.
 	errCh := make(chan error, 1)
 	go func() {
@@ -74,6 +88,11 @@ func run() error {
 		slog.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		if cfg.SyncWorkerEnabled {
+			if err := worker.Stop(shutdownCtx); err != nil {
+				slog.Warn("sync worker did not stop cleanly", "error", err)
+			}
+		}
 		return httpServer.Shutdown(shutdownCtx)
 	}
 }

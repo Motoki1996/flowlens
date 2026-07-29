@@ -206,10 +206,13 @@ func TestProcessNext_KnownIssue_UpdatesExistingTask(t *testing.T) {
 	assert.EqualValues(t, 5, updated.AssigneeGitlabUserID.Int64)
 }
 
-// Guard 2 ("stale"): an event whose payload updated_at is not after
+// Guard 2 ("stale"): an event whose payload updated_at is strictly before
 // task_gitlab_links.gitlab_updated_at must be skipped, never applied — this
 // is what makes ordering depend on GitLab's own timestamps rather than
 // arrival order, so a reordered redelivery can never clobber a newer state.
+// A tied timestamp is not stale (see
+// TestProcessNext_ConcurrentEventsForSameNewIssue_OnlyOneTaskCreated_RealPostgres):
+// it falls through to the echo guard, or is applied if its content differs.
 func TestProcessNext_StaleEvent_SkippedAndTaskUnchanged(t *testing.T) {
 	f := newFixture(t, linkedproject.ScopeAll, nil)
 	ctx := context.Background()

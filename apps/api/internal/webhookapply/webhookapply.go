@@ -195,7 +195,12 @@ func (s *Service) apply(ctx context.Context, q db.Querier, event db.WebhookEvent
 // gitlab_updated_at and last_pushed_fingerprint — that only a known issue
 // has.
 func (s *Service) applyToExistingTask(ctx context.Context, q db.Querier, event db.WebhookEvent, link db.TaskGitlabLink, fields taskFields) error {
-	if !fields.UpdatedAt.IsZero() && link.GitlabUpdatedAt.Valid && !fields.UpdatedAt.After(link.GitlabUpdatedAt.Time) {
+	// Strictly Before, not "not After": a delivery whose updated_at ties the
+	// recorded baseline is a legitimate near-simultaneous update (e.g. the
+	// loser of the guard-1 create race retrying into this path), not a
+	// reordered redelivery. If it also carries identical content that's the
+	// echo guard's job, right below.
+	if !fields.UpdatedAt.IsZero() && link.GitlabUpdatedAt.Valid && fields.UpdatedAt.Before(link.GitlabUpdatedAt.Time) {
 		return s.markSkipped(ctx, q, event.ID, SkipReasonStale)
 	}
 	if fields.Fingerprint == link.LastPushedFingerprint {

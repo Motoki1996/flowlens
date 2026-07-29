@@ -44,6 +44,9 @@ type FakeQuerier struct {
 	syncJobsByDedupeKey map[string]uuid.UUID
 
 	taskGitlabLinksByTaskID map[uuid.UUID]db.TaskGitlabLink
+
+	webhookEvents      []db.WebhookEvent // insertion order, newest last
+	webhookEventsByKey map[string]db.WebhookEvent
 }
 
 // New returns an empty FakeQuerier.
@@ -69,6 +72,8 @@ func New() *FakeQuerier {
 		syncJobsByDedupeKey: map[string]uuid.UUID{},
 
 		taskGitlabLinksByTaskID: map[uuid.UUID]db.TaskGitlabLink{},
+
+		webhookEventsByKey: map[string]db.WebhookEvent{},
 	}
 }
 
@@ -1426,4 +1431,68 @@ func (f *FakeQuerier) SeedTaskGitlabLink(taskID, linkedGitlabProjectID uuid.UUID
 	}
 	f.taskGitlabLinksByTaskID[taskID] = l
 	return l
+}
+
+// SeedLinkedGitlabProject inserts a linked GitLab project row directly,
+// bypassing Create, for tests that need a link with a known (already
+// "registered") webhook secret without wiring up a full
+// connection/project chain — GetLinkedGitlabProjectByID, the only query
+// internal/webhookevent uses, is unscoped. Returns the stored row.
+func (f *FakeQuerier) SeedLinkedGitlabProject(encryptedWebhookSecret []byte) db.LinkedGitlabProject {
+	l := db.LinkedGitlabProject{
+		ID:                     uuid.New(),
+		GitlabConnectionID:     uuid.New(),
+		GitlabProjectID:        1,
+		PathWithNamespace:      "group/project",
+		Name:                   "project",
+		EncryptedWebhookSecret: encryptedWebhookSecret,
+		InitialImportStatus:    "pending",
+		CreatedAt:              now(),
+		UpdatedAt:              now(),
+	}
+	f.storeLinkedGitlabProject(l)
+	return l
+}
+
+func webhookEventKey(linkedGitlabProjectID uuid.UUID, deliveryUUID string) string {
+	return linkedGitlabProjectID.String() + "\x00" + deliveryUUID
+}
+
+// CreateWebhookEvent mirrors the SQL: ON CONFLICT (linked_gitlab_project_id,
+// delivery_uuid) DO NOTHING makes a duplicate delivery a no-op, reported as
+// pgx.ErrNoRows exactly like the real driver does for a zero-row RETURNING.
+func (f *FakeQuerier) CreateWebhookEvent(_ context.Context, arg db.CreateWebhookEventParams) (db.WebhookEvent, error) {
+	key := webhookEventKey(arg.LinkedGitlabProjectID, arg.DeliveryUuid)
+	if _, exists := f.webhookEventsByKey[key]; exists {
+		return db.WebhookEvent{}, pgx.ErrNoRows
+	}
+
+	e := db.WebhookEvent{
+		ID:                    uuid.New(),
+		LinkedGitlabProjectID: arg.LinkedGitlabProjectID,
+		DeliveryUuid:          arg.DeliveryUuid,
+		EventName:             arg.EventName,
+		ObjectKind:            arg.ObjectKind,
+		GitlabIssueIid:        arg.GitlabIssueIid,
+		Payload:               arg.Payload,
+		GitlabUpdatedAt:       arg.GitlabUpdatedAt,
+		Status:                arg.Status,
+		SkipReason:            arg.SkipReason,
+		ReceivedAt:            now(),
+	}
+	f.webhookEventsByKey[key] = e
+	f.webhookEvents = append(f.webhookEvents, e)
+	return e, nil
+}
+
+// WebhookEventsForLink returns every recorded webhook_events row for
+// linkedGitlabProjectID, insertion order, for test assertions.
+func (f *FakeQuerier) WebhookEventsForLink(linkedGitlabProjectID uuid.UUID) []db.WebhookEvent {
+	items := []db.WebhookEvent{}
+	for _, e := range f.webhookEvents {
+		if e.LinkedGitlabProjectID == linkedGitlabProjectID {
+			items = append(items, e)
+		}
+	}
+	return items
 }

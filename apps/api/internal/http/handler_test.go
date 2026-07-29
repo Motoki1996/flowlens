@@ -19,6 +19,7 @@ import (
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
+	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,6 +67,8 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		tasks:          task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs),
 		gitlabConns:    gitlabConns,
 		linkedProjects: linkedproject.NewService(q, projects, gitlabConns, cipher, appPublicURL),
+		webhookEvents:  webhookevent.NewService(q, cipher),
+		webhookLimiter: newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		sessions:       auth.NewSessionService(q, time.Hour),
 		cookies:        cookieManager{secure: false},
 		webBaseURL:     "http://localhost:3000",

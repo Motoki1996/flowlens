@@ -62,6 +62,13 @@ type Querier interface {
 	// docs/plans/issue-sync.md, "Outbound".
 	CreateTaskGitlabLink(ctx context.Context, arg CreateTaskGitlabLinkParams) (TaskGitlabLink, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
+	// webhook_events has no owner column and is never queried through a
+	// project/owner join: the linkID in the URL path is itself the
+	// authorization boundary (internal/webhookevent, ADR-0008).
+	// ON CONFLICT DO NOTHING makes a duplicate GitLab delivery a no-op instead
+	// of an error: the caller sees pgx.ErrNoRows and treats it the same as a
+	// fresh insert, so retried/duplicated deliveries are idempotent.
+	CreateWebhookEvent(ctx context.Context, arg CreateWebhookEventParams) (WebhookEvent, error)
 	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteGitlabConnectionForOwner(ctx context.Context, arg DeleteGitlabConnectionForOwnerParams) (int64, error)

@@ -17,6 +17,7 @@ import (
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/user"
+	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
@@ -37,6 +38,8 @@ type Server struct {
 	tasks          *task.Service
 	gitlabConns    *gitlabconn.Service
 	linkedProjects *linkedproject.Service
+	webhookEvents  *webhookevent.Service
+	webhookLimiter *simpleRateLimiter
 	sessions       *auth.SessionService
 	cookies        cookieManager
 	webBaseURL     string
@@ -61,6 +64,8 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		tasks:          task.NewService(queries, txRunner, projects, backlogs),
 		gitlabConns:    gitlabConns,
 		linkedProjects: linkedproject.NewService(queries, projects, gitlabConns, cipher, cfg.AppPublicURL),
+		webhookEvents:  webhookevent.NewService(queries, cipher),
+		webhookLimiter: newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		sessions:       auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:        cookieManager{secure: cfg.IsProduction()},
 		webBaseURL:     cfg.WebBaseURL,
@@ -82,6 +87,9 @@ func (s *Server) Router() chi.Router {
 	r.Post("/auth/signup", s.handleSignup)
 	r.Post("/auth/login", s.handleLogin)
 	r.Post("/auth/logout", s.handleLogout)
+
+	// GitLab webhook receiver (token-header auth, not session; ADR-0008).
+	r.Post("/webhooks/gitlab/{linkID}", s.handleGitlabWebhook)
 
 	// Authenticated API.
 	r.Route("/api/v1", func(api chi.Router) {

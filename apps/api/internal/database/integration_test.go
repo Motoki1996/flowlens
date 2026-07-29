@@ -458,3 +458,51 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM task_gitlab_links WHERE task_id = $1`, task.ID).Scan(&linkCount))
 	assert.Equal(t, 0, linkCount, "the gitlab sync link row must be gone")
 }
+
+// A duplicate GitLab webhook delivery — the same linked_gitlab_project_id +
+// delivery_uuid — must be a no-op, not an error, so the receiver
+// (internal/webhookevent) can always respond 200 whether or not this is a
+// GitLab redelivery. This drives the real UNIQUE constraint, which the fake
+// querier can only approximate.
+func TestCreateWebhookEvent_DuplicateDeliveryIsNoOp(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	conn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:           p.ID,
+		BaseUrl:             "https://gitlab.example.com",
+		EncryptedToken:      []byte("ciphertext"),
+		TokenGitlabUserID:   pgtype.Int8{Int64: 99, Valid: true},
+		TokenGitlabUsername: "octocat",
+	})
+	require.NoError(t, err)
+	link := seedLinkedGitlabProject(t, q, conn.ID, 1)
+
+	params := db.CreateWebhookEventParams{
+		LinkedGitlabProjectID: link.ID,
+		DeliveryUuid:          "delivery-uuid-1",
+		EventName:             "Issue Hook",
+		ObjectKind:            "issue",
+		GitlabIssueIid:        pgtype.Int8{Int64: 7, Valid: true},
+		Payload:               []byte(`{"object_kind":"issue"}`),
+		Status:                "pending",
+	}
+
+	first, err := q.CreateWebhookEvent(ctx, params)
+	require.NoError(t, err)
+
+	_, err = q.CreateWebhookEvent(ctx, params)
+	assert.ErrorIs(t, err, pgx.ErrNoRows, "a duplicate delivery_uuid for the same link must report zero rows, not an error")
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM webhook_events WHERE id = $1`, first.ID).Scan(&count))
+	assert.Equal(t, 1, count, "exactly one row must exist for the delivery")
+}

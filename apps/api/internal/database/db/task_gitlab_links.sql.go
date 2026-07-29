@@ -64,6 +64,42 @@ func (q *Queries) CreateTaskGitlabLink(ctx context.Context, arg CreateTaskGitlab
 	return i, err
 }
 
+const getTaskGitlabLinkByLinkedProjectAndIID = `-- name: GetTaskGitlabLinkByLinkedProjectAndIID :one
+
+SELECT task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at
+FROM task_gitlab_links
+WHERE linked_gitlab_project_id = $1 AND gitlab_issue_iid = $2
+`
+
+type GetTaskGitlabLinkByLinkedProjectAndIIDParams struct {
+	LinkedGitlabProjectID uuid.UUID `json:"linked_gitlab_project_id"`
+	GitlabIssueIid        int64     `json:"gitlab_issue_iid"`
+}
+
+// GetTaskGitlabLinkByLinkedProjectAndIID looks up a task already linked to a
+// specific GitLab issue, keyed by the same columns as the 1:1 UNIQUE
+// constraint. The inbound apply pipeline (internal/webhookapply,
+// docs/plans/issue-sync.md "Inbound") uses this to tell a known issue
+// (update an existing task) from an unknown one (create a new unclassified
+// task).
+func (q *Queries) GetTaskGitlabLinkByLinkedProjectAndIID(ctx context.Context, arg GetTaskGitlabLinkByLinkedProjectAndIIDParams) (TaskGitlabLink, error) {
+	row := q.db.QueryRow(ctx, getTaskGitlabLinkByLinkedProjectAndIID, arg.LinkedGitlabProjectID, arg.GitlabIssueIid)
+	var i TaskGitlabLink
+	err := row.Scan(
+		&i.TaskID,
+		&i.LinkedGitlabProjectID,
+		&i.GitlabIssueID,
+		&i.GitlabIssueIid,
+		&i.GitlabWebUrl,
+		&i.GitlabUpdatedAt,
+		&i.LastPushedFingerprint,
+		&i.SyncStatus,
+		&i.LastError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
 const getTaskGitlabLinkByTaskID = `-- name: GetTaskGitlabLinkByTaskID :one
 SELECT task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at
 FROM task_gitlab_links
@@ -72,6 +108,45 @@ WHERE task_id = $1
 
 func (q *Queries) GetTaskGitlabLinkByTaskID(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error) {
 	row := q.db.QueryRow(ctx, getTaskGitlabLinkByTaskID, taskID)
+	var i TaskGitlabLink
+	err := row.Scan(
+		&i.TaskID,
+		&i.LinkedGitlabProjectID,
+		&i.GitlabIssueID,
+		&i.GitlabIssueIid,
+		&i.GitlabWebUrl,
+		&i.GitlabUpdatedAt,
+		&i.LastPushedFingerprint,
+		&i.SyncStatus,
+		&i.LastError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
+const markTaskGitlabLinkAppliedForTask = `-- name: MarkTaskGitlabLinkAppliedForTask :one
+
+UPDATE task_gitlab_links
+SET gitlab_updated_at = $2,
+    sync_status = 'synced',
+    last_error = ''
+WHERE task_id = $1
+RETURNING task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at
+`
+
+type MarkTaskGitlabLinkAppliedForTaskParams struct {
+	TaskID          uuid.UUID          `json:"task_id"`
+	GitlabUpdatedAt pgtype.Timestamptz `json:"gitlab_updated_at"`
+}
+
+// MarkTaskGitlabLinkAppliedForTask records a successful inbound apply
+// (internal/webhookapply): only gitlab_updated_at advances and
+// sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask (the
+// outbound counterpart), it never touches last_pushed_fingerprint — that
+// field records what FlowLens itself last pushed, and an inbound apply is by
+// definition not that.
+func (q *Queries) MarkTaskGitlabLinkAppliedForTask(ctx context.Context, arg MarkTaskGitlabLinkAppliedForTaskParams) (TaskGitlabLink, error) {
+	row := q.db.QueryRow(ctx, markTaskGitlabLinkAppliedForTask, arg.TaskID, arg.GitlabUpdatedAt)
 	var i TaskGitlabLink
 	err := row.Scan(
 		&i.TaskID,

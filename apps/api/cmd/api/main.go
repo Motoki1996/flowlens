@@ -18,6 +18,7 @@ import (
 	apihttp "github.com/flowlens/api/internal/http"
 	"github.com/flowlens/api/internal/issuesync"
 	syncpkg "github.com/flowlens/api/internal/sync"
+	"github.com/flowlens/api/internal/webhookapply"
 )
 
 func main() {
@@ -79,6 +80,21 @@ func run() error {
 		}()
 	}
 
+	// Inbound webhook apply pipeline (docs/plans/issue-sync.md, "Inbound"):
+	// applies recorded webhook_events to tasks, guarded against stale, echo
+	// and out-of-scope deliveries. Runs under the same enable flag as the
+	// outbound worker above — together they are "the sync engine".
+	webhookApply := webhookapply.NewService(database.NewTxRunner(pool))
+	webhookWorker := webhookapply.NewWorker(webhookApply, webhookapply.WithPollInterval(cfg.SyncWorkerPollInterval))
+	if cfg.SyncWorkerEnabled {
+		go func() {
+			slog.Info("webhook apply worker starting", "poll_interval", cfg.SyncWorkerPollInterval)
+			if err := webhookWorker.Run(context.Background()); err != nil {
+				slog.Error("webhook apply worker stopped", "error", err)
+			}
+		}()
+	}
+
 	// Start serving in a goroutine so we can wait for shutdown signals.
 	errCh := make(chan error, 1)
 	go func() {
@@ -98,6 +114,9 @@ func run() error {
 		if cfg.SyncWorkerEnabled {
 			if err := worker.Stop(shutdownCtx); err != nil {
 				slog.Warn("sync worker did not stop cleanly", "error", err)
+			}
+			if err := webhookWorker.Stop(shutdownCtx); err != nil {
+				slog.Warn("webhook apply worker did not stop cleanly", "error", err)
 			}
 		}
 		return httpServer.Shutdown(shutdownCtx)

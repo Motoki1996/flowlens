@@ -12,7 +12,22 @@ import (
 )
 
 type Querier interface {
+	// ApplyWebhookTaskFields is the inbound apply pipeline's write to tasks
+	// (internal/webhookapply): unscoped, like GetLinkedGitlabProjectByID,
+	// because the task_gitlab_links row that names this task ID was already
+	// authorized when the link was first created (or, for a brand-new
+	// unclassified task, in the same transaction that just created it). It
+	// never touches backlog_id or position, which are app-only.
+	ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTaskFieldsParams) (Task, error)
 	AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskBacklogForOwnerParams) (Task, error)
+	// ClaimNextPendingWebhookEvent must be called through a transaction-scoped
+	// Querier: FOR UPDATE SKIP LOCKED only holds its lock for the life of the
+	// transaction, so the claim and the resulting task write and status
+	// update need to commit together (internal/webhookapply,
+	// docs/plans/issue-sync.md "Inbound"). SKIP LOCKED means two workers
+	// polling concurrently never claim the same row; ORDER BY received_at ASC
+	// processes deliveries oldest-first.
+	ClaimNextPendingWebhookEvent(ctx context.Context) (WebhookEvent, error)
 	// The outbox worker's SKIP LOCKED claim (internal/sync): atomically
 	// selects and flips due pending jobs to 'running' in one statement, so
 	// two workers polling concurrently never claim the same row.
@@ -112,10 +127,22 @@ type Querier interface {
 	// ownership check.
 	GetLinkedGitlabProjectByID(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
+	// GetProjectByID is unscoped, for the inbound webhook apply pipeline
+	// (internal/webhookapply), which resolves a new unclassified task's
+	// created_by_user_id from the project's owner and has no acting user of
+	// its own to scope through — the same reasoning as
+	// GetLinkedGitlabProjectByID.
+	GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
+	// GetTaskGitlabLinkByLinkedProjectAndIID looks up a task already linked to
+	// a specific GitLab issue, keyed by the same columns as the 1:1 UNIQUE
+	// constraint. The inbound apply pipeline (internal/webhookapply) uses this
+	// to tell a known issue (update an existing task) from an unknown one
+	// (create a new unclassified task).
+	GetTaskGitlabLinkByLinkedProjectAndIID(ctx context.Context, arg GetTaskGitlabLinkByLinkedProjectAndIIDParams) (TaskGitlabLink, error)
 	// task_gitlab_links has no owner column and is never queried through a
 	// project/owner join: only the outbox worker (internal/issuesync) reads and
 	// writes it, and the job row that drives it was already authorized when
@@ -133,6 +160,13 @@ type Querier interface {
 	// Also clears dedupe_key so a later edit is never permanently blocked by a
 	// job that already reached a terminal state.
 	MarkSyncJobSucceeded(ctx context.Context, id uuid.UUID) error
+	// MarkTaskGitlabLinkAppliedForTask records a successful inbound apply
+	// (internal/webhookapply): only gitlab_updated_at advances and
+	// sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask
+	// (the outbound counterpart), it never touches last_pushed_fingerprint —
+	// that field records what FlowLens itself last pushed, and an inbound
+	// apply is by definition not that.
+	MarkTaskGitlabLinkAppliedForTask(ctx context.Context, arg MarkTaskGitlabLinkAppliedForTaskParams) (TaskGitlabLink, error)
 	// Records why an outbound push failed, so a subsequent successful push can
 	// clear it (internal/sync's generic retry/backoff drives the retry itself;
 	// this only records the task_gitlab_links-side outcome).
@@ -145,6 +179,9 @@ type Querier interface {
 	// Records a successful outbound push: sync_status='synced', last_error
 	// cleared, gitlab_updated_at and last_synced_at refreshed.
 	MarkTaskGitlabLinkSyncedForTask(ctx context.Context, arg MarkTaskGitlabLinkSyncedForTaskParams) (TaskGitlabLink, error)
+	MarkWebhookEventFailed(ctx context.Context, arg MarkWebhookEventFailedParams) error
+	MarkWebhookEventProcessed(ctx context.Context, id uuid.UUID) error
+	MarkWebhookEventSkipped(ctx context.Context, arg MarkWebhookEventSkippedParams) error
 	// Used after deleting the default link: makes the oldest remaining link in
 	// the same connection the new default. A no-op if none remain.
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error

@@ -3,14 +3,18 @@ package task_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/flowlens/api/internal/backlog"
+	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/issuesync"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +22,27 @@ import (
 func newService(q *dbtest.FakeQuerier) *task.Service {
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
-	return task.NewService(q, projects, backlogs)
+	return task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs)
+}
+
+// seedLinkedGitlabProject links a fake GitLab project (id 100) to
+// connectionID directly at the database layer, bypassing
+// linkedproject.Service — task tests only need a link to exist and be
+// findable as a project's default, not the full linking flow. The first
+// link created for a connection becomes its default (mirroring the real
+// SQL), which is exactly what internal/task.Service.Create looks up.
+func seedLinkedGitlabProject(t *testing.T, q *dbtest.FakeQuerier, connectionID uuid.UUID) db.LinkedGitlabProject {
+	t.Helper()
+	link, err := q.CreateLinkedGitlabProject(context.Background(), db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: connectionID,
+		GitlabProjectID:    100,
+		PathWithNamespace:  "group/demo",
+		Name:               "demo",
+		WebUrl:             "https://gitlab.example.com/group/demo",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+	return link
 }
 
 func TestService_Create_ValidatesTitle(t *testing.T) {
@@ -441,4 +465,290 @@ func TestService_ScopesEveryOperationToProjectOwner(t *testing.T) {
 		_, err = svc.Get(ctx, owner, tsk.ID)
 		assert.NoError(t, err)
 	})
+}
+
+// The following tests cover the outbound sync wiring
+// (docs/plans/issue-sync.md, "Outbound"): Create/Update/Close/Reopen
+// enqueue the right sync_jobs row, in the right cases, with the right
+// payload — and Delete never does.
+
+func TestService_Create_EnqueuesIssueCreateJob_WhenProjectHasDefaultLinkedGitlabProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+
+	got, err := svc.Create(ctx, owner, p.ID, task.CreateParams{
+		Title:       "Fix bug",
+		Description: "does the thing",
+		Labels:      []string{"bug"},
+	})
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(got.ID)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, issuesync.KindIssueCreate, jobs[0].Kind)
+
+	var payload issuesync.CreatePayload
+	require.NoError(t, json.Unmarshal(jobs[0].Payload, &payload))
+	assert.Equal(t, link.ID, payload.LinkedGitlabProjectID)
+	assert.Equal(t, "Fix bug", payload.Title)
+	assert.Equal(t, "does the thing", payload.Description)
+	assert.Equal(t, []string{"bug"}, payload.Labels)
+}
+
+func TestService_Create_DoesNotEnqueue_WhenProjectHasNoLinkedGitlabProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	got, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug"})
+	require.NoError(t, err)
+	assert.Empty(t, q.SyncJobsForTask(got.ID))
+}
+
+func TestService_Create_DefaultsAssigneeToConnectionTokenIdentity(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	conn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:           p.ID,
+		BaseUrl:             "https://gitlab.example.com",
+		EncryptedToken:      []byte("encrypted"),
+		TokenGitlabUserID:   pgtype.Int8{Int64: 42, Valid: true},
+		TokenGitlabUsername: "octocat-bot",
+	})
+	require.NoError(t, err)
+	seedLinkedGitlabProject(t, q, conn.ID)
+
+	got, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug"})
+	require.NoError(t, err)
+	require.NotNil(t, got.AssigneeGitlabUserID)
+	assert.EqualValues(t, 42, *got.AssigneeGitlabUserID)
+	assert.Equal(t, "octocat-bot", got.AssigneeGitlabUsername)
+}
+
+func TestService_Create_ExplicitAssigneeOverridesConnectionDefault(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	conn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:           p.ID,
+		BaseUrl:             "https://gitlab.example.com",
+		EncryptedToken:      []byte("encrypted"),
+		TokenGitlabUserID:   pgtype.Int8{Int64: 42, Valid: true},
+		TokenGitlabUsername: "octocat-bot",
+	})
+	require.NoError(t, err)
+	seedLinkedGitlabProject(t, q, conn.ID)
+
+	explicit := int64(7)
+	got, err := svc.Create(ctx, owner, p.ID, task.CreateParams{
+		Title:                  "Fix bug",
+		AssigneeGitlabUserID:   &explicit,
+		AssigneeGitlabUsername: "someone-else",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got.AssigneeGitlabUserID)
+	assert.EqualValues(t, 7, *got.AssigneeGitlabUserID)
+	assert.Equal(t, "someone-else", got.AssigneeGitlabUsername)
+}
+
+func TestService_Update_EnqueuesIssueUpdateJob_WhenMirroredFieldsChangeAndTaskIsLinked(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
+		Title:       "Fix bug harder",
+		Description: "more detail",
+		Labels:      []string{"bug", "urgent"},
+	})
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(tsk.ID)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, issuesync.KindIssueUpdate, jobs[0].Kind)
+	assert.Equal(t, fmt.Sprintf("issue.update:%s", tsk.ID), jobs[0].DedupeKey.String)
+
+	var payload issuesync.UpdatePayload
+	require.NoError(t, json.Unmarshal(jobs[0].Payload, &payload))
+	require.NotNil(t, payload.Title)
+	assert.Equal(t, "Fix bug harder", *payload.Title)
+	assert.Equal(t, []string{"bug", "urgent"}, payload.Labels)
+}
+
+func TestService_Update_DoesNotEnqueue_WhenTaskHasNoGitlabLink(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{Title: "Fix bug harder", Description: "x"})
+	require.NoError(t, err)
+	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+func TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
+		Title:    "Fix bug", // unchanged
+		Position: 5,         // app-only, never mirrored to GitLab
+	})
+	require.NoError(t, err)
+	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+// This is the invariant the sync feature depends on (see the same-named
+// assertion in TestBuildGitlabIssuePayload_NeverReferencesAIContextFields):
+// an AI-context-only edit must never look like a task edit, so it must
+// never enqueue a sync job either, even for an already-linked task.
+func TestService_UpsertAIContext_DoesNotEnqueueSyncJob(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, err := svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{AcceptanceCriteria: "x"})
+	require.NoError(t, err)
+	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+func TestService_Close_EnqueuesIssueCloseJob_WhenTaskIsLinked(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, err := svc.Close(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(tsk.ID)
+	require.Len(t, jobs, 1)
+	assert.Equal(t, issuesync.KindIssueClose, jobs[0].Kind)
+}
+
+func TestService_Close_DoesNotEnqueue_WhenTaskHasNoGitlabLink(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	_, err := svc.Close(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+func TestService_Close_DoesNotEnqueue_WhenAlreadyClosed(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, err := svc.Close(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.Len(t, q.SyncJobsForTask(tsk.ID), 1)
+
+	_, err = svc.Close(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Len(t, q.SyncJobsForTask(tsk.ID), 1, "closing an already-closed task must not enqueue a second job")
+}
+
+func TestService_Reopen_EnqueuesIssueReopenJob_WhenTaskIsLinked(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, err := svc.Close(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+
+	_, err = svc.Reopen(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(tsk.ID)
+	require.Len(t, jobs, 2)
+	assert.Equal(t, issuesync.KindIssueClose, jobs[0].Kind)
+	assert.Equal(t, issuesync.KindIssueReopen, jobs[1].Kind)
+}
+
+func TestService_Reopen_DoesNotEnqueue_WhenTaskHasNoGitlabLink(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+
+	_, err := svc.Close(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	_, err = svc.Reopen(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+// Delete must never touch GitLab, so it must never enqueue a sync job
+// either — even for an already-linked task — per docs/plans/issue-sync.md's
+// "Task deletion" rule.
+func TestService_Delete_NeverEnqueuesSyncJob(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	require.NoError(t, svc.Delete(ctx, owner, tsk.ID))
+	assert.Zero(t, q.SyncJobCount())
 }

@@ -21,6 +21,48 @@ func NewQuerier(pool *pgxpool.Pool) Querier {
 	return db.New(pool)
 }
 
+// TxRunner runs fn as a single atomic unit, so a domain service can write
+// more than one table in one commit — e.g. creating a task and enqueueing
+// its outbox sync_jobs row together, so an accepted request is always
+// eventually pushed (docs/plans/issue-sync.md, "Sync engine"). PoolTxRunner
+// is the production implementation, backed by a real pgx transaction; tests
+// use dbtest.FakeTxRunner, which runs fn directly against the in-memory
+// fake querier (no rollback semantics needed there, since a fake write
+// never partially fails).
+type TxRunner interface {
+	RunInTx(ctx context.Context, fn func(Querier) error) error
+}
+
+// PoolTxRunner is the production TxRunner, backed by a real pgx
+// transaction on pool.
+type PoolTxRunner struct {
+	pool *pgxpool.Pool
+}
+
+// NewTxRunner builds a PoolTxRunner over pool.
+func NewTxRunner(pool *pgxpool.Pool) *PoolTxRunner {
+	return &PoolTxRunner{pool: pool}
+}
+
+// RunInTx begins a transaction, runs fn with a Querier scoped to it, and
+// commits on success. Any error from fn (or from the commit itself) leaves
+// the transaction rolled back.
+func (r *PoolTxRunner) RunInTx(ctx context.Context, fn func(Querier) error) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("database: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := fn(db.New(tx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("database: commit tx: %w", err)
+	}
+	return nil
+}
+
 // Connect opens a pgx connection pool and verifies connectivity.
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(databaseURL)

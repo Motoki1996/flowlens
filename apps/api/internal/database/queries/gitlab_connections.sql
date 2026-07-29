@@ -41,6 +41,12 @@ FROM gitlab_connections gc
 JOIN projects p ON p.id = gc.project_id
 WHERE gc.id = $1 AND p.owner_user_id = $2;
 
+-- name: GetGitlabConnectionByID :one
+-- Unscoped, for the outbox worker (internal/issuesync): a linked_gitlab_projects
+-- row carries gitlab_connection_id but the worker has no acting user to
+-- scope through, the same reasoning as GetLinkedGitlabProjectByID.
+SELECT * FROM gitlab_connections WHERE id = $1;
+
 -- name: UpdateGitlabConnectionVerificationForOwner :one
 UPDATE gitlab_connections gc
 SET token_gitlab_user_id = $3,

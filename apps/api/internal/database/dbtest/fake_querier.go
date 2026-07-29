@@ -42,6 +42,8 @@ type FakeQuerier struct {
 	syncJobs            []db.SyncJob // insertion order, newest last
 	syncJobsByID        map[uuid.UUID]db.SyncJob
 	syncJobsByDedupeKey map[string]uuid.UUID
+
+	taskGitlabLinksByTaskID map[uuid.UUID]db.TaskGitlabLink
 }
 
 // New returns an empty FakeQuerier.
@@ -65,6 +67,8 @@ func New() *FakeQuerier {
 
 		syncJobsByID:        map[uuid.UUID]db.SyncJob{},
 		syncJobsByDedupeKey: map[string]uuid.UUID{},
+
+		taskGitlabLinksByTaskID: map[uuid.UUID]db.TaskGitlabLink{},
 	}
 }
 
@@ -707,6 +711,16 @@ func (f *FakeQuerier) GetGitlabConnectionByIDForOwner(_ context.Context, arg db.
 	return c, nil
 }
 
+// GetGitlabConnectionByID is unscoped, mirroring the SQL used by the outbox
+// worker (internal/issuesync), which has no acting user to check against.
+func (f *FakeQuerier) GetGitlabConnectionByID(_ context.Context, id uuid.UUID) (db.GitlabConnection, error) {
+	c, ok := f.gitlabConnectionsByID[id]
+	if !ok {
+		return db.GitlabConnection{}, pgx.ErrNoRows
+	}
+	return c, nil
+}
+
 func (f *FakeQuerier) UpdateGitlabConnectionVerificationForOwner(_ context.Context, arg db.UpdateGitlabConnectionVerificationForOwnerParams) (db.GitlabConnection, error) {
 	existing, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
 	if !ok {
@@ -855,6 +869,38 @@ func (f *FakeQuerier) GetLinkedGitlabProjectForOwner(_ context.Context, arg db.G
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	return l, nil
+}
+
+// GetLinkedGitlabProjectByID is unscoped, mirroring the SQL used by the
+// outbox worker (internal/issuesync), which has no acting user to check
+// against.
+func (f *FakeQuerier) GetLinkedGitlabProjectByID(_ context.Context, id uuid.UUID) (db.LinkedGitlabProject, error) {
+	l, ok := f.linkedGitlabProjectsByID[id]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+// GetDefaultLinkedGitlabProjectForOwner mirrors the SQL: the project's
+// default link, scoped through its connection to the owning project like
+// every other linked-project query.
+func (f *FakeQuerier) GetDefaultLinkedGitlabProjectForOwner(_ context.Context, arg db.GetDefaultLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	for _, l := range f.linkedGitlabProjects {
+		if !l.IsDefault {
+			continue
+		}
+		conn, ok := f.gitlabConnectionsByID[l.GitlabConnectionID]
+		if !ok || conn.ProjectID != arg.ID {
+			continue
+		}
+		p, ok := f.projectsByID[conn.ProjectID]
+		if !ok || p.OwnerUserID != arg.OwnerUserID {
+			continue
+		}
+		return l, nil
+	}
+	return db.LinkedGitlabProject{}, pgx.ErrNoRows
 }
 
 func (f *FakeQuerier) UpdateLinkedGitlabProjectSyncScopeForOwner(_ context.Context, arg db.UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (db.LinkedGitlabProject, error) {
@@ -1189,4 +1235,94 @@ func (f *FakeQuerier) SyncJobCount() int {
 func (f *FakeQuerier) GetSyncJob(id uuid.UUID) (db.SyncJob, bool) {
 	j, ok := f.syncJobsByID[id]
 	return j, ok
+}
+
+// SyncJobsForTask returns every sync job enqueued for taskID, insertion
+// order, so tests can assert on what internal/task enqueued (kind, payload,
+// dedupe_key) without running a real worker.
+func (f *FakeQuerier) SyncJobsForTask(taskID uuid.UUID) []db.SyncJob {
+	var jobs []db.SyncJob
+	for _, j := range f.syncJobs {
+		if j.TaskID.Valid && j.TaskID.Bytes == taskID {
+			jobs = append(jobs, j)
+		}
+	}
+	return jobs
+}
+
+// CreateTaskGitlabLink mirrors the SQL: task_id is the primary key, so a
+// second insert for the same task is a unique-constraint violation, the
+// same as it would be against real Postgres.
+func (f *FakeQuerier) CreateTaskGitlabLink(_ context.Context, arg db.CreateTaskGitlabLinkParams) (db.TaskGitlabLink, error) {
+	if _, ok := f.taskGitlabLinksByTaskID[arg.TaskID]; ok {
+		return db.TaskGitlabLink{}, &pgconn.PgError{Code: "23505", ConstraintName: "task_gitlab_links_pkey"}
+	}
+	for _, l := range f.taskGitlabLinksByTaskID {
+		if l.LinkedGitlabProjectID == arg.LinkedGitlabProjectID && l.GitlabIssueIid == arg.GitlabIssueIid {
+			return db.TaskGitlabLink{}, &pgconn.PgError{Code: "23505", ConstraintName: "task_gitlab_links_linked_gitlab_project_id_gitlab_issue_iid_key"}
+		}
+	}
+	l := db.TaskGitlabLink{
+		TaskID:                arg.TaskID,
+		LinkedGitlabProjectID: arg.LinkedGitlabProjectID,
+		GitlabIssueID:         arg.GitlabIssueID,
+		GitlabIssueIid:        arg.GitlabIssueIid,
+		GitlabWebUrl:          arg.GitlabWebUrl,
+		GitlabUpdatedAt:       arg.GitlabUpdatedAt,
+		LastPushedFingerprint: arg.LastPushedFingerprint,
+		SyncStatus:            "synced",
+		LastSyncedAt:          now(),
+	}
+	f.taskGitlabLinksByTaskID[l.TaskID] = l
+	return l, nil
+}
+
+func (f *FakeQuerier) GetTaskGitlabLinkByTaskID(_ context.Context, taskID uuid.UUID) (db.TaskGitlabLink, error) {
+	l, ok := f.taskGitlabLinksByTaskID[taskID]
+	if !ok {
+		return db.TaskGitlabLink{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+func (f *FakeQuerier) MarkTaskGitlabLinkSyncedForTask(_ context.Context, arg db.MarkTaskGitlabLinkSyncedForTaskParams) (db.TaskGitlabLink, error) {
+	l, ok := f.taskGitlabLinksByTaskID[arg.TaskID]
+	if !ok {
+		return db.TaskGitlabLink{}, pgx.ErrNoRows
+	}
+	l.GitlabUpdatedAt = arg.GitlabUpdatedAt
+	l.LastPushedFingerprint = arg.LastPushedFingerprint
+	l.SyncStatus = "synced"
+	l.LastError = ""
+	l.LastSyncedAt = now()
+	f.taskGitlabLinksByTaskID[arg.TaskID] = l
+	return l, nil
+}
+
+func (f *FakeQuerier) MarkTaskGitlabLinkFailedForTask(_ context.Context, arg db.MarkTaskGitlabLinkFailedForTaskParams) (db.TaskGitlabLink, error) {
+	l, ok := f.taskGitlabLinksByTaskID[arg.TaskID]
+	if !ok {
+		return db.TaskGitlabLink{}, pgx.ErrNoRows
+	}
+	l.SyncStatus = "failed"
+	l.LastError = arg.LastError
+	f.taskGitlabLinksByTaskID[arg.TaskID] = l
+	return l, nil
+}
+
+// SeedTaskGitlabLink inserts a ready-made GitLab link for taskID directly,
+// bypassing HandleIssueCreate. Use it in tests that need a task already
+// linked (e.g. to exercise issue.update/close/reopen) without exercising
+// creation. Returns the stored row.
+func (f *FakeQuerier) SeedTaskGitlabLink(taskID, linkedGitlabProjectID uuid.UUID, gitlabIssueIID int64) db.TaskGitlabLink {
+	l := db.TaskGitlabLink{
+		TaskID:                taskID,
+		LinkedGitlabProjectID: linkedGitlabProjectID,
+		GitlabIssueID:         gitlabIssueIID,
+		GitlabIssueIid:        gitlabIssueIID,
+		SyncStatus:            "synced",
+		LastSyncedAt:          now(),
+	}
+	f.taskGitlabLinksByTaskID[taskID] = l
+	return l
 }

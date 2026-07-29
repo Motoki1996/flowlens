@@ -31,6 +31,23 @@ JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
 JOIN projects p ON p.id = gc.project_id
 WHERE lgp.id = $1 AND p.owner_user_id = $2;
 
+-- name: GetLinkedGitlabProjectByID :one
+-- Unscoped: the outbox worker (internal/issuesync) has no acting user. The
+-- sync_jobs row that names this linked project's ID was already authorized
+-- when internal/task enqueued it, so the job's execution needs no further
+-- ownership check.
+SELECT * FROM linked_gitlab_projects WHERE id = $1;
+
+-- name: GetDefaultLinkedGitlabProjectForOwner :one
+-- internal/task uses this at task-create time to decide whether the
+-- project has anywhere to push a new issue, and if so, where
+-- (docs/plans/issue-sync.md, "Outbound").
+SELECT lgp.*
+FROM linked_gitlab_projects lgp
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+JOIN projects p ON p.id = gc.project_id
+WHERE p.id = $1 AND p.owner_user_id = $2 AND lgp.is_default = true;
+
 -- name: UpdateLinkedGitlabProjectSyncScopeForOwner :one
 UPDATE linked_gitlab_projects lgp
 SET sync_scope = $3,

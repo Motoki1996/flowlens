@@ -14,7 +14,9 @@ import (
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
+	"github.com/flowlens/api/internal/gitlab"
 	apihttp "github.com/flowlens/api/internal/http"
+	"github.com/flowlens/api/internal/issuesync"
 	syncpkg "github.com/flowlens/api/internal/sync"
 )
 
@@ -48,7 +50,7 @@ func run() error {
 		return err
 	}
 
-	server, err := apihttp.NewServer(cfg, database.NewQuerier(pool), pool, cipher)
+	server, err := apihttp.NewServer(cfg, database.NewQuerier(pool), pool, database.NewTxRunner(pool), cipher)
 	if err != nil {
 		return err
 	}
@@ -59,9 +61,14 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	// Job handlers (the actual GitLab calls) are registered on this registry
-	// by a later issue; the worker runs with an empty one until then.
+	// Outbound issue sync job handlers (docs/plans/issue-sync.md,
+	// "Outbound"); internal/task enqueues the jobs they execute.
+	issueSync := issuesync.NewService(database.NewQuerier(pool), cipher, func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) })
 	registry := syncpkg.NewRegistry()
+	registry.Register(issuesync.KindIssueCreate, issueSync.HandleIssueCreate)
+	registry.Register(issuesync.KindIssueUpdate, issueSync.HandleIssueUpdate)
+	registry.Register(issuesync.KindIssueClose, issueSync.HandleIssueClose)
+	registry.Register(issuesync.KindIssueReopen, issueSync.HandleIssueReopen)
 	worker := syncpkg.NewWorker(database.NewQuerier(pool), registry, syncpkg.WithPollInterval(cfg.SyncWorkerPollInterval))
 	if cfg.SyncWorkerEnabled {
 		go func() {

@@ -25,6 +25,8 @@ Rules:
 
 ## Current
 
-| Plan | Status |
-| --- | --- |
-| [issue-sync.md](issue-sync.md) | Agreed, not yet implemented (7 phases) |
+None right now. The issue-sync MVP plan shipped (all 7 phases) and was
+deleted per phase 7's own instruction; what survives it lives in
+[`README.md`](../../README.md#gitlab-ce-connection--sync),
+[`docs/ui-design.md`](../ui-design.md), [ADR-0007](../decisions/0007-why-outbox-worker.md),
+and [ADR-0008](../decisions/0008-why-per-project-gitlab-connection.md).

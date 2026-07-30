@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FlowLens visualizes a team's software delivery process by collecting GitLab CE MR/review/CI data and surfacing delivery bottlenecks. It does **not** generate or review code with AI — the focus is measuring the review → test → merge → release flow.
+FlowLens is a task tracker whose tasks are kept 1:1 with GitLab CE issues, plus a (longer-term) view of a team's software delivery process from GitLab CE MR/review/CI data. It does **not** generate or review code with AI — AI agents are a *consumer* of FlowLens data (via the task context API), not something FlowLens runs.
 
-**Status:** Foundation phase. Only local username/password login (with signup), user persistence, and `GET /api/v1/me` are implemented. Project selection, MR sync, and dashboard data are not built yet, but the tables and seams for them exist. Login is intentionally independent of any GitLab connection — a per-user GitLab CE personal access token (for MR/pipeline sync) is a separate, not-yet-built feature.
+**Status:** Local username/password login (with signup), user persistence, and `GET /api/v1/me` are implemented. The task-tracker / GitLab CE Issue-sync MVP is also implemented: projects, backlogs, tasks, a per-project GitLab connection, linked GitLab projects, the outbox-backed sync worker, the webhook receiver, and the AI-facing task context API — see the "GitLab CE connection & sync" section in [`README.md`](README.md). The MR/review/CI delivery-flow visualization described above is **not** built yet; `repositories`, `pull_requests`, and `sync_runs` exist as unpopulated tables reserved for it. Login is intentionally independent of any GitLab connection. The GitLab connection used for Issue sync is scoped **per app project**, not per user — see [ADR-0008](docs/decisions/0008-why-per-project-gitlab-connection.md). A separate per-user GitLab CE personal access token for the still-unbuilt, read-only MR/pipeline sync is a distinct, future feature.
 
 Monorepo: `apps/api` (Go REST API) + `apps/web` (Next.js) + PostgreSQL.
 
@@ -97,4 +97,4 @@ Dev Container note: Makefile DB targets read `.env` (host port), so when running
 
 `docs/architecture.md` for detail; `docs/ui-design.md` for the OOUI rules every web screen follows; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first, OOUI, outbox worker, per-project GitLab connection).
 
-`docs/plans/` holds **time-limited** implementation plans, not conventions — read [`docs/plans/README.md`](docs/plans/README.md) before adding one, and delete a plan once its work ships. The current plan is the issue-sync MVP.
+`docs/plans/` holds **time-limited** implementation plans, not conventions — read [`docs/plans/README.md`](docs/plans/README.md) before adding one, and delete a plan once its work ships. There is no plan in flight right now; the issue-sync MVP plan shipped and was deleted once `README.md`/`docs/ui-design.md` absorbed what survived it.

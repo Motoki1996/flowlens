@@ -180,8 +180,13 @@ Three guards, each with its own test:
 3. **Loop prevention** — applying an inbound event **never enqueues an outbound
    job**; the apply path writes through a repository method that takes no
    outbound side effects. Additionally, an event whose content fingerprint
-   equals `last_pushed_fingerprint` is skipped (`skip_reason='echo'`), so our
-   own write coming back does not even bump timestamps.
+   equals `last_pushed_fingerprint` *and* whose status already matches the
+   task's current status is skipped (`skip_reason='echo'`), so our own write
+   coming back does not even bump timestamps. The status check matters
+   because a close/reopen push never changes `last_pushed_fingerprint` (only
+   `state_event` is sent), so a genuine external close/reopen whose content
+   still matches the last push would otherwise be indistinguishable from an
+   echo.
 
 Issue `close` / `reopen` map to `tasks.status`. Imported issues that match no
 existing task become tasks with `backlog_id = NULL` (未分類), assignable to a

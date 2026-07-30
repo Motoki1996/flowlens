@@ -285,6 +285,45 @@ func TestProcessNext_EchoEvent_SkippedAndTaskUnchanged(t *testing.T) {
 	assert.Equal(t, "Current title", unchanged.Title, "FlowLens's own push echoing back must never re-apply")
 }
 
+// A close/reopen push never touches last_pushed_fingerprint (see
+// internal/issuesync.handleStateChange), so a genuine external close whose
+// title/description/labels still match the last content push has the same
+// fingerprint as a true echo. The echo guard must tell them apart by status,
+// not skip the close.
+func TestProcessNext_GitlabCloseWithUnchangedContent_NotTreatedAsEcho(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Investigate outage")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 61)
+
+	baseline := time.Now().Add(-time.Hour)
+	fp := gitlab.Fingerprint("Investigate outage", "", []string{}, nil, nil)
+	_, err := f.q.MarkTaskGitlabLinkSyncedForTask(ctx, db.MarkTaskGitlabLinkSyncedForTaskParams{
+		TaskID:                tsk.ID,
+		GitlabUpdatedAt:       pgtype.Timestamptz{Time: baseline, Valid: true},
+		LastPushedFingerprint: fp,
+	})
+	require.NoError(t, err)
+
+	event := f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{
+		IID: 61, Title: "Investigate outage", State: "closed",
+		UpdatedAt: baseline.Add(time.Minute),
+	}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	got, ok := f.q.GetWebhookEvent(event.ID)
+	require.True(t, ok)
+	assert.Equal(t, "processed", got.Status, "a real GitLab-side close must be applied, not skipped as an echo")
+
+	updated, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
+	require.NoError(t, err)
+	assert.Equal(t, task.StatusClosed, updated.Status)
+}
+
 // Guard 1 ("duplicate"): a second delivery for a not-yet-known issue that
 // arrives after a first delivery already created and linked a task must
 // update that same task, never create a second one — the UNIQUE

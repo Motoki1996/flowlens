@@ -16,6 +16,18 @@ RETURNING *;
 -- name: GetTaskGitlabLinkByTaskID :one
 SELECT * FROM task_gitlab_links WHERE task_id = $1;
 
+-- GetTaskGitlabLinkWithProjectPathByTaskID is GetTaskGitlabLinkByTaskID plus
+-- the linked GitLab project's path_with_namespace, joined in for the
+-- AI-facing /context endpoints (docs/plans/issue-sync.md "AI-facing"): an AI
+-- agent needs the project path alongside the issue IID/URL to identify the
+-- issue without a second call.
+
+-- name: GetTaskGitlabLinkWithProjectPathByTaskID :one
+SELECT tgl.task_id, tgl.linked_gitlab_project_id, tgl.gitlab_issue_id, tgl.gitlab_issue_iid, tgl.gitlab_web_url, tgl.gitlab_updated_at, tgl.last_pushed_fingerprint, tgl.sync_status, tgl.last_error, tgl.last_synced_at, lgp.path_with_namespace
+FROM task_gitlab_links tgl
+JOIN linked_gitlab_projects lgp ON lgp.id = tgl.linked_gitlab_project_id
+WHERE tgl.task_id = $1;
+
 -- name: MarkTaskGitlabLinkSyncedForTask :one
 UPDATE task_gitlab_links
 SET gitlab_updated_at = $2,

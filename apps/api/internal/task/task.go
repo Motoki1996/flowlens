@@ -206,6 +206,13 @@ func toDate(v *time.Time) pgtype.Date {
 	return pgtype.Date{Time: *v, Valid: true}
 }
 
+func toTimestamptz(v *time.Time) pgtype.Timestamptz {
+	if v == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *v, Valid: true}
+}
+
 func toInt8(v *int64) pgtype.Int8 {
 	if v == nil {
 		return pgtype.Int8{}
@@ -540,12 +547,10 @@ func gitlabInfoFromLink(link db.TaskGitlabLink) *GitlabInfo {
 
 // gitlabInfoForTask resolves taskID's GitlabInfo for API responses. A task
 // with a task_gitlab_links row reads its sync state directly from there. A
-// task with none yet — its issue.create job hasn't succeeded — falls back to
-// that job's own status: still pending/running reports as
-// SyncStatusPending, permanently failed reports as SyncStatusFailed with the
-// job's error. A task with neither a link nor any sync job never had a
-// linked GitLab project to push to, and reports as nil (untracked, purely
-// local, per docs/plans/issue-sync.md).
+// task with none yet falls back to syncStatusFromLatestJob. A task with
+// neither a link nor any sync job never had a linked GitLab project to push
+// to, and reports as nil (untracked, purely local, per
+// docs/plans/issue-sync.md).
 func (s *Service) gitlabInfoForTask(ctx context.Context, taskID uuid.UUID) (*GitlabInfo, error) {
 	link, err := s.q.GetTaskGitlabLinkByTaskID(ctx, taskID)
 	if err == nil {
@@ -555,24 +560,65 @@ func (s *Service) gitlabInfoForTask(ctx context.Context, taskID uuid.UUID) (*Git
 		return nil, fmt.Errorf("task: get gitlab link: %w", err)
 	}
 
+	status, lastError, found, err := s.syncStatusFromLatestJob(ctx, taskID)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &GitlabInfo{SyncStatus: status, LastError: lastError}, nil
+}
+
+// syncStatusFromLatestJob derives a task's sync status and error from its
+// most recent sync job, for a task with no task_gitlab_links row yet — its
+// issue.create job hasn't succeeded. Still pending/running reports as
+// SyncStatusPending, permanently failed reports as SyncStatusFailed with the
+// job's error. found is false when there is no job at all, or when the
+// job's own status is anything else ("succeeded" without a link row is
+// unexpected — HandleIssueCreate always creates the link before reporting
+// success — so it is treated the same as "no job" rather than guessed at).
+func (s *Service) syncStatusFromLatestJob(ctx context.Context, taskID uuid.UUID) (status, lastError string, found bool, err error) {
 	job, err := s.q.GetLatestSyncJobForTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+			return "", "", false, nil
 		}
-		return nil, fmt.Errorf("task: get latest sync job: %w", err)
+		return "", "", false, fmt.Errorf("task: get latest sync job: %w", err)
 	}
 	switch job.Status {
 	case "pending", "running":
-		return &GitlabInfo{SyncStatus: SyncStatusPending}, nil
+		return SyncStatusPending, "", true, nil
 	case "failed":
-		return &GitlabInfo{SyncStatus: SyncStatusFailed, LastError: job.LastError}, nil
+		return SyncStatusFailed, job.LastError, true, nil
 	default:
-		// "succeeded" without a link row is unexpected (HandleIssueCreate
-		// always creates the link before reporting success); treat it the
-		// same as "never had a linked GitLab project" rather than guessing.
-		return nil, nil
+		return "", "", false, nil
 	}
+}
+
+// gitlabContextForTask is gitlabInfoForTask for the AI-facing /context
+// endpoints: the same sync-state derivation, plus the linked GitLab
+// project's path when a link exists (GitlabContext, not GitlabInfo — see
+// Context's doc comment for why the two are separate types).
+func (s *Service) gitlabContextForTask(ctx context.Context, taskID uuid.UUID) (*GitlabContext, error) {
+	link, err := s.q.GetTaskGitlabLinkWithProjectPathByTaskID(ctx, taskID)
+	if err == nil {
+		issueIID := link.GitlabIssueIid
+		return &GitlabContext{
+			SyncStatus:   link.SyncStatus,
+			LastError:    link.LastError,
+			LastSyncedAt: timePtr(link.LastSyncedAt),
+			IssueIID:     &issueIID,
+			WebURL:       link.GitlabWebUrl,
+			ProjectPath:  link.PathWithNamespace,
+		}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("task: get gitlab link with project path: %w", err)
+	}
+
+	status, lastError, found, err := s.syncStatusFromLatestJob(ctx, taskID)
+	if err != nil || !found {
+		return nil, err
+	}
+	return &GitlabContext{SyncStatus: status, LastError: lastError}, nil
 }
 
 // RetrySync re-enqueues a task's most recent failed GitLab push. It returns
@@ -873,7 +919,14 @@ func (s *Service) GetAIContext(ctx context.Context, ownerID, taskID uuid.UUID) (
 	if _, err := s.Get(ctx, ownerID, taskID); err != nil {
 		return AIContext{}, err
 	}
+	return s.aiContextForTask(ctx, taskID)
+}
 
+// aiContextForTask resolves taskID's AI context with no ownership check of
+// its own — callers must have already scoped taskID (via Get or
+// GetTaskForProject). A task with no task_ai_contexts row yet returns the
+// zero value, not an error.
+func (s *Service) aiContextForTask(ctx context.Context, taskID uuid.UUID) (AIContext, error) {
 	row, err := s.q.GetTaskAIContext(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -882,4 +935,201 @@ func (s *Service) GetAIContext(ctx context.Context, ownerID, taskID uuid.UUID) (
 		return AIContext{}, fmt.Errorf("task: get ai context: %w", err)
 	}
 	return aiContextFromRow(row), nil
+}
+
+// Pagination defaults and bounds for ListContext/ListContextForProject,
+// mirroring internal/webhookevent's.
+const (
+	DefaultContextPerPage = 20
+	MaxContextPerPage     = 100
+)
+
+// GitlabContext is GitlabInfo's AI-facing counterpart: the same sync state,
+// plus the linked GitLab project's path so an AI agent can identify the
+// issue without a second call. See Context's doc comment for why this is a
+// distinct type from GitlabInfo rather than an added field on it.
+type GitlabContext struct {
+	SyncStatus   string     `json:"syncStatus"`
+	LastError    string     `json:"lastError"`
+	LastSyncedAt *time.Time `json:"lastSyncedAt"`
+	IssueIID     *int64     `json:"issueIid"`
+	WebURL       string     `json:"webUrl"`
+	ProjectPath  string     `json:"projectPath"`
+}
+
+// Context is the stable, documented response shape for the AI-facing
+// endpoints (GET /api/v1/tasks/{taskID}/context and GET
+// /api/v1/projects/{projectID}/tasks/context — docs/plans/issue-sync.md,
+// "AI-facing"): a task's mirrored fields, its GitLab sync state including
+// project path, and its AI context, all in one payload so an AI agent needs
+// exactly one call. It is defined separately from Task, whose JSON shape
+// backs the UI's own CRUD endpoints and may evolve independently — an
+// external AI integration parses this contract, so its field names and
+// nesting must stay stable regardless of what Task does.
+type Context struct {
+	ID                     uuid.UUID      `json:"id"`
+	ProjectID              uuid.UUID      `json:"projectId"`
+	BacklogID              *uuid.UUID     `json:"backlogId"`
+	Title                  string         `json:"title"`
+	Description            string         `json:"description"`
+	Status                 string         `json:"status"`
+	AssigneeGitlabUserID   *int64         `json:"assigneeGitlabUserId"`
+	AssigneeGitlabUsername string         `json:"assigneeGitlabUsername"`
+	Labels                 []string       `json:"labels"`
+	DueOn                  *time.Time     `json:"dueOn"`
+	UpdatedAt              time.Time      `json:"updatedAt"`
+	Gitlab                 *GitlabContext `json:"gitlab"`
+	AcceptanceCriteria     string         `json:"acceptanceCriteria"`
+	AIContext              string         `json:"aiContext"`
+	AllowedScope           string         `json:"allowedScope"`
+	ForbiddenScope         string         `json:"forbiddenScope"`
+}
+
+// toContext combines t with its already-resolved GitLab and AI context into
+// the AI-facing Context shape.
+func toContext(t Task, gc *GitlabContext, ai AIContext) Context {
+	return Context{
+		ID:                     t.ID,
+		ProjectID:              t.ProjectID,
+		BacklogID:              t.BacklogID,
+		Title:                  t.Title,
+		Description:            t.Description,
+		Status:                 t.Status,
+		AssigneeGitlabUserID:   t.AssigneeGitlabUserID,
+		AssigneeGitlabUsername: t.AssigneeGitlabUsername,
+		Labels:                 t.Labels,
+		DueOn:                  t.DueOn,
+		UpdatedAt:              t.UpdatedAt,
+		Gitlab:                 gc,
+		AcceptanceCriteria:     ai.AcceptanceCriteria,
+		AIContext:              ai.AIContext,
+		AllowedScope:           ai.AllowedScope,
+		ForbiddenScope:         ai.ForbiddenScope,
+	}
+}
+
+// Context returns taskID's combined AI-facing context for a
+// session-authenticated caller, scoped through its project's owner like Get.
+func (s *Service) Context(ctx context.Context, ownerID, taskID uuid.UUID) (Context, error) {
+	t, err := s.Get(ctx, ownerID, taskID)
+	if err != nil {
+		return Context{}, err
+	}
+	return s.contextForTask(ctx, t)
+}
+
+// ContextForProject is Context for a bearer-token caller already scoped to
+// a single project (internal/apitoken): taskID must belong to projectID or
+// this reports ErrNotFound, the same way Get reports ErrNotFound for a
+// foreign owner. There is no owner to check — the token's project is
+// authorization enough (see internal/http.requireBearerAuth).
+func (s *Service) ContextForProject(ctx context.Context, projectID, taskID uuid.UUID) (Context, error) {
+	row, err := s.q.GetTaskForProject(ctx, db.GetTaskForProjectParams{ID: taskID, ProjectID: projectID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Context{}, ErrNotFound
+		}
+		return Context{}, fmt.Errorf("task: context for project: %w", err)
+	}
+	return s.contextForTask(ctx, fromRow(row))
+}
+
+// contextForTask resolves t's GitLab and AI context and combines them with
+// t. It performs no authorization of its own — callers (Context,
+// ContextForProject, listContext) must have already scoped t.
+func (s *Service) contextForTask(ctx context.Context, t Task) (Context, error) {
+	gc, err := s.gitlabContextForTask(ctx, t.ID)
+	if err != nil {
+		return Context{}, err
+	}
+	ai, err := s.aiContextForTask(ctx, t.ID)
+	if err != nil {
+		return Context{}, err
+	}
+	return toContext(t, gc, ai), nil
+}
+
+// ContextListFilter narrows ListContext/ListContextForProject to a subset of
+// a project's tasks, plus paging. The zero value means "no filter, first
+// page, default page size".
+type ContextListFilter struct {
+	BacklogID    *uuid.UUID // non-nil: only this backlog's tasks
+	Status       string     // "open" | "closed" | "" (no filter)
+	UpdatedSince *time.Time // non-nil: only tasks updated at or after this time
+	Page         int
+	PerPage      int
+}
+
+// ContextPage is one page of ListContext/ListContextForProject's results,
+// ordered the same way List is (position ASC, created_at ASC).
+type ContextPage struct {
+	Tasks    []Context
+	NextPage int // 0 when there is no next page
+}
+
+// ListContext returns a page of projectID's combined AI-facing task
+// contexts for a session-authenticated caller, scoped through its project's
+// owner like List. It returns ErrNotFound if projectID does not exist or
+// belongs to another user.
+func (s *Service) ListContext(ctx context.Context, ownerID, projectID uuid.UUID, filter ContextListFilter) (ContextPage, error) {
+	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
+		if errors.Is(err, project.ErrNotFound) {
+			return ContextPage{}, ErrNotFound
+		}
+		return ContextPage{}, fmt.Errorf("task: list context: %w", err)
+	}
+	return s.listContext(ctx, projectID, filter)
+}
+
+// ListContextForProject is ListContext for a bearer-token caller already
+// scoped to a single project by internal/http.requireTokenProjectMatch — no
+// additional ownership check.
+func (s *Service) ListContextForProject(ctx context.Context, projectID uuid.UUID, filter ContextListFilter) (ContextPage, error) {
+	return s.listContext(ctx, projectID, filter)
+}
+
+// listContext is ListContext/ListContextForProject once projectID is known
+// to be valid for the caller. It fetches one extra row per page to detect
+// whether another page follows, the same convention
+// internal/webhookevent.Service.List uses.
+func (s *Service) listContext(ctx context.Context, projectID uuid.UUID, filter ContextListFilter) (ContextPage, error) {
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	perPage := filter.PerPage
+	if perPage < 1 {
+		perPage = DefaultContextPerPage
+	}
+	if perPage > MaxContextPerPage {
+		perPage = MaxContextPerPage
+	}
+
+	rows, err := s.q.ListTasksByProjectPaged(ctx, db.ListTasksByProjectPagedParams{
+		ProjectID:    projectID,
+		BacklogID:    toUUID(filter.BacklogID),
+		Status:       filter.Status,
+		UpdatedSince: toTimestamptz(filter.UpdatedSince),
+		LimitCount:   int32(perPage + 1),
+		OffsetCount:  int32((page - 1) * perPage),
+	})
+	if err != nil {
+		return ContextPage{}, fmt.Errorf("task: list context: %w", err)
+	}
+
+	nextPage := 0
+	if len(rows) > perPage {
+		rows = rows[:perPage]
+		nextPage = page + 1
+	}
+
+	tasks := make([]Context, len(rows))
+	for i, row := range rows {
+		c, err := s.contextForTask(ctx, fromRow(row))
+		if err != nil {
+			return ContextPage{}, err
+		}
+		tasks[i] = c
+	}
+	return ContextPage{Tasks: tasks, NextPage: nextPage}, nil
 }

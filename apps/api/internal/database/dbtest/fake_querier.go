@@ -662,6 +662,45 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 	return items, nil
 }
 
+// ListTasksByProjectPaged mirrors the SQL: ListTasksByProject's
+// backlog_id/status filters plus updated_since and LIMIT/OFFSET paging,
+// ordered the same way (position ASC, created_at ASC).
+func (f *FakeQuerier) ListTasksByProjectPaged(_ context.Context, arg db.ListTasksByProjectPagedParams) ([]db.Task, error) {
+	items := []db.Task{}
+	for _, t := range f.tasks {
+		if t.ProjectID != arg.ProjectID {
+			continue
+		}
+		if arg.BacklogID.Valid && (!t.BacklogID.Valid || t.BacklogID.Bytes != arg.BacklogID.Bytes) {
+			continue
+		}
+		if arg.Status != "" && t.Status != arg.Status {
+			continue
+		}
+		if arg.UpdatedSince.Valid && t.UpdatedAt.Time.Before(arg.UpdatedSince.Time) {
+			continue
+		}
+		items = append(items, t)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Position != items[j].Position {
+			return items[i].Position < items[j].Position
+		}
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
+	})
+
+	offset := int(arg.OffsetCount)
+	if offset > len(items) {
+		offset = len(items)
+	}
+	items = items[offset:]
+	limit := int(arg.LimitCount)
+	if limit < len(items) {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
 // taskOwner returns the owner_user_id of the project a task belongs to,
 // mirroring the JOIN the real query performs.
 func (f *FakeQuerier) taskOwner(t db.Task) (uuid.UUID, bool) {
@@ -681,6 +720,16 @@ func (f *FakeQuerier) GetTaskForOwner(_ context.Context, arg db.GetTaskForOwnerP
 	}
 	owner, ok := f.taskOwner(t)
 	if !ok || owner != arg.OwnerUserID {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	return t, nil
+}
+
+// GetTaskForProject mirrors the SQL: scoped by project_id directly, with no
+// owner join, for the AI-facing bearer-token path.
+func (f *FakeQuerier) GetTaskForProject(_ context.Context, arg db.GetTaskForProjectParams) (db.Task, error) {
+	t, ok := f.tasksByID[arg.ID]
+	if !ok || t.ProjectID != arg.ProjectID {
 		return db.Task{}, pgx.ErrNoRows
 	}
 	return t, nil
@@ -1554,6 +1603,32 @@ func (f *FakeQuerier) GetTaskGitlabLinkByTaskID(_ context.Context, taskID uuid.U
 		return db.TaskGitlabLink{}, pgx.ErrNoRows
 	}
 	return l, nil
+}
+
+// GetTaskGitlabLinkWithProjectPathByTaskID mirrors the SQL: the link plus
+// its linked GitLab project's path_with_namespace, joined in.
+func (f *FakeQuerier) GetTaskGitlabLinkWithProjectPathByTaskID(_ context.Context, taskID uuid.UUID) (db.GetTaskGitlabLinkWithProjectPathByTaskIDRow, error) {
+	l, ok := f.taskGitlabLinksByTaskID[taskID]
+	if !ok {
+		return db.GetTaskGitlabLinkWithProjectPathByTaskIDRow{}, pgx.ErrNoRows
+	}
+	p, ok := f.linkedGitlabProjectsByID[l.LinkedGitlabProjectID]
+	if !ok {
+		return db.GetTaskGitlabLinkWithProjectPathByTaskIDRow{}, pgx.ErrNoRows
+	}
+	return db.GetTaskGitlabLinkWithProjectPathByTaskIDRow{
+		TaskID:                l.TaskID,
+		LinkedGitlabProjectID: l.LinkedGitlabProjectID,
+		GitlabIssueID:         l.GitlabIssueID,
+		GitlabIssueIid:        l.GitlabIssueIid,
+		GitlabWebUrl:          l.GitlabWebUrl,
+		GitlabUpdatedAt:       l.GitlabUpdatedAt,
+		LastPushedFingerprint: l.LastPushedFingerprint,
+		SyncStatus:            l.SyncStatus,
+		LastError:             l.LastError,
+		LastSyncedAt:          l.LastSyncedAt,
+		PathWithNamespace:     p.PathWithNamespace,
+	}, nil
 }
 
 // GetTaskGitlabLinkByLinkedProjectAndIID mirrors the SQL: a lookup keyed by

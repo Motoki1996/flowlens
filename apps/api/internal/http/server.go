@@ -163,6 +163,19 @@ func (s *Server) Router() chi.Router {
 				tasks.Put("/{taskID}/ai-context", s.handleUpsertTaskAIContext)
 			})
 		})
+
+		// AI-facing: session OR `Authorization: Bearer <project token>`
+		// (docs/plans/issue-sync.md "AI-facing"). Kept out of the
+		// `protected` group above, which is session-only.
+		api.Group(func(aiFacing chi.Router) {
+			aiFacing.Use(s.requireAuthOrBearer)
+			aiFacing.Get("/tasks/{taskID}/context", s.handleGetTaskContext)
+
+			aiFacing.Group(func(projectScoped chi.Router) {
+				projectScoped.Use(requireTokenProjectMatch)
+				projectScoped.Get("/projects/{projectID}/tasks/context", s.handleListTaskContexts)
+			})
+		})
 	})
 
 	return r

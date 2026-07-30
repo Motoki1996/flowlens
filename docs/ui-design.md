@@ -35,26 +35,33 @@ The objects the UI is built from, and where they live today:
 
 | Object | Meaning | Backing table |
 | --- | --- | --- |
+| `User` | An account of this app | `users` |
+| `Project` | A workspace owned by one user: backlogs, tasks, one GitLab connection | `projects` |
+| `Backlog` | An app-only grouping of tasks inside a project | `backlogs` |
+| `Task` | One unit of work, optionally mirrored by a GitLab issue | `tasks` (+ `task_ai_contexts`, `task_gitlab_links`) |
+| `GitLabConnection` | A GitLab CE base URL and access token for one project | `gitlab_connections` |
+| `LinkedGitLabProject` | A GitLab project a `Project` syncs issues with | `linked_gitlab_projects` |
+| `SyncRun` | One import / re-sync attempt against a linked GitLab project | `gitlab_sync_runs` |
+| `WebhookEvent` | One received GitLab webhook delivery and its processing state | `webhook_events` |
 | `Organization` | A GitLab group the team works in | `organizations` |
-| `Project` | A repository whose delivery flow we measure | `repositories` |
+| `Repository` | A GitLab project whose merge-request delivery flow we measure | `repositories` |
 | `MergeRequest` | One change under review | `pull_requests` |
 | `Reviewer` | A person assigned to review a merge request | `pull_request_reviewers` |
-| `SyncRun` | One attempt to pull fresh data from GitLab | `sync_runs` |
-| `User` | An account of this app | `users` |
 
-Three notes on this table:
+Two notes on this table:
 
-- Most of these are unpopulated until later phases (see `CLAUDE.md`). The model
-  is the target, not a description of what ships today.
-- The tables carry GitHub-era names (`repositories`, `pull_requests`,
-  `github_*`) while the domain is GitLab. **The UI uses the GitLab vocabulary**
-  — Project, Merge Request — and rule 1 below applies to it.
-- **`Project` is scheduled to be redefined.** The issue-sync MVP makes `Project`
-  the app-level workspace (backlogs, tasks, one GitLab connection) and renames
-  the row above to `Repository`. Until that ships, this table is still the
-  authority for the merge-request feature; see
-  [`docs/plans/issue-sync.md`](plans/issue-sync.md) for the new definition and
-  [ADR-0008](decisions/0008-why-per-project-gitlab-connection.md) for why.
+- The first eight rows (issue sync / task tracker) are implemented and populated
+  today. `Organization`, `Repository`, `MergeRequest`, and `Reviewer` back the
+  deferred merge-request / CI delivery-flow feature; their tables exist but stay
+  unpopulated until that feature ships (see `CLAUDE.md`).
+- `Repository` and `LinkedGitLabProject` are both "a GitLab project" but name
+  different things: `Repository` is the not-yet-built merge-request feature's
+  object, still backed by the GitHub-era `repositories` table; `LinkedGitLabProject`
+  is the issue-sync feature's object, backed by `linked_gitlab_projects`. `Project`
+  used to mean `Repository` before the issue-sync MVP claimed the noun for the
+  app-level workspace — see [ADR-0008](decisions/0008-why-per-project-gitlab-connection.md)
+  for why the rename happened and why the two GitLab-project objects don't share
+  a name.
 
 Objects that don't exist yet (`Pipeline`, `Release`) get added to this table
 when they get a table, not before.

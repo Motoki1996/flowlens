@@ -10,6 +10,7 @@ import type {
   Project,
   SyncRun,
   Task,
+  TaskDependency,
   User,
   WebhookEvent,
 } from "@/types";
@@ -147,6 +148,23 @@ export async function getTask(id: string): Promise<Task | null> {
     throw new Error(`Failed to load task: ${res.status}`);
   }
   return (await res.json()) as Task;
+}
+
+/**
+ * getTaskDependencies returns every predecessor/successor dependency between
+ * tasks in the project (issue #33's Gantt chart view). Callers must already
+ * know the request is authenticated.
+ */
+export async function getTaskDependencies(projectId: string): Promise<TaskDependency[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/task-dependencies`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load task dependencies: ${res.status}`);
+  }
+  return (await res.json()) as TaskDependency[];
 }
 
 /**

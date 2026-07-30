@@ -193,6 +193,7 @@ type Task struct {
 	AssigneeGitlabUsername string             `json:"assignee_gitlab_username"`
 	Labels                 []string           `json:"labels"`
 	DueOn                  pgtype.Date        `json:"due_on"`
+	StartDate              pgtype.Date        `json:"start_date"`
 	Position               int32              `json:"position"`
 	CreatedByUserID        uuid.UUID          `json:"created_by_user_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
@@ -206,6 +207,13 @@ type TaskAiContext struct {
 	AllowedScope       string             `json:"allowed_scope"`
 	ForbiddenScope     string             `json:"forbidden_scope"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TaskDependency struct {
+	ID                uuid.UUID          `json:"id"`
+	PredecessorTaskID uuid.UUID          `json:"predecessor_task_id"`
+	SuccessorTaskID   uuid.UUID          `json:"successor_task_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
 type TaskGitlabLink struct {

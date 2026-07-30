@@ -20,6 +20,7 @@ type createTaskRequest struct {
 	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
 	Labels                 []string   `json:"labels"`
 	DueOn                  *time.Time `json:"dueOn"`
+	StartDate              *time.Time `json:"startDate"`
 }
 
 type updateTaskRequest struct {
@@ -30,6 +31,7 @@ type updateTaskRequest struct {
 	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
 	Labels                 []string   `json:"labels"`
 	DueOn                  *time.Time `json:"dueOn"`
+	StartDate              *time.Time `json:"startDate"`
 	Position               int32      `json:"position"`
 }
 
@@ -130,6 +132,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		AssigneeGitlabUsername: req.AssigneeGitlabUsername,
 		Labels:                 req.Labels,
 		DueOn:                  req.DueOn,
+		StartDate:              req.StartDate,
 	})
 	if err != nil {
 		writeTaskError(w, err)
@@ -187,6 +190,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		AssigneeGitlabUsername: req.AssigneeGitlabUsername,
 		Labels:                 req.Labels,
 		DueOn:                  req.DueOn,
+		StartDate:              req.StartDate,
 		Position:               req.Position,
 	})
 	if err != nil {

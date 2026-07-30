@@ -37,6 +37,9 @@ type FakeQuerier struct {
 
 	taskAIContextsByTaskID map[uuid.UUID]db.TaskAiContext
 
+	taskDependencies     []db.TaskDependency // insertion order, newest last
+	taskDependenciesByID map[uuid.UUID]db.TaskDependency
+
 	gitlabConnectionsByProjectID map[uuid.UUID]db.GitlabConnection
 	gitlabConnectionsByID        map[uuid.UUID]db.GitlabConnection
 
@@ -74,6 +77,8 @@ func New() *FakeQuerier {
 		tasksByID:           map[uuid.UUID]db.Task{},
 
 		taskAIContextsByTaskID: map[uuid.UUID]db.TaskAiContext{},
+
+		taskDependenciesByID: map[uuid.UUID]db.TaskDependency{},
 
 		gitlabConnectionsByProjectID: map[uuid.UUID]db.GitlabConnection{},
 		gitlabConnectionsByID:        map[uuid.UUID]db.GitlabConnection{},
@@ -603,6 +608,7 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 		AssigneeGitlabUsername: arg.AssigneeGitlabUsername,
 		Labels:                 arg.Labels,
 		DueOn:                  arg.DueOn,
+		StartDate:              arg.StartDate,
 		Position:               f.nextTaskPosition(arg.ProjectID, arg.BacklogID),
 		CreatedByUserID:        arg.CreatedByUserID,
 		CreatedAt:              now(),
@@ -784,6 +790,7 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	existing.AssigneeGitlabUsername = arg.AssigneeGitlabUsername
 	existing.Labels = arg.Labels
 	existing.DueOn = arg.DueOn
+	existing.StartDate = arg.StartDate
 	existing.Position = arg.Position
 	existing.UpdatedAt = now()
 
@@ -880,6 +887,65 @@ func (f *FakeQuerier) GetTaskAIContext(_ context.Context, taskID uuid.UUID) (db.
 		return db.TaskAiContext{}, pgx.ErrNoRows
 	}
 	return c, nil
+}
+
+// SeedTaskDependency inserts a ready-made predecessor->successor dependency
+// directly, bypassing cycle validation. Returns the stored row.
+func (f *FakeQuerier) SeedTaskDependency(predecessorTaskID, successorTaskID uuid.UUID) db.TaskDependency {
+	d := db.TaskDependency{
+		ID:                uuid.New(),
+		PredecessorTaskID: predecessorTaskID,
+		SuccessorTaskID:   successorTaskID,
+		CreatedAt:         now(),
+	}
+	f.taskDependenciesByID[d.ID] = d
+	f.taskDependencies = append(f.taskDependencies, d)
+	return d
+}
+
+func (f *FakeQuerier) CreateTaskDependency(_ context.Context, arg db.CreateTaskDependencyParams) (db.TaskDependency, error) {
+	return f.SeedTaskDependency(arg.PredecessorTaskID, arg.SuccessorTaskID), nil
+}
+
+// ListTaskDependenciesByProject mirrors the SQL: every dependency whose
+// predecessor task belongs to projectID (both tasks in a dependency always
+// belong to the same project, enforced by internal/taskdependency).
+func (f *FakeQuerier) ListTaskDependenciesByProject(_ context.Context, projectID uuid.UUID) ([]db.TaskDependency, error) {
+	items := []db.TaskDependency{}
+	for _, d := range f.taskDependencies {
+		t, ok := f.tasksByID[d.PredecessorTaskID]
+		if !ok || t.ProjectID != projectID {
+			continue
+		}
+		items = append(items, d)
+	}
+	return items, nil
+}
+
+// DeleteTaskDependencyForOwner mirrors the SQL: ownership is checked through
+// the predecessor task's project, the same way DeleteTaskForOwner checks a
+// task's own project.
+func (f *FakeQuerier) DeleteTaskDependencyForOwner(_ context.Context, arg db.DeleteTaskDependencyForOwnerParams) (int64, error) {
+	d, ok := f.taskDependenciesByID[arg.ID]
+	if !ok {
+		return 0, nil
+	}
+	t, ok := f.tasksByID[d.PredecessorTaskID]
+	if !ok {
+		return 0, nil
+	}
+	owner, ok := f.taskOwner(t)
+	if !ok || owner != arg.OwnerUserID {
+		return 0, nil
+	}
+	delete(f.taskDependenciesByID, d.ID)
+	for i, x := range f.taskDependencies {
+		if x.ID == d.ID {
+			f.taskDependencies = append(f.taskDependencies[:i], f.taskDependencies[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
 }
 
 // gitlabConnectionOwner returns the owner_user_id of the project a GitLab

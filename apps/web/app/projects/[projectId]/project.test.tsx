@@ -13,6 +13,7 @@ const getCurrentUser = vi.fn();
 const getProject = vi.fn();
 const getTasks = vi.fn();
 const getBacklogs = vi.fn();
+const getTaskDependencies = vi.fn();
 const getGitlabConnection = vi.fn();
 const getLinkedGitlabProjects = vi.fn();
 
@@ -21,6 +22,7 @@ vi.mock("@/lib/api", () => ({
   getProject: (id: string) => getProject(id),
   getTasks: (id: string) => getTasks(id),
   getBacklogs: (id: string) => getBacklogs(id),
+  getTaskDependencies: (id: string) => getTaskDependencies(id),
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
 }));
@@ -49,6 +51,7 @@ describe("ProjectPage", () => {
   beforeEach(() => {
     getTasks.mockResolvedValue([]);
     getBacklogs.mockResolvedValue([]);
+    getTaskDependencies.mockResolvedValue([]);
     getGitlabConnection.mockResolvedValue(null);
     getLinkedGitlabProjects.mockResolvedValue([]);
   });

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/db"
@@ -622,6 +623,54 @@ func TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange(t *testin
 		Position: 5,         // app-only, never mirrored to GitLab
 	})
 	require.NoError(t, err)
+	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+// startDate is app-only (issue #33): GitLab Issues have no native start-date
+// field, so, unlike due_on, it must round-trip through Create/Update without
+// ever being pushed to GitLab.
+func TestService_Create_PersistsStartDate(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", StartDate: &start})
+	require.NoError(t, err)
+	require.NotNil(t, created.StartDate)
+	assert.True(t, start.Equal(*created.StartDate))
+
+	got, err := svc.Get(ctx, owner, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.StartDate)
+	assert.True(t, start.Equal(*got.StartDate))
+}
+
+// startDate is never mirrored to GitLab (it has no due_on-style
+// counterpart), so an update that only changes it must not enqueue an
+// issue.update job, even for an already-linked task — mirroring
+// TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange.
+func TestService_Update_PersistsStartDate_WithoutEnqueuingSyncJob(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	updated, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
+		Title:     "Fix bug", // unchanged
+		StartDate: &start,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.StartDate)
+	assert.True(t, start.Equal(*updated.StartDate))
 	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
 }
 

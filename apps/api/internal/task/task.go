@@ -131,6 +131,7 @@ type Task struct {
 	AssigneeGitlabUsername string      `json:"assigneeGitlabUsername"`
 	Labels                 []string    `json:"labels"`
 	DueOn                  *time.Time  `json:"dueOn"`
+	StartDate              *time.Time  `json:"startDate"`
 	Position               int32       `json:"position"`
 	CreatedByUserID        uuid.UUID   `json:"createdByUserId"`
 	CreatedAt              time.Time   `json:"createdAt"`
@@ -153,6 +154,7 @@ func fromRow(row db.Task) Task {
 		AssigneeGitlabUsername: row.AssigneeGitlabUsername,
 		Labels:                 row.Labels,
 		DueOn:                  datePtr(row.DueOn),
+		StartDate:              datePtr(row.StartDate),
 		Position:               row.Position,
 		CreatedByUserID:        row.CreatedByUserID,
 		CreatedAt:              row.CreatedAt.Time,
@@ -230,6 +232,7 @@ type CreateParams struct {
 	AssigneeGitlabUsername string
 	Labels                 []string
 	DueOn                  *time.Time
+	StartDate              *time.Time
 }
 
 // UpdateParams holds the fields accepted when updating a task. A nil
@@ -244,6 +247,7 @@ type UpdateParams struct {
 	AssigneeGitlabUsername string
 	Labels                 []string
 	DueOn                  *time.Time
+	StartDate              *time.Time
 	Position               int32
 }
 
@@ -397,6 +401,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 			AssigneeGitlabUsername: assigneeUsername,
 			Labels:                 normalizeLabels(params.Labels),
 			DueOn:                  toDate(params.DueOn),
+			StartDate:              toDate(params.StartDate),
 			CreatedByUserID:        ownerID,
 		})
 		if err != nil {
@@ -695,6 +700,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			AssigneeGitlabUsername: params.AssigneeGitlabUsername,
 			Labels:                 normalizeLabels(params.Labels),
 			DueOn:                  toDate(params.DueOn),
+			StartDate:              toDate(params.StartDate),
 			Position:               params.Position,
 		})
 		if err != nil {

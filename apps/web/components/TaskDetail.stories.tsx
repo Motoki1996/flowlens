@@ -30,6 +30,7 @@ function makeTask(overrides: Partial<Task>): Task {
     assigneeGitlabUsername: "octocat",
     labels: ["bug"],
     dueOn: null,
+    startDate: null,
     position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",

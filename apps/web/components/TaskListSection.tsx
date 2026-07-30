@@ -4,11 +4,14 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, Backlog, Task, TaskStatus } from "@/types";
+import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SyncBadge } from "@/components/SyncBadge";
+import { TaskTimelineSection } from "@/components/TaskTimelineSection";
+
+type ViewMode = "list" | "timeline";
 
 const UNCLASSIFIED = "unclassified";
 const UNCLASSIFIED_LABEL = "未分類";
@@ -38,13 +41,16 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 export function TaskListSection({
   tasks,
   backlogs,
+  dependencies = [],
   error = false,
 }: {
   tasks: Task[];
   backlogs: Backlog[];
+  dependencies?: TaskDependency[];
   error?: boolean;
 }) {
   const router = useRouter();
+  const [view, setView] = useState<ViewMode>("list");
   const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
   const [backlogFilter, setBacklogFilter] = useState<"all" | string>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -131,31 +137,55 @@ export function TaskListSection({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base font-medium">Tasks</CardTitle>
           {!error && tasks.length > 0 ? (
-            <div className="flex gap-2">
-              <select
-                aria-label="Status"
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as "all" | TaskStatus)}
-                className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
-              >
-                <option value="all">All statuses</option>
-                <option value="open">Open</option>
-                <option value="closed">Closed</option>
-              </select>
-              <select
-                aria-label="Backlog"
-                value={backlogFilter}
-                onChange={(e) => setBacklogFilter(e.target.value)}
-                className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
-              >
-                <option value="all">All backlogs</option>
-                {backlogs.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
-                  </option>
-                ))}
-                <option value={UNCLASSIFIED}>{UNCLASSIFIED_LABEL}</option>
-              </select>
+            <div className="flex flex-wrap gap-2">
+              <div className="flex" role="group" aria-label="View">
+                <Button
+                  type="button"
+                  variant={view === "list" ? "default" : "outline"}
+                  size="sm"
+                  className="rounded-r-none"
+                  onClick={() => setView("list")}
+                >
+                  List
+                </Button>
+                <Button
+                  type="button"
+                  variant={view === "timeline" ? "default" : "outline"}
+                  size="sm"
+                  className="rounded-l-none"
+                  onClick={() => setView("timeline")}
+                >
+                  Timeline
+                </Button>
+              </div>
+              {view === "list" ? (
+                <>
+                  <select
+                    aria-label="Status"
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value as "all" | TaskStatus)}
+                    className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
+                  >
+                    <option value="all">All statuses</option>
+                    <option value="open">Open</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                  <select
+                    aria-label="Backlog"
+                    value={backlogFilter}
+                    onChange={(e) => setBacklogFilter(e.target.value)}
+                    className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
+                  >
+                    <option value="all">All backlogs</option>
+                    {backlogs.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                    <option value={UNCLASSIFIED}>{UNCLASSIFIED_LABEL}</option>
+                  </select>
+                </>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -165,6 +195,8 @@ export function TaskListSection({
           <p className="text-destructive text-sm">Failed to load tasks. Try refreshing the page.</p>
         ) : tasks.length === 0 ? (
           <p className="text-muted-foreground text-sm">No tasks yet.</p>
+        ) : view === "timeline" ? (
+          <TaskTimelineSection tasks={tasks} dependencies={dependencies} />
         ) : groups.length === 0 ? (
           <p className="text-muted-foreground text-sm">No tasks match the current filters.</p>
         ) : (

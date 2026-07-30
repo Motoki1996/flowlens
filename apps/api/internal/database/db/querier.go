@@ -88,6 +88,16 @@ type Querier interface {
 	// serves the unfiltered, single-backlog, unassigned-only and status-scoped
 	// list views: passing false/NULL/'' for a filter disables it.
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
+	// task_dependencies has no project_id/owner column of its own; ownership
+	// is always checked through its tasks, the same way task_gitlab_links is
+	// never queried through a project/owner join directly.
+	// CreateTaskDependency and ListTaskDependenciesByProject trust the caller
+	// (internal/taskdependency) to have already verified project ownership
+	// and that both tasks belong to the same project.
+	// DeleteTaskDependencyForOwner joins through the predecessor task to
+	// projects, so a dependency belonging to another user's project is
+	// indistinguishable from a missing one.
+	CreateTaskDependency(ctx context.Context, arg CreateTaskDependencyParams) (TaskDependency, error)
 	// task_gitlab_links has no owner column and is never queried through a
 	// project/owner join: only the outbox worker (internal/issuesync) reads and
 	// writes it, and the job row that drives it was already authorized when
@@ -117,6 +127,10 @@ type Querier interface {
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteProjectAPITokenForOwner(ctx context.Context, arg DeleteProjectAPITokenForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
+	// DeleteTaskDependencyForOwner joins through the predecessor task to
+	// projects, so a dependency belonging to another user's project is
+	// indistinguishable from a missing one.
+	DeleteTaskDependencyForOwner(ctx context.Context, arg DeleteTaskDependencyForOwnerParams) (int64, error)
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	// Upserts on dedupe_key: a colliding insert only overwrites the existing
 	// row while it is still 'pending' (collapsing rapid repeated edits into
@@ -212,6 +226,9 @@ type Querier interface {
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
+	// ListTaskDependenciesByProject trusts the caller to have already
+	// verified project ownership, the same way ListTasksByProject does.
+	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
 	// ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
 	// /api/v1/projects/{projectID}/tasks/context): the same

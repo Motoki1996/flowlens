@@ -21,6 +21,7 @@ function makeTask(overrides: Partial<Task>): Task {
     assigneeGitlabUsername: "",
     labels: [],
     dueOn: null,
+    startDate: null,
     position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
@@ -119,6 +120,18 @@ describe("TaskListSection", () => {
     const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
     render(<TaskListSection tasks={tasks} backlogs={[backlog]} />);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("switches to the timeline view mode and back", () => {
+    const tasks = [makeTask({ id: "t1", title: "Scheduled task", startDate: "2026-08-01" })];
+    render(<TaskListSection tasks={tasks} backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+    expect(screen.getByRole("link", { name: "Scheduled task" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Status" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
   });
 
   it("shows a sync badge per task row", () => {

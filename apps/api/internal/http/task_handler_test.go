@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flowlens/api/internal/issuesync"
 	"github.com/google/uuid"
@@ -111,6 +112,23 @@ func TestHandleCreateTask(t *testing.T) {
 	_, err := uuid.Parse(id)
 	assert.NoError(t, err)
 	assert.Equal(t, http.StatusOK, doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, token).Code)
+}
+
+// startDate is app-only (issue #33's Gantt chart): unlike dueOn, it has no
+// GitLab counterpart, but it round-trips through the same wire contract.
+func TestHandleCreateTask_PersistsStartDate(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Fix bug", StartDate: &start}, token)
+	require.Equal(t, http.StatusCreated, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "2026-08-01T00:00:00Z", body["startDate"])
 }
 
 func TestHandleCreateTask_RejectsInvalidTitle(t *testing.T) {

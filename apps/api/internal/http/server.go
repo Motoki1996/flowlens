@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/flowlens/api/internal/apitoken"
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/config"
@@ -36,6 +37,7 @@ type Server struct {
 	users          *user.Service
 	projects       *project.Service
 	backlogs       *backlog.Service
+	apiTokens      *apitoken.Service
 	tasks          *task.Service
 	gitlabConns    *gitlabconn.Service
 	linkedProjects *linkedproject.Service
@@ -57,6 +59,7 @@ type Server struct {
 func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRunner database.TxRunner, cipher *crypto.Cipher) (*Server, error) {
 	projects := project.NewService(queries)
 	backlogs := backlog.NewService(queries, projects)
+	apiTokens := apitoken.NewService(queries, projects)
 	clientFactory := func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
 	gitlabConns := gitlabconn.NewService(queries, projects, cipher, clientFactory)
 	return &Server{
@@ -64,6 +67,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		users:          user.NewService(queries),
 		projects:       projects,
 		backlogs:       backlogs,
+		apiTokens:      apiTokens,
 		tasks:          task.NewService(queries, txRunner, projects, backlogs),
 		gitlabConns:    gitlabConns,
 		linkedProjects: linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
@@ -122,6 +126,13 @@ func (s *Server) Router() chi.Router {
 
 				projects.Get("/{projectID}/linked-gitlab-projects", s.handleListLinkedGitlabProjects)
 				projects.Post("/{projectID}/linked-gitlab-projects", s.handleCreateLinkedGitlabProject)
+
+				projects.Get("/{projectID}/api-tokens", s.handleListAPITokens)
+				projects.Post("/{projectID}/api-tokens", s.handleCreateAPIToken)
+			})
+
+			protected.Route("/api-tokens", func(tokens chi.Router) {
+				tokens.Delete("/{tokenID}", s.handleDeleteAPIToken)
 			})
 
 			protected.Route("/linked-gitlab-projects", func(linked chi.Router) {

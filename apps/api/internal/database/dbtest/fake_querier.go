@@ -21,6 +21,10 @@ type FakeQuerier struct {
 	usersByID       map[uuid.UUID]db.User
 	sessions        map[string]db.Session // key: token_hash
 
+	projectAPITokens       []db.ProjectApiToken // insertion order, newest last
+	projectAPITokensByID   map[uuid.UUID]db.ProjectApiToken
+	projectAPITokensByHash map[string]uuid.UUID // key: token_hash
+
 	projects            []db.Project // insertion order, newest last
 	projectsByID        map[uuid.UUID]db.Project
 	projectsByOwnerName map[string]db.Project // key: owner_user_id + name
@@ -56,10 +60,14 @@ type FakeQuerier struct {
 // New returns an empty FakeQuerier.
 func New() *FakeQuerier {
 	return &FakeQuerier{
-		usersByUsername:     map[string]db.User{},
-		usersByEmail:        map[string]db.User{},
-		usersByID:           map[uuid.UUID]db.User{},
-		sessions:            map[string]db.Session{},
+		usersByUsername: map[string]db.User{},
+		usersByEmail:    map[string]db.User{},
+		usersByID:       map[uuid.UUID]db.User{},
+		sessions:        map[string]db.Session{},
+
+		projectAPITokensByID:   map[uuid.UUID]db.ProjectApiToken{},
+		projectAPITokensByHash: map[string]uuid.UUID{},
+
 		projectsByID:        map[uuid.UUID]db.Project{},
 		projectsByOwnerName: map[string]db.Project{},
 		backlogsByID:        map[uuid.UUID]db.Backlog{},
@@ -186,6 +194,101 @@ func (f *FakeQuerier) DeleteExpiredSessions(_ context.Context) error {
 			delete(f.sessions, k)
 		}
 	}
+	return nil
+}
+
+// storeProjectAPIToken inserts t if it is new, or overwrites the existing
+// row in place (preserving its position in f.projectAPITokens) otherwise.
+func (f *FakeQuerier) storeProjectAPIToken(t db.ProjectApiToken) {
+	f.projectAPITokensByID[t.ID] = t
+	f.projectAPITokensByHash[t.TokenHash] = t.ID
+	for i, x := range f.projectAPITokens {
+		if x.ID == t.ID {
+			f.projectAPITokens[i] = t
+			return
+		}
+	}
+	f.projectAPITokens = append(f.projectAPITokens, t)
+}
+
+func (f *FakeQuerier) CreateProjectAPIToken(_ context.Context, arg db.CreateProjectAPITokenParams) (db.ProjectApiToken, error) {
+	t := db.ProjectApiToken{
+		ID:        uuid.New(),
+		ProjectID: arg.ProjectID,
+		Name:      arg.Name,
+		TokenHash: arg.TokenHash,
+		ExpiresAt: arg.ExpiresAt,
+		CreatedAt: now(),
+	}
+	f.storeProjectAPIToken(t)
+	return t, nil
+}
+
+// ListProjectAPITokensByProject mirrors the SQL's ORDER BY created_at DESC.
+func (f *FakeQuerier) ListProjectAPITokensByProject(_ context.Context, projectID uuid.UUID) ([]db.ProjectApiToken, error) {
+	items := []db.ProjectApiToken{}
+	for i := len(f.projectAPITokens) - 1; i >= 0; i-- {
+		if t := f.projectAPITokens[i]; t.ProjectID == projectID {
+			items = append(items, t)
+		}
+	}
+	return items, nil
+}
+
+// projectAPITokenOwner returns the owner_user_id of the project a token
+// belongs to, mirroring the JOIN the real query performs.
+func (f *FakeQuerier) projectAPITokenOwner(t db.ProjectApiToken) (uuid.UUID, bool) {
+	p, ok := f.projectsByID[t.ProjectID]
+	if !ok {
+		return uuid.Nil, false
+	}
+	return p.OwnerUserID, true
+}
+
+// DeleteProjectAPITokenForOwner returns the number of rows affected, so
+// callers can tell "deleted" from "not yours / not there" exactly as
+// Postgres does.
+func (f *FakeQuerier) DeleteProjectAPITokenForOwner(_ context.Context, arg db.DeleteProjectAPITokenForOwnerParams) (int64, error) {
+	t, ok := f.projectAPITokensByID[arg.ID]
+	if !ok {
+		return 0, nil
+	}
+	owner, ok := f.projectAPITokenOwner(t)
+	if !ok || owner != arg.OwnerUserID {
+		return 0, nil
+	}
+	delete(f.projectAPITokensByID, t.ID)
+	delete(f.projectAPITokensByHash, t.TokenHash)
+	for i, x := range f.projectAPITokens {
+		if x.ID == t.ID {
+			f.projectAPITokens = append(f.projectAPITokens[:i], f.projectAPITokens[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
+}
+
+// GetProjectAPITokenByTokenHash mirrors the SQL: a token that does not exist
+// or has expired is reported as pgx.ErrNoRows, exactly like an unknown hash.
+func (f *FakeQuerier) GetProjectAPITokenByTokenHash(_ context.Context, tokenHash string) (db.ProjectApiToken, error) {
+	id, ok := f.projectAPITokensByHash[tokenHash]
+	if !ok {
+		return db.ProjectApiToken{}, pgx.ErrNoRows
+	}
+	t := f.projectAPITokensByID[id]
+	if t.ExpiresAt.Valid && !t.ExpiresAt.Time.After(time.Now()) {
+		return db.ProjectApiToken{}, pgx.ErrNoRows
+	}
+	return t, nil
+}
+
+func (f *FakeQuerier) UpdateProjectAPITokenLastUsedAt(_ context.Context, arg db.UpdateProjectAPITokenLastUsedAtParams) error {
+	t, ok := f.projectAPITokensByID[arg.ID]
+	if !ok {
+		return nil
+	}
+	t.LastUsedAt = arg.LastUsedAt
+	f.storeProjectAPIToken(t)
 	return nil
 }
 

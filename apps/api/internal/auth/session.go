@@ -93,3 +93,16 @@ func hashToken(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
 }
+
+// NewOpaqueToken returns a fresh random opaque token, suitable for any
+// bearer-style credential (session cookie, project API token) that is
+// stored server-side only as its HashToken hash.
+func NewOpaqueToken() (string, error) {
+	return randomToken()
+}
+
+// HashToken returns the SHA-256 hash of raw, for storage instead of the raw
+// value it was derived from.
+func HashToken(raw string) string {
+	return hashToken(raw)
+}

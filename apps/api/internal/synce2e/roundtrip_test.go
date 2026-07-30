@@ -35,10 +35,53 @@ import (
 	"github.com/flowlens/api/internal/webhookapply"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// crossPackageLockKey serializes this package's integration tests against
+// every other package that also drives real claim-and-execute workers over
+// sync_jobs/webhook_events (internal/sync, internal/webhookapply): those
+// tables have no per-package scoping, so `go test ./...`'s default
+// parallelism across packages otherwise lets one package's worker claim rows
+// enqueued by another's test via the unscoped FOR UPDATE SKIP LOCKED claim —
+// in particular this suite's own drainOutbox/drainInbox racing against
+// another package's own background workers over the same tables. Must match
+// the key used by those other packages' TestMain.
+const crossPackageLockKey = 727208135
+
+// TestMain holds a session-level Postgres advisory lock for this package's
+// whole test run, so it and every other integration-tagged package sharing
+// crossPackageLockKey run one at a time against the real database instead of
+// racing. A session-level lock is released automatically if the process
+// exits or the connection drops for any reason, so there is no deadlock risk
+// from a crash or a CI-enforced timeout skipping the deferred unlock.
+func TestMain(m *testing.M) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		os.Exit(m.Run())
+	}
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "synce2e: TestMain: connect: %v\n", err)
+		os.Exit(1)
+	}
+	defer conn.Close(ctx)
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", crossPackageLockKey); err != nil {
+		fmt.Fprintf(os.Stderr, "synce2e: TestMain: acquire lock: %v\n", err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", crossPackageLockKey); err != nil {
+		fmt.Fprintf(os.Stderr, "synce2e: TestMain: release lock: %v\n", err)
+	}
+	os.Exit(code)
+}
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -230,7 +273,16 @@ func issueHookPayload(o issueEvent) []byte {
 	body.ObjectAttributes.Title = o.Title
 	body.ObjectAttributes.Description = o.Description
 	body.ObjectAttributes.State = o.State
-	body.ObjectAttributes.UpdatedAt = o.UpdatedAt.UTC().Format(time.RFC3339)
+	// RFC3339Nano, not RFC3339: GitLab's real payloads carry sub-second
+	// precision, and internal/webhookapply's parseGitlabTime can parse it
+	// (Go's time.Parse accepts an optional fractional-second field after the
+	// seconds even when the layout doesn't specify one). Formatting with
+	// plain RFC3339 would truncate to whole seconds, so a same-instant echo
+	// (see TestRoundTrip_AppUpdateEcho_IsIgnored_RealPostgres) would come
+	// back rounded down and read as strictly before the stored
+	// gitlab_updated_at baseline — tripping the stale guard instead of the
+	// echo guard.
+	body.ObjectAttributes.UpdatedAt = o.UpdatedAt.UTC().Format(time.RFC3339Nano)
 	body.ObjectAttributes.URL = fmt.Sprintf("https://gitlab.example.com/group/demo/-/issues/%d", o.IID)
 	for _, l := range o.Labels {
 		body.Labels = append(body.Labels, label{Title: l})

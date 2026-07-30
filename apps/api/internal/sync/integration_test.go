@@ -21,11 +21,54 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// crossPackageLockKey serializes this package's integration tests against
+// every other package that also drives real claim-and-execute workers over
+// sync_jobs/webhook_events (internal/webhookapply, internal/synce2e): those
+// tables have no per-package scoping, so `go test ./...`'s default
+// parallelism across packages otherwise lets one package's worker claim rows
+// enqueued by another's test, e.g. this file's own TestWorker_TwoWorkers...
+// grabbing another package's outbound job (or vice versa) via the
+// unscoped FOR UPDATE SKIP LOCKED claim. Must match the key used by those
+// other packages' TestMain.
+const crossPackageLockKey = 727208135
+
+// TestMain holds a session-level Postgres advisory lock for this package's
+// whole test run, so it and every other integration-tagged package sharing
+// crossPackageLockKey run one at a time against the real database instead
+// of racing. A session-level lock is released automatically if the process
+// exits or the connection drops for any reason, so there is no deadlock risk
+// from a crash or a CI-enforced timeout skipping the deferred unlock.
+func TestMain(m *testing.M) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		os.Exit(m.Run())
+	}
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sync: TestMain: connect: %v\n", err)
+		os.Exit(1)
+	}
+	defer conn.Close(ctx)
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", crossPackageLockKey); err != nil {
+		fmt.Fprintf(os.Stderr, "sync: TestMain: acquire lock: %v\n", err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", crossPackageLockKey); err != nil {
+		fmt.Fprintf(os.Stderr, "sync: TestMain: release lock: %v\n", err)
+	}
+	os.Exit(code)
+}
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()

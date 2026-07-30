@@ -1,5 +1,5 @@
 import { redirect, notFound } from "next/navigation";
-import type { SyncRun } from "@/types";
+import type { SyncRun, WebhookEvent } from "@/types";
 import {
   getBacklogs,
   getCurrentUser,
@@ -8,6 +8,7 @@ import {
   getProject,
   getSyncRuns,
   getTasks,
+  getWebhookEvents,
 } from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
 import { ProjectDetail } from "@/components/ProjectDetail";
@@ -56,6 +57,16 @@ export default async function ProjectPage({
     // user retry via "Sync now".
   }
 
+  let webhookEventsByLink: Record<string, WebhookEvent[]> = {};
+  try {
+    const entries = await Promise.all(
+      linkedGitlabProjects.map(async (link) => [link.id, await getWebhookEvents(link.id)] as const),
+    );
+    webhookEventsByLink = Object.fromEntries(entries);
+  } catch {
+    // Left empty; the section still renders with no recent events.
+  }
+
   return (
     <>
       <AppHeader user={user} />
@@ -68,6 +79,7 @@ export default async function ProjectPage({
           gitlabConnection={gitlabConnection}
           linkedGitlabProjects={linkedGitlabProjects}
           syncRunsByLink={syncRunsByLink}
+          webhookEventsByLink={webhookEventsByLink}
         />
       </main>
     </>

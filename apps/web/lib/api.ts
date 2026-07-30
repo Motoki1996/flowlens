@@ -3,7 +3,16 @@
 // browser's session cookie so the API can authenticate the request.
 
 import { cookies } from "next/headers";
-import type { Backlog, GitlabConnection, LinkedGitlabProject, Project, SyncRun, Task, User } from "@/types";
+import type {
+  Backlog,
+  GitlabConnection,
+  LinkedGitlabProject,
+  Project,
+  SyncRun,
+  Task,
+  User,
+  WebhookEvent,
+} from "@/types";
 
 // Base URL the Next.js server uses to reach the API.
 const API_INTERNAL_URL =
@@ -189,4 +198,26 @@ export async function getSyncRuns(linkId: string): Promise<SyncRun[]> {
     throw new Error(`Failed to load sync runs: ${res.status}`);
   }
   return (await res.json()) as SyncRun[];
+}
+
+/**
+ * getWebhookEvents returns a linked GitLab project's most recently received
+ * webhook events, newest first, without their payload (GET
+ * .../webhook-events only includes it in the single-event fetch). Callers
+ * must already know the request is authenticated.
+ */
+export async function getWebhookEvents(linkId: string, perPage = 10): Promise<WebhookEvent[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(
+    `${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook-events?per_page=${perPage}`,
+    {
+      headers: { cookie: cookieStore.toString() },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load webhook events: ${res.status}`);
+  }
+  const body = (await res.json()) as { events: WebhookEvent[]; nextPage: number };
+  return body.events;
 }

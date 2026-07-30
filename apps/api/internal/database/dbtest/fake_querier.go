@@ -1679,6 +1679,14 @@ func (f *FakeQuerier) GetWebhookEvent(id uuid.UUID) (db.WebhookEvent, bool) {
 	return e, ok
 }
 
+// SetWebhookEventForTest overwrites an already-seeded webhook_events row in
+// place, for tests that need to set status/processed_at directly (e.g. to
+// exercise the list/retry/cleanup read side) rather than going through
+// Record or the apply pipeline.
+func (f *FakeQuerier) SetWebhookEventForTest(e db.WebhookEvent) {
+	f.storeWebhookEvent(e)
+}
+
 // WebhookEventsForLink returns every recorded webhook_events row for
 // linkedGitlabProjectID, insertion order, for test assertions.
 func (f *FakeQuerier) WebhookEventsForLink(linkedGitlabProjectID uuid.UUID) []db.WebhookEvent {
@@ -1689,6 +1697,78 @@ func (f *FakeQuerier) WebhookEventsForLink(linkedGitlabProjectID uuid.UUID) []db
 		}
 	}
 	return items
+}
+
+// ListWebhookEventsByLinkedGitlabProjectID mirrors the SQL's ORDER BY
+// received_at DESC, optional status filter, and LIMIT/OFFSET paging.
+func (f *FakeQuerier) ListWebhookEventsByLinkedGitlabProjectID(_ context.Context, arg db.ListWebhookEventsByLinkedGitlabProjectIDParams) ([]db.WebhookEvent, error) {
+	items := []db.WebhookEvent{}
+	for _, e := range f.webhookEvents {
+		if e.LinkedGitlabProjectID != arg.LinkedGitlabProjectID {
+			continue
+		}
+		if arg.Status != "" && e.Status != arg.Status {
+			continue
+		}
+		items = append(items, e)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ReceivedAt.Time.After(items[j].ReceivedAt.Time)
+	})
+
+	offset := int(arg.OffsetCount)
+	if offset > len(items) {
+		offset = len(items)
+	}
+	items = items[offset:]
+	limit := int(arg.LimitCount)
+	if limit >= 0 && limit < len(items) {
+		items = items[:limit]
+	}
+	return items, nil
+}
+
+// GetWebhookEventByLinkedGitlabProjectIDAndID mirrors the SQL: an event
+// belonging to a different link is reported as missing, the same way a
+// foreign linked_gitlab_projects row is.
+func (f *FakeQuerier) GetWebhookEventByLinkedGitlabProjectIDAndID(_ context.Context, arg db.GetWebhookEventByLinkedGitlabProjectIDAndIDParams) (db.WebhookEvent, error) {
+	e, ok := f.webhookEventsByID[arg.ID]
+	if !ok || e.LinkedGitlabProjectID != arg.LinkedGitlabProjectID {
+		return db.WebhookEvent{}, pgx.ErrNoRows
+	}
+	return e, nil
+}
+
+// RetryWebhookEvent mirrors the SQL: only a 'failed' event flips back to
+// 'pending'; any other status (or an unknown id) is pgx.ErrNoRows.
+func (f *FakeQuerier) RetryWebhookEvent(_ context.Context, id uuid.UUID) (db.WebhookEvent, error) {
+	e, ok := f.webhookEventsByID[id]
+	if !ok || e.Status != "failed" {
+		return db.WebhookEvent{}, pgx.ErrNoRows
+	}
+	e.Status = "pending"
+	e.ErrorMessage = ""
+	e.ProcessedAt = pgtype.Timestamptz{}
+	f.storeWebhookEvent(e)
+	return e, nil
+}
+
+// DeleteProcessedWebhookEventsOlderThan mirrors the SQL: only 'processed'
+// rows older than cutoff are removed.
+func (f *FakeQuerier) DeleteProcessedWebhookEventsOlderThan(_ context.Context, cutoff pgtype.Timestamptz) (int64, error) {
+	var kept []db.WebhookEvent
+	var deleted int64
+	for _, e := range f.webhookEvents {
+		if e.Status == "processed" && e.ProcessedAt.Valid && e.ProcessedAt.Time.Before(cutoff.Time) {
+			delete(f.webhookEventsByID, e.ID)
+			delete(f.webhookEventsByKey, webhookEventKey(e.LinkedGitlabProjectID, e.DeliveryUuid))
+			deleted++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	f.webhookEvents = kept
+	return deleted, nil
 }
 
 // storeGitlabSyncRun inserts r if it is new, or overwrites the existing row

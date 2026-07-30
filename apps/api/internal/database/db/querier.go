@@ -102,6 +102,11 @@ type Querier interface {
 	// service can tell whether it removed the default link and needs to
 	// promote another one.
 	DeleteLinkedGitlabProjectForOwner(ctx context.Context, arg DeleteLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
+	// The retention policy decided for issue #26: only 'processed' rows are
+	// pruned. 'failed' and 'skipped' rows are kept indefinitely (their error
+	// and skip_reason are the whole point of troubleshooting) and 'pending'
+	// rows are never touched by cleanup.
+	DeleteProcessedWebhookEventsOlderThan(ctx context.Context, processedAt pgtype.Timestamptz) (int64, error)
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
@@ -169,6 +174,12 @@ type Querier interface {
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
+	// The detail view: unlike the list row, its payload is actually read by
+	// the caller (internal/http keeps the list DTO payload-free to avoid
+	// exposing raw GitLab payloads by default). Ownership of linkID must
+	// already be verified by the caller via GetLinkedGitlabProjectForOwner
+	// before this runs.
+	GetWebhookEventByLinkedGitlabProjectIDAndID(ctx context.Context, arg GetWebhookEventByLinkedGitlabProjectIDAndIDParams) (WebhookEvent, error)
 	ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error)
 	// Ownership of linkID must already be verified by the caller via
 	// GetLinkedGitlabProjectForOwner before this runs.
@@ -176,6 +187,10 @@ type Querier interface {
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
+	// status = '' disables the filter, matching ListTasksByProject's
+	// convention. Ownership of linkID must already be verified by the caller
+	// via GetLinkedGitlabProjectForOwner before this runs.
+	ListWebhookEventsByLinkedGitlabProjectID(ctx context.Context, arg ListWebhookEventsByLinkedGitlabProjectIDParams) ([]WebhookEvent, error)
 	MarkSyncJobFailed(ctx context.Context, arg MarkSyncJobFailedParams) error
 	MarkSyncJobRetry(ctx context.Context, arg MarkSyncJobRetryParams) error
 	// Also clears dedupe_key so a later edit is never permanently blocked by a
@@ -216,6 +231,12 @@ type Querier interface {
 	// /tasks/{taskID}/sync-retry. No matching row (nothing to retry) is not an
 	// error; internal/task maps it to ErrSyncNotFailed.
 	RetryFailedSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error)
+	// Only a 'failed' event can be retried. internal/webhookevent.Service
+	// checks the event exists and is 'failed' via
+	// GetWebhookEventByLinkedGitlabProjectIDAndID first, so a zero-row
+	// result here is only the rare race where another request already
+	// retried it.
+	RetryWebhookEvent(ctx context.Context, id uuid.UUID) (WebhookEvent, error)
 	SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg SetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// Records why registering or repairing a webhook failed (most commonly
 	// insufficient GitLab permissions) without touching any existing

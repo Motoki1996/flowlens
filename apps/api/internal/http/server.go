@@ -130,6 +130,9 @@ func (s *Server) Router() chi.Router {
 				linked.Post("/{linkID}/webhook", s.handleRegisterLinkedGitlabProjectWebhook)
 				linked.Get("/{linkID}/sync-runs", s.handleListSyncRuns)
 				linked.Post("/{linkID}/sync-runs", s.handleCreateSyncRun)
+				linked.Get("/{linkID}/webhook-events", s.handleListWebhookEvents)
+				linked.Get("/{linkID}/webhook-events/{eventID}", s.handleGetWebhookEvent)
+				linked.Post("/{linkID}/webhook-events/{eventID}/retry", s.handleRetryWebhookEvent)
 			})
 
 			protected.Route("/backlogs", func(backlogs chi.Router) {

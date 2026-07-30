@@ -20,6 +20,7 @@ import (
 	"github.com/flowlens/api/internal/projectsync"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/webhookapply"
+	"github.com/flowlens/api/internal/webhookevent"
 )
 
 func main() {
@@ -105,6 +106,21 @@ func run() error {
 		}()
 	}
 
+	// Webhook event retention cleanup (issue #26): sweeps old 'processed'
+	// webhook_events rows on its own schedule, independent of the sync
+	// engine's poll interval. Runs under the same enable flag as the other
+	// background workers since it is likewise background housekeeping, not
+	// something a request waits on.
+	webhookCleanup := webhookevent.NewCleanupWorker(webhookevent.NewService(database.NewQuerier(pool), cipher))
+	if cfg.SyncWorkerEnabled {
+		go func() {
+			slog.Info("webhook event cleanup worker starting", "interval", webhookevent.DefaultCleanupInterval, "retention", webhookevent.DefaultRetentionPeriod)
+			if err := webhookCleanup.Run(context.Background()); err != nil {
+				slog.Error("webhook event cleanup worker stopped", "error", err)
+			}
+		}()
+	}
+
 	// Start serving in a goroutine so we can wait for shutdown signals.
 	errCh := make(chan error, 1)
 	go func() {
@@ -127,6 +143,9 @@ func run() error {
 			}
 			if err := webhookWorker.Stop(shutdownCtx); err != nil {
 				slog.Warn("webhook apply worker did not stop cleanly", "error", err)
+			}
+			if err := webhookCleanup.Stop(shutdownCtx); err != nil {
+				slog.Warn("webhook event cleanup worker did not stop cleanly", "error", err)
 			}
 		}
 		return httpServer.Shutdown(shutdownCtx)

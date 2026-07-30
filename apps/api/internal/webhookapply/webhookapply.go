@@ -182,7 +182,7 @@ func (s *Service) apply(ctx context.Context, q db.Querier, event db.WebhookEvent
 	})
 	switch {
 	case err == nil:
-		return s.applyToExistingTask(ctx, q, event, existingLink, fields)
+		return s.applyToExistingTask(ctx, q, event, link, existingLink, fields)
 	case errors.Is(err, pgx.ErrNoRows):
 		return s.applyAsNewTask(ctx, q, event, link, fields)
 	default:
@@ -194,7 +194,7 @@ func (s *Service) apply(ctx context.Context, q db.Querier, event db.WebhookEvent
 // (echo) run here, since both need a baseline — task_gitlab_links.
 // gitlab_updated_at and last_pushed_fingerprint — that only a known issue
 // has.
-func (s *Service) applyToExistingTask(ctx context.Context, q db.Querier, event db.WebhookEvent, link db.TaskGitlabLink, fields taskFields) error {
+func (s *Service) applyToExistingTask(ctx context.Context, q db.Querier, event db.WebhookEvent, linkedProject db.LinkedGitlabProject, link db.TaskGitlabLink, fields taskFields) error {
 	// Strictly Before, not "not After": a delivery whose updated_at ties the
 	// recorded baseline is a legitimate near-simultaneous update (e.g. the
 	// loser of the guard-1 create race retrying into this path), not a
@@ -204,7 +204,23 @@ func (s *Service) applyToExistingTask(ctx context.Context, q db.Querier, event d
 		return s.markSkipped(ctx, q, event.ID, SkipReasonStale)
 	}
 	if fields.Fingerprint == link.LastPushedFingerprint {
-		return s.markSkipped(ctx, q, event.ID, SkipReasonEcho)
+		// last_pushed_fingerprint never changes on a close/reopen push
+		// (handleStateChange in internal/issuesync intentionally leaves it
+		// alone — nothing content-wise changed), so a genuine external
+		// close/reopen whose title/description/labels/due date/assignee
+		// happen to still match the last content push would otherwise be
+		// indistinguishable from FlowLens's own echo. Only treat this as an
+		// echo if the task's current status also already matches: FlowLens's
+		// own edits (content or state) always land on the task row before the
+		// outbound push is even enqueued, so by the time its echo arrives the
+		// task is already in that state; an external close/reopen is not.
+		unchanged, err := s.statusAlreadyApplied(ctx, q, linkedProject, link.TaskID, fields.Status)
+		if err != nil {
+			return s.markFailed(ctx, q, event.ID, fmt.Errorf("check current status: %w", err))
+		}
+		if unchanged {
+			return s.markSkipped(ctx, q, event.ID, SkipReasonEcho)
+		}
 	}
 
 	if _, err := q.ApplyWebhookTaskFields(ctx, db.ApplyWebhookTaskFieldsParams{
@@ -306,6 +322,22 @@ func resolveProjectOwner(ctx context.Context, q db.Querier, link db.LinkedGitlab
 		return uuid.Nil, uuid.Nil, fmt.Errorf("get project: %w", err)
 	}
 	return proj.OwnerUserID, proj.ID, nil
+}
+
+// statusAlreadyApplied reports whether taskID's current status already
+// equals status, the extra signal the echo guard (applyToExistingTask) needs
+// once a content fingerprint match alone can no longer tell a genuine
+// external close/reopen from FlowLens's own echo.
+func (s *Service) statusAlreadyApplied(ctx context.Context, q db.Querier, linkedProject db.LinkedGitlabProject, taskID uuid.UUID, status string) (bool, error) {
+	ownerID, _, err := resolveProjectOwner(ctx, q, linkedProject)
+	if err != nil {
+		return false, err
+	}
+	current, err := q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: taskID, OwnerUserID: ownerID})
+	if err != nil {
+		return false, fmt.Errorf("get task: %w", err)
+	}
+	return current.Status == status, nil
 }
 
 func (s *Service) markProcessed(ctx context.Context, q db.Querier, id uuid.UUID) error {

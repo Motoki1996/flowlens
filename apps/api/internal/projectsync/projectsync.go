@@ -550,11 +550,20 @@ func fieldsFromIssue(issue gitlab.Issue) issueFields {
 		status = task.StatusClosed
 	}
 
+	// tasks.labels is NOT NULL; a GitLab issue with no labels reports a nil
+	// slice, which pgx would otherwise bind as SQL NULL and fail CreateTask /
+	// ApplyWebhookTaskFields (internal/task.Service.Create and
+	// internal/webhookapply.fieldsFromPayload normalize the same way).
+	labels := issue.Labels
+	if labels == nil {
+		labels = []string{}
+	}
+
 	return issueFields{
 		Title:            issue.Title,
 		Description:      issue.Description,
 		Status:           status,
-		Labels:           issue.Labels,
+		Labels:           labels,
 		DueDate:          dueDate,
 		AssigneeID:       assigneeID,
 		AssigneeUsername: assigneeUsername,
@@ -562,7 +571,7 @@ func fieldsFromIssue(issue gitlab.Issue) issueFields {
 		IssueID:          issue.ID,
 		IssueIID:         issue.IID,
 		WebURL:           issue.WebURL,
-		Fingerprint:      gitlab.Fingerprint(issue.Title, issue.Description, issue.Labels, dueDate, assigneeIDs),
+		Fingerprint:      gitlab.Fingerprint(issue.Title, issue.Description, labels, dueDate, assigneeIDs),
 	}
 }
 

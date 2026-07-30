@@ -23,11 +23,54 @@ import (
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/webhookapply"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// crossPackageLockKey serializes this package's integration tests against
+// every other package that also drives real claim-and-execute workers over
+// sync_jobs/webhook_events (internal/sync, internal/synce2e): those tables
+// have no per-package scoping, so `go test ./...`'s default parallelism
+// across packages otherwise lets one package's worker claim rows enqueued by
+// another's test via the unscoped FOR UPDATE SKIP LOCKED claim — in
+// particular this file's own concurrent-apply test racing against another
+// package's webhook_events rows. Must match the key used by those other
+// packages' TestMain.
+const crossPackageLockKey = 727208135
+
+// TestMain holds a session-level Postgres advisory lock for this package's
+// whole test run, so it and every other integration-tagged package sharing
+// crossPackageLockKey run one at a time against the real database instead of
+// racing. A session-level lock is released automatically if the process
+// exits or the connection drops for any reason, so there is no deadlock risk
+// from a crash or a CI-enforced timeout skipping the deferred unlock.
+func TestMain(m *testing.M) {
+	url := os.Getenv("DATABASE_URL")
+	if url == "" {
+		os.Exit(m.Run())
+	}
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "webhookapply: TestMain: connect: %v\n", err)
+		os.Exit(1)
+	}
+	defer conn.Close(ctx)
+
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", crossPackageLockKey); err != nil {
+		fmt.Fprintf(os.Stderr, "webhookapply: TestMain: acquire lock: %v\n", err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", crossPackageLockKey); err != nil {
+		fmt.Fprintf(os.Stderr, "webhookapply: TestMain: release lock: %v\n", err)
+	}
+	os.Exit(code)
+}
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()

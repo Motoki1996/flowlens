@@ -52,3 +52,44 @@ WHERE id = $1;
 UPDATE webhook_events
 SET status = 'failed', error_message = $2, processed_at = now()
 WHERE id = $1;
+
+-- The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID
+-- and GetWebhookEventByLinkedGitlabProjectIDAndID are scoped by
+-- linked_gitlab_project_id only, not owner — internal/webhookevent.Service
+-- verifies the caller owns linkID via GetLinkedGitlabProjectForOwner first, the
+-- same two-step internal/projectsync's ListRuns uses, so a foreign or unknown
+-- eventID under an owned link and an owned eventID under a foreign link both
+-- come back empty.
+
+-- name: ListWebhookEventsByLinkedGitlabProjectID :many
+-- status = '' disables the filter, matching ListTasksByProject's convention.
+SELECT * FROM webhook_events
+WHERE linked_gitlab_project_id = sqlc.arg(linked_gitlab_project_id)
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+ORDER BY received_at DESC
+LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
+
+-- name: GetWebhookEventByLinkedGitlabProjectIDAndID :one
+-- The detail view: unlike the list row, its payload is actually read by the
+-- caller (internal/http keeps the list DTO payload-free to avoid exposing
+-- raw GitLab payloads by default).
+SELECT * FROM webhook_events
+WHERE id = $1 AND linked_gitlab_project_id = $2;
+
+-- name: RetryWebhookEvent :one
+-- Only a 'failed' event can be retried. internal/webhookevent.Service checks
+-- the event exists and is 'failed' via GetWebhookEventByLinkedGitlabProjectIDAndID
+-- first, so a zero-row result here is only the rare race where another
+-- request already retried it; that maps to the same ErrNotFailed.
+UPDATE webhook_events
+SET status = 'pending', error_message = '', processed_at = NULL
+WHERE id = $1 AND status = 'failed'
+RETURNING *;
+
+-- name: DeleteProcessedWebhookEventsOlderThan :execrows
+-- The retention policy decided for issue #26: only 'processed' rows are
+-- pruned. 'failed' and 'skipped' rows are kept indefinitely (their error and
+-- skip_reason are the whole point of troubleshooting) and 'pending' rows are
+-- never touched by cleanup — the apply worker is the only thing that moves a
+-- pending row out of that state.
+DELETE FROM webhook_events WHERE status = 'processed' AND processed_at < $1;

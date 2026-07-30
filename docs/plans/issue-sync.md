@@ -213,7 +213,9 @@ GET            /api/v1/projects/{projectID}/gitlab-connection/available-projects
 GET|POST       /api/v1/projects/{projectID}/linked-gitlab-projects
 PATCH|DELETE   /api/v1/linked-gitlab-projects/{linkID}
 GET|POST       /api/v1/linked-gitlab-projects/{linkID}/sync-runs       -- manual re-sync
-GET            /api/v1/linked-gitlab-projects/{linkID}/webhook-events
+GET            /api/v1/linked-gitlab-projects/{linkID}/webhook-events   ?status=
+GET            /api/v1/linked-gitlab-projects/{linkID}/webhook-events/{eventID}   -- includes payload
+POST           /api/v1/linked-gitlab-projects/{linkID}/webhook-events/{eventID}/retry   -- 'failed' only
 
 # AI-facing (session OR `Authorization: Bearer <project token>`)
 GET  /api/v1/tasks/{taskID}/context      -- GitLab issue fields + AI fields in one payload

@@ -13,6 +13,7 @@ package webhookapply_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/webhookapply"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -121,6 +123,14 @@ func TestProcessNext_ConcurrentEventsForSameNewIssue_OnlyOneTaskCreated_RealPost
 			for time.Now().Before(deadline) {
 				claimed, err := svc.ProcessNext(context.Background())
 				if err != nil {
+					var pgErr *pgconn.PgError
+					if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+						// Guard 1 (webhookapply.go's applyAsNewTask): the
+						// loser of the concurrent-create race rolls back and
+						// must re-claim the same event on its next attempt —
+						// expected, not a test failure.
+						continue
+					}
 					t.Errorf("ProcessNext: %v", err)
 					return
 				}

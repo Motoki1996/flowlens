@@ -3,7 +3,16 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, Backlog, GitlabConnection, LinkedGitlabProject, Project, SyncRun, Task } from "@/types";
+import type {
+  ApiError,
+  Backlog,
+  GitlabConnection,
+  LinkedGitlabProject,
+  Project,
+  SyncRun,
+  Task,
+  WebhookEvent,
+} from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -13,6 +22,7 @@ import { TaskListSection } from "@/components/TaskListSection";
 import { BacklogListSection } from "@/components/BacklogListSection";
 import { GitlabConnectionSection } from "@/components/GitlabConnectionSection";
 import { SyncRunSection } from "@/components/SyncRunSection";
+import { WebhookEventSection } from "@/components/WebhookEventSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -176,6 +186,7 @@ export function ProjectDetail({
   gitlabConnection = null,
   linkedGitlabProjects = [],
   syncRunsByLink = {},
+  webhookEventsByLink = {},
 }: {
   project: Project;
   tasks?: Task[];
@@ -184,6 +195,7 @@ export function ProjectDetail({
   gitlabConnection?: GitlabConnection | null;
   linkedGitlabProjects?: LinkedGitlabProject[];
   syncRunsByLink?: Record<string, SyncRun[]>;
+  webhookEventsByLink?: Record<string, WebhookEvent[]>;
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -262,6 +274,10 @@ export function ProjectDetail({
 
       <div className="mt-8">
         <SyncRunSection linkedProjects={linkedGitlabProjects} syncRunsByLink={syncRunsByLink} />
+      </div>
+
+      <div className="mt-8">
+        <WebhookEventSection linkedProjects={linkedGitlabProjects} webhookEventsByLink={webhookEventsByLink} />
       </div>
     </>
   );

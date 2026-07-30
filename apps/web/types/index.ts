@@ -121,6 +121,22 @@ export interface GitlabProjectOption {
   webUrl: string;
 }
 
+export type WebhookEventStatus = "pending" | "processed" | "skipped" | "failed";
+
+/** WebhookEvent is one recorded GitLab webhook delivery, without its payload (see docs/plans/issue-sync.md). */
+export interface WebhookEvent {
+  id: string;
+  linkedGitlabProjectId: string;
+  eventName: string;
+  objectKind: string;
+  gitlabIssueIid: number | null;
+  status: WebhookEventStatus;
+  skipReason: string;
+  errorMessage: string;
+  receivedAt: string;
+  processedAt: string | null;
+}
+
 export type SyncRunKind = "initial_import" | "manual_resync";
 
 export type SyncRunStatus = "running" | "succeeded" | "failed";

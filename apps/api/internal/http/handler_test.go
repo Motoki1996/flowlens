@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowlens/api/internal/apitoken"
 	"github.com/flowlens/api/internal/auth"
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/crypto"
@@ -60,6 +61,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 	}
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
+	apiTokens := apitoken.NewService(q, projects)
 	txRunner := dbtest.FakeTxRunner{Q: q}
 	clientFactory := func(string) gitlab.Client { return fake }
 	gitlabConns := gitlabconn.NewService(q, projects, cipher, clientFactory)
@@ -67,6 +69,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		users:          user.NewService(q),
 		projects:       projects,
 		backlogs:       backlogs,
+		apiTokens:      apiTokens,
 		tasks:          task.NewService(q, txRunner, projects, backlogs),
 		gitlabConns:    gitlabConns,
 		linkedProjects: linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),

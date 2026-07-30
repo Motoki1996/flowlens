@@ -70,6 +70,13 @@ type Querier interface {
 	// which callers map to ErrNotFound. Handlers must never do their own
 	// ownership check, and later project-scoped tables follow the same rule.
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
+	// project_api_tokens has no owner column of its own; ownership is always
+	// checked through the parent project, the same way backlogs, tasks and
+	// gitlab_connections are. CreateProjectAPIToken/ListProjectAPITokensByProject
+	// trust the caller to have already verified project ownership (e.g. via
+	// project.Service.Get), while DeleteProjectAPITokenForOwner joins to projects
+	// so a foreign token is indistinguishable from a missing one.
+	CreateProjectAPIToken(ctx context.Context, arg CreateProjectAPITokenParams) (ProjectApiToken, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	// Tasks are scoped through their parent project the same way backlogs are:
 	// every single-task query joins to projects and filters on
@@ -108,6 +115,7 @@ type Querier interface {
 	// rows are never touched by cleanup.
 	DeleteProcessedWebhookEventsOlderThan(ctx context.Context, processedAt pgtype.Timestamptz) (int64, error)
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
+	DeleteProjectAPITokenForOwner(ctx context.Context, arg DeleteProjectAPITokenForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	// Upserts on dedupe_key: a colliding insert only overwrites the existing
@@ -157,6 +165,11 @@ type Querier interface {
 	// GetLinkedGitlabProjectByID.
 	GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
+	// GetProjectAPITokenByTokenHash is unscoped and used only by bearer
+	// authentication (internal/apitoken.Service.Authenticate), which has no
+	// acting user to scope through and resolves the project from the token
+	// itself. Like GetUserBySessionToken, it filters out expired rows in SQL.
+	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (ProjectApiToken, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
@@ -185,6 +198,7 @@ type Querier interface {
 	// GetLinkedGitlabProjectForOwner before this runs.
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
+	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
 	// status = '' disables the filter, matching ListTasksByProject's
@@ -257,6 +271,7 @@ type Querier interface {
 	UpdateLinkedGitlabProjectLastSyncedAt(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
+	UpdateProjectAPITokenLastUsedAt(ctx context.Context, arg UpdateProjectAPITokenLastUsedAtParams) error
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
 	// gitlab_connections has no owner column of its own; ownership is always
 	// checked through the parent project, the same way backlogs and tasks are.

@@ -219,7 +219,7 @@ POST           /api/v1/linked-gitlab-projects/{linkID}/webhook-events/{eventID}/
 
 # AI-facing (session OR `Authorization: Bearer <project token>`)
 GET  /api/v1/tasks/{taskID}/context      -- GitLab issue fields + AI fields in one payload
-GET  /api/v1/projects/{projectID}/tasks/context ?status=&backlog_id=
+GET  /api/v1/projects/{projectID}/tasks/context ?status=&backlog_id=&updated_since=&page=&per_page=
 GET|POST|DELETE /api/v1/projects/{projectID}/api-tokens
 
 # Webhook (token-header auth)
@@ -229,6 +229,60 @@ POST /webhooks/gitlab/{linkID}
 Errors follow the existing `internal/http/response.go` helpers. Every task
 response carries `sync_status`, `last_error` and `gitlab_web_url` so the UI can
 show per-task sync state and offer retry.
+
+### AI-facing response schema
+
+`GET /tasks/{taskID}/context` and the `tasks` array from `GET
+/projects/{projectID}/tasks/context` both return `internal/task.Context`: a
+shape kept deliberately separate from the CRUD `Task` JSON the UI's own
+endpoints return (`internal/task.Task`), since this one is a contract an
+external AI integration parses and must stay stable even as `Task` evolves.
+Every AI field (`acceptanceCriteria`, `aiContext`, `allowedScope`,
+`forbiddenScope`) is `""`, never `null`, when no AI context has been set yet;
+`gitlab` is `null` for a purely local task that has never had a linked GitLab
+project.
+
+```jsonc
+// GET /api/v1/tasks/{taskID}/context
+{
+  "id": "3fa2...",
+  "projectId": "a1b2...",
+  "backlogId": "c3d4...",       // null when unfiled (未分類)
+  "title": "Fix login redirect",
+  "description": "…",
+  "status": "open",             // "open" | "closed"
+  "assigneeGitlabUserId": 42,   // null when unassigned
+  "assigneeGitlabUsername": "octocat",
+  "labels": ["bug"],
+  "dueOn": "2026-08-01T00:00:00Z", // null when unset
+  "updatedAt": "2026-07-30T03:00:00Z",
+  "gitlab": {                   // null when never linked to a GitLab project
+    "syncStatus": "synced",     // "synced" | "pending" | "failed"
+    "lastError": "",
+    "lastSyncedAt": "2026-07-30T03:00:00Z",
+    "issueIid": 7,
+    "webUrl": "https://gitlab.example.com/group/demo/-/issues/7",
+    "projectPath": "group/demo"
+  },
+  "acceptanceCriteria": "Given/When/Then …",
+  "aiContext": "Legacy payments module …",
+  "allowedScope": "internal/payments/**",
+  "forbiddenScope": "internal/auth/**"
+}
+```
+
+```jsonc
+// GET /api/v1/projects/{projectID}/tasks/context?status=open&per_page=20
+{
+  "tasks": [ /* task.Context, as above */ ],
+  "nextPage": 2   // 0 when there is no next page
+}
+```
+
+`?updated_since=` accepts an RFC 3339 timestamp and filters to tasks whose
+`updatedAt` is at or after it, for AI clients that poll incrementally.
+`page`/`per_page` default to 1/20, capped at 100 per page, the same
+convention `internal/webhookevent`'s list endpoint uses.
 
 ## Web screens (OOUI)
 

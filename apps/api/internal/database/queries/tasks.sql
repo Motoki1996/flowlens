@@ -29,11 +29,40 @@ WHERE project_id = $1
   AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
 ORDER BY position ASC, created_at ASC;
 
+-- ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
+-- /api/v1/projects/{projectID}/tasks/context, docs/plans/issue-sync.md
+-- "AI-facing"): the same backlog_id/status filters as ListTasksByProject
+-- plus updated_since (tasks.updated_at >= the given time) and LIMIT/OFFSET
+-- paging, following the "fetch one extra row to detect a next page"
+-- convention ListWebhookEventsByLinkedGitlabProjectID/internal/webhookevent
+-- established. It has no "unassigned" filter — the bulk context view has no
+-- use for it yet, unlike the board view ListTasksByProject serves.
+
+-- name: ListTasksByProjectPaged :many
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+FROM tasks
+WHERE project_id = sqlc.arg(project_id)
+  AND (sqlc.narg(backlog_id)::uuid IS NULL OR backlog_id = sqlc.narg(backlog_id))
+  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
+  AND (sqlc.narg(updated_since)::timestamptz IS NULL OR updated_at >= sqlc.narg(updated_since))
+ORDER BY position ASC, created_at ASC
+LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
+
 -- name: GetTaskForOwner :one
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
 WHERE t.id = $1 AND p.owner_user_id = $2;
+
+-- GetTaskForProject scopes a task by its project directly, not by owner: the
+-- AI-facing bearer-token path (docs/plans/issue-sync.md "AI-facing") has no
+-- session user, only the project a project.Service-verified token was issued
+-- for (internal/apitoken), so there is no owner to join against.
+
+-- name: GetTaskForProject :one
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+FROM tasks
+WHERE id = $1 AND project_id = $2;
 
 -- name: UpdateTaskForOwner :one
 UPDATE tasks t

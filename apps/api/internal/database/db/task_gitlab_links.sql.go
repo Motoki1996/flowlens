@@ -124,6 +124,52 @@ func (q *Queries) GetTaskGitlabLinkByTaskID(ctx context.Context, taskID uuid.UUI
 	return i, err
 }
 
+const getTaskGitlabLinkWithProjectPathByTaskID = `-- name: GetTaskGitlabLinkWithProjectPathByTaskID :one
+
+SELECT tgl.task_id, tgl.linked_gitlab_project_id, tgl.gitlab_issue_id, tgl.gitlab_issue_iid, tgl.gitlab_web_url, tgl.gitlab_updated_at, tgl.last_pushed_fingerprint, tgl.sync_status, tgl.last_error, tgl.last_synced_at, lgp.path_with_namespace
+FROM task_gitlab_links tgl
+JOIN linked_gitlab_projects lgp ON lgp.id = tgl.linked_gitlab_project_id
+WHERE tgl.task_id = $1
+`
+
+type GetTaskGitlabLinkWithProjectPathByTaskIDRow struct {
+	TaskID                uuid.UUID          `json:"task_id"`
+	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`
+	GitlabIssueID         int64              `json:"gitlab_issue_id"`
+	GitlabIssueIid        int64              `json:"gitlab_issue_iid"`
+	GitlabWebUrl          string             `json:"gitlab_web_url"`
+	GitlabUpdatedAt       pgtype.Timestamptz `json:"gitlab_updated_at"`
+	LastPushedFingerprint string             `json:"last_pushed_fingerprint"`
+	SyncStatus            string             `json:"sync_status"`
+	LastError             string             `json:"last_error"`
+	LastSyncedAt          pgtype.Timestamptz `json:"last_synced_at"`
+	PathWithNamespace     string             `json:"path_with_namespace"`
+}
+
+// GetTaskGitlabLinkWithProjectPathByTaskID is GetTaskGitlabLinkByTaskID plus
+// the linked GitLab project's path_with_namespace, joined in for the
+// AI-facing /context endpoints (docs/plans/issue-sync.md "AI-facing"): an AI
+// agent needs the project path alongside the issue IID/URL to identify the
+// issue without a second call.
+func (q *Queries) GetTaskGitlabLinkWithProjectPathByTaskID(ctx context.Context, taskID uuid.UUID) (GetTaskGitlabLinkWithProjectPathByTaskIDRow, error) {
+	row := q.db.QueryRow(ctx, getTaskGitlabLinkWithProjectPathByTaskID, taskID)
+	var i GetTaskGitlabLinkWithProjectPathByTaskIDRow
+	err := row.Scan(
+		&i.TaskID,
+		&i.LinkedGitlabProjectID,
+		&i.GitlabIssueID,
+		&i.GitlabIssueIid,
+		&i.GitlabWebUrl,
+		&i.GitlabUpdatedAt,
+		&i.LastPushedFingerprint,
+		&i.SyncStatus,
+		&i.LastError,
+		&i.LastSyncedAt,
+		&i.PathWithNamespace,
+	)
+	return i, err
+}
+
 const markTaskGitlabLinkAppliedForTask = `-- name: MarkTaskGitlabLinkAppliedForTask :one
 
 UPDATE task_gitlab_links

@@ -173,6 +173,12 @@ type Querier interface {
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
+	// GetTaskForProject scopes a task by its project directly, not by owner:
+	// the AI-facing bearer-token path (docs/plans/issue-sync.md "AI-facing")
+	// has no session user, only the project a project.Service-verified token
+	// was issued for (internal/apitoken), so there is no owner to join
+	// against.
+	GetTaskForProject(ctx context.Context, arg GetTaskForProjectParams) (Task, error)
 	// GetTaskGitlabLinkByLinkedProjectAndIID looks up a task already linked to
 	// a specific GitLab issue, keyed by the same columns as the 1:1 UNIQUE
 	// constraint. The inbound apply pipeline (internal/webhookapply) uses this
@@ -184,6 +190,12 @@ type Querier interface {
 	// writes it, and the job row that drives it was already authorized when
 	// internal/task enqueued it.
 	GetTaskGitlabLinkByTaskID(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error)
+	// GetTaskGitlabLinkWithProjectPathByTaskID is GetTaskGitlabLinkByTaskID
+	// plus the linked GitLab project's path_with_namespace, joined in for the
+	// AI-facing /context endpoints: an AI agent needs the project path
+	// alongside the issue IID/URL to identify the issue without a second
+	// call.
+	GetTaskGitlabLinkWithProjectPathByTaskID(ctx context.Context, taskID uuid.UUID) (GetTaskGitlabLinkWithProjectPathByTaskIDRow, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
@@ -201,6 +213,14 @@ type Querier interface {
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
+	// ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
+	// /api/v1/projects/{projectID}/tasks/context): the same
+	// backlog_id/status filters as ListTasksByProject plus updated_since and
+	// LIMIT/OFFSET paging, following the "fetch one extra row to detect a
+	// next page" convention ListWebhookEventsByLinkedGitlabProjectID
+	// established. It has no "unassigned" filter, unlike the board view
+	// ListTasksByProject serves.
+	ListTasksByProjectPaged(ctx context.Context, arg ListTasksByProjectPagedParams) ([]Task, error)
 	// status = '' disables the filter, matching ListTasksByProject's
 	// convention. Ownership of linkID must already be verified by the caller
 	// via GetLinkedGitlabProjectForOwner before this runs.

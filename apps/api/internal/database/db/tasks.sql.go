@@ -308,6 +308,45 @@ func (q *Queries) GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams
 	return i, err
 }
 
+const getTaskForProject = `-- name: GetTaskForProject :one
+
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+FROM tasks
+WHERE id = $1 AND project_id = $2
+`
+
+type GetTaskForProjectParams struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"project_id"`
+}
+
+// GetTaskForProject scopes a task by its project directly, not by owner: the
+// AI-facing bearer-token path (docs/plans/issue-sync.md "AI-facing") has no
+// session user, only the project a project.Service-verified token was issued
+// for (internal/apitoken), so there is no owner to join against.
+func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectParams) (Task, error) {
+	row := q.db.QueryRow(ctx, getTaskForProject, arg.ID, arg.ProjectID)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BacklogID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.ClosedAt,
+		&i.AssigneeGitlabUserID,
+		&i.AssigneeGitlabUsername,
+		&i.Labels,
+		&i.DueOn,
+		&i.Position,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listTasksByProject = `-- name: ListTasksByProject :many
 SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
 FROM tasks
@@ -331,6 +370,78 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 		arg.Unassigned,
 		arg.BacklogID,
 		arg.Status,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Task{}
+	for rows.Next() {
+		var i Task
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.BacklogID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.ClosedAt,
+			&i.AssigneeGitlabUserID,
+			&i.AssigneeGitlabUsername,
+			&i.Labels,
+			&i.DueOn,
+			&i.Position,
+			&i.CreatedByUserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTasksByProjectPaged = `-- name: ListTasksByProjectPaged :many
+
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+FROM tasks
+WHERE project_id = $1
+  AND ($2::uuid IS NULL OR backlog_id = $2)
+  AND ($3::text = '' OR status = $3)
+  AND ($4::timestamptz IS NULL OR updated_at >= $4)
+ORDER BY position ASC, created_at ASC
+LIMIT $5 OFFSET $6
+`
+
+type ListTasksByProjectPagedParams struct {
+	ProjectID    uuid.UUID          `json:"project_id"`
+	BacklogID    pgtype.UUID        `json:"backlog_id"`
+	Status       string             `json:"status"`
+	UpdatedSince pgtype.Timestamptz `json:"updated_since"`
+	LimitCount   int32              `json:"limit_count"`
+	OffsetCount  int32              `json:"offset_count"`
+}
+
+// ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
+// /api/v1/projects/{projectID}/tasks/context, docs/plans/issue-sync.md
+// "AI-facing"): the same backlog_id/status filters as ListTasksByProject
+// plus updated_since (tasks.updated_at >= the given time) and LIMIT/OFFSET
+// paging, following the "fetch one extra row to detect a next page"
+// convention ListWebhookEventsByLinkedGitlabProjectID/internal/webhookevent
+// established. It has no "unassigned" filter — the bulk context view has no
+// use for it yet, unlike the board view ListTasksByProject serves.
+func (q *Queries) ListTasksByProjectPaged(ctx context.Context, arg ListTasksByProjectPagedParams) ([]Task, error) {
+	rows, err := q.db.Query(ctx, listTasksByProjectPaged,
+		arg.ProjectID,
+		arg.BacklogID,
+		arg.Status,
+		arg.UpdatedSince,
+		arg.LimitCount,
+		arg.OffsetCount,
 	)
 	if err != nil {
 		return nil, err

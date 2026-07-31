@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { taskPath } from "@/lib/routes";
 import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
 import { CalendarIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,8 +28,8 @@ import { SyncBadge } from "@/components/SyncBadge";
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
- * mode has no use for — loading it on demand keeps that cost off the project
- * page until someone actually switches views.
+ * mode has no use for — loading it on demand keeps that cost off the task
+ * collection until someone actually switches views.
  */
 const TaskTimelineSection = dynamic(
   () => import("@/components/TaskTimelineSection").then((m) => m.TaskTimelineSection),
@@ -262,10 +263,10 @@ function NewTaskForm({
 }
 
 /**
- * TaskListSection is the task collection view, embedded in the project
- * single view per docs/ui-design.md (no standalone "unclassified" screen).
- * Tasks are grouped by backlog, with a trailing 未分類 group for tasks that
- * have no backlog. Filters narrow which tasks appear within those groups.
+ * TaskListSection is the List view mode of the Task collection at
+ * /projects/[projectId]/tasks (no standalone "unclassified" screen). Tasks are
+ * grouped by backlog, with a trailing 未分類 group for tasks that have no
+ * backlog. Filters narrow which tasks appear within those groups.
  */
 export function TaskListSection({
   projectId,
@@ -465,7 +466,7 @@ export function TaskListSection({
         ) : tasks.length === 0 ? (
           <p className="text-muted-foreground text-sm">No tasks yet.</p>
         ) : view === "timeline" ? (
-          <TaskTimelineSection tasks={tasks} dependencies={dependencies} />
+          <TaskTimelineSection projectId={projectId} tasks={tasks} dependencies={dependencies} />
         ) : groups.length === 0 ? (
           <p className="text-muted-foreground text-sm">No tasks match the current filters.</p>
         ) : (
@@ -520,7 +521,7 @@ export function TaskListSection({
                           />
                         ) : null}
                         <Link
-                          href={`/tasks/${task.id}`}
+                          href={taskPath(projectId, task.id)}
                           className="border-border hover:border-ring flex flex-1 items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
                         >
                           <span className="text-foreground">{task.title}</span>

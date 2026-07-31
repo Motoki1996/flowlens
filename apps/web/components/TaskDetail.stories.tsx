@@ -5,8 +5,6 @@ import { TaskDetail } from "./TaskDetail";
 import { API_PUBLIC_URL } from "@/lib/config";
 import type { Backlog, Task } from "@/types";
 
-const project = { id: "p1", name: "Alpha" };
-
 const backlog: Backlog = {
   id: "b1",
   projectId: "p1",
@@ -57,7 +55,7 @@ type Story = StoryObj<typeof meta>;
 
 /** 未連携: the task's project has never had a linked GitLab project. */
 export const Unlinked: Story = {
-  args: { task: makeTask({ gitlab: null }), project, backlogs: [backlog] },
+  args: { task: makeTask({ gitlab: null }), backlogs: [backlog] },
 };
 
 /** 同期済み: the task pushed cleanly and links to its GitLab issue. */
@@ -72,7 +70,6 @@ export const Synced: Story = {
         webUrl: "https://gitlab.example.com/group/demo/-/issues/42",
       },
     }),
-    project,
     backlogs: [backlog],
   },
 };
@@ -83,7 +80,6 @@ export const Pending: Story = {
     task: makeTask({
       gitlab: { syncStatus: "pending", lastError: "", lastSyncedAt: null, issueIid: null, webUrl: "" },
     }),
-    project,
     backlogs: [backlog],
   },
 };
@@ -100,7 +96,6 @@ export const Failed: Story = {
         webUrl: "https://gitlab.example.com/group/demo/-/issues/42",
       },
     }),
-    project,
     backlogs: [backlog],
   },
 };
@@ -117,7 +112,6 @@ export const RetrySucceeds: Story = {
         webUrl: "",
       },
     }),
-    project,
     backlogs: [backlog],
   },
   parameters: {

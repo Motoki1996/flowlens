@@ -66,6 +66,34 @@ Two notes on this table:
 Objects that don't exist yet (`Pipeline`, `Release`) get added to this table
 when they get a table, not before.
 
+## The screen map
+
+The routes that exist today, and the object each one is about:
+
+| Route | Object | View |
+| --- | --- | --- |
+| `/projects` | `Project` | Collection |
+| `/projects/[projectId]` | `Project` | Single |
+| `/projects/[projectId]/backlogs` | `Backlog` | Collection |
+| `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single |
+| `/projects/[projectId]/tasks` | `Task` | Collection (List / Timeline view modes) |
+| `/projects/[projectId]/tasks/[taskId]` | `Task` | Single |
+| `/login`, `/signup` | — | Auth flows (rule 7) |
+
+Backlogs and tasks exist only inside a project, so both halves of each pair are
+nested under it. The flat `/backlogs/[id]` and `/tasks/[id]` routes predate the
+nesting and now only redirect to their nested equivalents, so older links keep
+working. Route strings are built by `lib/routes.ts` rather than written inline.
+
+The project single view is a **hub**: identity and attributes, then a link per
+related collection with a count, not the collections themselves. A screen that
+starts accumulating other objects' lists is the signal to split it — that is
+what happened to this one.
+
+Still to split (they currently sit on the project single view): the
+`GitLabConnection` settings, the `LinkedGitLabProject` collection, and the
+`SyncRun` / `WebhookEvent` histories.
+
 ## Rules
 
 ### 1. One object, one name, everywhere

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Backlog, Task, TaskStatus } from "@/types";
+import { taskPath } from "@/lib/routes";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -32,8 +33,9 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 /**
  * BacklogDetail is the single view for one backlog: identity, attributes,
  * then its tasks, per docs/ui-design.md. Rename and delete live on the
- * parent project's single view (BacklogListSection), not here — see the
- * issue this shipped with for why.
+ * Backlog collection view (BacklogListSection), not here — see the issue this
+ * shipped with for why. The link back to the collection is the page's
+ * breadcrumb, so it is not repeated inside this component.
  */
 export function BacklogDetail({
   backlog,
@@ -83,7 +85,7 @@ export function BacklogDetail({
               {tasks.map((task) => (
                 <li key={task.id}>
                   <Link
-                    href={`/tasks/${task.id}`}
+                    href={taskPath(project.id, task.id)}
                     className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
                   >
                     <span className="text-foreground">{task.title}</span>
@@ -99,12 +101,6 @@ export function BacklogDetail({
           )}
         </CardContent>
       </Card>
-
-      <div className="mt-8">
-        <Link href={`/projects/${project.id}`} className="text-primary text-sm hover:underline">
-          ← {project.name}
-        </Link>
-      </div>
     </>
   );
 }

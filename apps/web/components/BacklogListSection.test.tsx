@@ -33,7 +33,7 @@ describe("BacklogListSection", () => {
     const tasks: Task[] = [];
     render(<BacklogListSection projectId="p1" backlogs={[backlog]} tasks={tasks} />);
     const link = screen.getByRole("link", { name: /Sprint 1/ });
-    expect(link).toHaveAttribute("href", "/backlogs/b1");
+    expect(link).toHaveAttribute("href", "/projects/p1/backlogs/b1");
     expect(link).toHaveTextContent("(0)");
   });
 

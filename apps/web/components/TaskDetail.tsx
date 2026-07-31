@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError, Backlog, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -195,17 +194,15 @@ function GitlabSyncSection({
 
 /**
  * TaskDetail is the single view for one task, per docs/ui-design.md and the
- * order fixed in the issue: identity -> attributes -> AI-facing information
- * -> related links. Close/Reopen and backlog assignment live here, on the
- * object they act on.
+ * order fixed in the issue: identity -> attributes -> AI-facing information.
+ * Close/Reopen and backlog assignment live here, on the object they act on;
+ * the link back to the Task collection is the page's breadcrumb.
  */
 export function TaskDetail({
   task: initial,
-  project,
   backlogs,
 }: {
   task: Task;
-  project: { id: string; name: string };
   backlogs: Backlog[];
 }) {
   const [task, setTask] = useState(initial);
@@ -283,12 +280,6 @@ export function TaskDetail({
           <AIContextSection taskId={task.id} aiContext={task.aiContext} />
         </CardContent>
       </Card>
-
-      <div className="mt-8">
-        <Link href={`/projects/${project.id}`} className="text-primary text-sm hover:underline">
-          ← {project.name}
-        </Link>
-      </div>
     </>
   );
 }

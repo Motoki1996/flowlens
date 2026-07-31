@@ -91,7 +91,7 @@ describe("BacklogPage", () => {
 
   it("redirects to /login when not authenticated", async () => {
     getCurrentUser.mockResolvedValue(null);
-    await expect(BacklogPage({ params: Promise.resolve({ backlogId: "b1" }) })).rejects.toThrow(
+    await expect(BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) })).rejects.toThrow(
       "REDIRECT:/login",
     );
   });
@@ -101,30 +101,44 @@ describe("BacklogPage", () => {
       makeTask({ id: "t1", title: "In this backlog", backlogId: "b1" }),
       makeTask({ id: "t2", title: "In another backlog", backlogId: "b2" }),
     ]);
-    render(await BacklogPage({ params: Promise.resolve({ backlogId: "b1" }) }));
+    render(await BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) }));
     expect(screen.getByRole("heading", { name: "Sprint 1" })).toBeInTheDocument();
     expect(screen.getByText("In this backlog")).toBeInTheDocument();
     expect(screen.queryByText("In another backlog")).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "← Alpha" })).toHaveAttribute("href", "/projects/p1");
+  });
+
+  it("links back to the project and to the backlog collection", async () => {
+    render(await BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) }));
+    expect(screen.getByRole("link", { name: "Alpha" })).toHaveAttribute("href", "/projects/p1");
+    expect(screen.getByRole("link", { name: "Backlogs" })).toHaveAttribute(
+      "href",
+      "/projects/p1/backlogs",
+    );
   });
 
   it("renders not-found when the backlog doesn't exist", async () => {
     getBacklog.mockResolvedValue(null);
-    await expect(BacklogPage({ params: Promise.resolve({ backlogId: "unknown" }) })).rejects.toThrow(
-      "NOT_FOUND",
-    );
+    await expect(
+      BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "unknown" }) }),
+    ).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("renders not-found when the backlog belongs to another project", async () => {
+    await expect(
+      BacklogPage({ params: Promise.resolve({ projectId: "p2", backlogId: "b1" }) }),
+    ).rejects.toThrow("NOT_FOUND");
   });
 
   it("renders not-found when the parent project doesn't exist", async () => {
     getProject.mockResolvedValue(null);
-    await expect(BacklogPage({ params: Promise.resolve({ backlogId: "b1" }) })).rejects.toThrow(
+    await expect(BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) })).rejects.toThrow(
       "NOT_FOUND",
     );
   });
 
   it("shows a load error without failing the whole page when tasks fail to load", async () => {
     getTasks.mockRejectedValue(new Error("boom"));
-    render(await BacklogPage({ params: Promise.resolve({ backlogId: "b1" }) }));
+    render(await BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) }));
     expect(screen.getByText("Failed to load tasks. Try refreshing the page.")).toBeInTheDocument();
   });
 });

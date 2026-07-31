@@ -7,7 +7,6 @@ import {
   getLinkedGitlabProjects,
   getProject,
   getSyncRuns,
-  getTaskDependencies,
   getTasks,
   getWebhookEvents,
 } from "@/lib/api";
@@ -26,21 +25,15 @@ export default async function ProjectPage({
   const project = await getProject(projectId);
   if (!project) notFound();
 
+  // Tasks and backlogs have screens of their own; this view only needs enough
+  // of them to show a count next to each link.
   let tasks: Awaited<ReturnType<typeof getTasks>> = [];
   let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
-  let tasksError = false;
+  let countsError = false;
   try {
     [tasks, backlogs] = await Promise.all([getTasks(projectId), getBacklogs(projectId)]);
   } catch {
-    tasksError = true;
-  }
-
-  let taskDependencies: Awaited<ReturnType<typeof getTaskDependencies>> = [];
-  try {
-    taskDependencies = await getTaskDependencies(projectId);
-  } catch {
-    // Left empty; the timeline view still renders tasks, just without
-    // dependency lines.
+    countsError = true;
   }
 
   let gitlabConnection: Awaited<ReturnType<typeof getGitlabConnection>> = null;
@@ -82,10 +75,10 @@ export default async function ProjectPage({
       <main className="mx-auto max-w-6xl px-6 py-8">
         <ProjectDetail
           project={project}
-          tasks={tasks}
-          backlogs={backlogs}
-          taskDependencies={taskDependencies}
-          tasksError={tasksError}
+          backlogCount={backlogs.length}
+          taskCount={tasks.length}
+          openTaskCount={tasks.filter((t) => t.status === "open").length}
+          countsError={countsError}
           gitlabConnection={gitlabConnection}
           linkedGitlabProjects={linkedGitlabProjects}
           syncRunsByLink={syncRunsByLink}

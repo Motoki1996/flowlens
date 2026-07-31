@@ -55,13 +55,13 @@ describe("TaskListSection", () => {
   });
 
   it("shows an empty state with zero tasks", () => {
-    render(<TaskListSection tasks={[]} backlogs={[]} />);
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
     expect(screen.getByText("No tasks yet.")).toBeInTheDocument();
   });
 
   it("groups tasks with no backlog under 未分類", () => {
     const tasks = [makeTask({ id: "t1", title: "Unfiled task", backlogId: null })];
-    render(<TaskListSection tasks={tasks} backlogs={[backlog]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
     expect(screen.getByText("未分類 (1)")).toBeInTheDocument();
     expect(screen.getByText("Unfiled task")).toBeInTheDocument();
   });
@@ -71,20 +71,20 @@ describe("TaskListSection", () => {
       makeTask({ id: "t1", title: "Filed task", backlogId: "b1" }),
       makeTask({ id: "t2", title: "Unfiled task", backlogId: null }),
     ];
-    render(<TaskListSection tasks={tasks} backlogs={[backlog]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(headings).toEqual(["Sprint 1 (1)", "未分類 (1)"]);
   });
 
   it("includes closed tasks by default", () => {
     const tasks = [makeTask({ id: "t1", title: "Closed task", status: "closed" })];
-    render(<TaskListSection tasks={tasks} backlogs={[]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
     expect(screen.getByText("Closed task")).toBeInTheDocument();
     expect(screen.getByText("Closed", { selector: "span" })).toBeInTheDocument();
   });
 
   it("shows a load error", () => {
-    render(<TaskListSection tasks={[]} backlogs={[]} error />);
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} error />);
     expect(screen.getByText("Failed to load tasks. Try refreshing the page.")).toBeInTheDocument();
   });
 
@@ -94,7 +94,7 @@ describe("TaskListSection", () => {
       makeTask({ id: "t1", title: "Unfiled task 1", backlogId: null }),
       makeTask({ id: "t2", title: "Unfiled task 2", backlogId: null }),
     ];
-    render(<TaskListSection tasks={tasks} backlogs={[backlog]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Select Unfiled task 1" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Select Unfiled task 2" }));
@@ -118,13 +118,13 @@ describe("TaskListSection", () => {
 
   it("does not offer selection for tasks already in a backlog", () => {
     const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
-    render(<TaskListSection tasks={tasks} backlogs={[backlog]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
   it("switches to the timeline view mode and back", () => {
     const tasks = [makeTask({ id: "t1", title: "Scheduled task", startDate: "2026-08-01" })];
-    render(<TaskListSection tasks={tasks} backlogs={[]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
     expect(screen.getByRole("link", { name: "Scheduled task" })).toBeInTheDocument();
@@ -132,6 +132,80 @@ describe("TaskListSection", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
+  });
+
+  it("offers task creation even when the project has no tasks yet", () => {
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+    expect(screen.getByRole("button", { name: "New task" })).toBeInTheDocument();
+  });
+
+  it("requires a title before posting a new task", () => {
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+
+    expect(screen.getByText("Task title is required.")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("creates a task, sending dates as RFC3339 and no backlog as null", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 201 }));
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[backlog]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Fix bug" } });
+    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-08-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/projects/p1/tasks",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          title: "Fix bug",
+          description: "",
+          backlogId: null,
+          startDate: "2026-08-01T00:00:00Z",
+          dueOn: null,
+        }),
+      }),
+    );
+    expect(screen.queryByRole("form", { name: "New task" })).not.toBeInTheDocument();
+  });
+
+  it("creates a task in the chosen backlog", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 201 }));
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[backlog]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Filed task" } });
+    fireEvent.change(screen.getByLabelText("Backlog"), { target: { value: "b1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/projects/p1/tasks",
+      expect.objectContaining({ body: expect.stringContaining('"backlogId":"b1"') }),
+    );
+  });
+
+  it("keeps the form open and shows the API error when creation fails", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "invalid_title", message: "title is required" } }), {
+        status: 400,
+      }),
+    );
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Fix bug" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+
+    expect(await screen.findByText("title is required")).toBeInTheDocument();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(screen.getByRole("form", { name: "New task" })).toBeInTheDocument();
   });
 
   it("shows a sync badge per task row", () => {
@@ -149,7 +223,7 @@ describe("TaskListSection", () => {
         },
       }),
     ];
-    render(<TaskListSection tasks={tasks} backlogs={[]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
     expect(screen.getByText("Local only")).toBeInTheDocument();
     expect(screen.getByText("Sync failed")).toBeInTheDocument();
   });

@@ -265,6 +265,7 @@ export function ProjectDetail({
 
       <div className="mt-8">
         <TaskListSection
+          projectId={project.id}
           tasks={tasks}
           backlogs={backlogs}
           dependencies={taskDependencies}

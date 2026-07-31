@@ -126,12 +126,15 @@ describe("TaskListSection", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
-  it("switches to the timeline view mode and back", () => {
+  it("switches to the timeline view mode and back", async () => {
     const tasks = [makeTask({ id: "t1", title: "Scheduled task", startDate: "2026-08-01" })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-    expect(screen.getByRole("link", { name: "Scheduled task" })).toBeInTheDocument();
+    // The timeline is loaded on demand, so the link only appears once its chunk resolves.
+    expect(
+      await screen.findByRole("link", { name: "Scheduled task" }, { timeout: 15000 }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Status" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));

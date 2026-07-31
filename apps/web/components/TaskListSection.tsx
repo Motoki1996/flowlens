@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
@@ -15,7 +16,16 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { SyncBadge } from "@/components/SyncBadge";
-import { TaskTimelineSection } from "@/components/TaskTimelineSection";
+
+/**
+ * The Timeline view mode pulls in the charting library, which the default List
+ * mode has no use for — loading it on demand keeps that cost off the project
+ * page until someone actually switches views.
+ */
+const TaskTimelineSection = dynamic(
+  () => import("@/components/TaskTimelineSection").then((m) => m.TaskTimelineSection),
+  { loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p> },
+);
 
 type ViewMode = "list" | "timeline";
 

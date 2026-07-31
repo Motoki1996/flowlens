@@ -419,10 +419,32 @@ In the web app, a task is created from the "New task" action on the project's
 Task collection, which takes its title, description, backlog and both dates up
 front. The same collection has a "Timeline" view mode
 (alongside the default "List" mode, per the OOUI rule that a collection is
-one dataset presented several ways) that lays out scheduled tasks as bars
-along a date axis, with a project-wide closed/total progress ratio and each
-task's predecessors noted inline. Tasks with neither a start date nor a due
-date are listed separately below the chart rather than silently dropped.
+one dataset presented several ways) that lays out scheduled tasks as a Gantt
+chart. It is built on the shadcn `chart` component (Recharts) so it inherits
+the same tokens and tooltip styling as the rest of the UI, and is loaded on
+demand — the charting library stays out of the project page's bundle until
+someone switches to the Timeline:
+
+- Bars are a stacked horizontal bar chart: a transparent leading segment
+  positions each task at its start date, and the visible segment spans
+  start → due inclusive. A task with only one of the two dates occupies that
+  single day.
+- The date axis switches from daily to weekly to monthly ticks as the project's
+  span grows, and the plot scrolls horizontally rather than compressing bars
+  into slivers. "Today" is drawn as a reference line when it falls in range.
+- A bar's colour is a status, never an identity: open work is the brand hue,
+  an open task past its due date is destructive-red, and closed work recedes to
+  muted. A legend names all three, so colour is never the only cue.
+- Task names sit in a column beside the plot rather than as axis labels, so each
+  one stays a real link to the task's single view; the bars themselves are also
+  clickable.
+- A project-wide closed/total progress ratio sits above the chart, and each
+  task's predecessors are noted under its name. Tasks with neither a start date
+  nor a due date are listed separately below the chart rather than silently
+  dropped.
+
+The date math lives in `apps/web/lib/timeline.ts`, separate from the components
+so it is unit-testable without rendering a chart.
 
 ## Current limitations
 

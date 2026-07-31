@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
+import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
@@ -143,6 +144,16 @@ function NewTaskForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
+  // 未分類 leads the list so a task can always be filed later, and so the
+  // control has a selected label even on a project with no backlogs yet.
+  const backlogOptions = useMemo(
+    () => [
+      { value: UNCLASSIFIED, label: UNCLASSIFIED_LABEL },
+      ...backlogs.map((b) => ({ value: b.id, label: b.name })),
+    ],
+    [backlogs],
+  );
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) {
@@ -213,20 +224,15 @@ function NewTaskForm({
           <label htmlFor="new-task-backlog" className="text-foreground block text-sm font-medium">
             Backlog
           </label>
-          <select
+          <Combobox
             id="new-task-backlog"
-            name="backlogId"
+            options={backlogOptions}
             value={backlogId}
-            onChange={(e) => setBacklogId(e.target.value)}
-            className="border-input bg-input/30 text-foreground mt-1 h-9 w-full rounded-md border px-2 text-sm"
-          >
-            <option value={UNCLASSIFIED}>{UNCLASSIFIED_LABEL}</option>
-            {backlogs.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
+            onChange={setBacklogId}
+            searchPlaceholder="Search backlogs…"
+            emptyText="No backlog found."
+            className="mt-1"
+          />
         </div>
         <DateField
           id="new-task-start-date"

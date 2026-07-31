@@ -48,6 +48,13 @@ const backlog: Backlog = {
   updatedAt: "2026-01-01T00:00:00Z",
 };
 
+const otherBacklog: Backlog = {
+  ...backlog,
+  id: "b2",
+  name: "Icebox",
+  position: 1,
+};
+
 describe("TaskListSection", () => {
   beforeEach(() => {
     refresh.mockClear();
@@ -188,13 +195,14 @@ describe("TaskListSection", () => {
     expect(screen.queryByRole("form", { name: "New task" })).not.toBeInTheDocument();
   });
 
-  it("creates a task in the chosen backlog", async () => {
+  it("creates a task in the backlog picked from the combobox", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 201 }));
-    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[backlog]} />);
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[backlog, otherBacklog]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Filed task" } });
-    fireEvent.change(screen.getByLabelText("Backlog"), { target: { value: "b1" } });
+    fireEvent.click(screen.getByLabelText("Backlog"));
+    fireEvent.click(await screen.findByRole("option", { name: "Sprint 1" }));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
@@ -202,6 +210,21 @@ describe("TaskListSection", () => {
       "http://localhost:8080/api/v1/projects/p1/tasks",
       expect.objectContaining({ body: expect.stringContaining('"backlogId":"b1"') }),
     );
+  });
+
+  it("narrows the backlog combobox to the typed text", async () => {
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[backlog, otherBacklog]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.click(screen.getByLabelText("Backlog"));
+    expect(await screen.findByRole("option", { name: "Icebox" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("Search backlogs…"), {
+      target: { value: "sprint" },
+    });
+
+    await waitFor(() => expect(screen.queryByRole("option", { name: "Icebox" })).toBeNull());
+    expect(screen.getByRole("option", { name: "Sprint 1" })).toBeInTheDocument();
   });
 
   it("keeps the form open and shows the API error when creation fails", async () => {

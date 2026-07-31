@@ -4,23 +4,13 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
-import { backlogsPath, tasksPath } from "@/lib/routes";
-import type {
-  ApiError,
-  GitlabConnection,
-  LinkedGitlabProject,
-  Project,
-  SyncRun,
-  WebhookEvent,
-} from "@/types";
+import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
+import type { ApiError, GitlabConnection, Project } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { GitlabConnectionSection } from "@/components/GitlabConnectionSection";
-import { SyncRunSection } from "@/components/SyncRunSection";
-import { WebhookEventSection } from "@/components/WebhookEventSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -170,6 +160,14 @@ function DeleteProjectButton({ project }: { project: Project }) {
   );
 }
 
+/** gitlabSummary reads the connection the way the connection screen would: a
+ *  broken connection is worth surfacing here, an intact one is just its size. */
+function gitlabSummary(connection: GitlabConnection | null, linkedProjectCount: number) {
+  if (!connection) return "Not connected";
+  if (connection.lastVerifyError) return "Connection invalid";
+  return `${linkedProjectCount} linked projects`;
+}
+
 /** CollectionLink is one entry in the project's related-collections block. */
 function CollectionLink({
   href,
@@ -206,9 +204,7 @@ export function ProjectDetail({
   openTaskCount = 0,
   countsError = false,
   gitlabConnection = null,
-  linkedGitlabProjects = [],
-  syncRunsByLink = {},
-  webhookEventsByLink = {},
+  linkedProjectCount = 0,
 }: {
   project: Project;
   backlogCount?: number;
@@ -217,9 +213,7 @@ export function ProjectDetail({
   /** True when the counts could not be loaded; the links still work. */
   countsError?: boolean;
   gitlabConnection?: GitlabConnection | null;
-  linkedGitlabProjects?: LinkedGitlabProject[];
-  syncRunsByLink?: Record<string, SyncRun[]>;
-  webhookEventsByLink?: Record<string, WebhookEvent[]>;
+  linkedProjectCount?: number;
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -291,22 +285,11 @@ export function ProjectDetail({
           name="Tasks"
           summary={countsError ? "Count unavailable" : `${openTaskCount} open / ${taskCount} total`}
         />
-      </div>
-
-      <div className="mt-8">
-        <GitlabConnectionSection
-          projectId={project.id}
-          connection={gitlabConnection}
-          linkedProjects={linkedGitlabProjects}
+        <CollectionLink
+          href={gitlabConnectionPath(project.id)}
+          name="GitLab connection"
+          summary={gitlabSummary(gitlabConnection, linkedProjectCount)}
         />
-      </div>
-
-      <div className="mt-8">
-        <SyncRunSection linkedProjects={linkedGitlabProjects} syncRunsByLink={syncRunsByLink} />
-      </div>
-
-      <div className="mt-8">
-        <WebhookEventSection linkedProjects={linkedGitlabProjects} webhookEventsByLink={webhookEventsByLink} />
       </div>
     </>
   );

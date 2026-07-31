@@ -24,3 +24,13 @@ export function tasksPath(projectId: string) {
 export function taskPath(projectId: string, taskId: string) {
   return `/projects/${projectId}/tasks/${taskId}`;
 }
+
+/** A project has at most one GitLab connection (ADR-0008), so this is a single
+ *  view without a collection above it. */
+export function gitlabConnectionPath(projectId: string) {
+  return `/projects/${projectId}/gitlab-connection`;
+}
+
+export function linkedGitlabProjectPath(projectId: string, linkId: string) {
+  return `/projects/${projectId}/linked-gitlab-projects/${linkId}`;
+}

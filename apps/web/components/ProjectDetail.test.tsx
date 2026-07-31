@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
-import type { Project } from "@/types";
+import type { GitlabConnection, Project } from "@/types";
 import { ProjectDetail } from "./ProjectDetail";
 
 const push = vi.fn();
@@ -16,6 +16,19 @@ const project: Project = {
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
   failedSyncTaskCount: 0,
+};
+
+const connection: GitlabConnection = {
+  projectId: "1",
+  baseUrl: "https://gitlab.example.com",
+  tokenLastFour: "a1b2",
+  tokenGitlabUserId: 42,
+  tokenGitlabUsername: "octocat",
+  verified: true,
+  lastVerifiedAt: "2026-01-05T09:00:00Z",
+  lastVerifyError: "",
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-05T09:00:00Z",
 };
 
 describe("ProjectDetail", () => {
@@ -44,6 +57,26 @@ describe("ProjectDetail", () => {
     expect(screen.getByText("2 backlogs")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Tasks/ })).toHaveAttribute("href", "/projects/1/tasks");
     expect(screen.getByText("3 open / 5 total")).toBeInTheDocument();
+  });
+
+  it("summarises the GitLab connection's state on its link", () => {
+    const { rerender } = render(<ProjectDetail project={project} />);
+    expect(screen.getByRole("link", { name: /GitLab connection/ })).toHaveAttribute(
+      "href",
+      "/projects/1/gitlab-connection",
+    );
+    expect(screen.getByText("Not connected")).toBeInTheDocument();
+
+    rerender(<ProjectDetail project={project} gitlabConnection={connection} linkedProjectCount={2} />);
+    expect(screen.getByText("2 linked projects")).toBeInTheDocument();
+
+    rerender(
+      <ProjectDetail
+        project={project}
+        gitlabConnection={{ ...connection, verified: false, lastVerifyError: "token rejected" }}
+      />,
+    );
+    expect(screen.getByText("Connection invalid")).toBeInTheDocument();
   });
 
   it("still links to the collections when their counts fail to load", () => {

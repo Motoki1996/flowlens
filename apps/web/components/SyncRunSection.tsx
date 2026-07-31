@@ -1,12 +1,6 @@
-"use client";
-
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, LinkedGitlabProject, SyncRun } from "@/types";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import type { SyncRun } from "@/types";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -16,11 +10,6 @@ function formatDateTime(iso: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-async function parseError(res: Response, fallback: string) {
-  const body = (await res.json().catch(() => null)) as ApiError | null;
-  return body?.error.message ?? fallback;
 }
 
 function statusBadge(status: SyncRun["status"]) {
@@ -73,96 +62,19 @@ function SyncRunHistory({ runs }: { runs: SyncRun[] }) {
 }
 
 /**
- * SyncNowButton triggers a manual re-sync (POST
- * /linked-gitlab-projects/{linkId}/sync-runs) for one linked GitLab project.
- * A run already in progress reports 409, shown as an inline error rather
- * than a silent no-op.
+ * SyncRunSection is the SyncRun collection of one linked GitLab project,
+ * rendered inside that link's single view. "Sync now" is an action on the
+ * LinkedGitlabProject rather than on its history, so it lives in the link's
+ * own header (docs/ui-design.md rule 4).
  */
-function SyncNowButton({ linkId }: { linkId: string }) {
-  const router = useRouter();
-  const [full, setFull] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleClick() {
-    setPending(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${linkId}/sync-runs`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ full }),
-      });
-      if (!res.ok) {
-        setError(res.status === 409 ? "A sync is already running." : await parseError(res, "Failed to start the sync."));
-        return;
-      }
-      router.refresh();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col items-end gap-1">
-      {error ? <span className="text-destructive text-right text-xs">{error}</span> : null}
-      <label className="text-muted-foreground flex items-center gap-1.5 text-xs">
-        <input
-          type="checkbox"
-          checked={full}
-          onChange={(e) => setFull(e.target.checked)}
-          disabled={pending}
-        />
-        Full re-fetch
-      </label>
-      <Button variant="outline" size="sm" onClick={handleClick} disabled={pending}>
-        {pending ? "Syncing…" : "Sync now"}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * SyncRunSection is the SyncRun collection embedded in the project single
- * view (docs/ui-design.md rule 4: "Sync now" is an action on the
- * LinkedGitlabProject object it acts on, not a standalone task screen).
- * One subsection per linked GitLab project, each with its own action and
- * history — a project can have more than one linked GitLab project.
- */
-export function SyncRunSection({
-  linkedProjects,
-  syncRunsByLink,
-}: {
-  linkedProjects: LinkedGitlabProject[];
-  syncRunsByLink: Record<string, SyncRun[]>;
-}) {
-  if (linkedProjects.length === 0) {
-    return (
-      <Card className="border-dashed">
-        <CardHeader>
-          <CardTitle className="text-base font-medium">Sync history</CardTitle>
-          <CardDescription>Link a GitLab project to see its sync history here.</CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
-
+export function SyncRunSection({ runs }: { runs: SyncRun[] }) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base font-medium">Sync history</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-6">
-        {linkedProjects.map((link) => (
-          <div key={link.id} className="border-border space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <h3 className="text-foreground text-sm font-medium">{link.pathWithNamespace}</h3>
-              <SyncNowButton linkId={link.id} />
-            </div>
-            <SyncRunHistory runs={syncRunsByLink[link.id] ?? []} />
-          </div>
-        ))}
+      <CardContent>
+        <SyncRunHistory runs={runs} />
       </CardContent>
     </Card>
   );

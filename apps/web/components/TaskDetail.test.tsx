@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Backlog, Task } from "@/types";
 import { TaskDetail } from "./TaskDetail";
 
-const project = { id: "p1", name: "Alpha" };
 const backlog: Backlog = {
   id: "b1",
   projectId: "p1",
@@ -49,25 +48,24 @@ describe("TaskDetail", () => {
     vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("shows identity, attributes and a link back to the project", () => {
-    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog]} />);
+  it("shows identity and attributes", () => {
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} />);
     expect(screen.getByRole("heading", { name: "Fix the bug" })).toBeInTheDocument();
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText("octocat")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("b1");
-    expect(screen.getByRole("link", { name: "← Alpha" })).toHaveAttribute("href", "/projects/p1");
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 1");
   });
 
   it("shows 未分類 when the task has no backlog", () => {
-    render(<TaskDetail task={makeTask({ backlogId: null })} project={project} backlogs={[backlog]} />);
-    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("unclassified");
+    render(<TaskDetail task={makeTask({ backlogId: null })} backlogs={[backlog]} />);
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("未分類");
   });
 
   it("closes an open task", async () => {
     const closed = makeTask({ status: "closed", closedAt: "2026-01-05T00:00:00Z" });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(closed), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} />);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument());
@@ -81,7 +79,7 @@ describe("TaskDetail", () => {
     const reopened = makeTask({ status: "open", closedAt: null });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reopened), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({ status: "closed" })} project={project} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({ status: "closed" })} backlogs={[backlog]} />);
     fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument());
@@ -92,10 +90,13 @@ describe("TaskDetail", () => {
     const reassigned = makeTask({ backlogId: "b2" });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reassigned), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog, otherBacklog]} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Backlog" }), { target: { value: "b2" } });
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog, otherBacklog]} />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Sprint 2" }));
 
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("b2"));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 2"),
+    );
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b2" }) }),
@@ -106,10 +107,13 @@ describe("TaskDetail", () => {
     const unassigned = makeTask({ backlogId: null });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(unassigned), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog]} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Backlog" }), { target: { value: "unclassified" } });
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
+    fireEvent.click(await screen.findByRole("option", { name: "未分類" }));
 
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("unclassified"));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("未分類"),
+    );
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: null }) }),
@@ -117,7 +121,7 @@ describe("TaskDetail", () => {
   });
 
   it("shows Local only when the task has never been linked to GitLab", () => {
-    render(<TaskDetail task={makeTask({ gitlab: null })} project={project} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({ gitlab: null })} backlogs={[backlog]} />);
     expect(screen.getByText("Local only")).toBeInTheDocument();
   });
 
@@ -131,7 +135,7 @@ describe("TaskDetail", () => {
         webUrl: "https://gitlab.example.com/group/demo/-/issues/42",
       },
     });
-    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} />);
     expect(screen.getByText("Synced")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View issue #42" })).toHaveAttribute(
       "href",
@@ -149,7 +153,7 @@ describe("TaskDetail", () => {
         webUrl: "",
       },
     });
-    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} />);
     expect(screen.getByText("Sync failed")).toBeInTheDocument();
     expect(screen.getByText("gitlab rejected the update")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
@@ -176,7 +180,7 @@ describe("TaskDetail", () => {
         webUrl: "",
       },
     });
-    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => expect(screen.getByText("Syncing…")).toBeInTheDocument());
@@ -202,7 +206,7 @@ describe("TaskDetail", () => {
         webUrl: "",
       },
     });
-    render(<TaskDetail task={task} project={project} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText("gitlab sync is not currently failed")).toBeInTheDocument();

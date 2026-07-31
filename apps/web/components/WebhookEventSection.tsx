@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, LinkedGitlabProject, WebhookEvent } from "@/types";
+import type { ApiError, WebhookEvent } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -124,46 +124,35 @@ function WebhookEventList({ linkId, events }: { linkId: string; events: WebhookE
 }
 
 /**
- * WebhookEventSection is the WebhookEvent collection embedded in the project
- * single view (docs/ui-design.md rule 4), one subsection per linked GitLab
- * project — for troubleshooting inbound sync (issue #26). It warns whenever
- * any of the shown events failed to apply.
+ * WebhookEventSection is the WebhookEvent collection of one linked GitLab
+ * project, rendered inside that link's single view — for troubleshooting
+ * inbound sync (issue #26). It warns whenever any of the shown events failed
+ * to apply.
  */
 export function WebhookEventSection({
-  linkedProjects,
-  webhookEventsByLink,
+  linkId,
+  events,
 }: {
-  linkedProjects: LinkedGitlabProject[];
-  webhookEventsByLink: Record<string, WebhookEvent[]>;
+  linkId: string;
+  events: WebhookEvent[];
 }) {
-  if (linkedProjects.length === 0) {
-    return null;
-  }
+  const failedCount = events.filter((e) => e.status === "failed").length;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base font-medium">Webhook events</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-6">
-        {linkedProjects.map((link) => {
-          const events = webhookEventsByLink[link.id] ?? [];
-          const failedCount = events.filter((e) => e.status === "failed").length;
-          return (
-            <div key={link.id} className="border-border space-y-3 border-t pt-4 first:border-t-0 first:pt-0">
-              <h3 className="text-foreground text-sm font-medium">{link.pathWithNamespace}</h3>
-              {failedCount > 0 ? (
-                <Alert variant="destructive">
-                  <AlertDescription>
-                    {failedCount} webhook event{failedCount > 1 ? "s" : ""} failed to apply. See the details below
-                    and retry once the underlying issue is fixed.
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-              <WebhookEventList linkId={link.id} events={events} />
-            </div>
-          );
-        })}
+      <CardContent className="space-y-3">
+        {failedCount > 0 ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {failedCount} webhook event{failedCount > 1 ? "s" : ""} failed to apply. See the details below
+              and retry once the underlying issue is fixed.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        <WebhookEventList linkId={linkId} events={events} />
       </CardContent>
     </Card>
   );

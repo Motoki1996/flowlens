@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { backlogPath } from "@/lib/routes";
 import type { ApiError, Backlog, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -240,10 +241,10 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
 }
 
 /**
- * BacklogListSection is the backlog collection view, embedded in the
- * project single view per docs/ui-design.md and the issue that shipped it:
- * backlog creation, rename and delete all happen here rather than on a
- * separate backlog-management screen.
+ * BacklogListSection is the Backlog collection view at
+ * /projects/[projectId]/backlogs. Backlog creation, rename and delete all
+ * happen here rather than on a separate backlog-management screen — actions
+ * live on the object they act on (docs/ui-design.md rule 4).
  */
 export function BacklogListSection({
   projectId,
@@ -289,7 +290,10 @@ export function BacklogListSection({
                   />
                 ) : (
                   <div className="flex items-center justify-between gap-4">
-                    <Link href={`/backlogs/${backlog.id}`} className="text-foreground text-sm hover:underline">
+                    <Link
+                      href={backlogPath(projectId, backlog.id)}
+                      className="text-foreground text-sm hover:underline"
+                    >
                       {backlog.name}{" "}
                       <span className="text-muted-foreground text-xs">
                         ({taskCount(tasks, backlog.id)})

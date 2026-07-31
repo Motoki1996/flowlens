@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import type { Task, TaskDependency } from "@/types";
+import { taskPath } from "@/lib/routes";
 import { computeTimelineBounds, hasSchedule, spanDays, toGanttRows } from "@/lib/timeline";
 import { AXIS_HEIGHT, ROW_HEIGHT, STATE_LABEL, TaskGanttChart } from "@/components/TaskGanttChart";
 
@@ -36,10 +37,12 @@ const LEGEND_SWATCH: Record<(typeof LEGEND_STATES)[number], string> = {
  * predecessor/successor concept to render arrows from.
  */
 export function TaskTimelineSection({
+  projectId,
   tasks,
   dependencies,
   now,
 }: {
+  projectId: string;
   tasks: Task[];
   dependencies: TaskDependency[];
   /** Injectable so stories and tests pin "today" instead of drifting with the clock. */
@@ -107,7 +110,7 @@ export function TaskTimelineSection({
                   style={{ height: ROW_HEIGHT }}
                 >
                   <Link
-                    href={`/tasks/${row.id}`}
+                    href={taskPath(projectId, row.id)}
                     className="text-foreground truncate text-sm hover:underline"
                     title={row.title}
                   >
@@ -126,7 +129,7 @@ export function TaskTimelineSection({
 
         <div className="min-w-0 flex-1 overflow-x-auto">
           <div style={{ minWidth: plotWidth }}>
-            <TaskGanttChart rows={rows} bounds={bounds} now={today} />
+            <TaskGanttChart projectId={projectId} rows={rows} bounds={bounds} now={today} />
           </div>
         </div>
       </div>

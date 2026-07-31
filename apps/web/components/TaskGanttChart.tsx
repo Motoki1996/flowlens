@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
+import { taskPath } from "@/lib/routes";
 import {
   computeAxis,
   formatAxisTick,
@@ -86,10 +87,12 @@ function GanttTooltip({
  * both that navigation and keyboard access).
  */
 export function TaskGanttChart({
+  projectId,
   rows,
   bounds,
   now,
 }: {
+  projectId: string;
   rows: GanttRow[];
   bounds: DateRange;
   now: Date;
@@ -153,7 +156,7 @@ export function TaskGanttChart({
           className="cursor-pointer"
           onClick={(data: unknown) => {
             const row = (data as { payload?: GanttRow })?.payload;
-            if (row) router.push(`/tasks/${row.id}`);
+            if (row) router.push(taskPath(projectId, row.id));
           }}
         >
           {rows.map((row) => (

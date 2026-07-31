@@ -416,14 +416,14 @@ or dependency concept, so neither is ever pushed to or pulled from GitLab —
   one.
 
 In the web app, a task is created from the "New task" action on the project's
-Task collection, which takes its title, description, backlog and both dates up
-front. The same collection has a "Timeline" view mode
-(alongside the default "List" mode, per the OOUI rule that a collection is
-one dataset presented several ways) that lays out scheduled tasks as a Gantt
-chart. It is built on the shadcn `chart` component (Recharts) so it inherits
-the same tokens and tooltip styling as the rest of the UI, and is loaded on
-demand — the charting library stays out of the project page's bundle until
-someone switches to the Timeline:
+Task collection (`/projects/{projectId}/tasks`), which takes its title,
+description, backlog and both dates up front. The same collection has a
+"Timeline" view mode (alongside the default "List" mode, per the OOUI rule that
+a collection is one dataset presented several ways) that lays out scheduled
+tasks as a Gantt chart. It is built on the shadcn `chart` component (Recharts)
+so it inherits the same tokens and tooltip styling as the rest of the UI, and is
+loaded on demand — the charting library stays out of the collection's bundle
+until someone switches to the Timeline:
 
 - Bars are a stacked horizontal bar chart: a transparent leading segment
   positions each task at its start date, and the visible segment spans

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { taskPath } from "@/lib/routes";
 import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
 import { CalendarIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,13 +16,20 @@ import { Calendar } from "@/components/ui/calendar";
 import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { SyncBadge } from "@/components/SyncBadge";
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
- * mode has no use for — loading it on demand keeps that cost off the project
- * page until someone actually switches views.
+ * mode has no use for — loading it on demand keeps that cost off the task
+ * collection until someone actually switches views.
  */
 const TaskTimelineSection = dynamic(
   () => import("@/components/TaskTimelineSection").then((m) => m.TaskTimelineSection),
@@ -255,10 +263,10 @@ function NewTaskForm({
 }
 
 /**
- * TaskListSection is the task collection view, embedded in the project
- * single view per docs/ui-design.md (no standalone "unclassified" screen).
- * Tasks are grouped by backlog, with a trailing 未分類 group for tasks that
- * have no backlog. Filters narrow which tasks appear within those groups.
+ * TaskListSection is the List view mode of the Task collection at
+ * /projects/[projectId]/tasks (no standalone "unclassified" screen). Tasks are
+ * grouped by backlog, with a trailing 未分類 group for tasks that have no
+ * backlog. Filters narrow which tasks appear within those groups.
  */
 export function TaskListSection({
   projectId,
@@ -282,6 +290,23 @@ export function TaskListSection({
   const [targetBacklogId, setTargetBacklogId] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
+
+  // The filter offers every backlog plus the two groupings that aren't
+  // backlogs: "all" and the trailing 未分類 group.
+  const filterOptions = useMemo(
+    () => [
+      { value: "all", label: "All backlogs" },
+      ...backlogs.map((b) => ({ value: b.id, label: b.name })),
+      { value: UNCLASSIFIED, label: UNCLASSIFIED_LABEL },
+    ],
+    [backlogs],
+  );
+
+  // Bulk assign moves tasks *into* a backlog, so 未分類 is not a destination.
+  const assignOptions = useMemo(
+    () => backlogs.map((b) => ({ value: b.id, label: b.name })),
+    [backlogs],
+  );
 
   const filtered = useMemo(() => {
     return tasks.filter((t) => {
@@ -388,30 +413,32 @@ export function TaskListSection({
                 </div>
                 {view === "list" ? (
                   <>
-                    <select
-                      aria-label="Status"
+                    {/* Status is a short fixed list, so it stays a Select;
+                        backlogs grow with the project and get the searchable
+                        Combobox. */}
+                    <Select
                       value={statusFilter}
-                      onChange={(e) => setStatusFilter(e.target.value as "all" | TaskStatus)}
-                      className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
+                      onValueChange={(value) => setStatusFilter(value as "all" | TaskStatus)}
                     >
-                      <option value="all">All statuses</option>
-                      <option value="open">Open</option>
-                      <option value="closed">Closed</option>
-                    </select>
-                    <select
+                      <SelectTrigger size="sm" aria-label="Status" className="w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="open">Open</SelectItem>
+                        <SelectItem value="closed">Closed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Combobox
                       aria-label="Backlog"
+                      options={filterOptions}
                       value={backlogFilter}
-                      onChange={(e) => setBacklogFilter(e.target.value)}
-                      className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
-                    >
-                      <option value="all">All backlogs</option>
-                      {backlogs.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                      <option value={UNCLASSIFIED}>{UNCLASSIFIED_LABEL}</option>
-                    </select>
+                      onChange={setBacklogFilter}
+                      size="sm"
+                      className="w-44"
+                      searchPlaceholder="Search backlogs…"
+                      emptyText="No backlog found."
+                    />
                   </>
                 ) : null}
               </>
@@ -439,7 +466,7 @@ export function TaskListSection({
         ) : tasks.length === 0 ? (
           <p className="text-muted-foreground text-sm">No tasks yet.</p>
         ) : view === "timeline" ? (
-          <TaskTimelineSection tasks={tasks} dependencies={dependencies} />
+          <TaskTimelineSection projectId={projectId} tasks={tasks} dependencies={dependencies} />
         ) : groups.length === 0 ? (
           <p className="text-muted-foreground text-sm">No tasks match the current filters.</p>
         ) : (
@@ -455,19 +482,19 @@ export function TaskListSection({
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                       {assignError ? <span className="text-destructive text-xs">{assignError}</span> : null}
                       <span className="text-muted-foreground text-xs">{selected.size} selected</span>
-                      <select
-                        aria-label="Assign to backlog"
+                      {/* Named apart from the "Assign to backlog" button next
+                          to it, which is the action rather than the picker. */}
+                      <Combobox
+                        aria-label="Backlog to assign"
+                        options={assignOptions}
                         value={targetBacklogId}
-                        onChange={(e) => setTargetBacklogId(e.target.value)}
-                        className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
-                      >
-                        <option value="">Choose a backlog…</option>
-                        {backlogs.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.name}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={setTargetBacklogId}
+                        size="sm"
+                        className="w-44"
+                        placeholder="Choose a backlog…"
+                        searchPlaceholder="Search backlogs…"
+                        emptyText="No backlog found."
+                      />
                       <Button size="sm" onClick={handleAssignSelected} disabled={!targetBacklogId || assigning}>
                         {assigning ? "Assigning…" : "Assign to backlog"}
                       </Button>
@@ -494,7 +521,7 @@ export function TaskListSection({
                           />
                         ) : null}
                         <Link
-                          href={`/tasks/${task.id}`}
+                          href={taskPath(projectId, task.id)}
                           className="border-border hover:border-ring flex flex-1 items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
                         >
                           <span className="text-foreground">{task.title}</span>

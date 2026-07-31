@@ -1,9 +1,13 @@
 import { redirect, notFound } from "next/navigation";
-import { getBacklogs, getCurrentUser, getProject, getTask } from "@/lib/api";
-import { AppHeader } from "@/components/AppHeader";
-import { TaskDetail } from "@/components/TaskDetail";
+import { getCurrentUser, getTask } from "@/lib/api";
+import { taskPath } from "@/lib/routes";
 
-export default async function TaskPage({
+/**
+ * The task single view moved under its project (/projects/[projectId]/tasks/[taskId])
+ * so the collection and single routes mirror each other. This route stays
+ * behind to forward links that were made — or bookmarked — before the move.
+ */
+export default async function LegacyTaskPage({
   params,
 }: {
   params: Promise<{ taskId: string }>;
@@ -15,17 +19,5 @@ export default async function TaskPage({
   const task = await getTask(taskId);
   if (!task) notFound();
 
-  const project = await getProject(task.projectId);
-  if (!project) notFound();
-
-  const backlogs = await getBacklogs(task.projectId);
-
-  return (
-    <>
-      <AppHeader user={user} />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <TaskDetail task={task} project={project} backlogs={backlogs} />
-      </main>
-    </>
-  );
+  redirect(taskPath(task.projectId, task.id));
 }

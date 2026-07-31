@@ -2,28 +2,15 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type {
-  ApiError,
-  Backlog,
-  GitlabConnection,
-  LinkedGitlabProject,
-  Project,
-  SyncRun,
-  Task,
-  TaskDependency,
-  WebhookEvent,
-} from "@/types";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
+import type { ApiError, GitlabConnection, Project } from "@/types";
+import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { TaskListSection } from "@/components/TaskListSection";
-import { BacklogListSection } from "@/components/BacklogListSection";
-import { GitlabConnectionSection } from "@/components/GitlabConnectionSection";
-import { SyncRunSection } from "@/components/SyncRunSection";
-import { WebhookEventSection } from "@/components/WebhookEventSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -173,32 +160,60 @@ function DeleteProjectButton({ project }: { project: Project }) {
   );
 }
 
+/** gitlabSummary reads the connection the way the connection screen would: a
+ *  broken connection is worth surfacing here, an intact one is just its size. */
+function gitlabSummary(connection: GitlabConnection | null, linkedProjectCount: number) {
+  if (!connection) return "Not connected";
+  if (connection.lastVerifyError) return "Connection invalid";
+  return `${linkedProjectCount} linked projects`;
+}
+
+/** CollectionLink is one entry in the project's related-collections block. */
+function CollectionLink({
+  href,
+  name,
+  summary,
+}: {
+  href: string;
+  name: string;
+  summary: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-4 py-3 transition-colors"
+    >
+      <span className="text-foreground text-sm font-medium">{name}</span>
+      <span className="text-muted-foreground text-sm">{summary}</span>
+    </Link>
+  );
+}
+
 /**
  * ProjectDetail is the single view for one project. Attribute order is
  * fixed per docs/ui-design.md: identity -> attributes -> related
- * collections. Edit and delete actions live here rather than on a separate
+ * collections. Backlogs and tasks are collections of their own and get their
+ * own screens, so they appear here as links with a count rather than as
+ * embedded lists. Edit and delete actions live here rather than on a separate
  * "manage" screen.
  */
 export function ProjectDetail({
   project: initial,
-  tasks = [],
-  backlogs = [],
-  taskDependencies = [],
-  tasksError = false,
+  backlogCount = 0,
+  taskCount = 0,
+  openTaskCount = 0,
+  countsError = false,
   gitlabConnection = null,
-  linkedGitlabProjects = [],
-  syncRunsByLink = {},
-  webhookEventsByLink = {},
+  linkedProjectCount = 0,
 }: {
   project: Project;
-  tasks?: Task[];
-  backlogs?: Backlog[];
-  taskDependencies?: TaskDependency[];
-  tasksError?: boolean;
+  backlogCount?: number;
+  taskCount?: number;
+  openTaskCount?: number;
+  /** True when the counts could not be loaded; the links still work. */
+  countsError?: boolean;
   gitlabConnection?: GitlabConnection | null;
-  linkedGitlabProjects?: LinkedGitlabProject[];
-  syncRunsByLink?: Record<string, SyncRun[]>;
-  webhookEventsByLink?: Record<string, WebhookEvent[]>;
+  linkedProjectCount?: number;
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -242,7 +257,7 @@ export function ProjectDetail({
             <Alert variant="destructive" className="mb-4">
               <AlertDescription>
                 {project.failedSyncTaskCount} task{project.failedSyncTaskCount > 1 ? "s" : ""} failed
-                to sync with GitLab. Open a task below to see the error and retry.
+                to sync with GitLab. Open a task from Tasks to see the error and retry.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -259,34 +274,22 @@ export function ProjectDetail({
         </CardContent>
       </Card>
 
-      <div className="mt-8">
-        <BacklogListSection projectId={project.id} backlogs={backlogs} tasks={tasks} />
-      </div>
-
-      <div className="mt-8">
-        <TaskListSection
-          projectId={project.id}
-          tasks={tasks}
-          backlogs={backlogs}
-          dependencies={taskDependencies}
-          error={tasksError}
+      <div className="mt-8 grid gap-3 sm:grid-cols-2">
+        <CollectionLink
+          href={backlogsPath(project.id)}
+          name="Backlogs"
+          summary={countsError ? "Count unavailable" : `${backlogCount} backlogs`}
         />
-      </div>
-
-      <div className="mt-8">
-        <GitlabConnectionSection
-          projectId={project.id}
-          connection={gitlabConnection}
-          linkedProjects={linkedGitlabProjects}
+        <CollectionLink
+          href={tasksPath(project.id)}
+          name="Tasks"
+          summary={countsError ? "Count unavailable" : `${openTaskCount} open / ${taskCount} total`}
         />
-      </div>
-
-      <div className="mt-8">
-        <SyncRunSection linkedProjects={linkedGitlabProjects} syncRunsByLink={syncRunsByLink} />
-      </div>
-
-      <div className="mt-8">
-        <WebhookEventSection linkedProjects={linkedGitlabProjects} webhookEventsByLink={webhookEventsByLink} />
+        <CollectionLink
+          href={gitlabConnectionPath(project.id)}
+          name="GitLab connection"
+          summary={gitlabSummary(gitlabConnection, linkedProjectCount)}
+        />
       </div>
     </>
   );

@@ -54,7 +54,7 @@ const sprint: Task[] = [
 const meta = {
   title: "Components/TaskTimelineSection",
   component: TaskTimelineSection,
-  args: { now: NOW },
+  args: { projectId: "p1", now: NOW },
 } satisfies Meta<typeof TaskTimelineSection>;
 
 export default meta;

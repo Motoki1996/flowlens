@@ -46,11 +46,10 @@ function makeTask(overrides: Partial<Task>): Task {
 }
 
 describe("BacklogDetail", () => {
-  it("shows identity, attributes and a link back to the project", () => {
+  it("shows identity and attributes", () => {
     render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
     expect(screen.getByRole("heading", { name: "Sprint 1" })).toBeInTheDocument();
     expect(screen.getByText("The first sprint")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "← Alpha" })).toHaveAttribute("href", "/projects/p1");
   });
 
   it("shows an empty state with no tasks", () => {
@@ -61,8 +60,8 @@ describe("BacklogDetail", () => {
   it("lists the backlog's tasks", () => {
     const tasks = [makeTask({ id: "t1", title: "Fix the bug" }), makeTask({ id: "t2", title: "Write docs" })];
     render(<BacklogDetail backlog={backlog} project={project} tasks={tasks} />);
-    expect(screen.getByRole("link", { name: /Fix the bug/ })).toHaveAttribute("href", "/tasks/t1");
-    expect(screen.getByRole("link", { name: /Write docs/ })).toHaveAttribute("href", "/tasks/t2");
+    expect(screen.getByRole("link", { name: /Fix the bug/ })).toHaveAttribute("href", "/projects/p1/tasks/t1");
+    expect(screen.getByRole("link", { name: /Write docs/ })).toHaveAttribute("href", "/projects/p1/tasks/t2");
   });
 
   it("shows a load error", () => {

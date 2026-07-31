@@ -66,6 +66,41 @@ Two notes on this table:
 Objects that don't exist yet (`Pipeline`, `Release`) get added to this table
 when they get a table, not before.
 
+## The screen map
+
+The routes that exist today, and the object each one is about:
+
+| Route | Object | View |
+| --- | --- | --- |
+| `/projects` | `Project` | Collection |
+| `/projects/[projectId]` | `Project` | Single |
+| `/projects/[projectId]/backlogs` | `Backlog` | Collection |
+| `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single |
+| `/projects/[projectId]/tasks` | `Task` | Collection (List / Timeline view modes) |
+| `/projects/[projectId]/tasks/[taskId]` | `Task` | Single |
+| `/projects/[projectId]/gitlab-connection` | `GitLabConnection` | Single (+ the `LinkedGitLabProject` collection) |
+| `/projects/[projectId]/linked-gitlab-projects/[linkId]` | `LinkedGitLabProject` | Single (+ its `SyncRun` and `WebhookEvent` history) |
+| `/login`, `/signup` | — | Auth flows (rule 7) |
+
+Backlogs and tasks exist only inside a project, so both halves of each pair are
+nested under it. The flat `/backlogs/[id]` and `/tasks/[id]` routes predate the
+nesting and now only redirect to their nested equivalents, so older links keep
+working. Route strings are built by `lib/routes.ts` rather than written inline.
+
+The project single view is a **hub**: identity and attributes, then a link per
+related collection with a count, not the collections themselves. A screen that
+starts accumulating other objects' lists is the signal to split it — that is
+what happened to this one.
+
+Three objects deliberately skip routes of their own (rule 3's escape hatch):
+
+- `GitLabConnection` has a single view but **no collection view** — a project
+  has at most one connection ([ADR-0008](decisions/0008-why-per-project-gitlab-connection.md)),
+  so a list of one would be noise. The project view links straight to it.
+- `SyncRun` and `WebhookEvent` are never browsed apart from the link that
+  produced them, so they appear only as related collections inside the
+  `LinkedGitLabProject` single view.
+
 ## Rules
 
 ### 1. One object, one name, everywhere

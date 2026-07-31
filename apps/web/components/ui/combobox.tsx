@@ -36,7 +36,10 @@ export function Combobox({
   placeholder = "Select…",
   searchPlaceholder = "Search…",
   emptyText = "No match found.",
+  size = "default",
+  disabled = false,
   className,
+  "aria-label": ariaLabel,
 }: {
   id?: string
   options: ComboboxOption[]
@@ -45,7 +48,10 @@ export function Combobox({
   placeholder?: string
   searchPlaceholder?: string
   emptyText?: string
+  size?: "default" | "sm"
+  disabled?: boolean
   className?: string
+  "aria-label"?: string
 }) {
   const [open, setOpen] = React.useState(false)
   const selected = options.find((option) => option.value === value)
@@ -57,8 +63,11 @@ export function Combobox({
           id={id}
           type="button"
           variant="outline"
+          size={size}
           role="combobox"
           aria-expanded={open}
+          aria-label={ariaLabel}
+          disabled={disabled}
           className={cn("w-full justify-between font-normal", className)}
         >
           {selected ? (
@@ -69,7 +78,12 @@ export function Combobox({
           <ChevronsUpDownIcon className="size-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popover-trigger-width) p-0" align="start">
+      {/* The list matches the trigger's width, with a floor so the compact
+          triggers used in toolbars still get a readable dropdown. */}
+      <PopoverContent
+        className="w-(--radix-popover-trigger-width) min-w-52 p-0"
+        align="start"
+      >
         <Command>
           <CommandInput placeholder={searchPlaceholder} />
           <CommandList>

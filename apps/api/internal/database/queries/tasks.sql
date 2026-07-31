@@ -12,16 +12,16 @@
 INSERT INTO tasks (
     project_id, backlog_id, title, description,
     assignee_gitlab_user_id, assignee_gitlab_username,
-    labels, due_on, created_by_user_id, position
+    labels, due_on, start_date, created_by_user_id, position
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
     COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1 AND backlog_id IS NOT DISTINCT FROM $2), 0)
 )
-RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at;
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, start_date, position, created_by_user_id, created_at, updated_at;
 
 -- name: ListTasksByProject :many
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, start_date, position, created_by_user_id, created_at, updated_at
 FROM tasks
 WHERE project_id = $1
   AND (NOT sqlc.arg(unassigned)::boolean OR backlog_id IS NULL)
@@ -39,7 +39,7 @@ ORDER BY position ASC, created_at ASC;
 -- use for it yet, unlike the board view ListTasksByProject serves.
 
 -- name: ListTasksByProjectPaged :many
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, start_date, position, created_by_user_id, created_at, updated_at
 FROM tasks
 WHERE project_id = sqlc.arg(project_id)
   AND (sqlc.narg(backlog_id)::uuid IS NULL OR backlog_id = sqlc.narg(backlog_id))
@@ -49,7 +49,7 @@ ORDER BY position ASC, created_at ASC
 LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
 
 -- name: GetTaskForOwner :one
-SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at
+SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.start_date, t.position, t.created_by_user_id, t.created_at, t.updated_at
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
 WHERE t.id = $1 AND p.owner_user_id = $2;
@@ -60,7 +60,7 @@ WHERE t.id = $1 AND p.owner_user_id = $2;
 -- for (internal/apitoken), so there is no owner to join against.
 
 -- name: GetTaskForProject :one
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, start_date, position, created_by_user_id, created_at, updated_at
 FROM tasks
 WHERE id = $1 AND project_id = $2;
 
@@ -68,31 +68,31 @@ WHERE id = $1 AND project_id = $2;
 UPDATE tasks t
 SET backlog_id = $3, title = $4, description = $5,
     assignee_gitlab_user_id = $6, assignee_gitlab_username = $7,
-    labels = $8, due_on = $9, position = $10, updated_at = now()
+    labels = $8, due_on = $9, start_date = $10, position = $11, updated_at = now()
 FROM projects p
 WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.start_date, t.position, t.created_by_user_id, t.created_at, t.updated_at;
 
 -- name: AssignTaskBacklogForOwner :one
 UPDATE tasks t
 SET backlog_id = $3, updated_at = now()
 FROM projects p
 WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.start_date, t.position, t.created_by_user_id, t.created_at, t.updated_at;
 
 -- name: CloseTaskForOwner :one
 UPDATE tasks t
 SET status = 'closed', closed_at = now(), updated_at = now()
 FROM projects p
 WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.start_date, t.position, t.created_by_user_id, t.created_at, t.updated_at;
 
 -- name: ReopenTaskForOwner :one
 UPDATE tasks t
 SET status = 'open', closed_at = NULL, updated_at = now()
 FROM projects p
 WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.start_date, t.position, t.created_by_user_id, t.created_at, t.updated_at;
 
 -- name: DeleteTaskForOwner :execrows
 DELETE FROM tasks t
@@ -129,7 +129,7 @@ SET title = $2,
     closed_at = CASE WHEN $8 = 'closed' THEN COALESCE(closed_at, now()) ELSE NULL END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at;
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, start_date, position, created_by_user_id, created_at, updated_at;
 
 -- name: CountFailedSyncTasksByProjectForOwner :one
 SELECT COUNT(*) FROM tasks t

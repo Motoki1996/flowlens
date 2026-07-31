@@ -7,6 +7,7 @@ import {
   getLinkedGitlabProjects,
   getProject,
   getSyncRuns,
+  getTaskDependencies,
   getTasks,
   getWebhookEvents,
 } from "@/lib/api";
@@ -32,6 +33,14 @@ export default async function ProjectPage({
     [tasks, backlogs] = await Promise.all([getTasks(projectId), getBacklogs(projectId)]);
   } catch {
     tasksError = true;
+  }
+
+  let taskDependencies: Awaited<ReturnType<typeof getTaskDependencies>> = [];
+  try {
+    taskDependencies = await getTaskDependencies(projectId);
+  } catch {
+    // Left empty; the timeline view still renders tasks, just without
+    // dependency lines.
   }
 
   let gitlabConnection: Awaited<ReturnType<typeof getGitlabConnection>> = null;
@@ -75,6 +84,7 @@ export default async function ProjectPage({
           project={project}
           tasks={tasks}
           backlogs={backlogs}
+          taskDependencies={taskDependencies}
           tasksError={tasksError}
           gitlabConnection={gitlabConnection}
           linkedGitlabProjects={linkedGitlabProjects}

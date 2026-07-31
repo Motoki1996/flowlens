@@ -395,6 +395,33 @@ which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
 
+### Task scheduling & Gantt chart
+
+Beyond GitLab issue sync, a task can carry a `startDate` (alongside the
+existing `dueOn`) and predecessor/successor dependencies on other tasks in
+the same project. Both are app-only: GitLab Issues have no native start-date
+or dependency concept, so neither is ever pushed to or pulled from GitLab —
+`dueOn` remains the only date field synced with the linked GitLab issue.
+
+- `PATCH /api/v1/tasks/{taskID}` accepts `startDate` alongside the task's
+  other mirrored fields.
+- `POST /api/v1/projects/{projectID}/task-dependencies` records that
+  `predecessorTaskId` must finish before `successorTaskId` starts. Both
+  tasks must belong to the project, and the edge is rejected with 409 if it
+  would close a cycle (checked in the application layer via a reachability
+  walk, since neither a `CHECK` nor a `UNIQUE` constraint can express "no
+  cycles").
+- `GET /api/v1/projects/{projectID}/task-dependencies` lists every
+  dependency in the project; `DELETE /api/v1/task-dependencies/{id}` removes
+  one.
+
+In the web app, the project's Task collection has a "Timeline" view mode
+(alongside the default "List" mode, per the OOUI rule that a collection is
+one dataset presented several ways) that lays out scheduled tasks as bars
+along a date axis, with a project-wide closed/total progress ratio and each
+task's predecessors noted inline. Tasks with neither a start date nor a due
+date are listed separately below the chart rather than silently dropped.
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault

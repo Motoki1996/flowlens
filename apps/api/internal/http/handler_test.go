@@ -20,6 +20,7 @@ import (
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/task"
+	"github.com/flowlens/api/internal/taskdependency"
 	"github.com/flowlens/api/internal/user"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/google/uuid"
@@ -65,22 +66,24 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 	txRunner := dbtest.FakeTxRunner{Q: q}
 	clientFactory := func(string) gitlab.Client { return fake }
 	gitlabConns := gitlabconn.NewService(q, projects, cipher, clientFactory)
+	tasks := task.NewService(q, txRunner, projects, backlogs)
 	return &Server{
-		users:          user.NewService(q),
-		projects:       projects,
-		backlogs:       backlogs,
-		apiTokens:      apiTokens,
-		tasks:          task.NewService(q, txRunner, projects, backlogs),
-		gitlabConns:    gitlabConns,
-		linkedProjects: linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),
-		projectSync:    projectsync.NewService(q, txRunner, cipher, clientFactory),
-		webhookEvents:  webhookevent.NewService(q, cipher),
-		webhookLimiter: newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
-		sessions:       auth.NewSessionService(q, time.Hour),
-		cookies:        cookieManager{secure: false},
-		webBaseURL:     "http://localhost:3000",
-		sessionTTL:     time.Hour,
-		cipher:         cipher,
+		users:            user.NewService(q),
+		projects:         projects,
+		backlogs:         backlogs,
+		apiTokens:        apiTokens,
+		tasks:            tasks,
+		taskDependencies: taskdependency.NewService(q, projects, tasks),
+		gitlabConns:      gitlabConns,
+		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),
+		projectSync:      projectsync.NewService(q, txRunner, cipher, clientFactory),
+		webhookEvents:    webhookevent.NewService(q, cipher),
+		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
+		sessions:         auth.NewSessionService(q, time.Hour),
+		cookies:          cookieManager{secure: false},
+		webBaseURL:       "http://localhost:3000",
+		sessionTTL:       time.Hour,
+		cipher:           cipher,
 	}, q
 }
 

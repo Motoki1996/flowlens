@@ -11,6 +11,7 @@ import type {
   Project,
   SyncRun,
   Task,
+  TaskDependency,
   WebhookEvent,
 } from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -182,6 +183,7 @@ export function ProjectDetail({
   project: initial,
   tasks = [],
   backlogs = [],
+  taskDependencies = [],
   tasksError = false,
   gitlabConnection = null,
   linkedGitlabProjects = [],
@@ -191,6 +193,7 @@ export function ProjectDetail({
   project: Project;
   tasks?: Task[];
   backlogs?: Backlog[];
+  taskDependencies?: TaskDependency[];
   tasksError?: boolean;
   gitlabConnection?: GitlabConnection | null;
   linkedGitlabProjects?: LinkedGitlabProject[];
@@ -261,7 +264,12 @@ export function ProjectDetail({
       </div>
 
       <div className="mt-8">
-        <TaskListSection tasks={tasks} backlogs={backlogs} error={tasksError} />
+        <TaskListSection
+          tasks={tasks}
+          backlogs={backlogs}
+          dependencies={taskDependencies}
+          error={tasksError}
+        />
       </div>
 
       <div className="mt-8">

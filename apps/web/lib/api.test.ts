@@ -7,7 +7,7 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
-import { getBacklogs, getCurrentUser, getTask, getTasks } from "./api";
+import { getBacklogs, getCurrentUser, getTask, getTaskDependencies, getTasks } from "./api";
 
 describe("getCurrentUser", () => {
   beforeEach(() => {
@@ -100,6 +100,27 @@ describe("getBacklogs", () => {
     );
     const result = await getBacklogs("p1");
     expect(result).toEqual(backlogs);
+  });
+});
+
+describe("getTaskDependencies", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns the project's task dependencies on 200", async () => {
+    const deps = [{ id: "d1", predecessorTaskId: "t1", successorTaskId: "t2" }];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify(deps), { status: 200 })),
+    );
+    const result = await getTaskDependencies("p1");
+    expect(result).toEqual(deps);
+  });
+
+  it("throws on a non-2xx response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
+    await expect(getTaskDependencies("p1")).rejects.toThrow("Failed to load task dependencies: 500");
   });
 });
 

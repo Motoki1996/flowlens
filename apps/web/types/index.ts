@@ -67,6 +67,7 @@ export interface Task {
   assigneeGitlabUsername: string;
   labels: string[];
   dueOn: string | null;
+  startDate: string | null;
   position: number;
   createdByUserId: string;
   createdAt: string;
@@ -75,6 +76,14 @@ export interface Task {
   // purely local (see apps/api/internal/task.GitlabInfo).
   gitlab: TaskGitlabInfo | null;
   aiContext: TaskAIContext;
+}
+
+/** TaskDependency records that predecessorTaskId must finish before successorTaskId starts. */
+export interface TaskDependency {
+  id: string;
+  predecessorTaskId: string;
+  successorTaskId: string;
+  createdAt: string;
 }
 
 export interface GitlabConnection {

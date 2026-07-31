@@ -18,6 +18,7 @@ import (
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/task"
+	"github.com/flowlens/api/internal/taskdependency"
 	"github.com/flowlens/api/internal/user"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/go-chi/chi/v5"
@@ -33,22 +34,23 @@ type Pinger interface {
 
 // Server holds handler dependencies and builds the router.
 type Server struct {
-	health         Pinger
-	users          *user.Service
-	projects       *project.Service
-	backlogs       *backlog.Service
-	apiTokens      *apitoken.Service
-	tasks          *task.Service
-	gitlabConns    *gitlabconn.Service
-	linkedProjects *linkedproject.Service
-	projectSync    *projectsync.Service
-	webhookEvents  *webhookevent.Service
-	webhookLimiter *simpleRateLimiter
-	sessions       *auth.SessionService
-	cookies        cookieManager
-	webBaseURL     string
-	sessionTTL     time.Duration
-	cipher         *crypto.Cipher
+	health           Pinger
+	users            *user.Service
+	projects         *project.Service
+	backlogs         *backlog.Service
+	apiTokens        *apitoken.Service
+	tasks            *task.Service
+	taskDependencies *taskdependency.Service
+	gitlabConns      *gitlabconn.Service
+	linkedProjects   *linkedproject.Service
+	projectSync      *projectsync.Service
+	webhookEvents    *webhookevent.Service
+	webhookLimiter   *simpleRateLimiter
+	sessions         *auth.SessionService
+	cookies          cookieManager
+	webBaseURL       string
+	sessionTTL       time.Duration
+	cipher           *crypto.Cipher
 }
 
 // NewServer constructs a Server from configuration, the generated queries, a
@@ -62,23 +64,25 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 	apiTokens := apitoken.NewService(queries, projects)
 	clientFactory := func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
 	gitlabConns := gitlabconn.NewService(queries, projects, cipher, clientFactory)
+	tasks := task.NewService(queries, txRunner, projects, backlogs)
 	return &Server{
-		health:         health,
-		users:          user.NewService(queries),
-		projects:       projects,
-		backlogs:       backlogs,
-		apiTokens:      apiTokens,
-		tasks:          task.NewService(queries, txRunner, projects, backlogs),
-		gitlabConns:    gitlabConns,
-		linkedProjects: linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
-		projectSync:    projectsync.NewService(queries, txRunner, cipher, clientFactory),
-		webhookEvents:  webhookevent.NewService(queries, cipher),
-		webhookLimiter: newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
-		sessions:       auth.NewSessionService(queries, cfg.SessionTTL),
-		cookies:        cookieManager{secure: cfg.IsProduction()},
-		webBaseURL:     cfg.WebBaseURL,
-		sessionTTL:     cfg.SessionTTL,
-		cipher:         cipher,
+		health:           health,
+		users:            user.NewService(queries),
+		projects:         projects,
+		backlogs:         backlogs,
+		apiTokens:        apiTokens,
+		tasks:            tasks,
+		taskDependencies: taskdependency.NewService(queries, projects, tasks),
+		gitlabConns:      gitlabConns,
+		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
+		projectSync:      projectsync.NewService(queries, txRunner, cipher, clientFactory),
+		webhookEvents:    webhookevent.NewService(queries, cipher),
+		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
+		sessions:         auth.NewSessionService(queries, cfg.SessionTTL),
+		cookies:          cookieManager{secure: cfg.IsProduction()},
+		webBaseURL:       cfg.WebBaseURL,
+		sessionTTL:       cfg.SessionTTL,
+		cipher:           cipher,
 	}, nil
 }
 
@@ -118,6 +122,9 @@ func (s *Server) Router() chi.Router {
 				projects.Get("/{projectID}/tasks", s.handleListTasks)
 				projects.Post("/{projectID}/tasks", s.handleCreateTask)
 
+				projects.Get("/{projectID}/task-dependencies", s.handleListTaskDependencies)
+				projects.Post("/{projectID}/task-dependencies", s.handleCreateTaskDependency)
+
 				projects.Put("/{projectID}/gitlab-connection", s.handlePutGitlabConnection)
 				projects.Get("/{projectID}/gitlab-connection", s.handleGetGitlabConnection)
 				projects.Delete("/{projectID}/gitlab-connection", s.handleDeleteGitlabConnection)
@@ -150,6 +157,10 @@ func (s *Server) Router() chi.Router {
 				backlogs.Get("/{backlogID}", s.handleGetBacklog)
 				backlogs.Patch("/{backlogID}", s.handleUpdateBacklog)
 				backlogs.Delete("/{backlogID}", s.handleDeleteBacklog)
+			})
+
+			protected.Route("/task-dependencies", func(deps chi.Router) {
+				deps.Delete("/{dependencyID}", s.handleDeleteTaskDependency)
 			})
 
 			protected.Route("/tasks", func(tasks chi.Router) {

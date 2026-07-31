@@ -5,11 +5,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
+import { CalendarIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskTimelineSection } from "@/components/TaskTimelineSection";
@@ -19,12 +22,16 @@ type ViewMode = "list" | "timeline";
 const UNCLASSIFIED = "unclassified";
 const UNCLASSIFIED_LABEL = "未分類";
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, {
+function formatDateValue(date: Date) {
+  return date.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
+}
+
+function formatDate(iso: string) {
+  return formatDateValue(new Date(iso));
 }
 
 function StatusBadge({ status }: { status: TaskStatus }) {
@@ -36,13 +43,70 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 }
 
 /**
- * toApiDate turns an <input type="date"> value into the RFC3339 timestamp the
- * API decodes into a *time.Time. A bare "2026-08-01" is rejected as an invalid
- * body, so the date is anchored at midnight UTC — the same instant the API
- * returns for a date-only field.
+ * toApiDate turns a picked day into the RFC3339 timestamp the API decodes into
+ * a *time.Time — a bare "2026-08-01" is rejected as an invalid body. The day is
+ * read in local time and anchored at midnight UTC, so the date the user clicked
+ * is the date the API stores regardless of the browser's timezone (which
+ * toISOString would shift).
  */
-function toApiDate(value: string): string | null {
-  return value ? `${value}T00:00:00Z` : null;
+function toApiDate(date: Date | undefined): string | null {
+  if (!date) return null;
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}T00:00:00Z`;
+}
+
+/**
+ * DateField is a date input rendered as a shadcn Calendar in a popover. The
+ * trigger doubles as the labelled control, so the surrounding <label htmlFor>
+ * names it the same way it would name an <input>.
+ */
+function DateField({
+  id,
+  label,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: Date | undefined;
+  onChange: (date: Date | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div>
+      <label htmlFor={id} className="text-foreground block text-sm font-medium">
+        {label}
+      </label>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            id={id}
+            type="button"
+            variant="outline"
+            className="mt-1 w-full justify-between font-normal"
+          >
+            {value ? formatDateValue(value) : <span className="text-muted-foreground">Not set</span>}
+            <CalendarIcon className="size-4 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="single"
+            selected={value}
+            defaultMonth={value}
+            captionLayout="dropdown"
+            autoFocus
+            onSelect={(date) => {
+              onChange(date);
+              setOpen(false);
+            }}
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
 }
 
 /**
@@ -64,8 +128,8 @@ function NewTaskForm({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [backlogId, setBacklogId] = useState(UNCLASSIFIED);
-  const [startDate, setStartDate] = useState("");
-  const [dueOn, setDueOn] = useState("");
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -154,32 +218,13 @@ function NewTaskForm({
             ))}
           </select>
         </div>
-        <div>
-          <label htmlFor="new-task-start-date" className="text-foreground block text-sm font-medium">
-            Start date
-          </label>
-          <Input
-            id="new-task-start-date"
-            name="startDate"
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="mt-1"
-          />
-        </div>
-        <div>
-          <label htmlFor="new-task-due-on" className="text-foreground block text-sm font-medium">
-            Due date
-          </label>
-          <Input
-            id="new-task-due-on"
-            name="dueOn"
-            type="date"
-            value={dueOn}
-            onChange={(e) => setDueOn(e.target.value)}
-            className="mt-1"
-          />
-        </div>
+        <DateField
+          id="new-task-start-date"
+          label="Start date"
+          value={startDate}
+          onChange={setStartDate}
+        />
+        <DateField id="new-task-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
       </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>

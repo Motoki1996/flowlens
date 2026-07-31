@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Backlog, Task } from "@/types";
 import { TaskListSection } from "./TaskListSection";
@@ -52,6 +52,10 @@ describe("TaskListSection", () => {
   beforeEach(() => {
     refresh.mockClear();
     vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("shows an empty state with zero tasks", () => {
@@ -149,13 +153,19 @@ describe("TaskListSection", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("creates a task, sending dates as RFC3339 and no backlog as null", async () => {
+  it("creates a task, sending the day picked in the calendar as RFC3339", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-10T09:00:00Z"));
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 201 }));
     render(<TaskListSection projectId="p1" tasks={[]} backlogs={[backlog]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Fix bug" } });
-    fireEvent.change(screen.getByLabelText("Start date"), { target: { value: "2026-08-01" } });
+
+    // The calendar opens on the current month, so August 15th is one click
+    // away. Day buttons are named by react-day-picker's own aria-label.
+    fireEvent.click(screen.getByLabelText("Start date"));
+    fireEvent.click(await screen.findByRole("button", { name: /August 15th, 2026/ }));
     fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
@@ -167,7 +177,7 @@ describe("TaskListSection", () => {
           title: "Fix bug",
           description: "",
           backlogId: null,
-          startDate: "2026-08-01T00:00:00Z",
+          startDate: "2026-08-15T00:00:00Z",
           dueOn: null,
         }),
       }),

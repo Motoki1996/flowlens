@@ -54,13 +54,13 @@ describe("TaskDetail", () => {
     expect(screen.getByRole("heading", { name: "Fix the bug" })).toBeInTheDocument();
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText("octocat")).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("b1");
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 1");
     expect(screen.getByRole("link", { name: "← Alpha" })).toHaveAttribute("href", "/projects/p1");
   });
 
   it("shows 未分類 when the task has no backlog", () => {
     render(<TaskDetail task={makeTask({ backlogId: null })} project={project} backlogs={[backlog]} />);
-    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("unclassified");
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("未分類");
   });
 
   it("closes an open task", async () => {
@@ -93,9 +93,12 @@ describe("TaskDetail", () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reassigned), { status: 200 }));
 
     render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog, otherBacklog]} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Backlog" }), { target: { value: "b2" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Sprint 2" }));
 
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("b2"));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 2"),
+    );
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b2" }) }),
@@ -107,9 +110,12 @@ describe("TaskDetail", () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(unassigned), { status: 200 }));
 
     render(<TaskDetail task={makeTask({})} project={project} backlogs={[backlog]} />);
-    fireEvent.change(screen.getByRole("combobox", { name: "Backlog" }), { target: { value: "unclassified" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
+    fireEvent.click(await screen.findByRole("option", { name: "未分類" }));
 
-    await waitFor(() => expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveValue("unclassified"));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("未分類"),
+    );
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: null }) }),

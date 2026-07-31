@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError, Backlog, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import { AIContextSection } from "@/components/AIContextSection";
 import { SyncBadge } from "@/components/SyncBadge";
 
@@ -80,8 +81,15 @@ function BacklogSelect({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleChange(e: ChangeEvent<HTMLSelectElement>) {
-    const value = e.target.value;
+  const options = useMemo(
+    () => [
+      { value: UNCLASSIFIED, label: "未分類" },
+      ...backlogs.map((b) => ({ value: b.id, label: b.name })),
+    ],
+    [backlogs],
+  );
+
+  async function handleChange(value: string) {
     const backlogId = value === UNCLASSIFIED ? null : value;
 
     setPending(true);
@@ -107,20 +115,17 @@ function BacklogSelect({
   return (
     <div className="flex flex-col items-start gap-1">
       {error ? <span className="text-destructive text-xs">{error}</span> : null}
-      <select
+      <Combobox
         aria-label="Backlog"
+        options={options}
         value={task.backlogId ?? UNCLASSIFIED}
         onChange={handleChange}
         disabled={pending}
-        className="border-input bg-input/30 text-foreground h-8 rounded-md border px-2 text-xs"
-      >
-        <option value={UNCLASSIFIED}>未分類</option>
-        {backlogs.map((b) => (
-          <option key={b.id} value={b.id}>
-            {b.name}
-          </option>
-        ))}
-      </select>
+        size="sm"
+        className="w-52"
+        searchPlaceholder="Search backlogs…"
+        emptyText="No backlog found."
+      />
     </div>
   );
 }

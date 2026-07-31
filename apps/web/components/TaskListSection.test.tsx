@@ -111,9 +111,8 @@ describe("TaskListSection", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: "Select Unfiled task 2" }));
     expect(screen.getByText("2 selected")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByRole("combobox", { name: "Assign to backlog" }), {
-      target: { value: "b1" },
-    });
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog to assign" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Sprint 1" }));
     fireEvent.click(screen.getByRole("button", { name: "Assign to backlog" }));
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
@@ -125,6 +124,20 @@ describe("TaskListSection", () => {
       "http://localhost:8080/api/v1/tasks/t2/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b1" }) }),
     );
+  });
+
+  it("narrows the list to the backlog picked in the filter", async () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Sprint task", backlogId: "b1" }),
+      makeTask({ id: "t2", title: "Icebox task", backlogId: "b2" }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Icebox" }));
+
+    expect(screen.getByText("Icebox task")).toBeInTheDocument();
+    expect(screen.queryByText("Sprint task")).not.toBeInTheDocument();
   });
 
   it("does not offer selection for tasks already in a backlog", () => {

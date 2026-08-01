@@ -65,6 +65,8 @@ vi.mock("@/lib/api", () => ({
   getTask: (id: string) => getTask(id),
   getProject: (id: string) => getProject(id),
   getBacklogs: (id: string) => getBacklogs(id),
+  getTasks: () => Promise.resolve([]),
+  getTaskDependencies: () => Promise.resolve([]),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),

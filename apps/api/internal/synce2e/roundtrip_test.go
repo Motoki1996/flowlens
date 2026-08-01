@@ -518,7 +518,7 @@ func TestRoundTrip_AppUpdateEcho_IsIgnored_RealPostgres(t *testing.T) {
 	e.fake.Issue = &gitlab.Issue{ID: 9300, IID: 41, WebURL: "https://gitlab.example.com/group/demo/-/issues/41", UpdatedAt: pushedAt}
 
 	_, err = e.tasks.Update(ctx, e.ownerID, tsk.ID, task.UpdateParams{
-		Title: "Edited from app", Description: "edited", Labels: []string{"bug"},
+		Title: task.Present("Edited from app"), Description: task.Present("edited"), Labels: task.Present([]string{"bug"}),
 	})
 	require.NoError(t, err)
 	e.drainOutbox(t)

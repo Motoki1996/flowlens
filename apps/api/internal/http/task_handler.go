@@ -23,16 +23,19 @@ type createTaskRequest struct {
 	StartDate              *time.Time `json:"startDate"`
 }
 
+// updateTaskRequest is a true partial update: a key absent from the body
+// leaves that field alone, while an explicit null on a nullable field clears
+// it. See task.Optional for why a plain pointer is not enough.
 type updateTaskRequest struct {
-	Title                  string     `json:"title"`
-	Description            string     `json:"description"`
-	BacklogID              *uuid.UUID `json:"backlogId"`
-	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
-	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
-	Labels                 []string   `json:"labels"`
-	DueOn                  *time.Time `json:"dueOn"`
-	StartDate              *time.Time `json:"startDate"`
-	Position               int32      `json:"position"`
+	Title                  task.Optional[string]     `json:"title"`
+	Description            task.Optional[string]     `json:"description"`
+	BacklogID              task.Optional[*uuid.UUID] `json:"backlogId"`
+	AssigneeGitlabUserID   task.Optional[*int64]     `json:"assigneeGitlabUserId"`
+	AssigneeGitlabUsername task.Optional[string]     `json:"assigneeGitlabUsername"`
+	Labels                 task.Optional[[]string]   `json:"labels"`
+	DueOn                  task.Optional[*time.Time] `json:"dueOn"`
+	StartDate              task.Optional[*time.Time] `json:"startDate"`
+	Position               task.Optional[int32]      `json:"position"`
 }
 
 type assignTaskBacklogRequest struct {

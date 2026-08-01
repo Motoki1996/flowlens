@@ -77,7 +77,7 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]/backlogs` | `Backlog` | Collection |
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single |
 | `/projects/[projectId]/tasks` | `Task` | Collection (List / Timeline view modes, `?backlog=` filter) |
-| `/projects/[projectId]/tasks/[taskId]` | `Task` | Single |
+| `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |
 | `/projects/[projectId]/gitlab-connection` | `GitLabConnection` | Single (+ the `LinkedGitLabProject` collection) |
 | `/projects/[projectId]/linked-gitlab-projects/[linkId]` | `LinkedGitLabProject` | Single (+ its `SyncRun` and `WebhookEvent` history) |
 | `/login`, `/signup` | — | Auth flows (rule 7) |

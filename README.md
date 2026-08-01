@@ -404,7 +404,13 @@ or dependency concept, so neither is ever pushed to or pulled from GitLab —
 `dueOn` remains the only date field synced with the linked GitLab issue.
 
 - `PATCH /api/v1/tasks/{taskID}` accepts `startDate` alongside the task's
-  other mirrored fields.
+  other mirrored fields. It is a **partial** update: a key absent from the
+  body leaves that field alone, and an explicit `null` clears a nullable one
+  (backlog, assignee ID, either date). That is what lets a client edit one
+  attribute without echoing the whole task back — and what keeps `position`,
+  which no edit form shows, from being reset. An edit that touches only
+  app-only fields (`startDate`, backlog, position) enqueues no `issue.update`
+  job.
 - `POST /api/v1/projects/{projectID}/task-dependencies` records that
   `predecessorTaskId` must finish before `successorTaskId` starts. Both
   tasks must belong to the project, and the edge is rejected with 409 if it
@@ -417,7 +423,14 @@ or dependency concept, so neither is ever pushed to or pulled from GitLab —
 
 In the web app, a task is created from the "New task" action on the project's
 Task collection (`/projects/{projectId}/tasks`), which takes its title,
-description, backlog and both dates up front. The same collection has a
+description, backlog and both dates up front. It is edited from the "Edit task"
+action on the task's own single view (`/projects/{projectId}/tasks/{taskId}`),
+which swaps the attribute block for an inline form covering title,
+description, assignee, labels, backlog and both dates — there is no separate
+edit screen, since editing is an action on the Task object (see
+[`docs/ui-design.md`](docs/ui-design.md), rule 4). Predecessors and successors
+are added and removed from a "Dependencies" section on the same screen; a
+rejected cycle is reported there. The same collection has a
 "Timeline" view mode (alongside the default "List" mode, per the OOUI rule that
 a collection is one dataset presented several ways) that lays out scheduled
 tasks as a Gantt chart. It is built on the shadcn `chart` component (Recharts)

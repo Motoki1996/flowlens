@@ -1,5 +1,12 @@
 import { redirect, notFound } from "next/navigation";
-import { getBacklogs, getCurrentUser, getProject, getTask } from "@/lib/api";
+import {
+  getBacklogs,
+  getCurrentUser,
+  getProject,
+  getTask,
+  getTaskDependencies,
+  getTasks,
+} from "@/lib/api";
 import { tasksPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { TaskDetail } from "@/components/TaskDetail";
@@ -19,14 +26,25 @@ export default async function TaskPage({
   // so the nested route treats it as missing rather than rendering it here.
   if (task.projectId !== projectId) notFound();
 
-  const backlogs = await getBacklogs(projectId);
+  // The dependency pickers choose from the project's other tasks, so the
+  // single view loads the collection alongside the task itself.
+  const [backlogs, tasks, dependencies] = await Promise.all([
+    getBacklogs(projectId),
+    getTasks(projectId),
+    getTaskDependencies(projectId),
+  ]);
 
   return (
     <>
       <Breadcrumbs
         items={[{ label: "Tasks", href: tasksPath(project.id) }, { label: task.title }]}
       />
-      <TaskDetail task={task} backlogs={backlogs} />
+      <TaskDetail
+        task={task}
+        backlogs={backlogs}
+        tasks={tasks}
+        dependencies={dependencies}
+      />
     </>
   );
 }

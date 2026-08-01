@@ -205,7 +205,7 @@ func TestHandleUpdateTask(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("other user gets 404 and does not modify the task", func(t *testing.T) {
-		rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id, updateTaskRequest{Title: "Hijacked"}, otherToken)
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id, map[string]any{"title": "Hijacked"}, otherToken)
 		require.Equal(t, http.StatusNotFound, rec.Code)
 
 		rec = doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, ownerToken)
@@ -217,7 +217,7 @@ func TestHandleUpdateTask(t *testing.T) {
 
 	t.Run("owner can update, including position", func(t *testing.T) {
 		rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
-			updateTaskRequest{Title: "Renamed", Description: "new", Position: 3}, ownerToken)
+			map[string]any{"title": "Renamed", "description": "new", "position": 3}, ownerToken)
 		require.Equal(t, http.StatusOK, rec.Code)
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -225,6 +225,48 @@ func TestHandleUpdateTask(t *testing.T) {
 		assert.Equal(t, "new", body["description"])
 		assert.Equal(t, float64(3), body["position"])
 	})
+}
+
+// PATCH is a partial update at the wire level too: a key absent from the
+// JSON body leaves the field alone, and an explicit null clears a nullable
+// one. The web edit form relies on this to send only what it shows.
+func TestHandleUpdateTask_AppliesOnlyKeysPresentInBody(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
+		map[string]any{"title": "Renamed", "description": "original", "position": 3, "dueOn": "2026-09-01T00:00:00Z"}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	tests := []struct {
+		name string
+		body map[string]any
+		want map[string]any
+	}{
+		{
+			name: "title only keeps description, position and due date",
+			body: map[string]any{"title": "Renamed again"},
+			want: map[string]any{"title": "Renamed again", "description": "original", "position": float64(3), "dueOn": "2026-09-01T00:00:00Z"},
+		},
+		{
+			name: "explicit null clears the due date",
+			body: map[string]any{"dueOn": nil},
+			want: map[string]any{"title": "Renamed again", "description": "original", "position": float64(3), "dueOn": nil},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id, tt.body, token)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			for k, want := range tt.want {
+				assert.Equal(t, want, got[k], k)
+			}
+		})
+	}
 }
 
 func TestHandleUpdateTask_RejectsBacklogFromAnotherProject(t *testing.T) {
@@ -236,7 +278,7 @@ func TestHandleUpdateTask_RejectsBacklogFromAnotherProject(t *testing.T) {
 	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
 
 	rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
-		updateTaskRequest{Title: "Fix bug", BacklogID: &foreignBacklog.ID}, token)
+		map[string]any{"title": "Fix bug", "backlogId": foreignBacklog.ID}, token)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 

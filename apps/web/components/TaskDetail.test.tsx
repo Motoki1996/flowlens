@@ -49,7 +49,7 @@ describe("TaskDetail", () => {
   });
 
   it("shows identity and attributes", () => {
-    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     expect(screen.getByRole("heading", { name: "Fix the bug" })).toBeInTheDocument();
     expect(screen.getByText("Open")).toBeInTheDocument();
     expect(screen.getByText("octocat")).toBeInTheDocument();
@@ -57,7 +57,7 @@ describe("TaskDetail", () => {
   });
 
   it("shows 未分類 when the task has no backlog", () => {
-    render(<TaskDetail task={makeTask({ backlogId: null })} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({ backlogId: null })} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("未分類");
   });
 
@@ -65,7 +65,7 @@ describe("TaskDetail", () => {
     const closed = makeTask({ status: "closed", closedAt: "2026-01-05T00:00:00Z" });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(closed), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument());
@@ -79,7 +79,7 @@ describe("TaskDetail", () => {
     const reopened = makeTask({ status: "open", closedAt: null });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reopened), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({ status: "closed" })} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({ status: "closed" })} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument());
@@ -90,7 +90,7 @@ describe("TaskDetail", () => {
     const reassigned = makeTask({ backlogId: "b2" });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reassigned), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({})} backlogs={[backlog, otherBacklog]} />);
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog, otherBacklog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
     fireEvent.click(await screen.findByRole("option", { name: "Sprint 2" }));
 
@@ -107,7 +107,7 @@ describe("TaskDetail", () => {
     const unassigned = makeTask({ backlogId: null });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(unassigned), { status: 200 }));
 
-    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
     fireEvent.click(await screen.findByRole("option", { name: "未分類" }));
 
@@ -120,8 +120,90 @@ describe("TaskDetail", () => {
     );
   });
 
+  it("edits the task in place and shows the saved values", async () => {
+    const saved = makeTask({ title: "Fix the bug properly", labels: ["bug", "urgent"] });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(saved), { status: 200 }));
+
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Fix the bug properly" } });
+    fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "bug, urgent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Fix the bug properly" })).toBeInTheDocument(),
+    );
+    expect(screen.getByText("urgent")).toBeInTheDocument();
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8080/api/v1/tasks/t1");
+    expect(init.method).toBe("PATCH");
+    // Only the fields the form shows are sent: position is absent from the
+    // body, so the API leaves it alone rather than resetting it.
+    expect(JSON.parse(init.body as string)).toEqual({
+      title: "Fix the bug properly",
+      description: "Details about the bug.",
+      backlogId: "b1",
+      assigneeGitlabUsername: "octocat",
+      labels: ["bug", "urgent"],
+      startDate: null,
+      dueOn: "2026-02-01T00:00:00Z",
+    });
+  });
+
+  it("leaves the task unchanged when the edit is cancelled", () => {
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Discarded" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("heading", { name: "Fix the bug" })).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows an error and stays in the form when saving fails", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { code: "invalid_title", message: "title must be 1-255 characters" },
+        }),
+        { status: 400 },
+      ),
+    );
+
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("title must be 1-255 characters")).toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Edit task" })).toBeInTheDocument();
+  });
+
+  it("rejects an empty title without calling the API", () => {
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(screen.getByText("Task title is required.")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows the start date alongside the due date", () => {
+    render(
+      <TaskDetail
+        task={makeTask({ startDate: "2026-01-15" })}
+        backlogs={[backlog]}
+        tasks={[]}
+        dependencies={[]}
+      />,
+    );
+    expect(screen.getByText("Start")).toBeInTheDocument();
+    expect(screen.getByText("Jan 15, 2026")).toBeInTheDocument();
+  });
+
   it("shows Local only when the task has never been linked to GitLab", () => {
-    render(<TaskDetail task={makeTask({ gitlab: null })} backlogs={[backlog]} />);
+    render(<TaskDetail task={makeTask({ gitlab: null })} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     expect(screen.getByText("Local only")).toBeInTheDocument();
   });
 
@@ -135,7 +217,7 @@ describe("TaskDetail", () => {
         webUrl: "https://gitlab.example.com/group/demo/-/issues/42",
       },
     });
-    render(<TaskDetail task={task} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     expect(screen.getByText("Synced")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View issue #42" })).toHaveAttribute(
       "href",
@@ -153,7 +235,7 @@ describe("TaskDetail", () => {
         webUrl: "",
       },
     });
-    render(<TaskDetail task={task} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     expect(screen.getByText("Sync failed")).toBeInTheDocument();
     expect(screen.getByText("gitlab rejected the update")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
@@ -180,7 +262,7 @@ describe("TaskDetail", () => {
         webUrl: "",
       },
     });
-    render(<TaskDetail task={task} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     await waitFor(() => expect(screen.getByText("Syncing…")).toBeInTheDocument());
@@ -206,7 +288,7 @@ describe("TaskDetail", () => {
         webUrl: "",
       },
     });
-    render(<TaskDetail task={task} backlogs={[backlog]} />);
+    render(<TaskDetail task={task} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText("gitlab sync is not currently failed")).toBeInTheDocument();

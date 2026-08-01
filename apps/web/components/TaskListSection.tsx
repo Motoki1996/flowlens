@@ -6,16 +6,14 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
+import { formatDate, toApiDate } from "@/lib/dates";
 import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
-import { CalendarIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "@/components/ui/calendar";
 import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -24,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { DateField } from "@/components/DateField";
 import { SyncBadge } from "@/components/SyncBadge";
 
 /**
@@ -41,90 +40,11 @@ type ViewMode = "list" | "timeline";
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "未分類";
 
-function formatDateValue(date: Date) {
-  return date.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function formatDate(iso: string) {
-  return formatDateValue(new Date(iso));
-}
-
 function StatusBadge({ status }: { status: TaskStatus }) {
   return (
     <Badge variant={status === "open" ? "default" : "secondary"}>
       {status === "open" ? "Open" : "Closed"}
     </Badge>
-  );
-}
-
-/**
- * toApiDate turns a picked day into the RFC3339 timestamp the API decodes into
- * a *time.Time — a bare "2026-08-01" is rejected as an invalid body. The day is
- * read in local time and anchored at midnight UTC, so the date the user clicked
- * is the date the API stores regardless of the browser's timezone (which
- * toISOString would shift).
- */
-function toApiDate(date: Date | undefined): string | null {
-  if (!date) return null;
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}T00:00:00Z`;
-}
-
-/**
- * DateField is a date input rendered as a shadcn Calendar in a popover. The
- * trigger doubles as the labelled control, so the surrounding <label htmlFor>
- * names it the same way it would name an <input>.
- */
-function DateField({
-  id,
-  label,
-  value,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  value: Date | undefined;
-  onChange: (date: Date | undefined) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <div>
-      <label htmlFor={id} className="text-foreground block text-sm font-medium">
-        {label}
-      </label>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            id={id}
-            type="button"
-            variant="outline"
-            className="mt-1 w-full justify-between font-normal"
-          >
-            {value ? formatDateValue(value) : <span className="text-muted-foreground">Not set</span>}
-            <CalendarIcon className="size-4 opacity-50" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="start">
-          <Calendar
-            mode="single"
-            selected={value}
-            defaultMonth={value}
-            captionLayout="dropdown"
-            autoFocus
-            onSelect={(date) => {
-              onChange(date);
-              setOpen(false);
-            }}
-          />
-        </PopoverContent>
-      </Popover>
-    </div>
   );
 }
 

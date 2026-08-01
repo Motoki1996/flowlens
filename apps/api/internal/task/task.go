@@ -239,7 +239,28 @@ type CreateParams struct {
 // BacklogID leaves the task unfiled (未分類). Status and ClosedAt are
 // intentionally excluded: they only change through Close/Reopen, which keep
 // the two fields consistent and idempotent.
+// UpdateParams holds the fields accepted when updating a task. Every field
+// is Optional: one left unset keeps its current value, so a client may PATCH
+// a single attribute without having to echo back the rest of the task.
+// Nullable fields (backlog, assignee ID, the two dates) are Optional[*T], so
+// an explicit null clears them.
 type UpdateParams struct {
+	Title                  Optional[string]
+	Description            Optional[string]
+	BacklogID              Optional[*uuid.UUID]
+	AssigneeGitlabUserID   Optional[*int64]
+	AssigneeGitlabUsername Optional[string]
+	Labels                 Optional[[]string]
+	DueOn                  Optional[*time.Time]
+	StartDate              Optional[*time.Time]
+	Position               Optional[int32]
+}
+
+// resolvedUpdate is UpdateParams with every absent field filled in from the
+// task's current values. Both the database write and the mirrored-field
+// comparison work from it, so they can never disagree about what an absent
+// field meant.
+type resolvedUpdate struct {
 	Title                  string
 	Description            string
 	BacklogID              *uuid.UUID
@@ -249,6 +270,20 @@ type UpdateParams struct {
 	DueOn                  *time.Time
 	StartDate              *time.Time
 	Position               int32
+}
+
+func (p UpdateParams) resolve(current Task) resolvedUpdate {
+	return resolvedUpdate{
+		Title:                  p.Title.Or(current.Title),
+		Description:            p.Description.Or(current.Description),
+		BacklogID:              p.BacklogID.Or(current.BacklogID),
+		AssigneeGitlabUserID:   p.AssigneeGitlabUserID.Or(current.AssigneeGitlabUserID),
+		AssigneeGitlabUsername: p.AssigneeGitlabUsername.Or(current.AssigneeGitlabUsername),
+		Labels:                 p.Labels.Or(current.Labels),
+		DueOn:                  p.DueOn.Or(current.DueOn),
+		StartDate:              p.StartDate.Or(current.StartDate),
+		Position:               p.Position.Or(current.Position),
+	}
 }
 
 // BuildGitlabIssuePayload converts a task's mirrored fields into the payload
@@ -678,30 +713,33 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 		return Task{}, err
 	}
 
-	title, err := normalizeTitle(params.Title)
+	resolved := params.resolve(current)
+
+	title, err := normalizeTitle(resolved.Title)
 	if err != nil {
 		return Task{}, err
 	}
-	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, params.BacklogID); err != nil {
+	resolved.Title = title
+	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, resolved.BacklogID); err != nil {
 		return Task{}, err
 	}
 
-	mirroredChanged := mirroredFieldsChanged(current, title, params)
+	mirroredChanged := mirroredFieldsChanged(current, resolved)
 
 	var result Task
 	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
 		row, err := q.UpdateTaskForOwner(ctx, db.UpdateTaskForOwnerParams{
 			ID:                     taskID,
 			OwnerUserID:            ownerID,
-			BacklogID:              toUUID(params.BacklogID),
-			Title:                  title,
-			Description:            params.Description,
-			AssigneeGitlabUserID:   toInt8(params.AssigneeGitlabUserID),
-			AssigneeGitlabUsername: params.AssigneeGitlabUsername,
-			Labels:                 normalizeLabels(params.Labels),
-			DueOn:                  toDate(params.DueOn),
-			StartDate:              toDate(params.StartDate),
-			Position:               params.Position,
+			BacklogID:              toUUID(resolved.BacklogID),
+			Title:                  resolved.Title,
+			Description:            resolved.Description,
+			AssigneeGitlabUserID:   toInt8(resolved.AssigneeGitlabUserID),
+			AssigneeGitlabUsername: resolved.AssigneeGitlabUsername,
+			Labels:                 normalizeLabels(resolved.Labels),
+			DueOn:                  toDate(resolved.DueOn),
+			StartDate:              toDate(resolved.StartDate),
+			Position:               resolved.Position,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -729,22 +767,23 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 
 // mirroredFieldsChanged reports whether any of the fields FlowLens mirrors
 // to GitLab (title, description, assignee, labels, due date) differ between
-// current and the incoming update — the trigger for enqueueing
-// issue.update. Backlog and position are app-only and never compared here.
-func mirroredFieldsChanged(current Task, title string, params UpdateParams) bool {
-	if current.Title != title || current.Description != params.Description {
+// current and the resolved update — the trigger for enqueueing issue.update.
+// Backlog, position and start date are app-only and never compared here, so
+// a PATCH touching only those enqueues nothing.
+func mirroredFieldsChanged(current Task, resolved resolvedUpdate) bool {
+	if current.Title != resolved.Title || current.Description != resolved.Description {
 		return true
 	}
-	if !equalInt64Ptr(current.AssigneeGitlabUserID, params.AssigneeGitlabUserID) {
+	if !equalInt64Ptr(current.AssigneeGitlabUserID, resolved.AssigneeGitlabUserID) {
 		return true
 	}
-	if current.AssigneeGitlabUsername != params.AssigneeGitlabUsername {
+	if current.AssigneeGitlabUsername != resolved.AssigneeGitlabUsername {
 		return true
 	}
-	if !slices.Equal(current.Labels, normalizeLabels(params.Labels)) {
+	if !slices.Equal(current.Labels, normalizeLabels(resolved.Labels)) {
 		return true
 	}
-	if !equalTimePtr(current.DueOn, params.DueOn) {
+	if !equalTimePtr(current.DueOn, resolved.DueOn) {
 		return true
 	}
 	return false

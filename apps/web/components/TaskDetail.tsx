@@ -2,21 +2,16 @@
 
 import { useMemo, useState } from "react";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, Backlog, Task } from "@/types";
+import type { ApiError, Backlog, Task, TaskDependency } from "@/types";
+import { formatDate } from "@/lib/dates";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { AIContextSection } from "@/components/AIContextSection";
+import { TaskDependencySection } from "@/components/TaskDependencySection";
+import { TaskEditForm } from "@/components/TaskEditForm";
 import { SyncBadge } from "@/components/SyncBadge";
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 /** CloseReopenButton toggles a task between open and closed in place. */
 function CloseReopenButton({
@@ -195,77 +190,130 @@ function GitlabSyncSection({
 /**
  * TaskDetail is the single view for one task, per docs/ui-design.md and the
  * order fixed in the issue: identity -> attributes -> AI-facing information.
- * Close/Reopen and backlog assignment live here, on the object they act on;
- * the link back to the Task collection is the page's breadcrumb.
+ * Close/Reopen, backlog assignment and editing live here, on the object they
+ * act on — there is no separate edit screen (rule 4); the link back to the
+ * Task collection is the page's breadcrumb.
+ *
+ * Editing swaps the identity and attribute blocks for a form. The AI context
+ * card below keeps its own edit toggle, since those fields are a separate
+ * record that never reaches GitLab.
  */
 export function TaskDetail({
   task: initial,
   backlogs,
+  tasks,
+  dependencies,
 }: {
   task: Task;
   backlogs: Backlog[];
+  // The project's tasks and every dependency in it: what the
+  // predecessor/successor pickers choose from.
+  tasks: Task[];
+  dependencies: TaskDependency[];
 }) {
   const [task, setTask] = useState(initial);
+  const [editing, setEditing] = useState(false);
 
   return (
     <>
       <Card>
+        {editing ? (
+          <CardContent>
+            <TaskEditForm
+              task={task}
+              backlogs={backlogs}
+              onSaved={(updated) => {
+                setTask(updated);
+                setEditing(false);
+              }}
+              onCancel={() => setEditing(false)}
+            />
+          </CardContent>
+        ) : (
+          <>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h1 className="text-foreground text-xl leading-none font-semibold">
+                      {task.title}
+                    </h1>
+                    <Badge variant={task.status === "open" ? "default" : "secondary"}>
+                      {task.status === "open" ? "Open" : "Closed"}
+                    </Badge>
+                  </div>
+                  {task.description ? (
+                    <CardDescription className="mt-1.5 whitespace-pre-wrap">
+                      {task.description}
+                    </CardDescription>
+                  ) : null}
+                  <div className="mt-2">
+                    <GitlabSyncSection task={task} onChanged={setTask} />
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-start gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                    Edit task
+                  </Button>
+                  <CloseReopenButton task={task} onChanged={setTask} />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-muted-foreground">Assignee</dt>
+                  <dd className="text-foreground">{task.assigneeGitlabUsername || "Unassigned"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Labels</dt>
+                  <dd className="text-foreground">
+                    {task.labels.length > 0 ? (
+                      <span className="flex flex-wrap gap-1">
+                        {task.labels.map((label) => (
+                          <Badge key={label} variant="outline">
+                            {label}
+                          </Badge>
+                        ))}
+                      </span>
+                    ) : (
+                      "No labels"
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Start</dt>
+                  <dd className="text-foreground">
+                    {task.startDate ? formatDate(task.startDate) : "No start date"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Due</dt>
+                  <dd className="text-foreground">
+                    {task.dueOn ? formatDate(task.dueOn) : "No due date"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Backlog</dt>
+                  <dd className="text-foreground">
+                    <BacklogSelect task={task} backlogs={backlogs} onChanged={setTask} />
+                  </dd>
+                </div>
+              </dl>
+            </CardContent>
+          </>
+        )}
+      </Card>
+
+      <Card className="mt-8">
         <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-foreground text-xl leading-none font-semibold">
-                  {task.title}
-                </h1>
-                <Badge variant={task.status === "open" ? "default" : "secondary"}>
-                  {task.status === "open" ? "Open" : "Closed"}
-                </Badge>
-              </div>
-              {task.description ? (
-                <CardDescription className="mt-1.5 whitespace-pre-wrap">
-                  {task.description}
-                </CardDescription>
-              ) : null}
-              <div className="mt-2">
-                <GitlabSyncSection task={task} onChanged={setTask} />
-              </div>
-            </div>
-            <CloseReopenButton task={task} onChanged={setTask} />
-          </div>
+          <CardTitle className="text-base font-medium">Dependencies</CardTitle>
+          <CardDescription>
+            Scheduling order within the project. Never synced to GitLab.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
-            <div>
-              <dt className="text-muted-foreground">Assignee</dt>
-              <dd className="text-foreground">{task.assigneeGitlabUsername || "Unassigned"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Labels</dt>
-              <dd className="text-foreground">
-                {task.labels.length > 0 ? (
-                  <span className="flex flex-wrap gap-1">
-                    {task.labels.map((label) => (
-                      <Badge key={label} variant="outline">
-                        {label}
-                      </Badge>
-                    ))}
-                  </span>
-                ) : (
-                  "No labels"
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Due</dt>
-              <dd className="text-foreground">{task.dueOn ? formatDate(task.dueOn) : "No due date"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Backlog</dt>
-              <dd className="text-foreground">
-                <BacklogSelect task={task} backlogs={backlogs} onChanged={setTask} />
-              </dd>
-            </div>
-          </dl>
+          <TaskDependencySection task={task} tasks={tasks} dependencies={dependencies} />
         </CardContent>
       </Card>
 

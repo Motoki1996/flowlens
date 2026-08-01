@@ -3,7 +3,7 @@ import { expect, userEvent, within } from "storybook/test";
 import { http, HttpResponse } from "msw";
 import { TaskDetail } from "./TaskDetail";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { Backlog, Task } from "@/types";
+import type { Backlog, Task, TaskDependency } from "@/types";
 
 const backlog: Backlog = {
   id: "b1",
@@ -55,7 +55,7 @@ type Story = StoryObj<typeof meta>;
 
 /** 未連携: the task's project has never had a linked GitLab project. */
 export const Unlinked: Story = {
-  args: { task: makeTask({ gitlab: null }), backlogs: [backlog] },
+  args: { task: makeTask({ gitlab: null }), backlogs: [backlog], tasks: [], dependencies: [] },
 };
 
 /** 同期済み: the task pushed cleanly and links to its GitLab issue. */
@@ -71,6 +71,8 @@ export const Synced: Story = {
       },
     }),
     backlogs: [backlog],
+    tasks: [],
+    dependencies: [],
   },
 };
 
@@ -81,6 +83,8 @@ export const Pending: Story = {
       gitlab: { syncStatus: "pending", lastError: "", lastSyncedAt: null, issueIid: null, webUrl: "" },
     }),
     backlogs: [backlog],
+    tasks: [],
+    dependencies: [],
   },
 };
 
@@ -97,6 +101,66 @@ export const Failed: Story = {
       },
     }),
     backlogs: [backlog],
+    tasks: [],
+    dependencies: [],
+  },
+};
+
+const otherTasks: Task[] = [
+  makeTask({ id: "t2", title: "Design the fix" }),
+  makeTask({ id: "t3", title: "Ship the fix" }),
+];
+
+const dependencies: TaskDependency[] = [
+  { id: "d1", predecessorTaskId: "t2", successorTaskId: "t1", createdAt: "2026-01-01T00:00:00Z" },
+  { id: "d2", predecessorTaskId: "t1", successorTaskId: "t3", createdAt: "2026-01-01T00:00:00Z" },
+];
+
+/** 依存あり: the task sits between a predecessor and a successor. */
+export const WithDependencies: Story = {
+  args: {
+    task: makeTask({}),
+    backlogs: [backlog],
+    tasks: [makeTask({}), ...otherTasks],
+    dependencies,
+  },
+};
+
+/** 編集中: the attribute block swapped for the inline edit form. */
+export const Editing: Story = {
+  args: {
+    task: makeTask({ dueOn: "2026-02-01T00:00:00Z" }),
+    backlogs: [backlog],
+    tasks: [],
+    dependencies: [],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Edit task" }));
+    await expect(await canvas.findByRole("form", { name: "Edit task" })).toBeInTheDocument();
+  },
+};
+
+/** 編集の保存失敗: the API rejects the edit and the form stays open with the error. */
+export const EditFails: Story = {
+  args: { task: makeTask({}), backlogs: [backlog], tasks: [], dependencies: [] },
+  parameters: {
+    msw: {
+      handlers: [
+        http.patch(`${API_PUBLIC_URL}/api/v1/tasks/:taskId`, () =>
+          HttpResponse.json(
+            { error: { code: "invalid_title", message: "title must be 1-255 characters" } },
+            { status: 400 },
+          ),
+        ),
+      ],
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Edit task" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Save" }));
+    await expect(await canvas.findByText("title must be 1-255 characters")).toBeInTheDocument();
   },
 };
 
@@ -113,6 +177,8 @@ export const RetrySucceeds: Story = {
       },
     }),
     backlogs: [backlog],
+    tasks: [],
+    dependencies: [],
   },
   parameters: {
     msw: {

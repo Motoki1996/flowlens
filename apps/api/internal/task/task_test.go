@@ -391,9 +391,9 @@ func TestBuildGitlabIssuePayload_NeverReferencesAIContextFields(t *testing.T) {
 	ctx := context.Background()
 
 	tk, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
-		Title:       "Fix bug",
-		Description: "does not mention acceptance criteria",
-		Labels:      []string{"bug"},
+		Title:       task.Present("Fix bug"),
+		Description: task.Present("does not mention acceptance criteria"),
+		Labels:      task.Present([]string{"bug"}),
 	})
 	require.NoError(t, err)
 
@@ -444,7 +444,7 @@ func TestService_ScopesEveryOperationToProjectOwner(t *testing.T) {
 		p := q.SeedProject(owner, "Alpha")
 		tsk := q.SeedTask(p.ID, owner, "Fix bug")
 
-		_, err := svc.Update(ctx, other, tsk.ID, task.UpdateParams{Title: "Hijacked"})
+		_, err := svc.Update(ctx, other, tsk.ID, task.UpdateParams{Title: task.Present("Hijacked")})
 		require.ErrorIs(t, err, task.ErrNotFound)
 
 		still, err := svc.Get(ctx, owner, tsk.ID)
@@ -576,9 +576,9 @@ func TestService_Update_EnqueuesIssueUpdateJob_WhenMirroredFieldsChangeAndTaskIs
 	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
 
 	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
-		Title:       "Fix bug harder",
-		Description: "more detail",
-		Labels:      []string{"bug", "urgent"},
+		Title:       task.Present("Fix bug harder"),
+		Description: task.Present("more detail"),
+		Labels:      task.Present([]string{"bug", "urgent"}),
 	})
 	require.NoError(t, err)
 
@@ -602,7 +602,7 @@ func TestService_Update_DoesNotEnqueue_WhenTaskHasNoGitlabLink(t *testing.T) {
 	p := q.SeedProject(owner, "Alpha")
 	tsk := q.SeedTask(p.ID, owner, "Fix bug")
 
-	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{Title: "Fix bug harder", Description: "x"})
+	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{Title: task.Present("Fix bug harder"), Description: task.Present("x")})
 	require.NoError(t, err)
 	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
 }
@@ -619,11 +619,93 @@ func TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange(t *testin
 	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
 
 	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
-		Title:    "Fix bug", // unchanged
-		Position: 5,         // app-only, never mirrored to GitLab
+		Title:    task.Present("Fix bug"), // unchanged
+		Position: task.Present(int32(5)),  // app-only, never mirrored to GitLab
 	})
 	require.NoError(t, err)
 	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+// Update is a partial update: a field left unset in UpdateParams keeps its
+// current value, and a nullable field explicitly set to nil is cleared. This
+// is what lets the web edit form PATCH one attribute without echoing the
+// whole task back — and what keeps position from being reset to 0 by a form
+// that never shows it.
+func TestService_Update_PartialUpdate(t *testing.T) {
+	due := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	assigneeID := int64(42)
+
+	seed := func(t *testing.T) (*task.Service, context.Context, uuid.UUID, task.Task) {
+		t.Helper()
+		q := dbtest.New()
+		svc := newService(q)
+		ctx := context.Background()
+		owner := q.SeedUser("octocat", "octocat@example.com").ID
+		p := q.SeedProject(owner, "Alpha")
+		created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{
+			Title:                  "Fix bug",
+			Description:            "original",
+			AssigneeGitlabUserID:   &assigneeID,
+			AssigneeGitlabUsername: "octocat",
+			Labels:                 []string{"bug"},
+			DueOn:                  &due,
+			StartDate:              &start,
+		})
+		require.NoError(t, err)
+		return svc, ctx, owner, created
+	}
+
+	tests := []struct {
+		name   string
+		params task.UpdateParams
+		want   func(t *testing.T, before, after task.Task)
+	}{
+		{
+			name:   "title only leaves every other field alone",
+			params: task.UpdateParams{Title: task.Present("Renamed")},
+			want: func(t *testing.T, before, after task.Task) {
+				assert.Equal(t, "Renamed", after.Title)
+				assert.Equal(t, before.Description, after.Description)
+				assert.Equal(t, before.Labels, after.Labels)
+				assert.Equal(t, before.AssigneeGitlabUsername, after.AssigneeGitlabUsername)
+				assert.Equal(t, before.AssigneeGitlabUserID, after.AssigneeGitlabUserID)
+				assert.Equal(t, before.Position, after.Position)
+				require.NotNil(t, after.DueOn)
+				assert.True(t, due.Equal(*after.DueOn))
+				require.NotNil(t, after.StartDate)
+				assert.True(t, start.Equal(*after.StartDate))
+			},
+		},
+		{
+			name:   "explicit null clears a nullable field",
+			params: task.UpdateParams{DueOn: task.Present[*time.Time](nil)},
+			want: func(t *testing.T, before, after task.Task) {
+				assert.Nil(t, after.DueOn)
+				assert.Equal(t, before.Title, after.Title)
+				require.NotNil(t, after.StartDate, "an untouched nullable field is not cleared")
+			},
+		},
+		{
+			name:   "empty params change nothing",
+			params: task.UpdateParams{},
+			want: func(t *testing.T, before, after task.Task) {
+				assert.Equal(t, before.Title, after.Title)
+				assert.Equal(t, before.Description, after.Description)
+				assert.Equal(t, before.Labels, after.Labels)
+				assert.Equal(t, before.Position, after.Position)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, ctx, owner, before := seed(t)
+			after, err := svc.Update(ctx, owner, before.ID, tt.params)
+			require.NoError(t, err)
+			tt.want(t, before, after)
+		})
+	}
 }
 
 // startDate is app-only (issue #33): GitLab Issues have no native start-date
@@ -665,8 +747,8 @@ func TestService_Update_PersistsStartDate_WithoutEnqueuingSyncJob(t *testing.T) 
 
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	updated, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
-		Title:     "Fix bug", // unchanged
-		StartDate: &start,
+		Title:     task.Present("Fix bug"), // unchanged
+		StartDate: task.Present(&start),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, updated.StartDate)

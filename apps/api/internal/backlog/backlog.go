@@ -18,28 +18,36 @@ import (
 	"unicode/utf8"
 
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/optional"
 	"github.com/flowlens/api/internal/project"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Sentinel errors returned by Service. Handlers map these to HTTP status
 // codes. ErrNotFound is returned both when a backlog/project does not exist
 // and when it belongs to another user.
 var (
-	ErrInvalidName = errors.New("backlog: name must be 1-100 characters")
-	ErrNotFound    = errors.New("backlog: not found")
+	ErrInvalidName     = errors.New("backlog: name must be 1-100 characters")
+	ErrInvalidSchedule = errors.New("backlog: start date must not be after due date")
+	ErrNotFound        = errors.New("backlog: not found")
 )
 
-// Backlog is the API-facing representation of a project backlog.
+// Backlog is the API-facing representation of a project backlog. StartDate and
+// DueOn are the backlog's planned period, drawn as one bar on the Backlog
+// timeline. Both are app-only and never synced to GitLab — a backlog is not a
+// GitLab milestone (see the 000008 migration).
 type Backlog struct {
-	ID          uuid.UUID `json:"id"`
-	ProjectID   uuid.UUID `json:"projectId"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Position    int32     `json:"position"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID          uuid.UUID  `json:"id"`
+	ProjectID   uuid.UUID  `json:"projectId"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Position    int32      `json:"position"`
+	StartDate   *time.Time `json:"startDate"`
+	DueOn       *time.Time `json:"dueOn"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
 }
 
 // fromRow maps a database row to the domain model.
@@ -50,9 +58,36 @@ func fromRow(row db.Backlog) Backlog {
 		Name:        row.Name,
 		Description: row.Description,
 		Position:    row.Position,
+		StartDate:   datePtr(row.StartDate),
+		DueOn:       datePtr(row.DueOn),
 		CreatedAt:   row.CreatedAt.Time,
 		UpdatedAt:   row.UpdatedAt.Time,
 	}
+}
+
+func datePtr(v pgtype.Date) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := v.Time
+	return &t
+}
+
+func toDate(v *time.Time) pgtype.Date {
+	if v == nil {
+		return pgtype.Date{}
+	}
+	return pgtype.Date{Time: *v, Valid: true}
+}
+
+// validateSchedule rejects a period that ends before it starts. Either date
+// alone is fine: a backlog with only a due date is a deadline without a
+// committed start, and the timeline draws it as a single day.
+func validateSchedule(startDate, dueOn *time.Time) error {
+	if startDate != nil && dueOn != nil && startDate.After(*dueOn) {
+		return ErrInvalidSchedule
+	}
+	return nil
 }
 
 // Service manages backlogs inside projects owned by a single user.
@@ -76,10 +111,20 @@ func normalizeName(raw string) (string, error) {
 	return name, nil
 }
 
+// CreateParams are the attributes of a new backlog. StartDate and DueOn are
+// both optional — a backlog with no planned period simply doesn't appear on
+// the timeline until one is set.
+type CreateParams struct {
+	Name        string
+	Description string
+	StartDate   *time.Time
+	DueOn       *time.Time
+}
+
 // Create validates name and creates a backlog at the end of projectID's
 // backlog order. It returns ErrNotFound if projectID does not exist or
 // belongs to another user.
-func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, name, description string) (Backlog, error) {
+func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p CreateParams) (Backlog, error) {
 	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
 		if errors.Is(err, project.ErrNotFound) {
 			return Backlog{}, ErrNotFound
@@ -87,14 +132,19 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, name
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
 	}
 
-	normalized, err := normalizeName(name)
+	normalized, err := normalizeName(p.Name)
 	if err != nil {
+		return Backlog{}, err
+	}
+	if err := validateSchedule(p.StartDate, p.DueOn); err != nil {
 		return Backlog{}, err
 	}
 	row, err := s.q.CreateBacklog(ctx, db.CreateBacklogParams{
 		ProjectID:   projectID,
 		Name:        normalized,
-		Description: description,
+		Description: p.Description,
+		StartDate:   toDate(p.StartDate),
+		DueOn:       toDate(p.DueOn),
 	})
 	if err != nil {
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
@@ -140,19 +190,49 @@ func (s *Service) Get(ctx context.Context, ownerID, backlogID uuid.UUID) (Backlo
 	return fromRow(row), nil
 }
 
-// Update overwrites name, description and position. Ownership is enforced
-// by the query, so a non-owner gets ErrNotFound and nothing is written.
-func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, name, description string, position int32) (Backlog, error) {
-	normalized, err := normalizeName(name)
+// UpdateParams are the attributes Update writes. Name, Description and
+// Position are always overwritten; the two dates are Optional so a caller that
+// only renames a backlog — the rename form in the web UI does exactly that —
+// leaves its planned period untouched rather than clearing it. An explicit
+// null clears the date.
+type UpdateParams struct {
+	Name        string
+	Description string
+	Position    int32
+	StartDate   optional.Optional[*time.Time]
+	DueOn       optional.Optional[*time.Time]
+}
+
+// Update overwrites name, description and position, and applies whichever of
+// the dates the caller set. Ownership is enforced by the query, so a non-owner
+// gets ErrNotFound and nothing is written.
+func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p UpdateParams) (Backlog, error) {
+	normalized, err := normalizeName(p.Name)
 	if err != nil {
 		return Backlog{}, err
 	}
+
+	// The UPDATE writes every column, so absent dates have to be resolved
+	// against the stored row first. Get is owner-scoped, so a foreign backlog
+	// stops here with ErrNotFound before anything is written.
+	current, err := s.Get(ctx, ownerID, backlogID)
+	if err != nil {
+		return Backlog{}, err
+	}
+	startDate := p.StartDate.Or(current.StartDate)
+	dueOn := p.DueOn.Or(current.DueOn)
+	if err := validateSchedule(startDate, dueOn); err != nil {
+		return Backlog{}, err
+	}
+
 	row, err := s.q.UpdateBacklogForOwner(ctx, db.UpdateBacklogForOwnerParams{
 		ID:          backlogID,
 		OwnerUserID: ownerID,
 		Name:        normalized,
-		Description: description,
-		Position:    position,
+		Description: p.Description,
+		Position:    p.Position,
+		StartDate:   toDate(startDate),
+		DueOn:       toDate(dueOn),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

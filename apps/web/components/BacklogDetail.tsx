@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Backlog, Task, TaskStatus } from "@/types";
 import { taskPath, tasksPath } from "@/lib/routes";
+import { backlogProgress } from "@/lib/timeline";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -48,6 +49,10 @@ export function BacklogDetail({
   tasks?: Task[];
   tasksError?: boolean;
 }) {
+  // tasks is already filtered to this backlog by the page, but backlogProgress
+  // is the one place the ratio is defined, so it counts rather than the view.
+  const progress = backlogProgress(tasks, backlog.id);
+
   return (
     <>
       <Card>
@@ -59,6 +64,30 @@ export function BacklogDetail({
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Start date</dt>
+              <dd className="text-foreground">
+                {backlog.startDate ? formatDate(backlog.startDate) : "Not set"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Due date</dt>
+              <dd className="text-foreground">
+                {backlog.dueOn ? formatDate(backlog.dueOn) : "Not set"}
+              </dd>
+            </div>
+            {/* The same closed/total ratio the Backlog timeline fills its bar
+                with, stated here as the number it is. */}
+            <div>
+              <dt className="text-muted-foreground">Progress</dt>
+              <dd className="text-foreground">
+                {tasksError
+                  ? "Unavailable"
+                  : progress.total === 0
+                    ? "No tasks"
+                    : `${progress.closed}/${progress.total} closed (${Math.round(progress.ratio * 100)}%)`}
+              </dd>
+            </div>
             <div>
               <dt className="text-muted-foreground">Created</dt>
               <dd className="text-foreground">{formatDateTime(backlog.createdAt)}</dd>

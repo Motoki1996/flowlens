@@ -4,8 +4,8 @@ import { useMemo } from "react";
 import Link from "next/link";
 import type { Task, TaskDependency } from "@/types";
 import { taskPath } from "@/lib/routes";
-import { computeTimelineBounds, hasSchedule, spanDays, toGanttRows } from "@/lib/timeline";
-import { AXIS_HEIGHT, ROW_HEIGHT, STATE_LABEL, TaskGanttChart } from "@/components/TaskGanttChart";
+import { computeTimelineBounds, hasSchedule, spanDays, toTaskGanttRows } from "@/lib/timeline";
+import { AXIS_HEIGHT, GanttChart, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
 
 /** The name column is a fixed width so every row's bar starts at the same x,
  *  and the plot gets a minimum width per day so a long project scrolls
@@ -54,7 +54,7 @@ export function TaskTimelineSection({
   const today = useMemo(() => now ?? new Date(), [now]);
   const bounds = useMemo(() => computeTimelineBounds(tasks), [tasks]);
   const rows = useMemo(
-    () => (bounds ? toGanttRows(tasks.filter(hasSchedule), bounds, today) : []),
+    () => (bounds ? toTaskGanttRows(tasks.filter(hasSchedule), bounds, today) : []),
     [tasks, bounds, today],
   );
   const unscheduled = tasks.filter((t) => !hasSchedule(t));
@@ -129,7 +129,12 @@ export function TaskTimelineSection({
 
         <div className="min-w-0 flex-1 overflow-x-auto">
           <div style={{ minWidth: plotWidth }}>
-            <TaskGanttChart projectId={projectId} rows={rows} bounds={bounds} now={today} />
+            <GanttChart
+              rows={rows}
+              bounds={bounds}
+              now={today}
+              href={(row) => taskPath(projectId, row.id)}
+            />
           </div>
         </div>
       </div>

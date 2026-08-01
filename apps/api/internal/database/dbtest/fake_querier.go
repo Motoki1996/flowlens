@@ -447,6 +447,8 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 		Name:        arg.Name,
 		Description: arg.Description,
 		Position:    f.nextBacklogPosition(arg.ProjectID),
+		StartDate:   arg.StartDate,
+		DueOn:       arg.DueOn,
 		CreatedAt:   now(),
 		UpdatedAt:   now(),
 	}
@@ -501,9 +503,13 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 		return db.Backlog{}, pgx.ErrNoRows
 	}
 
+	// The real UPDATE writes both dates unconditionally; backlog.Service is
+	// what resolves an absent one to its current value before calling here.
 	existing.Name = arg.Name
 	existing.Description = arg.Description
 	existing.Position = arg.Position
+	existing.StartDate = arg.StartDate
+	existing.DueOn = arg.DueOn
 	existing.UpdatedAt = now()
 
 	f.backlogsByID[arg.ID] = existing

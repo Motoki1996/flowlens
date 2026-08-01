@@ -2,18 +2,44 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogPath, tasksPath } from "@/lib/routes";
+import { formatDate, fromApiDate, toApiDate } from "@/lib/dates";
 import type { ApiError, Backlog, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { DateField } from "@/components/DateField";
+
+/**
+ * The Timeline view mode pulls in the charting library, which the default List
+ * mode has no use for — loading it on demand keeps that cost off the backlog
+ * collection until someone actually switches views. Same arrangement as the
+ * Task collection.
+ */
+const BacklogTimelineSection = dynamic(
+  () => import("@/components/BacklogTimelineSection").then((m) => m.BacklogTimelineSection),
+  { loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p> },
+);
+
+type ViewMode = "list" | "timeline";
 
 function taskCount(tasks: Task[], backlogId: string) {
   return tasks.filter((t) => t.backlogId === backlogId).length;
+}
+
+/** scheduleLabel renders a backlog's planned period for the list row. */
+function scheduleLabel(backlog: Backlog): string | null {
+  if (backlog.startDate && backlog.dueOn) {
+    return `${formatDate(backlog.startDate)} – ${formatDate(backlog.dueOn)}`;
+  }
+  if (backlog.startDate) return `From ${formatDate(backlog.startDate)}`;
+  if (backlog.dueOn) return `Due ${formatDate(backlog.dueOn)}`;
+  return null;
 }
 
 /** NewBacklogForm is the inline creation form shown in the backlog list. */
@@ -21,6 +47,8 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -38,7 +66,12 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description }),
+        body: JSON.stringify({
+          name,
+          description,
+          startDate: toApiDate(startDate),
+          dueOn: toApiDate(dueOn),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -83,6 +116,15 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
           className="mt-1"
         />
       </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <DateField
+          id="new-backlog-start-date"
+          label="Start date"
+          value={startDate}
+          onChange={setStartDate}
+        />
+        <DateField id="new-backlog-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
+      </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Creating…" : "Create backlog"}
@@ -95,7 +137,9 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
   );
 }
 
-/** EditBacklogForm is the inline rename form shown in place of one backlog row. */
+/** EditBacklogForm is the inline edit form shown in place of one backlog row.
+ *  It covers the schedule as well as the name, so the action is "Edit", not
+ *  "Rename". */
 function EditBacklogForm({
   backlog,
   onSaved,
@@ -108,6 +152,8 @@ function EditBacklogForm({
   const router = useRouter();
   const [name, setName] = useState(backlog.name);
   const [description, setDescription] = useState(backlog.description);
+  const [startDate, setStartDate] = useState(fromApiDate(backlog.startDate));
+  const [dueOn, setDueOn] = useState(fromApiDate(backlog.dueOn));
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -125,7 +171,13 @@ function EditBacklogForm({
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, position: backlog.position }),
+        body: JSON.stringify({
+          name,
+          description,
+          position: backlog.position,
+          startDate: toApiDate(startDate),
+          dueOn: toApiDate(dueOn),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -140,7 +192,7 @@ function EditBacklogForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3" aria-label={`Rename ${backlog.name}`}>
+    <form onSubmit={handleSubmit} className="space-y-3" aria-label={`Edit ${backlog.name}`}>
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -171,6 +223,20 @@ function EditBacklogForm({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
+        />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <DateField
+          id={`edit-backlog-start-date-${backlog.id}`}
+          label="Start date"
+          value={startDate}
+          onChange={setStartDate}
+        />
+        <DateField
+          id={`edit-backlog-due-on-${backlog.id}`}
+          label="Due date"
+          value={dueOn}
+          onChange={setDueOn}
         />
       </div>
       <div className="flex gap-2">
@@ -242,32 +308,64 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
 
 /**
  * BacklogListSection is the Backlog collection view at
- * /projects/[projectId]/backlogs. Backlog creation, rename and delete all
- * happen here rather than on a separate backlog-management screen — actions
- * live on the object they act on (docs/ui-design.md rule 4).
+ * /projects/[projectId]/backlogs. List and Timeline are view modes of this one
+ * screen (docs/ui-design.md rule 5), and backlog creation, editing and delete
+ * all happen here rather than on a separate backlog-management screen —
+ * actions live on the object they act on (rule 4).
  */
 export function BacklogListSection({
   projectId,
   backlogs,
   tasks = [],
+  tasksError = false,
 }: {
   projectId: string;
   backlogs: Backlog[];
   tasks?: Task[];
+  /** Task counts and timeline progress both come from tasks, so a failed fetch
+   *  has to be visible rather than showing every backlog as empty. */
+  tasksError?: boolean;
 }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [view, setView] = useState<ViewMode>("list");
 
   return (
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base font-medium">Backlogs</CardTitle>
-          {!creating ? (
-            <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
-              New backlog
-            </Button>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            {/* The view modes only make sense once backlogs exist, but "New
+                backlog" must stay reachable on an empty project. */}
+            {backlogs.length > 0 ? (
+              <div className="flex" role="group" aria-label="View">
+                <Button
+                  type="button"
+                  variant={view === "list" ? "default" : "outline"}
+                  size="sm"
+                  className="rounded-r-none"
+                  onClick={() => setView("list")}
+                >
+                  List
+                </Button>
+                <Button
+                  type="button"
+                  variant={view === "timeline" ? "default" : "outline"}
+                  size="sm"
+                  className="rounded-l-none"
+                  onClick={() => setView("timeline")}
+                >
+                  Timeline
+                </Button>
+              </div>
+            ) : null}
+            {!creating ? (
+              <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+                New backlog
+              </Button>
+            ) : null}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -278,6 +376,13 @@ export function BacklogListSection({
         ) : null}
         {backlogs.length === 0 ? (
           <p className="text-muted-foreground text-sm">No backlogs yet.</p>
+        ) : view === "timeline" ? (
+          <BacklogTimelineSection
+            projectId={projectId}
+            backlogs={backlogs}
+            tasks={tasks}
+            tasksError={tasksError}
+          />
         ) : (
           <ul className="space-y-2">
             {backlogs.map((backlog) => (
@@ -290,15 +395,22 @@ export function BacklogListSection({
                   />
                 ) : (
                   <div className="flex items-center justify-between gap-4">
-                    <Link
-                      href={backlogPath(projectId, backlog.id)}
-                      className="text-foreground text-sm hover:underline"
-                    >
-                      {backlog.name}{" "}
-                      <span className="text-muted-foreground text-xs">
-                        ({taskCount(tasks, backlog.id)})
-                      </span>
-                    </Link>
+                    <div className="min-w-0">
+                      <Link
+                        href={backlogPath(projectId, backlog.id)}
+                        className="text-foreground text-sm hover:underline"
+                      >
+                        {backlog.name}{" "}
+                        <span className="text-muted-foreground text-xs">
+                          ({taskCount(tasks, backlog.id)})
+                        </span>
+                      </Link>
+                      {scheduleLabel(backlog) ? (
+                        <p className="text-muted-foreground truncate text-xs">
+                          {scheduleLabel(backlog)}
+                        </p>
+                      ) : null}
+                    </div>
                     <div className="flex shrink-0 items-center gap-2">
                       {/* Tasks live in the Task collection, filtered — this row
                           hands off to it instead of the list growing a second
@@ -310,7 +422,7 @@ export function BacklogListSection({
                         View tasks
                       </Link>
                       <Button variant="outline" size="sm" onClick={() => setEditingId(backlog.id)}>
-                        Rename
+                        Edit
                       </Button>
                       <DeleteBacklogButton backlog={backlog} />
                     </div>

@@ -11,6 +11,8 @@ const backlog: Backlog = {
   name: "Sprint 1",
   description: "The first sprint",
   position: 0,
+  startDate: null,
+  dueOn: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };
@@ -50,6 +52,38 @@ describe("BacklogDetail", () => {
     render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
     expect(screen.getByRole("heading", { name: "Sprint 1" })).toBeInTheDocument();
     expect(screen.getByText("The first sprint")).toBeInTheDocument();
+  });
+
+  it("shows the planned period, or says it is unset", () => {
+    const { rerender } = render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
+    expect(screen.getAllByText("Not set")).toHaveLength(2);
+
+    rerender(
+      <BacklogDetail
+        backlog={{ ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" }}
+        project={project}
+        tasks={[]}
+      />,
+    );
+    expect(screen.getByText("Aug 1, 2026")).toBeInTheDocument();
+    expect(screen.getByText("Aug 31, 2026")).toBeInTheDocument();
+  });
+
+  it("shows the closed/total progress its timeline bar is filled by", () => {
+    const tasks = [
+      makeTask({ id: "t1", status: "closed" }),
+      makeTask({ id: "t2", status: "closed" }),
+      makeTask({ id: "t3", status: "open" }),
+      makeTask({ id: "t4", status: "open" }),
+    ];
+    render(<BacklogDetail backlog={backlog} project={project} tasks={tasks} />);
+    expect(screen.getByText("2/4 closed (50%)")).toBeInTheDocument();
+  });
+
+  // Progress is unknowable when the task fetch failed, so it must not read 0%.
+  it("reports progress as unavailable when tasks failed to load", () => {
+    render(<BacklogDetail backlog={backlog} project={project} tasks={[]} tasksError />);
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
   });
 
   it("shows an empty state with no tasks", () => {

@@ -10,6 +10,8 @@ const backlog: Backlog = {
   name: "Sprint 1",
   description: "Two-week sprint ending Friday.",
   position: 0,
+  startDate: null,
+  dueOn: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };

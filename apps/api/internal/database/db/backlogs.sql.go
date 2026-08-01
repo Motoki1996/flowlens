@@ -9,24 +9,29 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createBacklog = `-- name: CreateBacklog :one
 
-INSERT INTO backlogs (project_id, name, description, position)
+INSERT INTO backlogs (project_id, name, description, position, start_date, due_on)
 VALUES (
     $1,
     $2,
     $3,
-    COALESCE((SELECT MAX(position) + 1 FROM backlogs WHERE project_id = $1), 0)
+    COALESCE((SELECT MAX(position) + 1 FROM backlogs WHERE project_id = $1), 0),
+    $4,
+    $5
 )
-RETURNING id, project_id, name, description, position, created_at, updated_at
+RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on
 `
 
 type CreateBacklogParams struct {
-	ProjectID   uuid.UUID `json:"project_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
+	ProjectID   uuid.UUID   `json:"project_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	StartDate   pgtype.Date `json:"start_date"`
+	DueOn       pgtype.Date `json:"due_on"`
 }
 
 // Backlogs have no owner column of their own; ownership is always checked
@@ -35,7 +40,13 @@ type CreateBacklogParams struct {
 // project.Service.Get), while the single-backlog queries join to projects so
 // a foreign backlog is indistinguishable from a missing one.
 func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error) {
-	row := q.db.QueryRow(ctx, createBacklog, arg.ProjectID, arg.Name, arg.Description)
+	row := q.db.QueryRow(ctx, createBacklog,
+		arg.ProjectID,
+		arg.Name,
+		arg.Description,
+		arg.StartDate,
+		arg.DueOn,
+	)
 	var i Backlog
 	err := row.Scan(
 		&i.ID,
@@ -45,6 +56,8 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StartDate,
+		&i.DueOn,
 	)
 	return i, err
 }
@@ -69,7 +82,7 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 }
 
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at
+SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on
 FROM backlogs b
 JOIN projects p ON p.id = b.project_id
 WHERE b.id = $1 AND p.owner_user_id = $2
@@ -91,12 +104,14 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StartDate,
+		&i.DueOn,
 	)
 	return i, err
 }
 
 const listBacklogsByProject = `-- name: ListBacklogsByProject :many
-SELECT id, project_id, name, description, position, created_at, updated_at FROM backlogs WHERE project_id = $1 ORDER BY position ASC, created_at ASC
+SELECT id, project_id, name, description, position, created_at, updated_at, start_date, due_on FROM backlogs WHERE project_id = $1 ORDER BY position ASC, created_at ASC
 `
 
 func (q *Queries) ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error) {
@@ -116,6 +131,8 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, projectID uuid.UUID
 			&i.Position,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StartDate,
+			&i.DueOn,
 		); err != nil {
 			return nil, err
 		}
@@ -129,20 +146,25 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, projectID uuid.UUID
 
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $3, description = $4, position = $5, updated_at = now()
+SET name = $3, description = $4, position = $5, start_date = $6, due_on = $7, updated_at = now()
 FROM projects p
 WHERE b.id = $1 AND b.project_id = p.id AND p.owner_user_id = $2
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at
+RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on
 `
 
 type UpdateBacklogForOwnerParams struct {
-	ID          uuid.UUID `json:"id"`
-	OwnerUserID uuid.UUID `json:"owner_user_id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Position    int32     `json:"position"`
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID uuid.UUID   `json:"owner_user_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Position    int32       `json:"position"`
+	StartDate   pgtype.Date `json:"start_date"`
+	DueOn       pgtype.Date `json:"due_on"`
 }
 
+// UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
+// must arrive already resolved: backlog.Service reads the current row first and
+// fills in whatever the PATCH body left out (see its Update).
 func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error) {
 	row := q.db.QueryRow(ctx, updateBacklogForOwner,
 		arg.ID,
@@ -150,6 +172,8 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		arg.Name,
 		arg.Description,
 		arg.Position,
+		arg.StartDate,
+		arg.DueOn,
 	)
 	var i Backlog
 	err := row.Scan(
@@ -160,6 +184,8 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StartDate,
+		&i.DueOn,
 	)
 	return i, err
 }

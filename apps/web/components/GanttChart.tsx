@@ -3,20 +3,19 @@
 import { useRouter } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
-import { taskPath } from "@/lib/routes";
 import {
   computeAxis,
   formatAxisTick,
   todayOffset,
   type DateRange,
   type GanttRow,
-  type TaskScheduleState,
+  type ScheduleState,
 } from "@/lib/timeline";
 
-/** ROW_HEIGHT must match the task-name column in TaskTimelineSection — the two
- *  are separate elements laid side by side, and only equal row heights keep a
- *  name aligned with its bar. AXIS_HEIGHT is reserved for the date axis so the
- *  labels are inside the container rather than clipped by it. */
+/** ROW_HEIGHT must match the name column of the section wrapping this chart —
+ *  the two are separate elements laid side by side, and only equal row heights
+ *  keep a name aligned with its bar. AXIS_HEIGHT is reserved for the date axis
+ *  so the labels are inside the container rather than clipped by it. */
 export const ROW_HEIGHT = 44;
 export const AXIS_HEIGHT = 28;
 const BAR_SIZE = 20;
@@ -26,17 +25,22 @@ const BAR_SIZE = 20;
  *  muted so what's left to do is what stands out. Because it is status, hue
  *  never carries the meaning alone — the legend, the tooltip and the row's
  *  own status text all repeat it. */
-const STATE_COLOR: Record<TaskScheduleState, string> = {
+const STATE_COLOR: Record<ScheduleState, string> = {
   open: "var(--chart-1)",
   overdue: "var(--destructive)",
   closed: "var(--muted-foreground)",
 };
 
-export const STATE_LABEL: Record<TaskScheduleState, string> = {
+export const STATE_LABEL: Record<ScheduleState, string> = {
   open: "Open",
   overdue: "Overdue",
   closed: "Closed",
 };
+
+/** The unfinished part of a backlog bar keeps the row's own colour rather than
+ *  taking a second hue: the split is "how much of this bar is done", which is
+ *  one measure, not two categories. */
+const REMAINING_OPACITY = 0.25;
 
 const chartConfig = {
   duration: { label: "Scheduled" },
@@ -44,6 +48,12 @@ const chartConfig = {
 
 function formatDay(date: Date) {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+/** percent renders a completion ratio, so every place that states one — the
+ *  tooltip here and the name column beside the chart — rounds it identically. */
+export function percent(ratio: number): string {
+  return `${Math.round(ratio * 100)}%`;
 }
 
 /** GanttTooltip replaces ChartTooltipContent, which renders one numeric value
@@ -76,31 +86,55 @@ function GanttTooltip({
           ? formatDay(row.start)
           : `${formatDay(row.start)} – ${formatDay(row.end)}`}
       </div>
+      {/* Naming the counts keeps the fill from being the only statement of
+          progress: "50%" and "1/2 tasks closed" carry different confidence. */}
+      {row.progress ? (
+        <div className="text-muted-foreground tabular-nums">
+          {row.progress.total === 0
+            ? "No tasks"
+            : `${row.progress.closed}/${row.progress.total} tasks closed (${percent(row.progress.ratio)})`}
+        </div>
+      ) : null}
     </div>
   );
 }
 
+/** doneWidth / remainingWidth split a bar at its completion ratio. A row with
+ *  no progress (a task) is all "done" and draws as one solid bar, since a task
+ *  is closed or it isn't — its colour already says which. */
+const doneWidth = (row: GanttRow) => (row.progress ? row.duration * row.progress.ratio : row.duration);
+const remainingWidth = (row: GanttRow) => (row.progress ? row.duration * (1 - row.progress.ratio) : 0);
+
 /**
- * TaskGanttChart draws the bars of the Timeline view mode. It renders only the
- * plot: the task names live in a sibling column in TaskTimelineSection so each
- * one stays a real <Link> to the task's single view (SVG axis ticks would break
- * both that navigation and keyboard access).
+ * GanttChart draws the bars of a Timeline view mode. It renders only the plot:
+ * the row names live in a sibling column in the section that wraps it, so each
+ * one stays a real <Link> to that object's single view (SVG axis ticks would
+ * break both that navigation and keyboard access). The completion percentage
+ * is stated in that same column rather than inside the SVG, for the same
+ * reason — text in the chart is neither selectable nor reliably announced.
  */
-export function TaskGanttChart({
-  projectId,
+export function GanttChart({
   rows,
   bounds,
   now,
+  href,
 }: {
-  projectId: string;
   rows: GanttRow[];
   bounds: DateRange;
   now: Date;
+  /** Where clicking a bar goes — the single view of whatever the row is. */
+  href: (row: GanttRow) => string;
 }) {
   const router = useRouter();
   const axis = computeAxis(bounds);
   const total = bounds.end.getTime() - bounds.start.getTime();
   const today = todayOffset(bounds, now);
+  const hasProgress = rows.some((row) => row.progress);
+
+  const open = (data: unknown) => {
+    const row = (data as { payload?: GanttRow })?.payload;
+    if (row) router.push(href(row));
+  };
 
   return (
     <ChartContainer
@@ -148,21 +182,37 @@ export function TaskGanttChart({
             carries no meaning of its own, so it is transparent and unlabelled. */}
         <Bar dataKey="offset" stackId="schedule" fill="transparent" isAnimationActive={false} />
         <Bar
-          dataKey="duration"
+          dataKey={doneWidth}
+          name="done"
           stackId="schedule"
           barSize={BAR_SIZE}
-          radius={4}
+          // A split bar is squared off where its two segments meet, so the
+          // boundary between done and remaining reads as a straight edge.
+          radius={hasProgress ? [4, 0, 0, 4] : 4}
           isAnimationActive={false}
           className="cursor-pointer"
-          onClick={(data: unknown) => {
-            const row = (data as { payload?: GanttRow })?.payload;
-            if (row) router.push(taskPath(projectId, row.id));
-          }}
+          onClick={open}
         >
           {rows.map((row) => (
             <Cell key={row.id} fill={STATE_COLOR[row.state]} />
           ))}
         </Bar>
+        {hasProgress ? (
+          <Bar
+            dataKey={remainingWidth}
+            name="remaining"
+            stackId="schedule"
+            barSize={BAR_SIZE}
+            radius={[0, 4, 4, 0]}
+            isAnimationActive={false}
+            className="cursor-pointer"
+            onClick={open}
+          >
+            {rows.map((row) => (
+              <Cell key={row.id} fill={STATE_COLOR[row.state]} fillOpacity={REMAINING_OPACITY} />
+            ))}
+          </Bar>
+        ) : null}
       </BarChart>
     </ChartContainer>
   );

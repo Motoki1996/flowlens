@@ -130,7 +130,7 @@ func TestHandleUpdateBacklog(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("other user gets 404 and does not modify the backlog", func(t *testing.T) {
-		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id, updateBacklogRequest{Name: "Hijacked"}, otherToken)
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id, map[string]any{"name": "Hijacked"}, otherToken)
 		require.Equal(t, http.StatusNotFound, rec.Code)
 
 		rec = doRequest(t, s, http.MethodGet, "/api/v1/backlogs/"+id, nil, ownerToken)
@@ -142,7 +142,7 @@ func TestHandleUpdateBacklog(t *testing.T) {
 
 	t.Run("owner can update, including position", func(t *testing.T) {
 		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
-			updateBacklogRequest{Name: "Renamed", Description: "new", Position: 3}, ownerToken)
+			map[string]any{"name": "Renamed", "description": "new", "position": 3}, ownerToken)
 		require.Equal(t, http.StatusOK, rec.Code)
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
@@ -150,6 +150,60 @@ func TestHandleUpdateBacklog(t *testing.T) {
 		assert.Equal(t, "new", body["description"])
 		assert.Equal(t, float64(3), body["position"])
 	})
+}
+
+// The Backlog timeline reads startDate/dueOn off this endpoint, and the web
+// rename form PATCHes without them — so "absent" has to mean "unchanged" while
+// an explicit null still clears.
+func TestHandleUpdateBacklog_Schedule(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedBacklog(p.ID, "Sprint 1").ID.String()
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+		map[string]any{"name": "Sprint 1", "startDate": "2026-08-01T00:00:00Z", "dueOn": "2026-08-31T00:00:00Z"}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	tests := []struct {
+		name          string
+		body          map[string]any
+		wantStartDate any
+		wantDueOn     any
+	}{
+		{
+			name:          "absent dates are left alone",
+			body:          map[string]any{"name": "Renamed"},
+			wantStartDate: "2026-08-01T00:00:00Z",
+			wantDueOn:     "2026-08-31T00:00:00Z",
+		},
+		{
+			name:          "explicit null clears only that date",
+			body:          map[string]any{"name": "Renamed", "startDate": nil},
+			wantStartDate: nil,
+			wantDueOn:     "2026-08-31T00:00:00Z",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id, tt.body, token)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			assert.Equal(t, tt.wantStartDate, got["startDate"])
+			assert.Equal(t, tt.wantDueOn, got["dueOn"])
+		})
+	}
+}
+
+func TestHandleCreateBacklog_RejectsStartAfterDue(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		map[string]any{"name": "Sprint 1", "startDate": "2026-09-01T00:00:00Z", "dueOn": "2026-08-31T00:00:00Z"}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestHandleDeleteBacklog(t *testing.T) {

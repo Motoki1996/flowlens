@@ -74,7 +74,7 @@ The routes that exist today, and the object each one is about:
 | --- | --- | --- |
 | `/projects` | `Project` | Collection |
 | `/projects/[projectId]` | `Project` | Single |
-| `/projects/[projectId]/backlogs` | `Backlog` | Collection |
+| `/projects/[projectId]/backlogs` | `Backlog` | Collection (List / Timeline view modes) |
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single |
 | `/projects/[projectId]/tasks` | `Task` | Collection (List / Timeline view modes, `?backlog=` filter) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |

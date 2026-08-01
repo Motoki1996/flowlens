@@ -31,6 +31,10 @@ export interface Backlog {
   name: string;
   description: string;
   position: number;
+  // The backlog's planned period, drawn as one bar on the Backlog timeline.
+  // App-only, like a task's startDate — neither ever syncs to GitLab.
+  startDate: string | null;
+  dueOn: string | null;
   createdAt: string;
   updatedAt: string;
 }

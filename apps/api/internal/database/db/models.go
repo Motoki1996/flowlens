@@ -17,6 +17,8 @@ type Backlog struct {
 	Position    int32              `json:"position"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	StartDate   pgtype.Date        `json:"start_date"`
+	DueOn       pgtype.Date        `json:"due_on"`
 }
 
 type GitlabConnection struct {
@@ -193,11 +195,11 @@ type Task struct {
 	AssigneeGitlabUsername string             `json:"assignee_gitlab_username"`
 	Labels                 []string           `json:"labels"`
 	DueOn                  pgtype.Date        `json:"due_on"`
-	StartDate              pgtype.Date        `json:"start_date"`
 	Position               int32              `json:"position"`
 	CreatedByUserID        uuid.UUID          `json:"created_by_user_id"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	StartDate              pgtype.Date        `json:"start_date"`
 }
 
 type TaskAiContext struct {

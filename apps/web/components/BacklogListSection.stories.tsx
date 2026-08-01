@@ -9,6 +9,8 @@ const backlog: Backlog = {
   name: "Sprint 1",
   description: "",
   position: 0,
+  startDate: null,
+  dueOn: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -27,6 +29,22 @@ export const Empty: Story = {
 
 export const Default: Story = {
   args: { projectId: "p1", backlogs: [backlog], tasks: [] },
+};
+
+/** The Timeline view mode of the same collection, reached from the List/
+ *  Timeline toggle. The bars are covered in BacklogTimelineSection's own
+ *  stories; this one covers the toggle that gets you there. */
+export const Timeline: Story = {
+  args: {
+    projectId: "p1",
+    backlogs: [{ ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" }],
+    tasks: [],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Timeline" }));
+    await expect(await canvas.findByRole("list", { name: "Bar colours" })).toBeInTheDocument();
+  },
 };
 
 export const DeleteConfirm: Story = {

@@ -17,14 +17,23 @@ export default async function BacklogsPage({
 
   const backlogs = await getBacklogs(projectId);
 
-  // Tasks are only here for the per-backlog count, so a failure leaves the
-  // list rendering with zeroes rather than failing the whole screen.
+  // Tasks feed the per-backlog count and the Timeline view's completion bars,
+  // so a failure leaves the collection rendering and is reported there rather
+  // than failing the whole screen.
   let tasks: Awaited<ReturnType<typeof getTasks>> = [];
+  let tasksError = false;
   try {
     tasks = await getTasks(projectId);
   } catch {
-    // Counts fall back to 0.
+    tasksError = true;
   }
 
-  return <BacklogListSection projectId={project.id} backlogs={backlogs} tasks={tasks} />;
+  return (
+    <BacklogListSection
+      projectId={project.id}
+      backlogs={backlogs}
+      tasks={tasks}
+      tasksError={tasksError}
+    />
+  );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import type { Backlog, Project, User } from "@/types";
 
 const user: User = {
@@ -24,6 +24,8 @@ const backlog: Backlog = {
   name: "Sprint 1",
   description: "",
   position: 0,
+  startDate: null,
+  dueOn: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -72,6 +74,25 @@ describe("BacklogsPage", () => {
       "href",
       "/projects/p1/backlogs/b1",
     );
+  });
+
+  // Task counts and timeline progress both come from tasks, so a failed fetch
+  // has to reach the collection rather than reading as "no tasks".
+  it("reports a failed task fetch instead of showing every backlog as empty", async () => {
+    getBacklogs.mockResolvedValue([
+      { ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" },
+    ]);
+    getTasks.mockRejectedValue(new Error("boom"));
+    render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+    // The timeline is loaded on demand, so its message only appears once that
+    // chunk resolves.
+    expect(
+      await screen.findByText("Failed to load tasks — progress is unavailable.", undefined, {
+        timeout: 15000,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("links each backlog to the task collection filtered to it", async () => {

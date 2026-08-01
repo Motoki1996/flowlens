@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  backlogProgress,
   computeAxis,
   computeTimelineBounds,
   effectiveRange,
@@ -7,10 +8,11 @@ import {
   hasSchedule,
   spanDays,
   startOfDay,
-  toGanttRows,
+  toBacklogGanttRows,
+  toTaskGanttRows,
   todayOffset,
 } from "./timeline";
-import type { Task } from "@/types";
+import type { Backlog, Task } from "@/types";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -184,17 +186,17 @@ describe("formatAxisTick", () => {
   });
 });
 
-describe("toGanttRows", () => {
+describe("toTaskGanttRows", () => {
   const bounds = { start: startOfDay(new Date("2026-08-01")), end: startOfDay(new Date("2026-08-21")) };
   const now = new Date("2026-08-10T09:00:00Z");
 
   it("drops tasks with no schedule", () => {
-    const rows = toGanttRows([makeTask({ id: "t1" })], bounds, now);
+    const rows = toTaskGanttRows([makeTask({ id: "t1" })], bounds, now);
     expect(rows).toEqual([]);
   });
 
   it("offsets a bar from the range start and spans whole days inclusively", () => {
-    const [row] = toGanttRows(
+    const [row] = toTaskGanttRows(
       [makeTask({ startDate: "2026-08-03", dueOn: "2026-08-05" })],
       bounds,
       now,
@@ -205,12 +207,12 @@ describe("toGanttRows", () => {
   });
 
   it("gives a single-day task a full day of width", () => {
-    const [row] = toGanttRows([makeTask({ dueOn: "2026-08-05" })], bounds, now);
+    const [row] = toTaskGanttRows([makeTask({ dueOn: "2026-08-05" })], bounds, now);
     expect(row.duration).toBe(ONE_DAY_MS);
   });
 
   it("orders rows by start date", () => {
-    const rows = toGanttRows(
+    const rows = toTaskGanttRows(
       [
         makeTask({ id: "late", title: "Late", startDate: "2026-08-09" }),
         makeTask({ id: "early", title: "Early", startDate: "2026-08-02" }),
@@ -228,12 +230,125 @@ describe("toGanttRows", () => {
     { name: "closed regardless of due date", status: "closed", dueOn: "2026-08-04", expected: "closed" },
     { name: "open when it has no due date", status: "open", dueOn: null, expected: "open" },
   ])("marks a task $name", ({ status, dueOn, expected }) => {
-    const [row] = toGanttRows(
+    const [row] = toTaskGanttRows(
       [makeTask({ startDate: "2026-08-02", dueOn, status: status as Task["status"] })],
       bounds,
       now,
     );
     expect(row.state).toBe(expected);
+  });
+});
+
+function makeBacklog(overrides: Partial<Backlog>): Backlog {
+  return {
+    id: "b1",
+    projectId: "p1",
+    name: "Backlog",
+    description: "",
+    position: 0,
+    startDate: null,
+    dueOn: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("backlogProgress", () => {
+  const tasks = [
+    makeTask({ id: "t1", backlogId: "b1", status: "closed" }),
+    makeTask({ id: "t2", backlogId: "b1", status: "open" }),
+    makeTask({ id: "t3", backlogId: "b2", status: "closed" }),
+    makeTask({ id: "t4", backlogId: null, status: "closed" }),
+  ];
+
+  it("counts only the tasks filed in that backlog", () => {
+    expect(backlogProgress(tasks, "b1")).toEqual({ closed: 1, total: 2, ratio: 0.5 });
+  });
+
+  // An empty backlog has not been finished, so it must not read as complete.
+  it("reports 0/0 at ratio 0 for a backlog with no tasks", () => {
+    expect(backlogProgress(tasks, "b9")).toEqual({ closed: 0, total: 0, ratio: 0 });
+  });
+
+  it("reports a fully closed backlog at ratio 1", () => {
+    expect(backlogProgress(tasks, "b2").ratio).toBe(1);
+  });
+});
+
+describe("toBacklogGanttRows", () => {
+  const bounds = { start: startOfDay(new Date("2026-08-01")), end: startOfDay(new Date("2026-08-21")) };
+  const now = new Date("2026-08-10T09:00:00Z");
+
+  it("drops backlogs with no schedule", () => {
+    expect(toBacklogGanttRows([makeBacklog({})], [], bounds, now)).toEqual([]);
+  });
+
+  it("carries the completion ratio onto the row", () => {
+    const [row] = toBacklogGanttRows(
+      [makeBacklog({ id: "b1", startDate: "2026-08-03", dueOn: "2026-08-05" })],
+      [
+        makeTask({ id: "t1", backlogId: "b1", status: "closed" }),
+        makeTask({ id: "t2", backlogId: "b1", status: "open" }),
+      ],
+      bounds,
+      now,
+    );
+    expect(row.progress).toEqual({ closed: 1, total: 2, ratio: 0.5 });
+    expect(row.offset).toBe(2 * ONE_DAY_MS);
+    expect(row.duration).toBe(3 * ONE_DAY_MS);
+  });
+
+  it("titles the row with the backlog's name", () => {
+    const [row] = toBacklogGanttRows([makeBacklog({ name: "Sprint 1", dueOn: "2026-08-05" })], [], bounds, now);
+    expect(row.title).toBe("Sprint 1");
+  });
+
+  it.each([
+    {
+      name: "closed once every task is closed",
+      dueOn: "2026-08-04",
+      statuses: ["closed", "closed"],
+      expected: "closed",
+    },
+    {
+      name: "overdue while unfinished work sits past the due date",
+      dueOn: "2026-08-04",
+      statuses: ["closed", "open"],
+      expected: "overdue",
+    },
+    {
+      name: "open when the due date is still ahead",
+      dueOn: "2026-08-15",
+      statuses: ["open"],
+      expected: "open",
+    },
+    // No tasks means nothing has been finished, overdue or not.
+    { name: "overdue when empty and past due", dueOn: "2026-08-04", statuses: [], expected: "overdue" },
+    { name: "open when empty and not yet due", dueOn: "2026-08-15", statuses: [], expected: "open" },
+  ])("marks a backlog $name", ({ dueOn, statuses, expected }) => {
+    const [row] = toBacklogGanttRows(
+      [makeBacklog({ id: "b1", startDate: "2026-08-02", dueOn })],
+      statuses.map((status, i) =>
+        makeTask({ id: `t${i}`, backlogId: "b1", status: status as Task["status"] }),
+      ),
+      bounds,
+      now,
+    );
+    expect(row.state).toBe(expected);
+  });
+
+  it("orders rows by start date", () => {
+    const rows = toBacklogGanttRows(
+      [
+        makeBacklog({ id: "late", name: "Late", startDate: "2026-08-09" }),
+        makeBacklog({ id: "early", name: "Early", startDate: "2026-08-02" }),
+      ],
+      [],
+      bounds,
+      now,
+    );
+    expect(rows.map((r) => r.id)).toEqual(["early", "late"]);
   });
 });
 

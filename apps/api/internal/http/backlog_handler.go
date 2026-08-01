@@ -5,21 +5,30 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/flowlens/api/internal/backlog"
+	"github.com/flowlens/api/internal/optional"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
 type createBacklogRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	StartDate   *time.Time `json:"startDate"`
+	DueOn       *time.Time `json:"dueOn"`
 }
 
+// The dates are Optional so PATCH stays a partial update for them: a body
+// without "startDate" keeps the stored one, and an explicit null clears it.
+// Name/description/position predate that and are still overwritten wholesale.
 type updateBacklogRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Position    int32  `json:"position"`
+	Name        string                        `json:"name"`
+	Description string                        `json:"description"`
+	Position    int32                         `json:"position"`
+	StartDate   optional.Optional[*time.Time] `json:"startDate"`
+	DueOn       optional.Optional[*time.Time] `json:"dueOn"`
 }
 
 // backlogIDFromURL parses the {backlogID} path parameter. A malformed ID is
@@ -66,7 +75,12 @@ func (s *Server) handleCreateBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, err := s.backlogs.Create(r.Context(), u.ID, projectID, req.Name, req.Description)
+	b, err := s.backlogs.Create(r.Context(), u.ID, projectID, backlog.CreateParams{
+		Name:        req.Name,
+		Description: req.Description,
+		StartDate:   req.StartDate,
+		DueOn:       req.DueOn,
+	})
 	if err != nil {
 		writeBacklogError(w, err)
 		return
@@ -108,7 +122,13 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, err := s.backlogs.Update(r.Context(), u.ID, backlogID, req.Name, req.Description, req.Position)
+	b, err := s.backlogs.Update(r.Context(), u.ID, backlogID, backlog.UpdateParams{
+		Name:        req.Name,
+		Description: req.Description,
+		Position:    req.Position,
+		StartDate:   req.StartDate,
+		DueOn:       req.DueOn,
+	})
 	if err != nil {
 		writeBacklogError(w, err)
 		return
@@ -139,6 +159,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, backlog.ErrInvalidName):
 		writeError(w, http.StatusBadRequest, "invalid_name", "name must be 1-100 characters")
+	case errors.Is(err, backlog.ErrInvalidSchedule):
+		writeError(w, http.StatusBadRequest, "invalid_schedule", "start date must not be after due date")
 	case errors.Is(err, backlog.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "backlog not found")
 	default:

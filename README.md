@@ -395,13 +395,15 @@ which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
 
-### Task scheduling & Gantt chart
+### Task & backlog scheduling, Gantt charts
 
 Beyond GitLab issue sync, a task can carry a `startDate` (alongside the
 existing `dueOn`) and predecessor/successor dependencies on other tasks in
-the same project. Both are app-only: GitLab Issues have no native start-date
-or dependency concept, so neither is ever pushed to or pulled from GitLab —
-`dueOn` remains the only date field synced with the linked GitLab issue.
+the same project, and a **backlog** carries its own `startDate`/`dueOn` pair.
+All of these are app-only: GitLab Issues have no native start-date or
+dependency concept and a backlog is not a GitLab milestone, so none of them is
+ever pushed to or pulled from GitLab — a task's `dueOn` remains the only date
+field synced with the linked GitLab issue.
 
 - `PATCH /api/v1/tasks/{taskID}` accepts `startDate` alongside the task's
   other mirrored fields. It is a **partial** update: a key absent from the
@@ -420,6 +422,13 @@ or dependency concept, so neither is ever pushed to or pulled from GitLab —
 - `GET /api/v1/projects/{projectID}/task-dependencies` lists every
   dependency in the project; `DELETE /api/v1/task-dependencies/{id}` removes
   one.
+- `POST /api/v1/projects/{projectID}/backlogs` and
+  `PATCH /api/v1/backlogs/{backlogID}` accept `startDate` and `dueOn`. On the
+  PATCH the two dates are **partial** in the same sense as a task's: absent
+  leaves the stored value alone, an explicit `null` clears it. That is what
+  keeps a rename — which sends only name, description and position — from
+  wiping the backlog's planned period. A period whose start is after its due
+  date is rejected with 400 `invalid_schedule`.
 
 In the web app, a task is created from the "New task" action on the project's
 Task collection (`/projects/{projectId}/tasks`), which takes its title,
@@ -455,6 +464,17 @@ until someone switches to the Timeline:
   task's predecessors are noted under its name. Tasks with neither a start date
   nor a due date are listed separately below the chart rather than silently
   dropped.
+
+The Backlog collection (`/projects/{projectId}/backlogs`) has the same
+List / Timeline pair, drawing one bar per scheduled backlog with the same axis,
+colours and today marker. What it adds is **completion**: each bar is filled by
+the share of that backlog's tasks that are closed, with the remainder drawn in
+the same hue at low opacity, so plan and progress are read in one place. The
+ratio is also stated as text (`3/8 closed (38%)`) beside the bar, in the
+tooltip, and on the backlog's single view — the fill is a second reading of it,
+never the only one. A backlog with no tasks reads "No tasks" and stays unfilled
+rather than appearing complete, and when the task fetch itself fails the chart
+says progress is unavailable instead of showing everything at 0%.
 
 The date math lives in `apps/web/lib/timeline.ts`, separate from the components
 so it is unit-testable without rendering a chart.

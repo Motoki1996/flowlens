@@ -7,13 +7,23 @@
 // horizontal bar chart (a transparent `offset` segment followed by a visible
 // `duration` segment), and a stack has to accumulate from zero.
 
-import type { Task } from "@/types";
+import type { Backlog, Task } from "@/types";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface DateRange {
   start: Date;
   end: Date;
+}
+
+/**
+ * Scheduled is the shape the date math needs, and the only thing tasks and
+ * backlogs have to share to be plottable: both carry the same optional
+ * startDate/dueOn pair.
+ */
+export interface Scheduled {
+  startDate: string | null;
+  dueOn: string | null;
 }
 
 /** startOfDay truncates a date to local midnight, the granularity a Gantt row is drawn at. */
@@ -30,7 +40,7 @@ function addDays(date: Date, days: number): Date {
  * both are set, or either one alone treated as a single-day range. Returns
  * null for a task with neither set — it has nothing to plot.
  */
-export function effectiveRange(task: Pick<Task, "startDate" | "dueOn">): DateRange | null {
+export function effectiveRange(task: Scheduled): DateRange | null {
   const start = task.startDate ? new Date(task.startDate) : null;
   const end = task.dueOn ? new Date(task.dueOn) : null;
   if (!start && !end) return null;
@@ -40,7 +50,7 @@ export function effectiveRange(task: Pick<Task, "startDate" | "dueOn">): DateRan
 }
 
 /** hasSchedule reports whether a task has a startDate or dueOn to plot. */
-export function hasSchedule(task: Pick<Task, "startDate" | "dueOn">): boolean {
+export function hasSchedule(task: Scheduled): boolean {
   return effectiveRange(task) !== null;
 }
 
@@ -51,7 +61,7 @@ export function hasSchedule(task: Pick<Task, "startDate" | "dueOn">): boolean {
  * day occupies the whole of that day rather than ending at its midnight.
  * Returns null when no task in tasks has a schedule.
  */
-export function computeTimelineBounds(tasks: Pick<Task, "startDate" | "dueOn">[]): DateRange | null {
+export function computeTimelineBounds(tasks: Scheduled[]): DateRange | null {
   const ranges = tasks.map(effectiveRange).filter((r): r is DateRange => r !== null);
   if (ranges.length === 0) return null;
 
@@ -119,16 +129,25 @@ export function formatAxisTick(
 }
 
 /**
- * TaskScheduleState is what colours a bar. It is a status, not an identity:
- * "overdue" is an open task whose due date has already passed, and "closed"
- * deliberately recedes so remaining work is what stands out.
+ * ScheduleState is what colours a bar. It is a status, not an identity:
+ * "overdue" is unfinished work whose due date has already passed, and "closed"
+ * deliberately recedes so remaining work is what stands out. Backlog bars use
+ * the same three values, read off their tasks rather than off a status column.
  */
-export type TaskScheduleState = "open" | "overdue" | "closed";
+export type ScheduleState = "open" | "overdue" | "closed";
+
+/** Progress is the closed/total task ratio a backlog bar is filled by. */
+export interface Progress {
+  closed: number;
+  total: number;
+  /** closed / total, 0 for a backlog with no tasks. */
+  ratio: number;
+}
 
 export interface GanttRow {
   id: string;
   title: string;
-  state: TaskScheduleState;
+  state: ScheduleState;
   /** Transparent leading segment of the stacked bar, in ms from bounds.start. */
   offset: number;
   /** Visible segment, in ms. Always at least one whole day. */
@@ -136,38 +155,102 @@ export interface GanttRow {
   /** Inclusive display dates, for labels and the tooltip. */
   start: Date;
   end: Date;
+  /** Set on backlog rows only; task rows are closed or not, never partial. */
+  progress?: Progress;
+}
+
+/** isOverdue reports whether dueOn is a day already behind us. */
+function isOverdue(dueOn: string | null, now: Date): boolean {
+  return !!dueOn && startOfDay(new Date(dueOn)).getTime() < startOfDay(now).getTime();
+}
+
+/** buildRow lays one scheduled object out on the axis, or returns null when it
+ *  has no dates to plot. Everything object-specific arrives already decided. */
+function buildRow(
+  item: { id: string; title: string } & Scheduled,
+  bounds: DateRange,
+  state: ScheduleState,
+  progress?: Progress,
+): GanttRow | null {
+  const range = effectiveRange(item);
+  if (!range) return null;
+  const start = startOfDay(range.start);
+  const endExclusive = addDays(startOfDay(range.end), 1);
+  return {
+    id: item.id,
+    title: item.title,
+    state,
+    offset: start.getTime() - bounds.start.getTime(),
+    duration: endExclusive.getTime() - start.getTime(),
+    start,
+    end: startOfDay(range.end),
+    ...(progress ? { progress } : {}),
+  };
+}
+
+/** byStartThenTitle orders rows so the chart reads top-left to bottom-right. */
+function byStartThenTitle(a: GanttRow, b: GanttRow): number {
+  return a.offset - b.offset || a.title.localeCompare(b.title);
 }
 
 /**
- * toGanttRows converts scheduled tasks into stacked-bar rows, ordered by start
- * date so the chart reads top-left to bottom-right. Tasks with no schedule are
- * dropped — the caller lists them separately rather than inventing dates.
+ * toTaskGanttRows converts scheduled tasks into stacked-bar rows. Tasks with no
+ * schedule are dropped — the caller lists them separately rather than inventing
+ * dates.
  */
-export function toGanttRows(tasks: Task[], bounds: DateRange, now: Date): GanttRow[] {
+export function toTaskGanttRows(tasks: Task[], bounds: DateRange, now: Date): GanttRow[] {
   return tasks
-    .map((task) => {
-      const range = effectiveRange(task);
-      if (!range) return null;
-      const start = startOfDay(range.start);
-      const endExclusive = addDays(startOfDay(range.end), 1);
-      const state: TaskScheduleState =
-        task.status === "closed"
-          ? "closed"
-          : task.dueOn && startOfDay(new Date(task.dueOn)).getTime() < startOfDay(now).getTime()
-            ? "overdue"
-            : "open";
-      return {
-        id: task.id,
-        title: task.title,
-        state,
-        offset: start.getTime() - bounds.start.getTime(),
-        duration: endExclusive.getTime() - start.getTime(),
-        start,
-        end: startOfDay(range.end),
-      };
+    .map((task) =>
+      buildRow(
+        task,
+        bounds,
+        task.status === "closed" ? "closed" : isOverdue(task.dueOn, now) ? "overdue" : "open",
+      ),
+    )
+    .filter((row): row is GanttRow => row !== null)
+    .sort(byStartThenTitle);
+}
+
+/**
+ * backlogProgress counts how much of a backlog is done. A backlog with no tasks
+ * reports 0/0 at ratio 0 rather than "complete": an empty backlog has not been
+ * finished, and filling its bar would say it had.
+ */
+export function backlogProgress(tasks: Task[], backlogId: string): Progress {
+  const owned = tasks.filter((t) => t.backlogId === backlogId);
+  const closed = owned.filter((t) => t.status === "closed").length;
+  return {
+    closed,
+    total: owned.length,
+    ratio: owned.length === 0 ? 0 : closed / owned.length,
+  };
+}
+
+/**
+ * toBacklogGanttRows converts scheduled backlogs into stacked-bar rows carrying
+ * their completion. A backlog's state comes from its tasks, not from a status
+ * column it doesn't have: it is "closed" once every task in it is closed, and
+ * "overdue" while unfinished work sits past its due date.
+ */
+export function toBacklogGanttRows(
+  backlogs: Backlog[],
+  tasks: Task[],
+  bounds: DateRange,
+  now: Date,
+): GanttRow[] {
+  return backlogs
+    .map((backlog) => {
+      const progress = backlogProgress(tasks, backlog.id);
+      const complete = progress.total > 0 && progress.closed === progress.total;
+      const state: ScheduleState = complete
+        ? "closed"
+        : isOverdue(backlog.dueOn, now)
+          ? "overdue"
+          : "open";
+      return buildRow({ ...backlog, title: backlog.name }, bounds, state, progress);
     })
     .filter((row): row is GanttRow => row !== null)
-    .sort((a, b) => a.offset - b.offset || a.title.localeCompare(b.title));
+    .sort(byStartThenTitle);
 }
 
 /**

@@ -95,13 +95,15 @@ type Project struct {
 }
 
 type ProjectApiToken struct {
-	ID         uuid.UUID          `json:"id"`
-	ProjectID  uuid.UUID          `json:"project_id"`
-	Name       string             `json:"name"`
-	TokenHash  string             `json:"token_hash"`
-	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ID          uuid.UUID          `json:"id"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+	Name        string             `json:"name"`
+	TokenHash   string             `json:"token_hash"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Scopes      []string           `json:"scopes"`
+	TokenPrefix pgtype.Text        `json:"token_prefix"`
 }
 
 type PullRequest struct {

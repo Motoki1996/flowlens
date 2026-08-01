@@ -182,8 +182,11 @@ type Querier interface {
 	// GetProjectAPITokenByTokenHash is unscoped and used only by bearer
 	// authentication (internal/apitoken.Service.Authenticate), which has no
 	// acting user to scope through and resolves the project from the token
-	// itself. Like GetUserBySessionToken, it filters out expired rows in SQL.
-	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (ProjectApiToken, error)
+	// itself. Like GetUserBySessionToken, it filters out expired rows in SQL. It
+	// joins projects to also resolve owner_user_id: a bearer request has no
+	// session, so the project's owner is the only user it can act as (see
+	// internal/apitoken's Auth type).
+	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)

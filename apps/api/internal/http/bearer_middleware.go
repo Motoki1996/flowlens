@@ -53,7 +53,7 @@ func (s *Server) requireBearerAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 			return
 		}
-		projectID, err := s.apiTokens.Authenticate(r.Context(), token)
+		tokenAuth, err := s.apiTokens.Authenticate(r.Context(), token)
 		if err != nil {
 			if errors.Is(err, apitoken.ErrTokenNotFound) {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
@@ -63,7 +63,7 @@ func (s *Server) requireBearerAuth(next http.Handler) http.Handler {
 			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 			return
 		}
-		ctx := context.WithValue(r.Context(), tokenProjectContextKey, projectID)
+		ctx := context.WithValue(r.Context(), tokenProjectContextKey, tokenAuth.ProjectID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

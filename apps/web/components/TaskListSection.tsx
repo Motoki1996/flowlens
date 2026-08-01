@@ -331,7 +331,7 @@ export function TaskListSection({
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base font-medium">Tasks</CardTitle>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* The view modes and filters only make sense once tasks exist, but
                 "New task" must stay reachable on an empty project. */}
             {!error && tasks.length > 0 ? (
@@ -356,36 +356,39 @@ export function TaskListSection({
                     Timeline
                   </Button>
                 </div>
-                {view === "list" ? (
-                  <>
-                    {/* Status is a short fixed list, so it stays a Select;
-                        backlogs grow with the project and get the searchable
-                        Combobox. */}
-                    <Select
-                      value={statusFilter}
-                      onValueChange={(value) => setStatusFilter(value as "all" | TaskStatus)}
-                    >
-                      <SelectTrigger size="sm" aria-label="Status" className="w-36">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        <SelectItem value="open">Open</SelectItem>
-                        <SelectItem value="closed">Closed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Combobox
-                      aria-label="Backlog"
-                      options={filterOptions}
-                      value={backlogFilter}
-                      onChange={changeBacklogFilter}
-                      size="sm"
-                      className="w-44"
-                      searchPlaceholder="Search backlogs…"
-                      emptyText="No backlog found."
-                    />
-                  </>
-                ) : null}
+                {/* Filters belong to the collection, not to one presentation of
+                    it (docs/ui-design.md rule 5), so they stay put across view
+                    modes and narrow the timeline the same way they narrow the
+                    list. Keeping them mounted is also what holds this
+                    right-aligned cluster still: unmounting them on every view
+                    switch slid the buttons out from under the pointer that had
+                    just clicked them.
+
+                    Status is a short fixed list, so it stays a Select; backlogs
+                    grow with the project and get the searchable Combobox. */}
+                <Select
+                  value={statusFilter}
+                  onValueChange={(value) => setStatusFilter(value as "all" | TaskStatus)}
+                >
+                  <SelectTrigger size="sm" aria-label="Status" className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="closed">Closed</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Combobox
+                  aria-label="Backlog"
+                  options={filterOptions}
+                  value={backlogFilter}
+                  onChange={changeBacklogFilter}
+                  size="sm"
+                  className="w-44"
+                  searchPlaceholder="Search backlogs…"
+                  emptyText="No backlog found."
+                />
               </>
             ) : null}
             {!creating ? (
@@ -410,10 +413,17 @@ export function TaskListSection({
           <p className="text-destructive text-sm">Failed to load tasks. Try refreshing the page.</p>
         ) : tasks.length === 0 ? (
           <p className="text-muted-foreground text-sm">No tasks yet.</p>
-        ) : view === "timeline" ? (
-          <TaskTimelineSection projectId={projectId} tasks={tasks} dependencies={dependencies} />
-        ) : groups.length === 0 ? (
+        ) : filtered.length === 0 ? (
+          // Checked before the view branch so the timeline doesn't answer an
+          // empty filter result with its own "set a start or due date" hint.
           <p className="text-muted-foreground text-sm">No tasks match the current filters.</p>
+        ) : view === "timeline" ? (
+          <TaskTimelineSection
+            projectId={projectId}
+            tasks={filtered}
+            allTasks={tasks}
+            dependencies={dependencies}
+          />
         ) : (
           <div className="space-y-6">
             {groups.map((group) => {

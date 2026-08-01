@@ -39,11 +39,16 @@ const LEGEND_SWATCH: Record<(typeof LEGEND_STATES)[number], string> = {
 export function TaskTimelineSection({
   projectId,
   tasks,
+  allTasks,
   dependencies,
   now,
 }: {
   projectId: string;
   tasks: Task[];
+  /** Every task in the collection, filters included — `tasks` may be a filtered
+   *  subset, and a predecessor filtered out of view still has to be nameable in
+   *  the "After: …" line. Defaults to `tasks` when nothing is filtered out. */
+  allTasks?: Task[];
   dependencies: TaskDependency[];
   /** Injectable so stories and tests pin "today" instead of drifting with the clock. */
   now?: Date;
@@ -60,7 +65,7 @@ export function TaskTimelineSection({
   const unscheduled = tasks.filter((t) => !hasSchedule(t));
 
   const predecessorsByTask = useMemo(() => {
-    const titleById = new Map(tasks.map((t) => [t.id, t.title]));
+    const titleById = new Map((allTasks ?? tasks).map((t) => [t.id, t.title]));
     const byTask = new Map<string, string[]>();
     for (const d of dependencies) {
       const predecessorTitle = titleById.get(d.predecessorTaskId);
@@ -70,7 +75,7 @@ export function TaskTimelineSection({
       byTask.set(d.successorTaskId, list);
     }
     return byTask;
-  }, [tasks, dependencies]);
+  }, [tasks, allTasks, dependencies]);
 
   const closedCount = tasks.filter((t) => t.status === "closed").length;
   const progressPercent = tasks.length > 0 ? Math.round((closedCount / tasks.length) * 100) : 0;

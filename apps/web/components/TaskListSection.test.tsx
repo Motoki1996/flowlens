@@ -148,7 +148,7 @@ describe("TaskListSection", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
-  it("switches to the timeline view mode and back", async () => {
+  it("switches to the timeline view mode and back, keeping the filters in place", async () => {
     const tasks = [makeTask({ id: "t1", title: "Scheduled task", startDate: "2026-08-01" })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
 
@@ -157,10 +157,42 @@ describe("TaskListSection", () => {
     expect(
       await screen.findByRole("link", { name: "Scheduled task" }, { timeout: 15000 }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: "Status" })).not.toBeInTheDocument();
+    // The filters belong to the collection, not to the list presentation, so
+    // they stay put — a view switch that reflowed the header would move the
+    // buttons out from under the pointer.
+    expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
+  });
+
+  it("narrows the timeline to the backlog picked in the filter", async () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Sprint task", backlogId: "b1", startDate: "2026-08-01" }),
+      makeTask({ id: "t2", title: "Icebox task", backlogId: "b2", startDate: "2026-08-02" }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Icebox" }));
+    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+
+    expect(
+      await screen.findByRole("link", { name: "Icebox task" }, { timeout: 15000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Sprint task" })).not.toBeInTheDocument();
+  });
+
+  it("reports an empty filter result the same way in either view mode", async () => {
+    const tasks = [makeTask({ id: "t1", title: "Sprint task", backlogId: "b1" })];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Icebox" }));
+    expect(screen.getByText("No tasks match the current filters.")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+    expect(screen.getByText("No tasks match the current filters.")).toBeInTheDocument();
   });
 
   it("offers task creation even when the project has no tasks yet", () => {

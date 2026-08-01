@@ -1,21 +1,25 @@
 import { redirect, notFound } from "next/navigation";
 import { getBacklogs, getCurrentUser, getProject, getTaskDependencies, getTasks } from "@/lib/api";
-import { projectPath } from "@/lib/routes";
-import { AppHeader } from "@/components/AppHeader";
-import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { TaskListSection } from "@/components/TaskListSection";
 
-/** The Task collection view of one project — List and Timeline are view modes
- *  of this one screen, per docs/ui-design.md rule 5. */
+/**
+ * The Task collection view of one project — List and Timeline are view modes
+ * of this one screen, per docs/ui-design.md rule 5, and `?backlog=` is the
+ * backlog filter of that same collection. The backlog screens link here rather
+ * than keeping a task list of their own.
+ */
 export default async function TasksPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams?: Promise<{ backlog?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
   const { projectId } = await params;
+  const backlogFilter = (await searchParams)?.backlog;
   const project = await getProject(projectId);
   if (!project) notFound();
 
@@ -37,23 +41,13 @@ export default async function TasksPage({
   }
 
   return (
-    <>
-      <AppHeader user={user} />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <Breadcrumbs
-          items={[
-            { label: project.name, href: projectPath(project.id) },
-            { label: "Tasks" },
-          ]}
-        />
-        <TaskListSection
-          projectId={project.id}
-          tasks={tasks}
-          backlogs={backlogs}
-          dependencies={taskDependencies}
-          error={tasksError}
-        />
-      </main>
-    </>
+    <TaskListSection
+      projectId={project.id}
+      tasks={tasks}
+      backlogs={backlogs}
+      dependencies={taskDependencies}
+      initialBacklogFilter={backlogFilter}
+      error={tasksError}
+    />
   );
 }

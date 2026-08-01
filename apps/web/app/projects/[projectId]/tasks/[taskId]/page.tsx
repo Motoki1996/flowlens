@@ -1,7 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { getBacklogs, getCurrentUser, getProject, getTask } from "@/lib/api";
-import { projectPath, tasksPath } from "@/lib/routes";
-import { AppHeader } from "@/components/AppHeader";
+import { tasksPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { TaskDetail } from "@/components/TaskDetail";
 
@@ -24,17 +23,10 @@ export default async function TaskPage({
 
   return (
     <>
-      <AppHeader user={user} />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <Breadcrumbs
-          items={[
-            { label: project.name, href: projectPath(project.id) },
-            { label: "Tasks", href: tasksPath(project.id) },
-            { label: task.title },
-          ]}
-        />
-        <TaskDetail task={task} backlogs={backlogs} />
-      </main>
+      <Breadcrumbs
+        items={[{ label: "Tasks", href: tasksPath(project.id) }, { label: task.title }]}
+      />
+      <TaskDetail task={task} backlogs={backlogs} />
     </>
   );
 }

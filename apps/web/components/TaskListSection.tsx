@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
-import { taskPath } from "@/lib/routes";
+import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
 import { CalendarIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,7 +38,7 @@ const TaskTimelineSection = dynamic(
 
 type ViewMode = "list" | "timeline";
 
-const UNCLASSIFIED = "unclassified";
+const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "未分類";
 
 function formatDateValue(date: Date) {
@@ -273,19 +273,25 @@ export function TaskListSection({
   tasks,
   backlogs,
   dependencies = [],
+  initialBacklogFilter,
   error = false,
 }: {
   projectId: string;
   tasks: Task[];
   backlogs: Backlog[];
   dependencies?: TaskDependency[];
+  /** The `?backlog=` the screen was opened with, if any — how the backlog
+   *  screens hand off to this collection. */
+  initialBacklogFilter?: string;
   error?: boolean;
 }) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("list");
   const [creating, setCreating] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
-  const [backlogFilter, setBacklogFilter] = useState<"all" | string>("all");
+  const [backlogFilter, setBacklogFilter] = useState<"all" | string>(
+    initialBacklogFilter ?? "all",
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [targetBacklogId, setTargetBacklogId] = useState("");
   const [assigning, setAssigning] = useState(false);
@@ -338,6 +344,25 @@ export function TaskListSection({
     }
     return ordered;
   }, [filtered, backlogs]);
+
+  /**
+   * Filtering by backlog is how the backlog screens hand off to this one, so
+   * the choice belongs in the URL: the screen stays shareable and the browser's
+   * back button walks the filter. history.replaceState keeps that a client-side
+   * edit — router.replace would re-render the whole tree just to change a
+   * filter the client already applied.
+   */
+  function changeBacklogFilter(value: string) {
+    setBacklogFilter(value);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (value === "all") {
+      url.searchParams.delete("backlog");
+    } else {
+      url.searchParams.set("backlog", value);
+    }
+    window.history.replaceState(null, "", url);
+  }
 
   function toggleSelected(taskId: string) {
     setSelected((prev) => {
@@ -433,7 +458,7 @@ export function TaskListSection({
                       aria-label="Backlog"
                       options={filterOptions}
                       value={backlogFilter}
-                      onChange={setBacklogFilter}
+                      onChange={changeBacklogFilter}
                       size="sm"
                       className="w-44"
                       searchPlaceholder="Search backlogs…"

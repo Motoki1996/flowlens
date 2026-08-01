@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
-import { backlogPath } from "@/lib/routes";
+import { backlogPath, tasksPath } from "@/lib/routes";
 import type { ApiError, Backlog, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -299,7 +299,16 @@ export function BacklogListSection({
                         ({taskCount(tasks, backlog.id)})
                       </span>
                     </Link>
-                    <div className="flex shrink-0 gap-2">
+                    <div className="flex shrink-0 items-center gap-2">
+                      {/* Tasks live in the Task collection, filtered — this row
+                          hands off to it instead of the list growing a second
+                          place to browse tasks (docs/ui-design.md rule 5). */}
+                      <Link
+                        href={tasksPath(projectId, { backlogId: backlog.id })}
+                        className="text-muted-foreground hover:text-foreground text-sm hover:underline"
+                      >
+                        View tasks
+                      </Link>
                       <Button variant="outline" size="sm" onClick={() => setEditingId(backlog.id)}>
                         Rename
                       </Button>

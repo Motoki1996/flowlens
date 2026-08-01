@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Backlog, Task, TaskStatus } from "@/types";
-import { taskPath } from "@/lib/routes";
+import { taskPath, tasksPath } from "@/lib/routes";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -73,7 +73,18 @@ export function BacklogDetail({
 
       <Card className="mt-8">
         <CardHeader>
-          <CardTitle className="text-base font-medium">Tasks</CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base font-medium">Tasks</CardTitle>
+            {/* The list below is a read-only preview; filtering, the timeline
+                view and task creation all belong to the Task collection, so
+                this link hands off rather than duplicating them. */}
+            <Link
+              href={tasksPath(project.id, { backlogId: backlog.id })}
+              className="text-muted-foreground hover:text-foreground text-sm hover:underline"
+            >
+              Open in Tasks
+            </Link>
+          </div>
         </CardHeader>
         <CardContent>
           {tasksError ? (

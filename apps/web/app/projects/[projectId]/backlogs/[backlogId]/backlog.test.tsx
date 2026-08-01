@@ -107,12 +107,21 @@ describe("BacklogPage", () => {
     expect(screen.queryByText("In another backlog")).not.toBeInTheDocument();
   });
 
-  it("links back to the project and to the backlog collection", async () => {
+  // The project itself is reached from the sidebar in the surrounding layout,
+  // so the breadcrumb here only has to climb to the collection.
+  it("links back to the backlog collection", async () => {
     render(await BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) }));
-    expect(screen.getByRole("link", { name: "Alpha" })).toHaveAttribute("href", "/projects/p1");
     expect(screen.getByRole("link", { name: "Backlogs" })).toHaveAttribute(
       "href",
       "/projects/p1/backlogs",
+    );
+  });
+
+  it("hands its tasks off to the task collection, filtered to this backlog", async () => {
+    render(await BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) }));
+    expect(screen.getByRole("link", { name: "Open in Tasks" })).toHaveAttribute(
+      "href",
+      "/projects/p1/tasks?backlog=b1",
     );
   });
 

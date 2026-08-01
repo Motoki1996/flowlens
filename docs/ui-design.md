@@ -76,7 +76,7 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]` | `Project` | Single |
 | `/projects/[projectId]/backlogs` | `Backlog` | Collection |
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single |
-| `/projects/[projectId]/tasks` | `Task` | Collection (List / Timeline view modes) |
+| `/projects/[projectId]/tasks` | `Task` | Collection (List / Timeline view modes, `?backlog=` filter) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single |
 | `/projects/[projectId]/gitlab-connection` | `GitLabConnection` | Single (+ the `LinkedGitLabProject` collection) |
 | `/projects/[projectId]/linked-gitlab-projects/[linkId]` | `LinkedGitLabProject` | Single (+ its `SyncRun` and `WebhookEvent` history) |
@@ -91,6 +91,20 @@ The project single view is a **hub**: identity and attributes, then a link per
 related collection with a count, not the collections themselves. A screen that
 starts accumulating other objects' lists is the signal to split it — that is
 what happened to this one.
+
+Every screen under `/projects/[projectId]` shares one layout
+(`app/projects/[projectId]/layout.tsx`), which holds the app header and a
+**persistent project sidebar**: a switcher for the project itself, then one
+entry per section (Overview, Backlogs, Tasks, GitLab connection) with the same
+count the hub shows. The hub being the only way between sibling collections was
+the original mistake — going from Backlogs to Tasks meant a detour up and back
+down. The sidebar makes that lateral move one click, and the sections are the
+`ProjectSection` union in `lib/routes.ts`, so the switcher can keep you on the
+same section when you change project.
+
+Because the sidebar always names the project, breadcrumbs inside it start at the
+collection (`Backlogs / Sprint 1`), and the collection views drop them
+altogether — their own entry in the sidebar is already marked current.
 
 Three objects deliberately skip routes of their own (rule 3's escape hatch):
 
@@ -144,6 +158,14 @@ Table, card grid, and chart of the same collection are **view modes of one
 screen**, not separate screens. Filters and sorts are derived from the object's
 own attributes (state, author, project, merged-at), so the user filters in the
 same vocabulary the object is described in.
+
+A filter that another screen wants to hand off through belongs in the URL. The
+Task collection reads `?backlog=`, and the Backlog screens link to
+`/projects/[id]/tasks?backlog=[backlogId]` instead of growing task browsing of
+their own — one place to browse tasks, reachable pre-filtered. The Backlog
+single view keeps a read-only preview of its tasks and an "Open in Tasks" link;
+filtering, the timeline mode, and task creation stay with the collection that
+owns them.
 
 ### 6. Single views present attributes in a fixed order
 

@@ -112,7 +112,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateTask creates a task in the project, scoped to the
-// authenticated user. A nil backlogId leaves the task unfiled (未分類).
+// authenticated user. A nil backlogId leaves the task unfiled (Unclassified).
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	projectID, ok := projectIDFromURL(r)
@@ -169,7 +169,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateTask updates one task, scoped to the authenticated user via
-// its project. A nil backlogId leaves the task unfiled (未分類); status only
+// its project. A nil backlogId leaves the task unfiled (Unclassified); status only
 // changes through /close and /reopen.
 func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
@@ -222,7 +222,7 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAssignTaskBacklog moves one task to a backlog (or back to unfiled,
-// 未分類, when backlogId is null), scoped to the authenticated user via its
+// Unclassified, when backlogId is null), scoped to the authenticated user via its
 // project. Unlike handleUpdateTask, it only touches backlog_id, so callers
 // don't need to resend the rest of the task to move it.
 func (s *Server) handleAssignTaskBacklog(w http.ResponseWriter, r *http.Request) {

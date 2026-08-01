@@ -43,17 +43,17 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** 未接続: without a connection there is nothing to search, so linking is hidden. */
+/** Not connected: without a connection there is nothing to search, so linking is hidden. */
 export const NotConnected: Story = {
   args: { projectId: "p1", links: [], connected: false },
 };
 
-/** 接続済み・連携0件: a verified connection with no linked GitLab projects yet. */
+/** Connected, no links yet: a verified connection with no linked GitLab projects yet. */
 export const NoLinks: Story = {
   args: { projectId: "p1", links: [], connected: true },
 };
 
-/** 連携あり: one link per row, each carrying its scope, last sync and webhook status. */
+/** With links: one link per row, each carrying its scope, last sync and webhook status. */
 export const WithLinks: Story = {
   args: {
     projectId: "p1",

@@ -223,7 +223,7 @@ func toInt8(v *int64) pgtype.Int8 {
 }
 
 // CreateParams holds the fields accepted when creating a task. A nil
-// BacklogID leaves the task unfiled (未分類).
+// BacklogID leaves the task unfiled (Unclassified).
 type CreateParams struct {
 	Title                  string
 	Description            string
@@ -236,7 +236,7 @@ type CreateParams struct {
 }
 
 // UpdateParams holds the fields accepted when updating a task. A nil
-// BacklogID leaves the task unfiled (未分類). Status and ClosedAt are
+// BacklogID leaves the task unfiled (Unclassified). Status and ClosedAt are
 // intentionally excluded: they only change through Close/Reopen, which keep
 // the two fields consistent and idempotent.
 // UpdateParams holds the fields accepted when updating a task. Every field
@@ -826,7 +826,7 @@ func enqueueIfLinked(ctx context.Context, q db.Querier, taskID, projectID uuid.U
 	return nil
 }
 
-// AssignBacklog moves the task to backlogID, or back to unfiled (未分類)
+// AssignBacklog moves the task to backlogID, or back to unfiled (Unclassified)
 // when backlogID is nil. It returns ErrBacklogNotInProject if backlogID
 // belongs to a different project than the task's.
 func (s *Service) AssignBacklog(ctx context.Context, ownerID, taskID uuid.UUID, backlogID *uuid.UUID) (Task, error) {

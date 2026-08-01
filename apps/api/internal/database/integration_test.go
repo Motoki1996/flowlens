@@ -206,7 +206,7 @@ func TestBacklogQueriesEnforceOwnership(t *testing.T) {
 }
 
 // Deleting a backlog must never delete its tasks: the schema's
-// ON DELETE SET NULL on tasks.backlog_id drops them to unfiled (未分類)
+// ON DELETE SET NULL on tasks.backlog_id drops them to unfiled (Unclassified)
 // instead. Tasks have no generated queries yet (a later issue), so this
 // inserts directly with the pool to exercise the real FK behaviour.
 func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
@@ -233,7 +233,7 @@ func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
 
 	var backlogID pgtype.UUID
 	require.NoError(t, pool.QueryRow(ctx, `SELECT backlog_id FROM tasks WHERE id = $1`, taskID).Scan(&backlogID))
-	assert.False(t, backlogID.Valid, "expected the task's backlog_id to become NULL (未分類), not be deleted")
+	assert.False(t, backlogID.Valid, "expected the task's backlog_id to become NULL (Unclassified), not be deleted")
 
 	// Cleanup: the task outlives its backlog, so it is not removed by cascade.
 	_, err = pool.Exec(ctx, `DELETE FROM tasks WHERE id = $1`, taskID)

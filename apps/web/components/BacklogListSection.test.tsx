@@ -108,13 +108,15 @@ describe("BacklogListSection", () => {
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
   });
 
-  it("requires a confirmation step before deleting, and explains tasks move to 未分類", async () => {
+  it("requires a confirmation step before deleting, and explains where tasks go", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
     render(<BacklogListSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(fetch).not.toHaveBeenCalled();
-    expect(screen.getByText("配下タスクは未分類に移動します。削除しますか？")).toBeInTheDocument();
+    expect(
+      screen.getByText("Its tasks will move to Unclassified. Delete this backlog?"),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());

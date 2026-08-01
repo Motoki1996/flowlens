@@ -11,8 +11,8 @@ import (
 
 type createSyncRunRequest struct {
 	// Full selects a full re-fetch of every issue over a diff against the
-	// link's last successful sync (docs/plans/issue-sync.md's
-	// "差分取得...と全件再取得を選べるようにする", issue #25).
+	// link's last successful sync (docs/plans/issue-sync.md's "let the user
+	// choose between an incremental fetch and a full re-fetch", issue #25).
 	Full bool `json:"full"`
 }
 

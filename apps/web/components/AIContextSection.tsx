@@ -10,10 +10,14 @@ import { Textarea } from "@/components/ui/textarea";
 type FieldKey = "acceptanceCriteria" | "aiContext" | "allowedScope" | "forbiddenScope";
 
 const FIELDS: { key: FieldKey; label: string; placeholder: string }[] = [
-  { key: "acceptanceCriteria", label: "完了条件", placeholder: "No acceptance criteria set." },
-  { key: "aiContext", label: "AIコンテキスト", placeholder: "No AI context set." },
-  { key: "allowedScope", label: "変更可能範囲", placeholder: "No allowed scope set." },
-  { key: "forbiddenScope", label: "変更禁止範囲", placeholder: "No forbidden scope set." },
+  {
+    key: "acceptanceCriteria",
+    label: "Acceptance criteria",
+    placeholder: "No acceptance criteria set.",
+  },
+  { key: "aiContext", label: "AI context", placeholder: "No AI context set." },
+  { key: "allowedScope", label: "Allowed scope", placeholder: "No allowed scope set." },
+  { key: "forbiddenScope", label: "Forbidden scope", placeholder: "No forbidden scope set." },
 ];
 
 /**

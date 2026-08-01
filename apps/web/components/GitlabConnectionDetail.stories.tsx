@@ -26,17 +26,17 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** 未接続: no GitLab connection has been saved yet. */
+/** Not connected: no GitLab connection has been saved yet. */
 export const NotConnected: Story = {
   args: { projectId: "p1", connection: null },
 };
 
-/** 接続済み: a verified connection, with its test and change actions. */
+/** Connected: a verified connection, with its test and change actions. */
 export const Connected: Story = {
   args: { projectId: "p1", connection },
 };
 
-/** トークン無効: the stored connection's token was rejected by GitLab. */
+/** Invalid token: the stored connection's token was rejected by GitLab. */
 export const TokenInvalid: Story = {
   args: {
     projectId: "p1",

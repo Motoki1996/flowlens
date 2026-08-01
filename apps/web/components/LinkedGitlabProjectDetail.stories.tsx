@@ -76,12 +76,13 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Webhook正常: a healthy link with sync history and a received event. */
+/** Webhook healthy: a healthy link with sync history and a received event. */
 export const WebhookRegistered: Story = {
   args: { projectId: "p1", link: makeLink({}), syncRuns: runs, webhookEvents: events },
 };
 
-/** Webhook未登録（APP_PUBLIC_URL未設定）: registration was skipped, so only a retry action shows. */
+/** Webhook not registered (APP_PUBLIC_URL unset): registration was skipped, so
+ *  only a retry action shows. */
 export const WebhookNotRegistered: Story = {
   args: {
     projectId: "p1",
@@ -91,7 +92,8 @@ export const WebhookNotRegistered: Story = {
   },
 };
 
-/** Webhook登録失敗: GitLab rejected the registration (e.g. token below Maintainer role). */
+/** Webhook registration failed: GitLab rejected the registration (e.g. token
+ *  below Maintainer role). */
 export const WebhookFailed: Story = {
   args: {
     projectId: "p1",
@@ -106,7 +108,7 @@ export const WebhookFailed: Story = {
   },
 };
 
-/** 同期失敗: the most recent run failed, with the error kept in the history. */
+/** Sync failed: the most recent run failed, with the error kept in the history. */
 export const SyncFailed: Story = {
   args: {
     projectId: "p1",

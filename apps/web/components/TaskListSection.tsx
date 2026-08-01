@@ -38,7 +38,7 @@ const TaskTimelineSection = dynamic(
 type ViewMode = "list" | "timeline";
 
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
-const UNCLASSIFIED_LABEL = "未分類";
+const UNCLASSIFIED_LABEL = "Unclassified";
 
 function StatusBadge({ status }: { status: TaskStatus }) {
   return (
@@ -72,7 +72,7 @@ function NewTaskForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  // 未分類 leads the list so a task can always be filed later, and so the
+  // Unclassified leads the list so a task can always be filed later, and so the
   // control has a selected label even on a project with no backlogs yet.
   const backlogOptions = useMemo(
     () => [
@@ -185,7 +185,7 @@ function NewTaskForm({
 /**
  * TaskListSection is the List view mode of the Task collection at
  * /projects/[projectId]/tasks (no standalone "unclassified" screen). Tasks are
- * grouped by backlog, with a trailing 未分類 group for tasks that have no
+ * grouped by backlog, with a trailing Unclassified group for tasks that have no
  * backlog. Filters narrow which tasks appear within those groups.
  */
 export function TaskListSection({
@@ -218,7 +218,7 @@ export function TaskListSection({
   const [assignError, setAssignError] = useState<string | null>(null);
 
   // The filter offers every backlog plus the two groupings that aren't
-  // backlogs: "all" and the trailing 未分類 group.
+  // backlogs: "all" and the trailing Unclassified group.
   const filterOptions = useMemo(
     () => [
       { value: "all", label: "All backlogs" },
@@ -228,7 +228,7 @@ export function TaskListSection({
     [backlogs],
   );
 
-  // Bulk assign moves tasks *into* a backlog, so 未分類 is not a destination.
+  // Bulk assign moves tasks *into* a backlog, so Unclassified is not a destination.
   const assignOptions = useMemo(
     () => backlogs.map((b) => ({ value: b.id, label: b.name })),
     [backlogs],

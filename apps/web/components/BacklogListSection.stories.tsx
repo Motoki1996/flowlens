@@ -52,6 +52,8 @@ export const DeleteConfirm: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: "Delete" }));
-    await expect(canvas.getByText("配下タスクは未分類に移動します。削除しますか？")).toBeInTheDocument();
+    await expect(
+      canvas.getByText("Its tasks will move to Unclassified. Delete this backlog?"),
+    ).toBeInTheDocument();
   },
 };

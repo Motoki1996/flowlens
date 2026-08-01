@@ -11,8 +11,7 @@ import (
 // bound abusive webhook delivery volume (docs/plans/issue-sync.md,
 // Security: "the endpoint is rate-limited and bounded in body size") — it is
 // intentionally simple (single-process, in-memory), matching the issue's
-// "簡易レート制限" (simple rate limiting) scope rather than a
-// general-purpose limiter.
+// "simple rate limiting" scope rather than a general-purpose limiter.
 type simpleRateLimiter struct {
 	limit  int
 	window time.Duration

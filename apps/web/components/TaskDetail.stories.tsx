@@ -55,12 +55,12 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** 未連携: the task's project has never had a linked GitLab project. */
+/** Not linked: the task's project has never had a linked GitLab project. */
 export const Unlinked: Story = {
   args: { task: makeTask({ gitlab: null }), backlogs: [backlog], tasks: [], dependencies: [] },
 };
 
-/** 同期済み: the task pushed cleanly and links to its GitLab issue. */
+/** Synced: the task pushed cleanly and links to its GitLab issue. */
 export const Synced: Story = {
   args: {
     task: makeTask({
@@ -78,7 +78,7 @@ export const Synced: Story = {
   },
 };
 
-/** 同期中: a push is enqueued but hasn't been picked up by the worker yet. */
+/** Syncing: a push is enqueued but hasn't been picked up by the worker yet. */
 export const Pending: Story = {
   args: {
     task: makeTask({
@@ -90,7 +90,7 @@ export const Pending: Story = {
   },
 };
 
-/** 失敗（エラー文言あり）: the last push failed; the error and a retry action are shown. */
+/** Failed (with an error message): the last push failed; the error and a retry action are shown. */
 export const Failed: Story = {
   args: {
     task: makeTask({
@@ -118,7 +118,7 @@ const dependencies: TaskDependency[] = [
   { id: "d2", predecessorTaskId: "t1", successorTaskId: "t3", createdAt: "2026-01-01T00:00:00Z" },
 ];
 
-/** 依存あり: the task sits between a predecessor and a successor. */
+/** With dependencies: the task sits between a predecessor and a successor. */
 export const WithDependencies: Story = {
   args: {
     task: makeTask({}),
@@ -128,7 +128,7 @@ export const WithDependencies: Story = {
   },
 };
 
-/** 編集中: the attribute block swapped for the inline edit form. */
+/** Editing: the attribute block swapped for the inline edit form. */
 export const Editing: Story = {
   args: {
     task: makeTask({ dueOn: "2026-02-01T00:00:00Z" }),
@@ -143,7 +143,7 @@ export const Editing: Story = {
   },
 };
 
-/** 編集の保存失敗: the API rejects the edit and the form stays open with the error. */
+/** Edit save failure: the API rejects the edit and the form stays open with the error. */
 export const EditFails: Story = {
   args: { task: makeTask({}), backlogs: [backlog], tasks: [], dependencies: [] },
   parameters: {

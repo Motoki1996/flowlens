@@ -72,21 +72,21 @@ describe("TaskListSection", () => {
     expect(screen.getByText("No tasks yet.")).toBeInTheDocument();
   });
 
-  it("groups tasks with no backlog under 未分類", () => {
+  it("groups tasks with no backlog under Unclassified", () => {
     const tasks = [makeTask({ id: "t1", title: "Unfiled task", backlogId: null })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
-    expect(screen.getByText("未分類 (1)")).toBeInTheDocument();
+    expect(screen.getByText("Unclassified (1)")).toBeInTheDocument();
     expect(screen.getByText("Unfiled task")).toBeInTheDocument();
   });
 
-  it("groups tasks by backlog, ordered before the 未分類 group", () => {
+  it("groups tasks by backlog, ordered before the Unclassified group", () => {
     const tasks = [
       makeTask({ id: "t1", title: "Filed task", backlogId: "b1" }),
       makeTask({ id: "t2", title: "Unfiled task", backlogId: null }),
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(headings).toEqual(["Sprint 1 (1)", "未分類 (1)"]);
+    expect(headings).toEqual(["Sprint 1 (1)", "Unclassified (1)"]);
   });
 
   it("includes closed tasks by default", () => {

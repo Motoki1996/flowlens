@@ -253,7 +253,7 @@ function EditBacklogForm({
 
 /**
  * DeleteBacklogButton interposes an inline confirmation before deleting,
- * spelling out that the backlog's tasks move to 未分類 rather than being
+ * spelling out that the backlog's tasks move to Unclassified rather than being
  * deleted with it.
  */
 function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
@@ -286,7 +286,9 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
     return (
       <div className="flex flex-col items-end gap-1">
         {error ? <span className="text-destructive text-xs">{error}</span> : null}
-        <span className="text-foreground text-xs">配下タスクは未分類に移動します。削除しますか？</span>
+        <span className="text-foreground text-xs">
+          Its tasks will move to Unclassified. Delete this backlog?
+        </span>
         <div className="flex gap-2">
           <Button variant="destructive" size="sm" onClick={handleDelete} disabled={pending}>
             {pending ? "Deleting…" : "Confirm delete"}

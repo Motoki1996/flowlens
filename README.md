@@ -266,7 +266,7 @@ see (`GET .../gitlab-connection/available-projects`) and link one
    that pulls every in-scope issue and creates a task for each one that has
    no existing link — the reverse of a normal push, since these issues
    already existed before FlowLens knew about them. Imported issues land
-   with no backlog (未分類 / unfiled) so they can be triaged afterwards.
+   with no backlog (Unclassified / unfiled) so they can be triaged afterwards.
 
 The first project you link becomes that FlowLens project's **default**
 linked GitLab project — new tasks with no explicit link are pushed there.
@@ -359,7 +359,7 @@ through a project-scoped bearer token rather than a user session:
 {
   "id": "3fa2...",
   "projectId": "a1b2...",
-  "backlogId": "c3d4...",       // null when unfiled (未分類)
+  "backlogId": "c3d4...",       // null when unfiled (Unclassified)
   "title": "Fix login redirect",
   "description": "…",
   "status": "open",             // "open" | "closed"

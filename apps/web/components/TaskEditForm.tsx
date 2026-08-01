@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 
-const UNCLASSIFIED_LABEL = "未分類";
+const UNCLASSIFIED_LABEL = "Unclassified";
 
 /** parseLabels reads the comma-separated label input back into the API's array. */
 function parseLabels(raw: string): string[] {

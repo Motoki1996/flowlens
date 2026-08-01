@@ -62,7 +62,7 @@ function CloseReopenButton({
 
 const UNCLASSIFIED = "unclassified";
 
-/** BacklogSelect assigns the task to a backlog, or back to 未分類. */
+/** BacklogSelect assigns the task to a backlog, or back to Unclassified. */
 function BacklogSelect({
   task,
   backlogs,
@@ -77,7 +77,7 @@ function BacklogSelect({
 
   const options = useMemo(
     () => [
-      { value: UNCLASSIFIED, label: "未分類" },
+      { value: UNCLASSIFIED, label: "Unclassified" },
       ...backlogs.map((b) => ({ value: b.id, label: b.name })),
     ],
     [backlogs],
@@ -319,7 +319,7 @@ export function TaskDetail({
 
       <Card className="mt-8">
         <CardHeader>
-          <CardTitle className="text-base font-medium">AI向け情報</CardTitle>
+          <CardTitle className="text-base font-medium">AI-facing context</CardTitle>
           <CardDescription>
             What an AI coding agent needs to understand and scope this task.
           </CardDescription>

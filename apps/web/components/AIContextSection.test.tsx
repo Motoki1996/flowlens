@@ -35,7 +35,7 @@ describe("AIContextSection", () => {
     render(<AIContextSection taskId="t1" aiContext={emptyContext} />);
 
     fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]);
-    fireEvent.change(screen.getByLabelText("完了条件"), {
+    fireEvent.change(screen.getByLabelText("Acceptance criteria"), {
       target: { value: "Ship the feature" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

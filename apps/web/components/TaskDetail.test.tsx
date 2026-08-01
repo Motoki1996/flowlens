@@ -58,9 +58,9 @@ describe("TaskDetail", () => {
     expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 1");
   });
 
-  it("shows 未分類 when the task has no backlog", () => {
+  it("shows Unclassified when the task has no backlog", () => {
     render(<TaskDetail task={makeTask({ backlogId: null })} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
-    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("未分類");
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Unclassified");
   });
 
   it("closes an open task", async () => {
@@ -105,16 +105,16 @@ describe("TaskDetail", () => {
     );
   });
 
-  it("unassigns the task back to 未分類", async () => {
+  it("unassigns the task back to Unclassified", async () => {
     const unassigned = makeTask({ backlogId: null });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(unassigned), { status: 200 }));
 
     render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
-    fireEvent.click(await screen.findByRole("option", { name: "未分類" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Unclassified" }));
 
     await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("未分類"),
+      expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Unclassified"),
     );
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8080/api/v1/tasks/t1/assign-backlog",

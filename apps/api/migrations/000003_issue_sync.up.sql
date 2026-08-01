@@ -27,7 +27,7 @@ CREATE INDEX idx_backlogs_project_id ON backlogs(project_id);
 CREATE TABLE tasks (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     project_id               UUID        NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    -- NULL = 未分類 (unfiled); a backlog being deleted must not delete its tasks.
+    -- NULL = Unclassified (unfiled); a backlog being deleted must not delete its tasks.
     backlog_id               UUID        REFERENCES backlogs(id) ON DELETE SET NULL,
     title                    TEXT        NOT NULL,
     description              TEXT        NOT NULL DEFAULT '',

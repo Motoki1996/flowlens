@@ -46,7 +46,7 @@ func TestCipher_EncryptDecrypt_RoundTrips(t *testing.T) {
 	}{
 		{"typical token", "glpat-abcdefghijklmnopqrst"},
 		{"empty string", ""},
-		{"unicode", "こんにちは世界"},
+		{"unicode", "héllo wörld 🌍"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

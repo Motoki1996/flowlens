@@ -19,7 +19,7 @@ export function backlogPath(projectId: string, backlogId: string) {
 
 /** The Task collection. `backlogId` pre-selects the collection's backlog
  *  filter — the backlog screens link here rather than listing tasks of their
- *  own (docs/ui-design.md rule 5). Pass UNCLASSIFIED_BACKLOG for the 未分類
+ *  own (docs/ui-design.md rule 5). Pass UNCLASSIFIED_BACKLOG for the Unclassified
  *  group. */
 export function tasksPath(projectId: string, options?: { backlogId?: string }) {
   const base = `/projects/${projectId}/tasks`;

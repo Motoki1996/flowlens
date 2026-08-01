@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { GitlabConnection, LinkedGitlabProject, Project, User } from "@/types";
 
 const user: User = {
@@ -90,8 +90,6 @@ describe("GitlabConnectionPage", () => {
 
   it("shows the connection and links every linked project to its single view", async () => {
     render(await GitlabConnectionPage({ params: Promise.resolve({ projectId: "p1" }) }));
-    const breadcrumb = within(screen.getByRole("navigation", { name: "Breadcrumb" }));
-    expect(breadcrumb.getByRole("link", { name: "Alpha" })).toHaveAttribute("href", "/projects/p1");
     expect(screen.getByText("https://gitlab.example.com")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /team\/demo/ })).toHaveAttribute(
       "href",

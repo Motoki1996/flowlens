@@ -7,8 +7,7 @@ import {
   getSyncRuns,
   getWebhookEvents,
 } from "@/lib/api";
-import { gitlabConnectionPath, projectPath } from "@/lib/routes";
-import { AppHeader } from "@/components/AppHeader";
+import { gitlabConnectionPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { LinkedGitlabProjectDetail } from "@/components/LinkedGitlabProjectDetail";
 
@@ -48,22 +47,18 @@ export default async function LinkedGitlabProjectPage({
 
   return (
     <>
-      <AppHeader user={user} />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <Breadcrumbs
-          items={[
-            { label: project.name, href: projectPath(project.id) },
-            { label: "GitLab connection", href: gitlabConnectionPath(project.id) },
-            { label: link.pathWithNamespace },
-          ]}
-        />
-        <LinkedGitlabProjectDetail
-          projectId={project.id}
-          link={link}
-          syncRuns={syncRuns}
-          webhookEvents={webhookEvents}
-        />
-      </main>
+      <Breadcrumbs
+        items={[
+          { label: "GitLab connection", href: gitlabConnectionPath(project.id) },
+          { label: link.pathWithNamespace },
+        ]}
+      />
+      <LinkedGitlabProjectDetail
+        projectId={project.id}
+        link={link}
+        syncRuns={syncRuns}
+        webhookEvents={webhookEvents}
+      />
     </>
   );
 }

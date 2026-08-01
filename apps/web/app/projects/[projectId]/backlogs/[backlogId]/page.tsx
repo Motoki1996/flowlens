@@ -1,7 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { getBacklog, getCurrentUser, getProject, getTasks } from "@/lib/api";
-import { backlogsPath, projectPath } from "@/lib/routes";
-import { AppHeader } from "@/components/AppHeader";
+import { backlogsPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BacklogDetail } from "@/components/BacklogDetail";
 import type { Task } from "@/types";
@@ -32,17 +31,13 @@ export default async function BacklogPage({
 
   return (
     <>
-      <AppHeader user={user} />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <Breadcrumbs
-          items={[
-            { label: project.name, href: projectPath(project.id) },
-            { label: "Backlogs", href: backlogsPath(project.id) },
-            { label: backlog.name },
-          ]}
-        />
-        <BacklogDetail backlog={backlog} project={project} tasks={tasks} tasksError={tasksError} />
-      </main>
+      <Breadcrumbs
+        items={[
+          { label: "Backlogs", href: backlogsPath(project.id) },
+          { label: backlog.name },
+        ]}
+      />
+      <BacklogDetail backlog={backlog} project={project} tasks={tasks} tasksError={tasksError} />
     </>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { Project, User } from "@/types";
 
 const user: User = {
@@ -59,13 +59,30 @@ describe("TasksPage", () => {
     );
   });
 
-  it("renders the task collection under a breadcrumb back to the project", async () => {
+  it("renders the task collection", async () => {
     render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
-    const breadcrumb = within(screen.getByRole("navigation", { name: "Breadcrumb" }));
-    expect(breadcrumb.getByRole("link", { name: "Alpha" })).toHaveAttribute("href", "/projects/p1");
-    expect(breadcrumb.getByText("Tasks")).toBeInTheDocument();
+    expect(screen.getByText("Tasks")).toBeInTheDocument();
     expect(getTasks).toHaveBeenCalledWith("p1");
     expect(getBacklogs).toHaveBeenCalledWith("p1");
+  });
+
+  it("pre-selects the backlog filter from ?backlog=", async () => {
+    getBacklogs.mockResolvedValue([
+      { id: "b1", projectId: "p1", name: "Sprint 1", description: "", position: 0 },
+    ]);
+    getTasks.mockResolvedValue([
+      { id: "t1", projectId: "p1", backlogId: "b1", title: "In sprint 1", status: "open" },
+      { id: "t2", projectId: "p1", backlogId: null, title: "Loose end", status: "open" },
+    ]);
+    render(
+      await TasksPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ backlog: "b1" }),
+      }),
+    );
+    expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 1");
+    expect(screen.getByText("In sprint 1")).toBeInTheDocument();
+    expect(screen.queryByText("Loose end")).not.toBeInTheDocument();
   });
 
   it("renders not-found when the project doesn't exist", async () => {

@@ -1,7 +1,13 @@
 // Server-side API client. Server Components call the Go API through the
 // internal URL (the compose service name in Docker) and forward the
 // browser's session cookie so the API can authenticate the request.
+//
+// The readers a project layout and the page inside it both need are wrapped in
+// React's cache(), so rendering one screen makes one request per resource
+// however many components ask for it. The rest are called from a single place
+// and are left as plain functions.
 
+import { cache } from "react";
 import { cookies } from "next/headers";
 import type {
   Backlog,
@@ -27,7 +33,7 @@ export { API_PUBLIC_URL } from "./config";
  * has no valid session. It never throws for the unauthenticated case so
  * callers can redirect cleanly.
  */
-export async function getCurrentUser(): Promise<User | null> {
+export const getCurrentUser = cache(async (): Promise<User | null> => {
   const cookieStore = await cookies();
   const cookieHeader = cookieStore.toString();
 
@@ -48,13 +54,13 @@ export async function getCurrentUser(): Promise<User | null> {
     throw new Error(`Failed to load current user: ${res.status}`);
   }
   return (await res.json()) as User;
-}
+});
 
 /**
  * getProjects returns every project owned by the current user. Callers must
  * already know the request is authenticated (e.g. via getCurrentUser).
  */
-export async function getProjects(): Promise<Project[]> {
+export const getProjects = cache(async (): Promise<Project[]> => {
   const cookieStore = await cookies();
   const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects`, {
     headers: { cookie: cookieStore.toString() },
@@ -64,13 +70,13 @@ export async function getProjects(): Promise<Project[]> {
     throw new Error(`Failed to load projects: ${res.status}`);
   }
   return (await res.json()) as Project[];
-}
+});
 
 /**
  * getProject returns one project, or null when it doesn't exist or isn't
  * owned by the current user (the API reports both cases as 404).
  */
-export async function getProject(id: string): Promise<Project | null> {
+export const getProject = cache(async (id: string): Promise<Project | null> => {
   const cookieStore = await cookies();
   const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${id}`, {
     headers: { cookie: cookieStore.toString() },
@@ -81,13 +87,13 @@ export async function getProject(id: string): Promise<Project | null> {
     throw new Error(`Failed to load project: ${res.status}`);
   }
   return (await res.json()) as Project;
-}
+});
 
 /**
  * getBacklogs returns every backlog in the project, ordered by position.
  * Callers must already know the request is authenticated.
  */
-export async function getBacklogs(projectId: string): Promise<Backlog[]> {
+export const getBacklogs = cache(async (projectId: string): Promise<Backlog[]> => {
   const cookieStore = await cookies();
   const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/backlogs`, {
     headers: { cookie: cookieStore.toString() },
@@ -97,7 +103,7 @@ export async function getBacklogs(projectId: string): Promise<Backlog[]> {
     throw new Error(`Failed to load backlogs: ${res.status}`);
   }
   return (await res.json()) as Backlog[];
-}
+});
 
 /**
  * getBacklog returns one backlog, or null when it doesn't exist or isn't
@@ -120,7 +126,7 @@ export async function getBacklog(id: string): Promise<Backlog | null> {
  * getTasks returns every task in the project, ordered by position. Callers
  * must already know the request is authenticated.
  */
-export async function getTasks(projectId: string): Promise<Task[]> {
+export const getTasks = cache(async (projectId: string): Promise<Task[]> => {
   const cookieStore = await cookies();
   const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/tasks`, {
     headers: { cookie: cookieStore.toString() },
@@ -130,7 +136,7 @@ export async function getTasks(projectId: string): Promise<Task[]> {
     throw new Error(`Failed to load tasks: ${res.status}`);
   }
   return (await res.json()) as Task[];
-}
+});
 
 /**
  * getTask returns one task including its AI context, or null when it
@@ -172,7 +178,7 @@ export async function getTaskDependencies(projectId: string): Promise<TaskDepend
  * none has been configured yet (the API reports both "none" and "not owned"
  * as 404).
  */
-export async function getGitlabConnection(projectId: string): Promise<GitlabConnection | null> {
+export const getGitlabConnection = cache(async (projectId: string): Promise<GitlabConnection | null> => {
   const cookieStore = await cookies();
   const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/gitlab-connection`, {
     headers: { cookie: cookieStore.toString() },
@@ -183,14 +189,14 @@ export async function getGitlabConnection(projectId: string): Promise<GitlabConn
     throw new Error(`Failed to load gitlab connection: ${res.status}`);
   }
   return (await res.json()) as GitlabConnection;
-}
+});
 
 /**
  * getLinkedGitlabProjects returns every GitLab project linked to the
  * project's GitLab connection. Callers must already know the request is
  * authenticated.
  */
-export async function getLinkedGitlabProjects(projectId: string): Promise<LinkedGitlabProject[]> {
+export const getLinkedGitlabProjects = cache(async (projectId: string): Promise<LinkedGitlabProject[]> => {
   const cookieStore = await cookies();
   const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/linked-gitlab-projects`, {
     headers: { cookie: cookieStore.toString() },
@@ -200,7 +206,7 @@ export async function getLinkedGitlabProjects(projectId: string): Promise<Linked
     throw new Error(`Failed to load linked gitlab projects: ${res.status}`);
   }
   return (await res.json()) as LinkedGitlabProject[];
-}
+});
 
 /**
  * getSyncRuns returns a linked GitLab project's sync run history, newest

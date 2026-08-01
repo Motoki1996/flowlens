@@ -66,12 +66,19 @@ describe("BacklogsPage", () => {
     );
   });
 
-  it("renders the backlog collection under a breadcrumb back to the project", async () => {
+  it("renders the backlog collection", async () => {
     render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
-    expect(screen.getByRole("link", { name: "Alpha" })).toHaveAttribute("href", "/projects/p1");
     expect(screen.getByRole("link", { name: /Sprint 1/ })).toHaveAttribute(
       "href",
       "/projects/p1/backlogs/b1",
+    );
+  });
+
+  it("links each backlog to the task collection filtered to it", async () => {
+    render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
+    expect(screen.getByRole("link", { name: "View tasks" })).toHaveAttribute(
+      "href",
+      "/projects/p1/tasks?backlog=b1",
     );
   });
 

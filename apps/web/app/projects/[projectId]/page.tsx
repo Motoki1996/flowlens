@@ -7,7 +7,6 @@ import {
   getProject,
   getTasks,
 } from "@/lib/api";
-import { AppHeader } from "@/components/AppHeader";
 import { ProjectDetail } from "@/components/ProjectDetail";
 
 export default async function ProjectPage({
@@ -49,19 +48,14 @@ export default async function ProjectPage({
   }
 
   return (
-    <>
-      <AppHeader user={user} />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <ProjectDetail
-          project={project}
-          backlogCount={backlogs.length}
-          taskCount={tasks.length}
-          openTaskCount={tasks.filter((t) => t.status === "open").length}
-          countsError={countsError}
-          gitlabConnection={gitlabConnection}
-          linkedProjectCount={linkedGitlabProjects.length}
-        />
-      </main>
-    </>
+    <ProjectDetail
+      project={project}
+      backlogCount={backlogs.length}
+      taskCount={tasks.length}
+      openTaskCount={tasks.filter((t) => t.status === "open").length}
+      countsError={countsError}
+      gitlabConnection={gitlabConnection}
+      linkedProjectCount={linkedGitlabProjects.length}
+    />
   );
 }

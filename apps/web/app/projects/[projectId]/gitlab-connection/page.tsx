@@ -1,8 +1,5 @@
 import { redirect, notFound } from "next/navigation";
 import { getCurrentUser, getGitlabConnection, getLinkedGitlabProjects, getProject } from "@/lib/api";
-import { projectPath } from "@/lib/routes";
-import { AppHeader } from "@/components/AppHeader";
-import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { GitlabConnectionDetail } from "@/components/GitlabConnectionDetail";
 import { LinkedGitlabProjectListSection } from "@/components/LinkedGitlabProjectListSection";
 
@@ -34,23 +31,14 @@ export default async function GitlabConnectionPage({
 
   return (
     <>
-      <AppHeader user={user} />
-      <main className="mx-auto max-w-6xl px-6 py-8">
-        <Breadcrumbs
-          items={[
-            { label: project.name, href: projectPath(project.id) },
-            { label: "GitLab connection" },
-          ]}
+      <GitlabConnectionDetail projectId={project.id} connection={connection} />
+      <div className="mt-8">
+        <LinkedGitlabProjectListSection
+          projectId={project.id}
+          links={links}
+          connected={connection !== null}
         />
-        <GitlabConnectionDetail projectId={project.id} connection={connection} />
-        <div className="mt-8">
-          <LinkedGitlabProjectListSection
-            projectId={project.id}
-            links={links}
-            connected={connection !== null}
-          />
-        </div>
-      </main>
+      </div>
     </>
   );
 }

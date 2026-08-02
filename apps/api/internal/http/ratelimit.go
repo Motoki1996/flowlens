@@ -3,6 +3,7 @@ package http
 import (
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -46,6 +47,14 @@ func (l *simpleRateLimiter) Allow(key string) bool {
 	}
 	b.count++
 	return b.count <= l.limit
+}
+
+// writeTooManyRequests writes a 429 response with a Retry-After header set to
+// window's length in seconds, so a well-behaved caller knows how long to
+// back off before its bucket resets.
+func writeTooManyRequests(w http.ResponseWriter, window time.Duration) {
+	w.Header().Set("Retry-After", strconv.Itoa(int(window.Seconds())))
+	writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 }
 
 // clientIP returns the request's remote address without its port, for use

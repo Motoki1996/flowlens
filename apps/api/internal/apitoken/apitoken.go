@@ -98,10 +98,13 @@ type APIToken struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 }
 
-// Auth is what a valid bearer token resolves to: the project it was issued
-// for, the project's owner (the user a bearer-authenticated request acts
-// as — see the package doc), and the scopes it was granted.
+// Auth is what a valid bearer token resolves to: the token's own ID (used
+// as a per-token rate-limit key — never the raw token or its hash, see
+// internal/http's tokenLimiter), the project it was issued for, the
+// project's owner (the user a bearer-authenticated request acts as — see
+// the package doc), and the scopes it was granted.
 type Auth struct {
+	TokenID     uuid.UUID
 	ProjectID   uuid.UUID
 	OwnerUserID uuid.UUID
 	Scopes      []string
@@ -309,5 +312,5 @@ func (s *Service) Authenticate(ctx context.Context, rawToken string) (Auth, erro
 			return Auth{}, fmt.Errorf("apitoken: authenticate: update last used: %w", err)
 		}
 	}
-	return Auth{ProjectID: row.ProjectID, OwnerUserID: row.OwnerUserID, Scopes: row.Scopes}, nil
+	return Auth{TokenID: row.ID, ProjectID: row.ProjectID, OwnerUserID: row.OwnerUserID, Scopes: row.Scopes}, nil
 }

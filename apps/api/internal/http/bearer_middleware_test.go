@@ -155,6 +155,94 @@ func TestRequireAuthOrBearer_AcceptsBearerToken(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), p.ID.String())
 }
 
+func TestRequireBearerAuth_RateLimitsExceedingTokenLimit(t *testing.T) {
+	s, q := newTestServer(t)
+	s.tokenLimiter = newSimpleRateLimiter(2, time.Minute)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
+	require.NoError(t, err)
+
+	req := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/projects/"+p.ID.String()+"/probe/", nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		rec := httptest.NewRecorder()
+		bearerTestRouter(s).ServeHTTP(rec, req)
+		return rec
+	}
+
+	require.Equal(t, http.StatusOK, req().Code)
+	require.Equal(t, http.StatusOK, req().Code)
+
+	rec := req()
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("Retry-After"))
+	assert.NotContains(t, rec.Body.String(), raw, "the raw token must never appear in the rate-limit response")
+}
+
+func TestRequireBearerAuth_RateLimitBucketsAreIndependentPerToken(t *testing.T) {
+	s, q := newTestServer(t)
+	s.tokenLimiter = newSimpleRateLimiter(1, time.Minute)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, rawA, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "Bot A", []string{"read"}, nil)
+	require.NoError(t, err)
+	_, rawB, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "Bot B", []string{"read"}, nil)
+	require.NoError(t, err)
+
+	get := func(raw string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/projects/"+p.ID.String()+"/probe/", nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		rec := httptest.NewRecorder()
+		bearerTestRouter(s).ServeHTTP(rec, req)
+		return rec
+	}
+
+	require.Equal(t, http.StatusOK, get(rawA).Code)
+	assert.Equal(t, http.StatusOK, get(rawB).Code, "a different token must have its own rate-limit bucket")
+	assert.Equal(t, http.StatusTooManyRequests, get(rawA).Code, "token A's own second request must still be blocked")
+}
+
+func TestRequireBearerAuth_RateLimitRecoversAfterWindow(t *testing.T) {
+	s, q := newTestServer(t)
+	s.tokenLimiter = newSimpleRateLimiter(1, time.Millisecond)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
+	require.NoError(t, err)
+
+	req := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/projects/"+p.ID.String()+"/probe/", nil)
+		req.Header.Set("Authorization", "Bearer "+raw)
+		rec := httptest.NewRecorder()
+		bearerTestRouter(s).ServeHTTP(rec, req)
+		return rec
+	}
+
+	require.Equal(t, http.StatusOK, req().Code)
+	time.Sleep(5 * time.Millisecond)
+	assert.Equal(t, http.StatusOK, req().Code, "a new window must reset the token's budget")
+}
+
+func TestRequireAuthOrBearer_SessionAuthIsNotRateLimited(t *testing.T) {
+	s, q := newTestServer(t)
+	s.tokenLimiter = newSimpleRateLimiter(1, time.Minute)
+	_, session := loginSession(t, s, q)
+
+	r := chi.NewRouter()
+	r.With(s.requireAuthOrBearer).Get("/whoami", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/whoami", nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "session-authenticated requests must never be subject to tokenLimiter")
+	}
+}
+
 func TestRequireAuthOrBearer_RejectsInvalidCookieWithoutFallingBackToBearer(t *testing.T) {
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")

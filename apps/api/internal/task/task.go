@@ -34,6 +34,7 @@ import (
 // non-owners.
 var (
 	ErrInvalidTitle          = errors.New("task: title must be 1-255 characters")
+	ErrInvalidPriority       = errors.New("task: priority must be one of low, medium, high, urgent")
 	ErrNotFound              = errors.New("task: not found")
 	ErrBacklogNotInProject   = errors.New("task: backlog belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
@@ -46,6 +47,19 @@ const maxAIContextFieldLength = 20000
 const (
 	StatusOpen   = "open"
 	StatusClosed = "closed"
+)
+
+// Priority values, app-only and never synced to GitLab (GitLab CE issues
+// have no native priority field — priority label/weight is an EE feature),
+// per the 000010 migration. SortPriority is the ListFilter.Sort value that
+// switches List's ORDER BY from position to priority rank.
+const (
+	PriorityLow    = "low"
+	PriorityMedium = "medium"
+	PriorityHigh   = "high"
+	PriorityUrgent = "urgent"
+
+	SortPriority = "priority"
 )
 
 // GitLab sync status values, mirroring task_gitlab_links.sync_status
@@ -132,6 +146,7 @@ type Task struct {
 	Labels                 []string    `json:"labels"`
 	DueOn                  *time.Time  `json:"dueOn"`
 	StartDate              *time.Time  `json:"startDate"`
+	Priority               string      `json:"priority"`
 	Position               int32       `json:"position"`
 	CreatedByUserID        uuid.UUID   `json:"createdByUserId"`
 	CreatedAt              time.Time   `json:"createdAt"`
@@ -155,6 +170,7 @@ func fromRow(row db.Task) Task {
 		Labels:                 row.Labels,
 		DueOn:                  datePtr(row.DueOn),
 		StartDate:              datePtr(row.StartDate),
+		Priority:               row.Priority,
 		Position:               row.Position,
 		CreatedByUserID:        row.CreatedByUserID,
 		CreatedAt:              row.CreatedAt.Time,
@@ -233,6 +249,8 @@ type CreateParams struct {
 	Labels                 []string
 	DueOn                  *time.Time
 	StartDate              *time.Time
+	// Priority defaults to PriorityMedium when empty.
+	Priority string
 }
 
 // UpdateParams holds the fields accepted when updating a task. A nil
@@ -253,7 +271,11 @@ type UpdateParams struct {
 	Labels                 Optional[[]string]
 	DueOn                  Optional[*time.Time]
 	StartDate              Optional[*time.Time]
-	Position               Optional[int32]
+	// Priority left absent keeps the task's current priority; an explicit
+	// empty string resets it to PriorityMedium, the same as an absent
+	// Priority on CreateParams.
+	Priority Optional[string]
+	Position Optional[int32]
 }
 
 // resolvedUpdate is UpdateParams with every absent field filled in from the
@@ -269,6 +291,7 @@ type resolvedUpdate struct {
 	Labels                 []string
 	DueOn                  *time.Time
 	StartDate              *time.Time
+	Priority               string
 	Position               int32
 }
 
@@ -282,6 +305,7 @@ func (p UpdateParams) resolve(current Task) resolvedUpdate {
 		Labels:                 p.Labels.Or(current.Labels),
 		DueOn:                  p.DueOn.Or(current.DueOn),
 		StartDate:              p.StartDate.Or(current.StartDate),
+		Priority:               p.Priority.Or(current.Priority),
 		Position:               p.Position.Or(current.Position),
 	}
 }
@@ -355,6 +379,21 @@ func normalizeTitle(raw string) (string, error) {
 	return title, nil
 }
 
+// normalizePriority defaults an empty raw to PriorityMedium — Create leaves
+// it unset when the caller doesn't specify one, and Update's Optional
+// resolves an explicit empty string the same way — and otherwise rejects
+// anything outside the fixed set.
+func normalizePriority(raw string) (string, error) {
+	switch raw {
+	case "":
+		return PriorityMedium, nil
+	case PriorityLow, PriorityMedium, PriorityHigh, PriorityUrgent:
+		return raw, nil
+	default:
+		return "", ErrInvalidPriority
+	}
+}
+
 // validateBacklog checks that backlogID, if set, both belongs to ownerID and
 // is inside projectID. A backlog that exists but belongs to a different
 // project of the same owner is rejected the same as a missing one: it is
@@ -407,6 +446,10 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 	if err != nil {
 		return Task{}, err
 	}
+	priority, err := normalizePriority(params.Priority)
+	if err != nil {
+		return Task{}, err
+	}
 	if err := s.validateBacklog(ctx, ownerID, projectID, params.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -437,6 +480,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 			Labels:                 normalizeLabels(params.Labels),
 			DueOn:                  toDate(params.DueOn),
 			StartDate:              toDate(params.StartDate),
+			Priority:               priority,
 			CreatedByUserID:        ownerID,
 		})
 		if err != nil {
@@ -517,6 +561,10 @@ type ListFilter struct {
 	BacklogID  *uuid.UUID // non-nil: only this backlog's tasks
 	Unassigned bool       // true: only unfiled tasks (backlog_id IS NULL); mutually exclusive with BacklogID
 	Status     string     // "open" | "closed" | "" (no filter)
+	Priority   string     // one of the Priority* constants, or "" (no filter)
+	// Sort is "" (position ASC, created_at ASC, the manual/DnD order) or
+	// SortPriority (priority rank DESC, then the same tiebreak).
+	Sort string
 }
 
 // List returns projectID's tasks matching filter, ordered by position. It
@@ -531,10 +579,12 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	}
 
 	rows, err := s.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
-		ProjectID:  projectID,
-		Unassigned: filter.Unassigned,
-		BacklogID:  toUUID(filter.BacklogID),
-		Status:     filter.Status,
+		ProjectID:      projectID,
+		Unassigned:     filter.Unassigned,
+		BacklogID:      toUUID(filter.BacklogID),
+		Status:         filter.Status,
+		Priority:       filter.Priority,
+		SortByPriority: filter.Sort == SortPriority,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("task: list: %w", err)
@@ -736,6 +786,11 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 		return Task{}, err
 	}
 	resolved.Title = title
+	priority, err := normalizePriority(resolved.Priority)
+	if err != nil {
+		return Task{}, err
+	}
+	resolved.Priority = priority
 	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, resolved.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -755,6 +810,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			Labels:                 normalizeLabels(resolved.Labels),
 			DueOn:                  toDate(resolved.DueOn),
 			StartDate:              toDate(resolved.StartDate),
+			Priority:               resolved.Priority,
 			Position:               resolved.Position,
 		})
 		if err != nil {

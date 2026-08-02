@@ -4,11 +4,18 @@ import { useMemo, useState, type FormEvent } from "react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
-import type { ApiError, Backlog, Task } from "@/types";
+import type { ApiError, Backlog, Priority, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 
@@ -50,6 +57,7 @@ export function TaskEditForm({
   const [labels, setLabels] = useState(task.labels.join(", "));
   const [startDate, setStartDate] = useState(fromApiDate(task.startDate));
   const [dueOn, setDueOn] = useState(fromApiDate(task.dueOn));
+  const [priority, setPriority] = useState<Priority>(task.priority);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -83,6 +91,7 @@ export function TaskEditForm({
           labels: parseLabels(labels),
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
+          priority,
         }),
       });
       if (!res.ok) {
@@ -178,6 +187,22 @@ export function TaskEditForm({
           onChange={setStartDate}
         />
         <DateField id="edit-task-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
+      </div>
+      <div>
+        <label htmlFor="edit-task-priority" className="text-foreground block text-sm font-medium">
+          Priority
+        </label>
+        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
+          <SelectTrigger id="edit-task-priority" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="urgent">Urgent</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>

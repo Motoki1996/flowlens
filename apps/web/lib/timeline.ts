@@ -7,7 +7,7 @@
 // horizontal bar chart (a transparent `offset` segment followed by a visible
 // `duration` segment), and a stack has to accumulate from zero.
 
-import type { Backlog, Task } from "@/types";
+import type { Backlog, Priority, Task } from "@/types";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -147,6 +147,7 @@ export interface Progress {
 export interface GanttRow {
   id: string;
   title: string;
+  priority: Priority;
   state: ScheduleState;
   /** Transparent leading segment of the stacked bar, in ms from bounds.start. */
   offset: number;
@@ -167,7 +168,7 @@ function isOverdue(dueOn: string | null, now: Date): boolean {
 /** buildRow lays one scheduled object out on the axis, or returns null when it
  *  has no dates to plot. Everything object-specific arrives already decided. */
 function buildRow(
-  item: { id: string; title: string } & Scheduled,
+  item: { id: string; title: string; priority: Priority } & Scheduled,
   bounds: DateRange,
   state: ScheduleState,
   progress?: Progress,
@@ -179,6 +180,7 @@ function buildRow(
   return {
     id: item.id,
     title: item.title,
+    priority: item.priority,
     state,
     offset: start.getTime() - bounds.start.getTime(),
     duration: endExclusive.getTime() - start.getTime(),

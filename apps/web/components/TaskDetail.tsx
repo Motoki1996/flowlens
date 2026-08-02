@@ -11,6 +11,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { AIContextSection } from "@/components/AIContextSection";
 import { TaskDependencySection } from "@/components/TaskDependencySection";
 import { TaskEditForm } from "@/components/TaskEditForm";
+import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 
 /** CloseReopenButton toggles a task between open and closed in place. */
@@ -241,6 +242,7 @@ export function TaskDetail({
                     <Badge variant={task.status === "open" ? "default" : "secondary"}>
                       {task.status === "open" ? "Open" : "Closed"}
                     </Badge>
+                    <PriorityBadge priority={task.priority} />
                   </div>
                   {task.description ? (
                     <CardDescription className="mt-1.5 whitespace-pre-wrap">

@@ -11,6 +11,7 @@ const backlog: Backlog = {
   position: 0,
   startDate: null,
   dueOn: null,
+  priority: "medium",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -29,6 +30,7 @@ function makeTask(overrides: Partial<Task>): Task {
     labels: ["bug"],
     dueOn: "2026-02-01",
     startDate: null,
+    priority: "medium",
     position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
@@ -150,6 +152,7 @@ describe("TaskDetail", () => {
       labels: ["bug", "urgent"],
       startDate: null,
       dueOn: "2026-02-01T00:00:00Z",
+      priority: "medium",
     });
   });
 

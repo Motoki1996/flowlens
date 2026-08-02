@@ -31,7 +31,21 @@ import (
 var (
 	ErrInvalidName     = errors.New("backlog: name must be 1-100 characters")
 	ErrInvalidSchedule = errors.New("backlog: start date must not be after due date")
+	ErrInvalidPriority = errors.New("backlog: priority must be one of low, medium, high, urgent")
 	ErrNotFound        = errors.New("backlog: not found")
+)
+
+// Priority values, app-only and never synced to GitLab, mirroring
+// internal/task's (a backlog's priority is independent of its tasks', per
+// the 000010 migration). SortPriority is the ListFilter.Sort value that
+// switches List's ORDER BY from position to priority rank.
+const (
+	PriorityLow    = "low"
+	PriorityMedium = "medium"
+	PriorityHigh   = "high"
+	PriorityUrgent = "urgent"
+
+	SortPriority = "priority"
 )
 
 // Backlog is the API-facing representation of a project backlog. StartDate and
@@ -46,6 +60,7 @@ type Backlog struct {
 	Position    int32      `json:"position"`
 	StartDate   *time.Time `json:"startDate"`
 	DueOn       *time.Time `json:"dueOn"`
+	Priority    string     `json:"priority"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
@@ -60,6 +75,7 @@ func fromRow(row db.Backlog) Backlog {
 		Position:    row.Position,
 		StartDate:   datePtr(row.StartDate),
 		DueOn:       datePtr(row.DueOn),
+		Priority:    row.Priority,
 		CreatedAt:   row.CreatedAt.Time,
 		UpdatedAt:   row.UpdatedAt.Time,
 	}
@@ -88,6 +104,21 @@ func validateSchedule(startDate, dueOn *time.Time) error {
 		return ErrInvalidSchedule
 	}
 	return nil
+}
+
+// normalizePriority defaults an empty raw to PriorityMedium — Create leaves
+// it unset when the caller doesn't specify one, and Update's Optional
+// resolves an explicit empty string the same way — and otherwise rejects
+// anything outside the fixed set.
+func normalizePriority(raw string) (string, error) {
+	switch raw {
+	case "":
+		return PriorityMedium, nil
+	case PriorityLow, PriorityMedium, PriorityHigh, PriorityUrgent:
+		return raw, nil
+	default:
+		return "", ErrInvalidPriority
+	}
 }
 
 // Service manages backlogs inside projects owned by a single user.
@@ -119,6 +150,8 @@ type CreateParams struct {
 	Description string
 	StartDate   *time.Time
 	DueOn       *time.Time
+	// Priority defaults to PriorityMedium when empty.
+	Priority string
 }
 
 // Create validates name and creates a backlog at the end of projectID's
@@ -139,12 +172,17 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	if err := validateSchedule(p.StartDate, p.DueOn); err != nil {
 		return Backlog{}, err
 	}
+	priority, err := normalizePriority(p.Priority)
+	if err != nil {
+		return Backlog{}, err
+	}
 	row, err := s.q.CreateBacklog(ctx, db.CreateBacklogParams{
 		ProjectID:   projectID,
 		Name:        normalized,
 		Description: p.Description,
 		StartDate:   toDate(p.StartDate),
 		DueOn:       toDate(p.DueOn),
+		Priority:    priority,
 	})
 	if err != nil {
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
@@ -152,9 +190,19 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	return fromRow(row), nil
 }
 
-// List returns every backlog in projectID, ordered by position. It returns
-// ErrNotFound if projectID does not exist or belongs to another user.
-func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID) ([]Backlog, error) {
+// ListFilter narrows List to a subset of a project's backlogs. The zero
+// value means "no filter, default (position) order".
+type ListFilter struct {
+	Priority string // one of the Priority* constants, or "" (no filter)
+	// Sort is "" (position ASC, created_at ASC, the manual order) or
+	// SortPriority (priority rank DESC, then the same tiebreak).
+	Sort string
+}
+
+// List returns projectID's backlogs matching filter, ordered by position (or
+// by priority when filter.Sort is SortPriority). It returns ErrNotFound if
+// projectID does not exist or belongs to another user.
+func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Backlog, error) {
 	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
 		if errors.Is(err, project.ErrNotFound) {
 			return nil, ErrNotFound
@@ -162,7 +210,11 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID) ([]Bac
 		return nil, fmt.Errorf("backlog: list: %w", err)
 	}
 
-	rows, err := s.q.ListBacklogsByProject(ctx, projectID)
+	rows, err := s.q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{
+		ProjectID:      projectID,
+		Priority:       filter.Priority,
+		SortByPriority: filter.Sort == SortPriority,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("backlog: list: %w", err)
 	}
@@ -217,6 +269,10 @@ type UpdateParams struct {
 	Position    int32
 	StartDate   optional.Optional[*time.Time]
 	DueOn       optional.Optional[*time.Time]
+	// Priority left absent keeps the backlog's current priority; an
+	// explicit empty string resets it to PriorityMedium, the same as an
+	// absent Priority on CreateParams.
+	Priority optional.Optional[string]
 }
 
 // Update overwrites name, description and position, and applies whichever of
@@ -240,6 +296,10 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 	if err := validateSchedule(startDate, dueOn); err != nil {
 		return Backlog{}, err
 	}
+	priority, err := normalizePriority(p.Priority.Or(current.Priority))
+	if err != nil {
+		return Backlog{}, err
+	}
 
 	row, err := s.q.UpdateBacklogForOwner(ctx, db.UpdateBacklogForOwnerParams{
 		ID:          backlogID,
@@ -249,6 +309,7 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		Position:    p.Position,
 		StartDate:   toDate(startDate),
 		DueOn:       toDate(dueOn),
+		Priority:    priority,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

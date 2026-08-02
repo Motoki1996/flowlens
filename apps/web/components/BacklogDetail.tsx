@@ -4,6 +4,7 @@ import { taskPath, tasksPath } from "@/lib/routes";
 import { backlogProgress } from "@/lib/timeline";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { PriorityBadge } from "@/components/PriorityBadge";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -57,7 +58,10 @@ export function BacklogDetail({
     <>
       <Card>
         <CardHeader>
-          <h1 className="text-foreground text-xl leading-none font-semibold">{backlog.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-foreground text-xl leading-none font-semibold">{backlog.name}</h1>
+            <PriorityBadge priority={backlog.priority} />
+          </div>
           <CardDescription className="mt-1.5">
             {backlog.description || "No description"}
           </CardDescription>

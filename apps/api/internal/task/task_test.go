@@ -79,6 +79,67 @@ func TestService_Create_ValidatesTitle(t *testing.T) {
 	}
 }
 
+func TestService_Create_DefaultsAndValidatesPriority(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr error
+	}{
+		{"empty defaults to medium", "", task.PriorityMedium, nil},
+		{"accepts low", task.PriorityLow, task.PriorityLow, nil},
+		{"accepts high", task.PriorityHigh, task.PriorityHigh, nil},
+		{"accepts urgent", task.PriorityUrgent, task.PriorityUrgent, nil},
+		{"rejects unknown value", "critical", "", task.ErrInvalidPriority},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+
+			got, err := svc.Create(context.Background(), owner, p.ID, task.CreateParams{Title: "Fix bug", Priority: tt.input})
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.Priority)
+		})
+	}
+}
+
+func TestService_Update_ChangesPriority(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", Priority: task.PriorityLow})
+	require.NoError(t, err)
+	require.Equal(t, task.PriorityLow, created.Priority)
+
+	// An absent Priority leaves the stored value alone, the same as every
+	// other Optional field on UpdateParams.
+	untouched, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug")})
+	require.NoError(t, err)
+	assert.Equal(t, task.PriorityLow, untouched.Priority)
+
+	updated, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{
+		Title:    task.Present("Fix bug"),
+		Priority: task.Present(task.PriorityUrgent),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, task.PriorityUrgent, updated.Priority)
+
+	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{
+		Title:    task.Present("Fix bug"),
+		Priority: task.Present("not-a-priority"),
+	})
+	assert.ErrorIs(t, err, task.ErrInvalidPriority)
+}
+
 func TestService_Create_ReturnsNotFoundForForeignProject(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
@@ -189,6 +250,47 @@ func TestService_List_FiltersByBacklogAndStatus(t *testing.T) {
 			assert.ElementsMatch(t, tt.want, ids)
 		})
 	}
+}
+
+func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	low, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Low", Priority: task.PriorityLow})
+	require.NoError(t, err)
+	medium, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Medium", Priority: task.PriorityMedium})
+	require.NoError(t, err)
+	high, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "High", Priority: task.PriorityHigh})
+	require.NoError(t, err)
+	urgent, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Urgent", Priority: task.PriorityUrgent})
+	require.NoError(t, err)
+
+	filtered, err := svc.List(ctx, owner, p.ID, task.ListFilter{Priority: task.PriorityHigh})
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, high.ID, filtered[0].ID)
+
+	// Sorting by priority ranks urgent > high > medium > low; the fixture
+	// was created in the opposite (low-to-urgent, i.e. position ASC) order,
+	// so this also proves the sort overrides the manual position order.
+	sorted, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortPriority})
+	require.NoError(t, err)
+	require.Len(t, sorted, 4)
+	assert.Equal(t, []uuid.UUID{urgent.ID, high.ID, medium.ID, low.ID}, []uuid.UUID{
+		sorted[0].ID, sorted[1].ID, sorted[2].ID, sorted[3].ID,
+	})
+
+	// Without Sort, the original position order (creation order) is
+	// unaffected by priority.
+	unsorted, err := svc.List(ctx, owner, p.ID, task.ListFilter{})
+	require.NoError(t, err)
+	require.Len(t, unsorted, 4)
+	assert.Equal(t, []uuid.UUID{low.ID, medium.ID, high.ID, urgent.ID}, []uuid.UUID{
+		unsorted[0].ID, unsorted[1].ID, unsorted[2].ID, unsorted[3].ID,
+	})
 }
 
 func TestService_List_ReturnsNotFoundForForeignProject(t *testing.T) {

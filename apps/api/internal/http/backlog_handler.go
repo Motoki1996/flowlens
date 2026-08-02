@@ -18,17 +18,21 @@ type createBacklogRequest struct {
 	Description string     `json:"description"`
 	StartDate   *time.Time `json:"startDate"`
 	DueOn       *time.Time `json:"dueOn"`
+	Priority    string     `json:"priority"`
 }
 
-// The dates are Optional so PATCH stays a partial update for them: a body
-// without "startDate" keeps the stored one, and an explicit null clears it.
-// Name/description/position predate that and are still overwritten wholesale.
+// The dates and priority are Optional so PATCH stays a partial update for
+// them: a body without "startDate"/"priority" keeps the stored value, and an
+// explicit null clears a date (priority has no null case — see
+// backlog.normalizePriority). Name/description/position predate that and are
+// still overwritten wholesale.
 type updateBacklogRequest struct {
 	Name        string                        `json:"name"`
 	Description string                        `json:"description"`
 	Position    int32                         `json:"position"`
 	StartDate   optional.Optional[*time.Time] `json:"startDate"`
 	DueOn       optional.Optional[*time.Time] `json:"dueOn"`
+	Priority    optional.Optional[string]     `json:"priority"`
 }
 
 // backlogIDFromURL parses the {backlogID} path parameter. A malformed ID is
@@ -51,12 +55,52 @@ func (s *Server) handleListBacklogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	backlogs, err := s.backlogs.List(r.Context(), u.ID, projectID)
+	filter, err := parseBacklogListFilter(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+
+	backlogs, err := s.backlogs.List(r.Context(), u.ID, projectID, filter)
 	if err != nil {
 		writeBacklogError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, backlogs)
+}
+
+// isValidBacklogPriority reports whether v is one of the fixed priority
+// values.
+func isValidBacklogPriority(v string) bool {
+	switch v {
+	case backlog.PriorityLow, backlog.PriorityMedium, backlog.PriorityHigh, backlog.PriorityUrgent:
+		return true
+	default:
+		return false
+	}
+}
+
+// parseBacklogListFilter reads the ?priority= and ?sort= query parameters,
+// the same way parseTaskListFilter does for tasks. Either may be omitted to
+// mean "no filter"/"default order".
+func parseBacklogListFilter(r *http.Request) (backlog.ListFilter, error) {
+	var filter backlog.ListFilter
+
+	if v := r.URL.Query().Get("priority"); v != "" {
+		if !isValidBacklogPriority(v) {
+			return backlog.ListFilter{}, errors.New("priority must be one of low, medium, high, urgent")
+		}
+		filter.Priority = v
+	}
+
+	if v := r.URL.Query().Get("sort"); v != "" {
+		if v != backlog.SortPriority {
+			return backlog.ListFilter{}, errors.New("sort must be \"priority\"")
+		}
+		filter.Sort = v
+	}
+
+	return filter, nil
 }
 
 // handleCreateBacklog creates a backlog at the end of the project's backlog
@@ -80,6 +124,7 @@ func (s *Server) handleCreateBacklog(w http.ResponseWriter, r *http.Request) {
 		Description: req.Description,
 		StartDate:   req.StartDate,
 		DueOn:       req.DueOn,
+		Priority:    req.Priority,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -128,6 +173,7 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		Position:    req.Position,
 		StartDate:   req.StartDate,
 		DueOn:       req.DueOn,
+		Priority:    req.Priority,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -161,6 +207,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_name", "name must be 1-100 characters")
 	case errors.Is(err, backlog.ErrInvalidSchedule):
 		writeError(w, http.StatusBadRequest, "invalid_schedule", "start date must not be after due date")
+	case errors.Is(err, backlog.ErrInvalidPriority):
+		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
 	case errors.Is(err, backlog.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "backlog not found")
 	default:

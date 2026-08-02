@@ -253,6 +253,27 @@ func (q *Queries) GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLin
 	return i, err
 }
 
+const getLinkedGitlabProjectProjectID = `-- name: GetLinkedGitlabProjectProjectID :one
+
+SELECT gc.project_id
+FROM linked_gitlab_projects lgp
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE lgp.id = $1
+`
+
+// GetLinkedGitlabProjectProjectID is the lightweight project lookup
+// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+// bearer token's project boundary on GET
+// /linked-gitlab-projects/{linkID}/sync-runs, resolved through
+// gitlab_connections the same way linkedProjectOwner (dbtest) does, since a
+// linked project has no project_id column of its own.
+func (q *Queries) GetLinkedGitlabProjectProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getLinkedGitlabProjectProjectID, id)
+	var project_id uuid.UUID
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
 const listLinkedGitlabProjectsForOwner = `-- name: ListLinkedGitlabProjectsForOwner :many
 SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 FROM linked_gitlab_projects lgp

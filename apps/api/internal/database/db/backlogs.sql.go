@@ -110,6 +110,23 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 	return i, err
 }
 
+const getBacklogProjectID = `-- name: GetBacklogProjectID :one
+
+SELECT project_id FROM backlogs WHERE id = $1
+`
+
+// GetBacklogProjectID is the lightweight project lookup
+// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+// bearer token's project boundary on a single-backlog URL, without
+// GetBacklogForOwner's owner join — a token has no session owner to join
+// against.
+func (q *Queries) GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getBacklogProjectID, id)
+	var project_id uuid.UUID
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
 const listBacklogsByProject = `-- name: ListBacklogsByProject :many
 SELECT id, project_id, name, description, position, created_at, updated_at, start_date, due_on FROM backlogs WHERE project_id = $1 ORDER BY position ASC, created_at ASC
 `

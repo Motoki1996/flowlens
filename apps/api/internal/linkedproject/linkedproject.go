@@ -322,6 +322,23 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID) ([]Lin
 	return out, nil
 }
 
+// ProjectID returns the project linkID belongs to (resolved through its
+// GitLab connection), with no owner check — only requireTokenResourceProject
+// (internal/http, issue #66) uses this, to compare against a bearer token's
+// own project on GET /linked-gitlab-projects/{linkID}/sync-runs. Every other
+// method on this Service already scopes by owner; this one exists because a
+// token has no owner to join against in the first place.
+func (s *Service) ProjectID(ctx context.Context, linkID uuid.UUID) (uuid.UUID, error) {
+	projectID, err := s.q.GetLinkedGitlabProjectProjectID(ctx, linkID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, fmt.Errorf("linkedproject: project id: %w", err)
+	}
+	return projectID, nil
+}
+
 // Update changes linkID's sync scope and, if requested, promotes it to be
 // its connection's default link. Ownership is enforced by the query, so a
 // non-owner gets ErrNotFound and nothing is written.

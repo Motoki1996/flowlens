@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowlens/api/internal/apitoken"
+	"github.com/flowlens/api/internal/task"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -15,9 +17,8 @@ import (
 
 // bearerTestRouter mounts requireBearerAuth and requireTokenProjectMatch in
 // front of a stub handler that echoes the token's project ID, the same
-// composition a future project-scoped, AI-facing endpoint would use
-// (docs/plans/issue-sync.md "AI-facing"; no such endpoint exists yet, so
-// this is the only place that pipeline runs end to end).
+// composition server.go's project-scoped, bearer-reachable routes use
+// (issue #66's route allowlist).
 func bearerTestRouter(s *Server) chi.Router {
 	r := chi.NewRouter()
 	r.Route("/projects/{projectID}/probe", func(pr chi.Router) {
@@ -261,4 +262,176 @@ func TestRequireAuthOrBearer_RejectsInvalidCookieWithoutFallingBackToBearer(t *t
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestRequireBearerAuth_ResolvesTokenOwnerAsUser pins issue #66's design: a
+// bearer token resolves to a real user.User (its project's owner) in
+// userContextKey, the same key requireAuth uses — this is what lets every
+// existing owner-scoped handler serve a token request with no changes of
+// its own.
+func TestRequireBearerAuth_ResolvesTokenOwnerAsUser(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeRead}, nil)
+	require.NoError(t, err)
+
+	r := chi.NewRouter()
+	r.With(s.requireBearerAuth).Get("/whoami", func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusInternalServerError, "internal_error", "expected a user in context")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"userId": u.ID.String(), "username": u.Username})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/whoami", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), owner.ID.String())
+	assert.Contains(t, rec.Body.String(), "octocat")
+}
+
+func TestRequireTokenScope_ForbidsTokenWithoutScope(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeRead}, nil)
+	require.NoError(t, err)
+
+	r := chi.NewRouter()
+	r.With(s.requireBearerAuth, requireTokenScope(apitoken.ScopeWrite)).Post("/probe", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/probe", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestRequireTokenScope_AllowsTokenWithScope(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeWrite}, nil)
+	require.NoError(t, err)
+
+	r := chi.NewRouter()
+	r.With(s.requireBearerAuth, requireTokenScope(apitoken.ScopeWrite)).Post("/probe", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/probe", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestRequireTokenScope_NoOpForSessionAuth(t *testing.T) {
+	s, q := newTestServer(t)
+	_, session := loginSession(t, s, q)
+
+	r := chi.NewRouter()
+	r.With(s.requireAuthOrBearer, requireTokenScope(apitoken.ScopeWrite)).Post("/probe", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/probe", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code, "a session-authenticated request must never be scope-limited")
+}
+
+// taskResourceTestRouter mounts requireBearerAuth and
+// requireTokenResourceProject("taskID", ...) in front of a stub handler, the
+// same composition server.go's single-task bearer-reachable routes use.
+func taskResourceTestRouter(s *Server) chi.Router {
+	r := chi.NewRouter()
+	r.Route("/tasks/{taskID}/probe", func(pr chi.Router) {
+		pr.Use(s.requireBearerAuth)
+		pr.Use(requireTokenResourceProject("taskID", task.ErrNotFound, s.tasks.ProjectID))
+		pr.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+	return r
+}
+
+func TestRequireTokenResourceProject_AllowsMatchingProject(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	tsk := q.SeedTask(p.ID, owner.ID, "Fix bug")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeRead}, nil)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+tsk.ID.String()+"/probe/", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	taskResourceTestRouter(s).ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// TestRequireTokenResourceProject_ReturnsNotFoundForForeignProject pins
+// issue #66's central threat: since a bearer token now resolves to a real
+// user (its project's owner), the owner-scoped check every service method
+// already performs is not enough on its own — a task in a *different*
+// project owned by that same user must still be unreachable.
+func TestRequireTokenResourceProject_ReturnsNotFoundForForeignProject(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	ownProject := q.SeedProject(owner.ID, "Alpha")
+	otherProject := q.SeedProject(owner.ID, "Beta")
+	otherTask := q.SeedTask(otherProject.ID, owner.ID, "Other task")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, ownProject.ID, "CI bot", []string{apitoken.ScopeRead}, nil)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+otherTask.ID.String()+"/probe/", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	taskResourceTestRouter(s).ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestRequireTokenResourceProject_ReturnsNotFoundForUnknownResource(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeRead}, nil)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+uuid.New().String()+"/probe/", nil)
+	req.Header.Set("Authorization", "Bearer "+raw)
+	rec := httptest.NewRecorder()
+	taskResourceTestRouter(s).ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestRequireTokenResourceProject_NoOpForSessionAuth(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, session := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	tsk := q.SeedTask(p.ID, ownerID, "Fix bug")
+
+	r := chi.NewRouter()
+	r.Route("/tasks/{taskID}/probe", func(pr chi.Router) {
+		pr.Use(s.requireAuthOrBearer)
+		pr.Use(requireTokenResourceProject("taskID", task.ErrNotFound, s.tasks.ProjectID))
+		pr.Get("/", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+tsk.ID.String()+"/probe/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code, "a session-authenticated request must never be resource-boundary limited")
 }

@@ -17,6 +17,14 @@ const userContextKey contextKey = "flowlens_user"
 
 // corsMiddleware allows the configured web origin to call the API with
 // credentials (cookies).
+//
+// Access-Control-Allow-Headers deliberately never lists "Authorization"
+// (issue #66): the web app only ever authenticates with the session cookie,
+// never a bearer API token, so a browser has no legitimate reason to send
+// one. Leaving it off means the browser's CORS preflight rejects any
+// cross-origin script that tries to attach a token to a request, keeping
+// bearer tokens usable only for direct, server-to-server calls and shrinking
+// the token's exposure to XSS in the web app to zero.
 func corsMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

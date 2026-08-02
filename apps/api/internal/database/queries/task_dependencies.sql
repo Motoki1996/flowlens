@@ -24,3 +24,15 @@ ORDER BY td.created_at ASC;
 DELETE FROM task_dependencies td
 USING tasks t, projects p
 WHERE td.id = $1 AND t.id = td.predecessor_task_id AND t.project_id = p.id AND p.owner_user_id = $2;
+
+-- GetTaskDependencyProjectID is the lightweight project lookup
+-- requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+-- bearer token's project boundary on a single-dependency URL: resolved
+-- through the predecessor task, the same way DeleteTaskDependencyForOwner
+-- resolves ownership.
+
+-- name: GetTaskDependencyProjectID :one
+SELECT t.project_id
+FROM task_dependencies td
+JOIN tasks t ON t.id = td.predecessor_task_id
+WHERE td.id = $1;

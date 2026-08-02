@@ -349,9 +349,11 @@ An AI agent (or any external integration) reads and writes a task's status
 through a project-scoped bearer token rather than a user session:
 
 1. Issue a token from the project's single view or
-   `POST /api/v1/projects/{projectID}/api-tokens` (session auth). The raw
-   token is shown exactly once, at creation — FlowLens stores only its
-   SHA-256 hash, the same as a session cookie.
+   `POST /api/v1/projects/{projectID}/api-tokens` (session auth), with
+   `scopes: ["read"]` or `["read","write"]` (`["write"]` alone is expanded
+   to both — write always implies read). Omitting `scopes` defaults to
+   `["read"]`. The raw token is shown exactly once, at creation — FlowLens
+   stores only its SHA-256 hash, the same as a session cookie.
 2. Call the context API with `Authorization: Bearer <token>`:
 
 ```jsonc
@@ -394,6 +396,28 @@ To list several tasks at once (e.g. an agent polling its queue), use
 which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
+
+Beyond the context endpoints, a token can also reach a fixed allowlist of
+the regular task-tracker routes — everything else (starting a GitLab
+connection, minting more tokens, creating or deleting a project) stays
+session-only, permanently, regardless of scope:
+
+- **Read** (either scope): `GET /projects`, `/projects/{projectID}`,
+  `/projects/{projectID}/backlogs`, `/backlogs/{backlogID}`,
+  `/projects/{projectID}/tasks`, `/tasks/{taskID}`,
+  `/projects/{projectID}/task-dependencies`, and
+  `/linked-gitlab-projects/{linkID}/sync-runs`. `GET /projects` returns only
+  the token's own project, never every project its owner has.
+- **Write** (`write` scope): create/update/delete on tasks, backlogs and
+  task-dependencies, plus `POST /tasks/{taskID}/close|reopen|assign-backlog|sync-retry`
+  and `PUT /tasks/{taskID}/ai-context`.
+
+A single-resource URL (`{taskID}`, `{backlogID}`, `{dependencyID}`,
+`{linkID}`) is checked against the token's own project the same way
+`{projectID}` is: a resource in a *different* project owned by the same
+user gets the same 404 as one that doesn't exist. `Authorization` is never
+added to the web app's CORS-allowed request headers, so a bearer token stays
+usable only for direct, server-to-server calls, never from browser script.
 
 ### Task & backlog scheduling, Gantt charts
 

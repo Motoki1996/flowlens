@@ -572,6 +572,22 @@ func (s *Service) Get(ctx context.Context, ownerID, taskID uuid.UUID) (Task, err
 	return t, nil
 }
 
+// ProjectID returns the project taskID belongs to, with no owner check —
+// only requireTokenResourceProject (internal/http, issue #66) uses this, to
+// compare against a bearer token's own project. Every other method on this
+// Service already scopes by owner; this one exists because a token has no
+// owner to join against in the first place.
+func (s *Service) ProjectID(ctx context.Context, taskID uuid.UUID) (uuid.UUID, error) {
+	projectID, err := s.q.GetTaskProjectID(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, fmt.Errorf("task: project id: %w", err)
+	}
+	return projectID, nil
+}
+
 // gitlabInfoFromLink builds a task's GitlabInfo from its task_gitlab_links
 // row: the common case once a task has ever successfully pushed to GitLab.
 func gitlabInfoFromLink(link db.TaskGitlabLink) *GitlabInfo {

@@ -190,6 +190,22 @@ func (s *Service) Get(ctx context.Context, ownerID, backlogID uuid.UUID) (Backlo
 	return fromRow(row), nil
 }
 
+// ProjectID returns the project backlogID belongs to, with no owner check —
+// only requireTokenResourceProject (internal/http, issue #66) uses this, to
+// compare against a bearer token's own project. Every other method on this
+// Service already scopes by owner; this one exists because a token has no
+// owner to join against in the first place.
+func (s *Service) ProjectID(ctx context.Context, backlogID uuid.UUID) (uuid.UUID, error) {
+	projectID, err := s.q.GetBacklogProjectID(ctx, backlogID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, fmt.Errorf("backlog: project id: %w", err)
+	}
+	return projectID, nil
+}
+
 // UpdateParams are the attributes Update writes. Name, Description and
 // Position are always overwritten; the two dates are Optional so a caller that
 // only renames a backlog — the rename form in the web UI does exactly that —

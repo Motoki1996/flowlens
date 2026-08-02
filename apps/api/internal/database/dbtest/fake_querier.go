@@ -513,6 +513,16 @@ func (f *FakeQuerier) GetBacklogForOwner(_ context.Context, arg db.GetBacklogFor
 	return b, nil
 }
 
+// GetBacklogProjectID mirrors the SQL: no owner join, just the backlog's
+// own project_id.
+func (f *FakeQuerier) GetBacklogProjectID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	b, ok := f.backlogsByID[id]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return b.ProjectID, nil
+}
+
 func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBacklogForOwnerParams) (db.Backlog, error) {
 	existing, ok := f.backlogsByID[arg.ID]
 	if !ok {
@@ -767,6 +777,16 @@ func (f *FakeQuerier) GetTaskForProject(_ context.Context, arg db.GetTaskForProj
 	return t, nil
 }
 
+// GetTaskProjectID mirrors the SQL: no owner join, just the task's own
+// project_id.
+func (f *FakeQuerier) GetTaskProjectID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	t, ok := f.tasksByID[id]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return t.ProjectID, nil
+}
+
 // CountFailedSyncTasksByProjectForOwner mirrors the SQL: a task counts as
 // failed the same way internal/task derives a single task's sync_status,
 // from task_gitlab_links when a link exists or from its most recent sync_jobs
@@ -931,6 +951,21 @@ func (f *FakeQuerier) SeedTaskDependency(predecessorTaskID, successorTaskID uuid
 
 func (f *FakeQuerier) CreateTaskDependency(_ context.Context, arg db.CreateTaskDependencyParams) (db.TaskDependency, error) {
 	return f.SeedTaskDependency(arg.PredecessorTaskID, arg.SuccessorTaskID), nil
+}
+
+// GetTaskDependencyProjectID mirrors the SQL: resolved through the
+// predecessor task's project_id, the same way DeleteTaskDependencyForOwner
+// resolves ownership.
+func (f *FakeQuerier) GetTaskDependencyProjectID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	d, ok := f.taskDependenciesByID[id]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	t, ok := f.tasksByID[d.PredecessorTaskID]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return t.ProjectID, nil
 }
 
 // ListTaskDependenciesByProject mirrors the SQL: every dependency whose
@@ -1208,6 +1243,21 @@ func (f *FakeQuerier) GetLinkedGitlabProjectByID(_ context.Context, id uuid.UUID
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	return l, nil
+}
+
+// GetLinkedGitlabProjectProjectID mirrors the SQL: resolved through the
+// link's connection, the same way linkedProjectOwner is, since a linked
+// project has no project_id column of its own.
+func (f *FakeQuerier) GetLinkedGitlabProjectProjectID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	l, ok := f.linkedGitlabProjectsByID[id]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	conn, ok := f.gitlabConnectionsByID[l.GitlabConnectionID]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return conn.ProjectID, nil
 }
 
 // GetDefaultLinkedGitlabProjectForOwner mirrors the SQL: the project's

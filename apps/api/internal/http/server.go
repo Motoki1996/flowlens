@@ -107,25 +107,23 @@ func (s *Server) Router() chi.Router {
 
 	// Authenticated API.
 	r.Route("/api/v1", func(api chi.Router) {
+		// Session-only: never reachable by a project API token (issue #66's
+		// route allowlist — everything else is default-denied to a token).
+		// gitlab-connection* holds an encrypted GitLab PAT, /api-tokens can
+		// mint more tokens (privilege escalation), POST /projects and
+		// DELETE /projects/{projectID} let a token create or destroy its
+		// own footing, and linked-gitlab-projects' management/
+		// webhook-registration routes are all left out for the same
+		// "a token must not be able to reshape its own trust boundary"
+		// reason.
 		api.Group(func(protected chi.Router) {
 			protected.Use(s.requireAuth)
 			protected.Get("/me", s.handleMe)
 
 			protected.Route("/projects", func(projects chi.Router) {
-				projects.Get("/", s.handleListProjects)
 				projects.Post("/", s.handleCreateProject)
-				projects.Get("/{projectID}", s.handleGetProject)
 				projects.Patch("/{projectID}", s.handleUpdateProject)
 				projects.Delete("/{projectID}", s.handleDeleteProject)
-
-				projects.Get("/{projectID}/backlogs", s.handleListBacklogs)
-				projects.Post("/{projectID}/backlogs", s.handleCreateBacklog)
-
-				projects.Get("/{projectID}/tasks", s.handleListTasks)
-				projects.Post("/{projectID}/tasks", s.handleCreateTask)
-
-				projects.Get("/{projectID}/task-dependencies", s.handleListTaskDependencies)
-				projects.Post("/{projectID}/task-dependencies", s.handleCreateTaskDependency)
 
 				projects.Put("/{projectID}/gitlab-connection", s.handlePutGitlabConnection)
 				projects.Get("/{projectID}/gitlab-connection", s.handleGetGitlabConnection)
@@ -148,46 +146,81 @@ func (s *Server) Router() chi.Router {
 				linked.Patch("/{linkID}", s.handleUpdateLinkedGitlabProject)
 				linked.Delete("/{linkID}", s.handleDeleteLinkedGitlabProject)
 				linked.Post("/{linkID}/webhook", s.handleRegisterLinkedGitlabProjectWebhook)
-				linked.Get("/{linkID}/sync-runs", s.handleListSyncRuns)
 				linked.Post("/{linkID}/sync-runs", s.handleCreateSyncRun)
 				linked.Get("/{linkID}/webhook-events", s.handleListWebhookEvents)
 				linked.Get("/{linkID}/webhook-events/{eventID}", s.handleGetWebhookEvent)
 				linked.Post("/{linkID}/webhook-events/{eventID}/retry", s.handleRetryWebhookEvent)
 			})
-
-			protected.Route("/backlogs", func(backlogs chi.Router) {
-				backlogs.Get("/{backlogID}", s.handleGetBacklog)
-				backlogs.Patch("/{backlogID}", s.handleUpdateBacklog)
-				backlogs.Delete("/{backlogID}", s.handleDeleteBacklog)
-			})
-
-			protected.Route("/task-dependencies", func(deps chi.Router) {
-				deps.Delete("/{dependencyID}", s.handleDeleteTaskDependency)
-			})
-
-			protected.Route("/tasks", func(tasks chi.Router) {
-				tasks.Get("/{taskID}", s.handleGetTask)
-				tasks.Patch("/{taskID}", s.handleUpdateTask)
-				tasks.Delete("/{taskID}", s.handleDeleteTask)
-				tasks.Post("/{taskID}/close", s.handleCloseTask)
-				tasks.Post("/{taskID}/reopen", s.handleReopenTask)
-				tasks.Post("/{taskID}/assign-backlog", s.handleAssignTaskBacklog)
-				tasks.Post("/{taskID}/sync-retry", s.handleRetryTaskSync)
-				tasks.Put("/{taskID}/ai-context", s.handleUpsertTaskAIContext)
-			})
 		})
 
-		// AI-facing: session OR `Authorization: Bearer <project token>`
-		// (docs/plans/issue-sync.md "AI-facing"). Kept out of the
-		// `protected` group above, which is session-only.
-		api.Group(func(aiFacing chi.Router) {
-			aiFacing.Use(s.requireAuthOrBearer)
-			aiFacing.Get("/tasks/{taskID}/context", s.handleGetTaskContext)
+		// Session OR `Authorization: Bearer <project token>`
+		// (docs/plans/issue-sync.md "AI-facing"; internal/apitoken). Every
+		// route mounted here is on issue #66's explicit read/write
+		// allowlist — this is the only place a bearer token can reach app
+		// data at all. requireTokenScope(apitoken.ScopeWrite) gates
+		// mutations (a no-op for session auth, and for any token that
+		// already has write — write always implies read,
+		// apitoken.normalizeScopes). requireTokenProjectMatch and
+		// requireTokenResourceProject enforce that a token can only ever
+		// reach its own project's resources, whether the URL carries a
+		// {projectID} directly or a single-resource ID that must first be
+		// resolved to its project — see bearer_middleware.go's doc
+		// comments for why both checks exist on top of the ownership check
+		// every service method already performs.
+		//
+		// Every route below is registered as a flat, full-path leaf (never
+		// through a nested shared.Route(prefix, ...) sub-mount) precisely
+		// because `protected` above already owns a chi.Mount() at each of
+		// these same prefixes (/projects, /backlogs, /tasks,
+		// /task-dependencies, /linked-gitlab-projects) for its own
+		// session-only routes; a second, independent sub-mount at an
+		// identical prefix is untested territory, whereas a flat leaf route
+		// coexisting with a sibling group's mount at the same prefix is
+		// exactly what the original AI-facing routes already did safely
+		// (GET /tasks/{taskID}/context next to protected's /tasks mount).
+		api.Group(func(shared chi.Router) {
+			shared.Use(s.requireAuthOrBearer)
 
-			aiFacing.Group(func(projectScoped chi.Router) {
-				projectScoped.Use(requireTokenProjectMatch)
-				projectScoped.Get("/projects/{projectID}/tasks/context", s.handleListTaskContexts)
-			})
+			shared.Get("/projects", s.handleListProjects)
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}", s.handleGetProject)
+
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/backlogs", s.handleListBacklogs)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/backlogs", s.handleCreateBacklog)
+
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks", s.handleListTasks)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/tasks", s.handleCreateTask)
+
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/task-dependencies", s.handleListTaskDependencies)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/task-dependencies", s.handleCreateTaskDependency)
+
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks/context", s.handleListTaskContexts)
+
+			backlogResource := requireTokenResourceProject("backlogID", backlog.ErrNotFound, s.backlogs.ProjectID)
+			shared.With(backlogResource).Get("/backlogs/{backlogID}", s.handleGetBacklog)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Patch("/backlogs/{backlogID}", s.handleUpdateBacklog)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Delete("/backlogs/{backlogID}", s.handleDeleteBacklog)
+
+			depResource := requireTokenResourceProject("dependencyID", taskdependency.ErrNotFound, s.taskDependencies.ProjectID)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), depResource).Delete("/task-dependencies/{dependencyID}", s.handleDeleteTaskDependency)
+
+			taskResource := requireTokenResourceProject("taskID", task.ErrNotFound, s.tasks.ProjectID)
+			shared.With(taskResource).Get("/tasks/{taskID}", s.handleGetTask)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Patch("/tasks/{taskID}", s.handleUpdateTask)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Delete("/tasks/{taskID}", s.handleDeleteTask)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/close", s.handleCloseTask)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/reopen", s.handleReopenTask)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/assign-backlog", s.handleAssignTaskBacklog)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/sync-retry", s.handleRetryTaskSync)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Put("/tasks/{taskID}/ai-context", s.handleUpsertTaskAIContext)
+
+			// handleGetTaskContext is already project-scoped through the
+			// token itself (task.Service.ContextForProject, driven by
+			// tokenProjectFromContext) rather than through this URL's
+			// {taskID}, so it needs no requireTokenResourceProject on top.
+			shared.Get("/tasks/{taskID}/context", s.handleGetTaskContext)
+
+			linkResource := requireTokenResourceProject("linkID", linkedproject.ErrNotFound, s.linkedProjects.ProjectID)
+			shared.With(linkResource).Get("/linked-gitlab-projects/{linkID}/sync-runs", s.handleListSyncRuns)
 		})
 	})
 

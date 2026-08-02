@@ -140,6 +140,12 @@ type Querier interface {
 	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
 	FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunParams) (GitlabSyncRun, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
+	// GetBacklogProjectID is the lightweight project lookup
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
+	// a bearer token's project boundary on a single-backlog URL, without
+	// GetBacklogForOwner's owner join — a token has no session owner to
+	// join against.
+	GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	// internal/task uses this at task-create time to decide whether the
 	// project has anywhere to push a new issue, and if so, where
 	// (docs/plans/issue-sync.md, "Outbound").
@@ -172,6 +178,13 @@ type Querier interface {
 	// ownership check.
 	GetLinkedGitlabProjectByID(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
+	// GetLinkedGitlabProjectProjectID is the lightweight project lookup
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
+	// a bearer token's project boundary on GET
+	// /linked-gitlab-projects/{linkID}/sync-runs, resolved through
+	// gitlab_connections the same way linkedProjectOwner (dbtest) does,
+	// since a linked project has no project_id column of its own.
+	GetLinkedGitlabProjectProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	// GetProjectByID is unscoped, for the inbound webhook apply pipeline
 	// (internal/webhookapply), which resolves a new unclassified task's
 	// created_by_user_id from the project's owner and has no acting user of
@@ -189,6 +202,12 @@ type Querier interface {
 	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
+	// GetTaskDependencyProjectID is the lightweight project lookup
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
+	// a bearer token's project boundary on a single-dependency URL:
+	// resolved through the predecessor task, the same way
+	// DeleteTaskDependencyForOwner resolves ownership.
+	GetTaskDependencyProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
 	// GetTaskForProject scopes a task by its project directly, not by owner:
 	// the AI-facing bearer-token path (docs/plans/issue-sync.md "AI-facing")
@@ -213,6 +232,13 @@ type Querier interface {
 	// alongside the issue IID/URL to identify the issue without a second
 	// call.
 	GetTaskGitlabLinkWithProjectPathByTaskID(ctx context.Context, taskID uuid.UUID) (GetTaskGitlabLinkWithProjectPathByTaskIDRow, error)
+	// GetTaskProjectID is the lightweight project lookup
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
+	// a bearer token's project boundary on a single-task URL. It has no
+	// owner join, unlike GetTaskForOwner: a token has no session owner to
+	// join against (apitoken.Auth), only its own project to compare the
+	// result against.
+	GetTaskProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)

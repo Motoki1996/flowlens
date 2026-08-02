@@ -64,6 +64,16 @@ SELECT id, project_id, backlog_id, title, description, status, closed_at, assign
 FROM tasks
 WHERE id = $1 AND project_id = $2;
 
+-- GetTaskProjectID is the lightweight project lookup
+-- requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+-- bearer token's project boundary on a single-task URL. It has no owner
+-- join, unlike GetTaskForOwner: a token has no session owner to join
+-- against (apitoken.Auth), only its own project to compare the result
+-- against.
+
+-- name: GetTaskProjectID :one
+SELECT project_id FROM tasks WHERE id = $1;
+
 -- name: UpdateTaskForOwner :one
 UPDATE tasks t
 SET backlog_id = $3, title = $4, description = $5,

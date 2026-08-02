@@ -12,8 +12,14 @@ import (
 	"github.com/google/uuid"
 )
 
+// createAPITokenRequest's Scopes defaults to read-only when omitted or
+// empty, preserving the shape existing clients already send; a caller must
+// explicitly ask for ["read","write"] (or just ["write"], which
+// apitoken.normalizeScopes expands) to get a token the write-scoped routes
+// in server.go's allowlist will accept (issue #66).
 type createAPITokenRequest struct {
 	Name      string     `json:"name"`
+	Scopes    []string   `json:"scopes"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
@@ -52,9 +58,11 @@ func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scope is not yet exposed on the request; every token created through
-	// this endpoint is read-only until #66 wires scope selection through.
-	token, rawToken, err := s.apiTokens.Create(r.Context(), u.ID, projectID, req.Name, []string{apitoken.ScopeRead}, req.ExpiresAt)
+	scopes := req.Scopes
+	if len(scopes) == 0 {
+		scopes = []string{apitoken.ScopeRead}
+	}
+	token, rawToken, err := s.apiTokens.Create(r.Context(), u.ID, projectID, req.Name, scopes, req.ExpiresAt)
 	if err != nil {
 		writeAPITokenError(w, err)
 		return

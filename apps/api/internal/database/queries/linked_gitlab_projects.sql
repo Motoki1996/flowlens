@@ -38,6 +38,17 @@ WHERE lgp.id = $1 AND p.owner_user_id = $2;
 -- ownership check.
 SELECT * FROM linked_gitlab_projects WHERE id = $1;
 
+-- name: GetLinkedGitlabProjectProjectID :one
+-- The lightweight project lookup requireTokenResourceProject (internal/http,
+-- issue #66) uses to enforce a bearer token's project boundary on
+-- GET /linked-gitlab-projects/{linkID}/sync-runs, resolved through
+-- gitlab_connections the same way linkedProjectOwner (dbtest) does, since a
+-- linked project has no project_id column of its own.
+SELECT gc.project_id
+FROM linked_gitlab_projects lgp
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE lgp.id = $1;
+
 -- name: GetDefaultLinkedGitlabProjectForOwner :one
 -- internal/task uses this at task-create time to decide whether the
 -- project has anywhere to push a new issue, and if so, where

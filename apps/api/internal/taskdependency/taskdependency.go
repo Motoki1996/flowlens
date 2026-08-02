@@ -21,6 +21,7 @@ import (
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // Sentinel errors returned by Service. Handlers map these to HTTP status
@@ -189,4 +190,21 @@ func (s *Service) Delete(ctx context.Context, ownerID, dependencyID uuid.UUID) e
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ProjectID returns the project dependencyID belongs to (resolved through
+// its predecessor task), with no owner check — only
+// requireTokenResourceProject (internal/http, issue #66) uses this, to
+// compare against a bearer token's own project. Every other method on this
+// Service already scopes by owner; this one exists because a token has no
+// owner to join against in the first place.
+func (s *Service) ProjectID(ctx context.Context, dependencyID uuid.UUID) (uuid.UUID, error) {
+	projectID, err := s.q.GetTaskDependencyProjectID(ctx, dependencyID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, fmt.Errorf("taskdependency: project id: %w", err)
+	}
+	return projectID, nil
 }

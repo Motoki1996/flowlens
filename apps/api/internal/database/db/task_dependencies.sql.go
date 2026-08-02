@@ -63,6 +63,26 @@ func (q *Queries) DeleteTaskDependencyForOwner(ctx context.Context, arg DeleteTa
 	return result.RowsAffected(), nil
 }
 
+const getTaskDependencyProjectID = `-- name: GetTaskDependencyProjectID :one
+
+SELECT t.project_id
+FROM task_dependencies td
+JOIN tasks t ON t.id = td.predecessor_task_id
+WHERE td.id = $1
+`
+
+// GetTaskDependencyProjectID is the lightweight project lookup
+// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+// bearer token's project boundary on a single-dependency URL: resolved
+// through the predecessor task, the same way DeleteTaskDependencyForOwner
+// resolves ownership.
+func (q *Queries) GetTaskDependencyProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getTaskDependencyProjectID, id)
+	var project_id uuid.UUID
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
 const listTaskDependenciesByProject = `-- name: ListTaskDependenciesByProject :many
 SELECT td.id, td.predecessor_task_id, td.successor_task_id, td.created_at
 FROM task_dependencies td

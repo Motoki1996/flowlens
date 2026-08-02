@@ -32,8 +32,24 @@ func projectIDFromURL(r *http.Request) (uuid.UUID, bool) {
 }
 
 // handleListProjects returns every project owned by the authenticated user.
+//
+// A bearer-authenticated request is scoped down to just its own token's
+// project (issue #66): unlike every other handler, this one cannot lean on
+// userFromContext's owner-scoped List alone, since the token's owner may
+// have other projects the token was never issued for.
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
+
+	if ts, ok := tokenScopeFromContext(r.Context()); ok {
+		p, err := s.projects.Get(r.Context(), u.ID, ts.ProjectID)
+		if err != nil {
+			writeProjectError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, []project.Project{p})
+		return
+	}
+
 	projects, err := s.projects.List(r.Context(), u.ID)
 	if err != nil {
 		slog.Error("list projects", "error", err)

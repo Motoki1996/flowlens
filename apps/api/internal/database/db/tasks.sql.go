@@ -355,6 +355,24 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 	return i, err
 }
 
+const getTaskProjectID = `-- name: GetTaskProjectID :one
+
+SELECT project_id FROM tasks WHERE id = $1
+`
+
+// GetTaskProjectID is the lightweight project lookup
+// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+// bearer token's project boundary on a single-task URL. It has no owner
+// join, unlike GetTaskForOwner: a token has no session owner to join
+// against (apitoken.Auth), only its own project to compare the result
+// against.
+func (q *Queries) GetTaskProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getTaskProjectID, id)
+	var project_id uuid.UUID
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
 const listTasksByProject = `-- name: ListTasksByProject :many
 SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, start_date, position, created_by_user_id, created_at, updated_at
 FROM tasks

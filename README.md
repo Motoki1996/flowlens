@@ -343,18 +343,58 @@ unset:
   latest state from GitLab. This is a complete substitute for webhooks, just
   not automatic — nothing GitLab-side needs to change.
 
-### AI-facing API
+### API tokens
 
-An AI agent (or any external integration) reads and writes a task's status
-through a project-scoped bearer token rather than a user session:
+An AI agent (or any external integration) reads and writes a project's
+tasks through a project-scoped bearer token rather than a user session. A
+token **acts as the project's owner** — every request it makes is
+authorized exactly the way that owner's session would be — but it is
+confined to the one project it was issued for and to a fixed allowlist of
+routes; see [ADR-0009](docs/decisions/0009-why-project-scoped-api-tokens.md)
+for why it's built that way.
 
-1. Issue a token from the project's single view or
-   `POST /api/v1/projects/{projectID}/api-tokens` (session auth), with
-   `scopes: ["read"]` or `["read","write"]` (`["write"]` alone is expanded
-   to both — write always implies read). Omitting `scopes` defaults to
-   `["read"]`. The raw token is shown exactly once, at creation — FlowLens
-   stores only its SHA-256 hash, the same as a session cookie.
-2. Call the context API with `Authorization: Bearer <token>`:
+#### Issuing a token
+
+From the project's single view (`/projects/{projectId}`), open the **API
+tokens** card, click **Issue token**, and fill in a name, a scope
+(**Read-only** or **Read & write**), and an optional expiry date. The raw
+token is shown exactly once, in the "Token issued" dialog right after
+creation — FlowLens stores only its SHA-256 hash, the same as a session
+cookie, so if you lose it you have to issue a new one. Revoke a token any
+time with **Revoke** on its row in the same card.
+
+The same action, direct against the API (session auth; this is the only
+token-management route a token itself can never call — see
+[What a token can't reach](#what-a-token-cant-reach) below):
+
+```bash
+curl -X POST "$API_BASE_URL/api/v1/projects/$PROJECT_ID/api-tokens" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: flowlens_session=$SESSION_COOKIE" \
+  -d '{"name": "ci-agent", "scopes": ["read", "write"]}'
+```
+
+```jsonc
+{
+  "id": "b7e1...",
+  "projectId": "a1b2...",
+  "name": "ci-agent",
+  "scopes": ["read", "write"],
+  "tokenPrefix": "flt_9f3a2c1d",
+  "createdAt": "2026-08-02T00:00:00Z",
+  "token": "flt_9f3a2c1d8e2b4a1f6c3d5e7a9b0f1c2d" // only ever present here
+}
+```
+
+#### Calling the API
+
+Every call authenticates with `Authorization: Bearer <token>` instead of
+the session cookie:
+
+```bash
+curl "$API_BASE_URL/api/v1/tasks/$TASK_ID/context" \
+  -H "Authorization: Bearer flt_9f3a2c1d8e2b4a1f6c3d5e7a9b0f1c2d"
+```
 
 ```jsonc
 // GET /api/v1/tasks/{taskID}/context
@@ -397,27 +437,74 @@ which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
 
-Beyond the context endpoints, a token can also reach a fixed allowlist of
-the regular task-tracker routes — everything else (starting a GitLab
-connection, minting more tokens, creating or deleting a project) stays
-session-only, permanently, regardless of scope:
+#### Scopes
 
-- **Read** (either scope): `GET /projects`, `/projects/{projectID}`,
-  `/projects/{projectID}/backlogs`, `/backlogs/{backlogID}`,
-  `/projects/{projectID}/tasks`, `/tasks/{taskID}`,
-  `/projects/{projectID}/task-dependencies`, and
-  `/linked-gitlab-projects/{linkID}/sync-runs`. `GET /projects` returns only
-  the token's own project, never every project its owner has.
-- **Write** (`write` scope): create/update/delete on tasks, backlogs and
-  task-dependencies, plus `POST /tasks/{taskID}/close|reopen|assign-backlog|sync-retry`
-  and `PUT /tasks/{taskID}/ai-context`.
+| Scope | Grants |
+| --- | --- |
+| `read` | Every allowlisted `GET`, including both context endpoints above. Every token has at least this scope. |
+| `write` | Everything `read` grants, plus create/update/delete on tasks, backlogs and task-dependencies. |
+
+`scopes: ["write"]` alone is expanded to `["read","write"]` at creation —
+write always implies read, so a route never has to check for `write` without
+also accepting a plain `read` token where read access is all it needs.
+Omitting `scopes` on creation defaults to `["read"]`.
+
+#### Reachable endpoints
+
+Beyond the two context endpoints above, a token can reach this fixed
+allowlist of the regular task-tracker routes:
+
+| Method | Path | Scope |
+| --- | --- | --- |
+| GET | `/projects` (only the token's own project, never every project its owner has) | `read` |
+| GET | `/projects/{projectID}` | `read` |
+| GET | `/projects/{projectID}/backlogs` | `read` |
+| POST | `/projects/{projectID}/backlogs` | `write` |
+| GET | `/backlogs/{backlogID}` | `read` |
+| PATCH, DELETE | `/backlogs/{backlogID}` | `write` |
+| GET | `/projects/{projectID}/tasks` | `read` |
+| POST | `/projects/{projectID}/tasks` | `write` |
+| GET | `/tasks/{taskID}` | `read` |
+| PATCH, DELETE | `/tasks/{taskID}` | `write` |
+| POST | `/tasks/{taskID}/close`, `/reopen`, `/assign-backlog`, `/sync-retry` | `write` |
+| PUT | `/tasks/{taskID}/ai-context` | `write` |
+| GET | `/projects/{projectID}/task-dependencies` | `read` |
+| POST | `/projects/{projectID}/task-dependencies` | `write` |
+| DELETE | `/task-dependencies/{dependencyID}` | `write` |
+| GET | `/linked-gitlab-projects/{linkID}/sync-runs` | `read` |
 
 A single-resource URL (`{taskID}`, `{backlogID}`, `{dependencyID}`,
 `{linkID}`) is checked against the token's own project the same way
 `{projectID}` is: a resource in a *different* project owned by the same
-user gets the same 404 as one that doesn't exist. `Authorization` is never
-added to the web app's CORS-allowed request headers, so a bearer token stays
-usable only for direct, server-to-server calls, never from browser script.
+user gets the same 404 as one that doesn't exist.
+
+#### What a token can't reach
+
+Everything else stays session-only, permanently, regardless of scope —
+there is no scope that unlocks these, because each one lets an existing
+credential either read a second secret or reshape the project's own trust
+boundary:
+
+- **The project's GitLab connection** (`PUT`/`GET`/`DELETE
+  .../gitlab-connection`, `.../gitlab-connection/test`,
+  `.../gitlab-connection/available-projects`) — it holds an encrypted GitLab
+  access token; a project API token must never be a path to a second,
+  more powerful secret.
+- **API tokens themselves** (`GET`/`POST .../api-tokens`,
+  `DELETE /api-tokens/{tokenID}`) — otherwise a read-only token could mint
+  itself a write token, defeating the scope check entirely.
+- **Creating or deleting a project** (`POST /projects`,
+  `DELETE /projects/{projectID}`) — a token could otherwise create or
+  destroy its own footing.
+- **Linked-GitLab-project management and webhook registration**
+  (`POST`/`PATCH`/`DELETE .../linked-gitlab-projects*`,
+  `.../webhook`, `.../webhook-events*`) — these change what the project
+  syncs with and how, which is a connection-level decision, not a
+  task-tracker read/write.
+
+`Authorization` is also never added to the web app's CORS-allowed request
+headers, so a bearer token stays usable only for direct, server-to-server
+calls, never from browser script.
 
 ### Task & backlog scheduling, Gantt charts
 

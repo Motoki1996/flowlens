@@ -5,12 +5,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
-import type { ApiError, GitlabConnection, Project } from "@/types";
+import type { ApiError, ApiToken, GitlabConnection, Project } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { ApiTokenSection } from "@/components/ApiTokenSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -205,6 +206,7 @@ export function ProjectDetail({
   countsError = false,
   gitlabConnection = null,
   linkedProjectCount = 0,
+  apiTokens = [],
 }: {
   project: Project;
   backlogCount?: number;
@@ -214,6 +216,7 @@ export function ProjectDetail({
   countsError?: boolean;
   gitlabConnection?: GitlabConnection | null;
   linkedProjectCount?: number;
+  apiTokens?: ApiToken[];
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -290,6 +293,10 @@ export function ProjectDetail({
           name="GitLab connection"
           summary={gitlabSummary(gitlabConnection, linkedProjectCount)}
         />
+      </div>
+
+      <div className="mt-8">
+        <ApiTokenSection projectId={project.id} tokens={apiTokens} />
       </div>
     </>
   );

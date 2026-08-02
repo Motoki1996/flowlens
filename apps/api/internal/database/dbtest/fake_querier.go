@@ -218,12 +218,14 @@ func (f *FakeQuerier) storeProjectAPIToken(t db.ProjectApiToken) {
 
 func (f *FakeQuerier) CreateProjectAPIToken(_ context.Context, arg db.CreateProjectAPITokenParams) (db.ProjectApiToken, error) {
 	t := db.ProjectApiToken{
-		ID:        uuid.New(),
-		ProjectID: arg.ProjectID,
-		Name:      arg.Name,
-		TokenHash: arg.TokenHash,
-		ExpiresAt: arg.ExpiresAt,
-		CreatedAt: now(),
+		ID:          uuid.New(),
+		ProjectID:   arg.ProjectID,
+		Name:        arg.Name,
+		TokenHash:   arg.TokenHash,
+		TokenPrefix: arg.TokenPrefix,
+		Scopes:      arg.Scopes,
+		ExpiresAt:   arg.ExpiresAt,
+		CreatedAt:   now(),
 	}
 	f.storeProjectAPIToken(t)
 	return t, nil
@@ -275,16 +277,34 @@ func (f *FakeQuerier) DeleteProjectAPITokenForOwner(_ context.Context, arg db.De
 
 // GetProjectAPITokenByTokenHash mirrors the SQL: a token that does not exist
 // or has expired is reported as pgx.ErrNoRows, exactly like an unknown hash.
-func (f *FakeQuerier) GetProjectAPITokenByTokenHash(_ context.Context, tokenHash string) (db.ProjectApiToken, error) {
+// Like the real JOIN, a token whose project has been deleted (should not
+// happen given the FK's ON DELETE CASCADE, but the fake has no such
+// constraint) is also reported as pgx.ErrNoRows.
+func (f *FakeQuerier) GetProjectAPITokenByTokenHash(_ context.Context, tokenHash string) (db.GetProjectAPITokenByTokenHashRow, error) {
 	id, ok := f.projectAPITokensByHash[tokenHash]
 	if !ok {
-		return db.ProjectApiToken{}, pgx.ErrNoRows
+		return db.GetProjectAPITokenByTokenHashRow{}, pgx.ErrNoRows
 	}
 	t := f.projectAPITokensByID[id]
 	if t.ExpiresAt.Valid && !t.ExpiresAt.Time.After(time.Now()) {
-		return db.ProjectApiToken{}, pgx.ErrNoRows
+		return db.GetProjectAPITokenByTokenHashRow{}, pgx.ErrNoRows
 	}
-	return t, nil
+	owner, ok := f.projectAPITokenOwner(t)
+	if !ok {
+		return db.GetProjectAPITokenByTokenHashRow{}, pgx.ErrNoRows
+	}
+	return db.GetProjectAPITokenByTokenHashRow{
+		ID:          t.ID,
+		ProjectID:   t.ProjectID,
+		Name:        t.Name,
+		TokenHash:   t.TokenHash,
+		LastUsedAt:  t.LastUsedAt,
+		ExpiresAt:   t.ExpiresAt,
+		CreatedAt:   t.CreatedAt,
+		Scopes:      t.Scopes,
+		TokenPrefix: t.TokenPrefix,
+		OwnerUserID: owner,
+	}, nil
 }
 
 func (f *FakeQuerier) UpdateProjectAPITokenLastUsedAt(_ context.Context, arg db.UpdateProjectAPITokenLastUsedAtParams) error {

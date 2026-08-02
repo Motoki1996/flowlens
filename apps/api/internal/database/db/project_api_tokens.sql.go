@@ -14,16 +14,18 @@ import (
 
 const createProjectAPIToken = `-- name: CreateProjectAPIToken :one
 
-INSERT INTO project_api_tokens (project_id, name, token_hash, expires_at)
-VALUES ($1, $2, $3, $4)
-RETURNING id, project_id, name, token_hash, last_used_at, expires_at, created_at
+INSERT INTO project_api_tokens (project_id, name, token_hash, token_prefix, scopes, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, project_id, name, token_hash, last_used_at, expires_at, created_at, scopes, token_prefix
 `
 
 type CreateProjectAPITokenParams struct {
-	ProjectID uuid.UUID          `json:"project_id"`
-	Name      string             `json:"name"`
-	TokenHash string             `json:"token_hash"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+	Name        string             `json:"name"`
+	TokenHash   string             `json:"token_hash"`
+	TokenPrefix pgtype.Text        `json:"token_prefix"`
+	Scopes      []string           `json:"scopes"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
 }
 
 // project_api_tokens has no owner column of its own; ownership is always
@@ -37,6 +39,8 @@ func (q *Queries) CreateProjectAPIToken(ctx context.Context, arg CreateProjectAP
 		arg.ProjectID,
 		arg.Name,
 		arg.TokenHash,
+		arg.TokenPrefix,
+		arg.Scopes,
 		arg.ExpiresAt,
 	)
 	var i ProjectApiToken
@@ -48,6 +52,8 @@ func (q *Queries) CreateProjectAPIToken(ctx context.Context, arg CreateProjectAP
 		&i.LastUsedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Scopes,
+		&i.TokenPrefix,
 	)
 	return i, err
 }
@@ -73,18 +79,36 @@ func (q *Queries) DeleteProjectAPITokenForOwner(ctx context.Context, arg DeleteP
 
 const getProjectAPITokenByTokenHash = `-- name: GetProjectAPITokenByTokenHash :one
 
-SELECT id, project_id, name, token_hash, last_used_at, expires_at, created_at FROM project_api_tokens
-WHERE token_hash = $1
-  AND (expires_at IS NULL OR expires_at > now())
+SELECT t.id, t.project_id, t.name, t.token_hash, t.last_used_at, t.expires_at, t.created_at, t.scopes, t.token_prefix, p.owner_user_id
+FROM project_api_tokens t
+JOIN projects p ON p.id = t.project_id
+WHERE t.token_hash = $1
+  AND (t.expires_at IS NULL OR t.expires_at > now())
 `
+
+type GetProjectAPITokenByTokenHashRow struct {
+	ID          uuid.UUID          `json:"id"`
+	ProjectID   uuid.UUID          `json:"project_id"`
+	Name        string             `json:"name"`
+	TokenHash   string             `json:"token_hash"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	Scopes      []string           `json:"scopes"`
+	TokenPrefix pgtype.Text        `json:"token_prefix"`
+	OwnerUserID uuid.UUID          `json:"owner_user_id"`
+}
 
 // GetProjectAPITokenByTokenHash is unscoped and used only by bearer
 // authentication (internal/apitoken.Service.Authenticate), which has no
 // acting user to scope through and resolves the project from the token
-// itself. Like GetUserBySessionToken, it filters out expired rows in SQL.
-func (q *Queries) GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (ProjectApiToken, error) {
+// itself. Like GetUserBySessionToken, it filters out expired rows in SQL. It
+// joins projects to also resolve owner_user_id: a bearer request has no
+// session, so the project's owner is the only user it can act as (see
+// internal/apitoken's Auth type).
+func (q *Queries) GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error) {
 	row := q.db.QueryRow(ctx, getProjectAPITokenByTokenHash, tokenHash)
-	var i ProjectApiToken
+	var i GetProjectAPITokenByTokenHashRow
 	err := row.Scan(
 		&i.ID,
 		&i.ProjectID,
@@ -93,12 +117,15 @@ func (q *Queries) GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash s
 		&i.LastUsedAt,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.Scopes,
+		&i.TokenPrefix,
+		&i.OwnerUserID,
 	)
 	return i, err
 }
 
 const listProjectAPITokensByProject = `-- name: ListProjectAPITokensByProject :many
-SELECT id, project_id, name, token_hash, last_used_at, expires_at, created_at FROM project_api_tokens WHERE project_id = $1 ORDER BY created_at DESC
+SELECT id, project_id, name, token_hash, last_used_at, expires_at, created_at, scopes, token_prefix FROM project_api_tokens WHERE project_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error) {
@@ -118,6 +145,8 @@ func (q *Queries) ListProjectAPITokensByProject(ctx context.Context, projectID u
 			&i.LastUsedAt,
 			&i.ExpiresAt,
 			&i.CreatedAt,
+			&i.Scopes,
+			&i.TokenPrefix,
 		); err != nil {
 			return nil, err
 		}

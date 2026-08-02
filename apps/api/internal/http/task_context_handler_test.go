@@ -85,7 +85,7 @@ func TestHandleGetTaskContext_BearerAuth(t *testing.T) {
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
 	tsk := q.SeedTask(p.ID, owner.ID, "Fix bug")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	rec := doBearerRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String()+"/context", nil, raw)
@@ -102,7 +102,7 @@ func TestHandleGetTaskContext_BearerAuth_ForeignProjectTokenGets404(t *testing.T
 	p := q.SeedProject(owner.ID, "Alpha")
 	otherProject := q.SeedProject(owner.ID, "Beta")
 	tsk := q.SeedTask(p.ID, owner.ID, "Fix bug")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, otherProject.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, otherProject.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	rec := doBearerRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String()+"/context", nil, raw)
@@ -211,7 +211,7 @@ func TestHandleListTaskContexts_BearerAuth(t *testing.T) {
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
 	q.SeedTask(p.ID, owner.ID, "Fix bug")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	rec := doBearerRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks/context", nil, raw)
@@ -230,7 +230,7 @@ func TestHandleListTaskContexts_BearerAuth_ForeignProjectTokenGets404(t *testing
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
 	otherProject := q.SeedProject(owner.ID, "Beta")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, otherProject.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, otherProject.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	rec := doBearerRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks/context", nil, raw)

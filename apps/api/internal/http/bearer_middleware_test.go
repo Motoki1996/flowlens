@@ -53,7 +53,7 @@ func TestRequireBearerAuth_ExpiredToken(t *testing.T) {
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
 	past := time.Now().Add(-time.Hour)
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", &past)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, &past)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+p.ID.String()+"/probe/", nil)
@@ -67,7 +67,7 @@ func TestRequireBearerAuth_RevokedToken(t *testing.T) {
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
-	token, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", nil)
+	token, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 	require.NoError(t, s.apiTokens.Delete(context.Background(), owner.ID, token.ID))
 
@@ -82,7 +82,7 @@ func TestRequireBearerAuth_ValidTokenSetsProjectInContext(t *testing.T) {
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+p.ID.String()+"/probe/", nil)
@@ -99,7 +99,7 @@ func TestRequireTokenProjectMatch_ReturnsNotFoundForForeignProject(t *testing.T)
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	ownProject := q.SeedProject(owner.ID, "Alpha")
 	otherProject := q.SeedProject(owner.ID, "Beta")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, ownProject.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, ownProject.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+otherProject.ID.String()+"/probe/", nil)
@@ -134,7 +134,7 @@ func TestRequireAuthOrBearer_AcceptsBearerToken(t *testing.T) {
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	r := chi.NewRouter()
@@ -159,7 +159,7 @@ func TestRequireAuthOrBearer_RejectsInvalidCookieWithoutFallingBackToBearer(t *t
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")
-	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", nil)
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
 	require.NoError(t, err)
 
 	r := chi.NewRouter()

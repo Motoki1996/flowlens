@@ -52,7 +52,9 @@ func (s *Server) handleCreateAPIToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, rawToken, err := s.apiTokens.Create(r.Context(), u.ID, projectID, req.Name, req.ExpiresAt)
+	// Scope is not yet exposed on the request; every token created through
+	// this endpoint is read-only until #66 wires scope selection through.
+	token, rawToken, err := s.apiTokens.Create(r.Context(), u.ID, projectID, req.Name, []string{apitoken.ScopeRead}, req.ExpiresAt)
 	if err != nil {
 		writeAPITokenError(w, err)
 		return
@@ -100,6 +102,8 @@ func writeAPITokenError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, apitoken.ErrInvalidName):
 		writeError(w, http.StatusBadRequest, "invalid_name", "name must be 1-100 characters")
+	case errors.Is(err, apitoken.ErrInvalidScopes):
+		writeError(w, http.StatusBadRequest, "invalid_scopes", "scopes must be a non-empty subset of read, write")
 	case errors.Is(err, apitoken.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "api token not found")
 	default:

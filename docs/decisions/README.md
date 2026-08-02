@@ -20,3 +20,4 @@ that capture a significant decision, its context, and its consequences.
 | [0006](0006-why-ooui.md) | Why object-oriented UI (OOUI) | Accepted |
 | [0007](0007-why-outbox-worker.md) | Why a Postgres outbox and in-process worker for GitLab sync | Accepted |
 | [0008](0008-why-per-project-gitlab-connection.md) | Why the GitLab connection is per app project, and tasks link 1:1 to issues | Accepted |
+| [0009](0009-why-project-scoped-api-tokens.md) | Why API tokens act as the project owner, with a two-tier scope enforced in HTTP middleware | Accepted |

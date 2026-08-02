@@ -140,6 +140,45 @@ Key properties:
 - **The cookie is HttpOnly**, so the access/session token is never exposed
   to JavaScript or `localStorage`. `Secure` is enabled in production.
 
+## Bearer token flow (API tokens)
+
+Alongside the session cookie, a second, project-scoped credential lets an
+external integration (typically an AI coding agent) call the API without a
+user in the loop:
+
+```
+Integration              Go API
+  │  GET /tasks/{id}/context  │
+  │  Authorization: Bearer flt_...
+  ├───────────────────────────▶│  hash token, look up project_api_tokens
+  │                            │  resolve token → project → owner user.User
+  │                            │  put owner in the same user-context key
+  │                            │  a session request uses (requireBearerAuth)
+  │◀── 200 + task context ─────┤
+```
+
+- **Tokens are opaque and server-side**, the same as sessions: only the
+  SHA-256 hash of `flt_<random>` is stored (`internal/apitoken`,
+  `auth.HashToken`); the raw value is returned once, at creation.
+- **A token acts as its project's owner.** `requireBearerAuth`
+  (`internal/http/bearer_middleware.go`) resolves the token to the owning
+  `user.User` and injects it into the request context exactly as
+  `requireAuth` does for a session — every existing owner-scoped service
+  method authorizes a bearer request with no changes of its own.
+- **The project boundary is a second, HTTP-only check.** Because a token's
+  owner may have several projects, `requireTokenProjectMatch` /
+  `requireTokenResourceProject` additionally confine the request to the
+  token's own project, and `requireTokenScope` enforces `read`/`write`. Only
+  routes explicitly mounted behind `requireAuthOrBearer` in `server.go`
+  accept a token at all; everything else remains session-only. See
+  [ADR-0009](decisions/0009-why-project-scoped-api-tokens.md) for the
+  rationale and the "API tokens" section of [`README.md`](../README.md)
+  for the reachable-route/scope reference.
+- **Never reachable from the browser.** `corsMiddleware` never lists
+  `Authorization` in `Access-Control-Allow-Headers`, so a browser's own CORS
+  preflight blocks any cross-origin script from attaching a token — it stays
+  usable only for direct, server-to-server calls.
+
 ## GitHub synchronization flow
 
 Not implemented yet, but the design is fixed by the current seams:

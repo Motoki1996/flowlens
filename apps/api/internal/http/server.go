@@ -46,6 +46,7 @@ type Server struct {
 	projectSync      *projectsync.Service
 	webhookEvents    *webhookevent.Service
 	webhookLimiter   *simpleRateLimiter
+	tokenLimiter     *simpleRateLimiter
 	sessions         *auth.SessionService
 	cookies          cookieManager
 	webBaseURL       string
@@ -78,6 +79,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		projectSync:      projectsync.NewService(queries, txRunner, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(queries, cipher),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
+		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
 		sessions:         auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:          cookieManager{secure: cfg.IsProduction()},
 		webBaseURL:       cfg.WebBaseURL,

@@ -79,6 +79,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		projectSync:      projectsync.NewService(q, txRunner, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(q, cipher),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
+		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
 		sessions:         auth.NewSessionService(q, time.Hour),
 		cookies:          cookieManager{secure: false},
 		webBaseURL:       "http://localhost:3000",

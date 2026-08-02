@@ -6,12 +6,25 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/flowlens/api/internal/apitoken"
 	"github.com/google/uuid"
 )
 
 const tokenProjectContextKey contextKey = "flowlens_token_project"
+
+// tokenRateLimit and tokenRateLimitWindow bound how many requests a single
+// API token can make in a window (issue #67: an unattended AI agent or a
+// broken integration must not be able to hammer the API without limit).
+// This is a separate budget from the webhook receiver's own
+// webhookRateLimit/webhookRateLimitWindow, and is keyed by token ID rather
+// than caller IP, since a single integration's requests should be bounded
+// regardless of which address they come from.
+const (
+	tokenRateLimit       = 120
+	tokenRateLimitWindow = time.Minute
+)
 
 // bearerToken extracts the raw token from an "Authorization: Bearer <token>"
 // header. It reports false for a missing header, a non-Bearer scheme, or an
@@ -42,7 +55,11 @@ func tokenProjectFromContext(ctx context.Context) (uuid.UUID, bool) {
 // the project.Project it was issued for (internal/apitoken, project-scoped
 // API tokens per docs/plans/issue-sync.md "AI-facing"), and rejects the
 // request with 401 when the token is missing, unknown, expired, or revoked
-// — the three failure cases are never distinguished in the response.
+// — the three failure cases are never distinguished in the response. A
+// successfully authenticated request is then subject to s.tokenLimiter,
+// keyed by the token's own ID, and rejected with 429 + Retry-After once its
+// budget (tokenRateLimit per tokenRateLimitWindow) is exhausted — this
+// applies only to bearer-authenticated requests, never to a session cookie.
 // Unlike requireAuth, it never resolves a user: a bearer caller is scoped to
 // its token's project only, put in context for requireTokenProjectMatch (or
 // a handler) to check against.
@@ -61,6 +78,10 @@ func (s *Server) requireBearerAuth(next http.Handler) http.Handler {
 			}
 			slog.Error("authenticate api token", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+			return
+		}
+		if !s.tokenLimiter.Allow(tokenAuth.TokenID.String()) {
+			writeTooManyRequests(w, tokenRateLimitWindow)
 			return
 		}
 		ctx := context.WithValue(r.Context(), tokenProjectContextKey, tokenAuth.ProjectID)

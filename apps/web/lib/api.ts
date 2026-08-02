@@ -10,6 +10,7 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
 import type {
+  ApiToken,
   Backlog,
   GitlabConnection,
   LinkedGitlabProject,
@@ -245,3 +246,21 @@ export async function getWebhookEvents(linkId: string, perPage = 10): Promise<We
   const body = (await res.json()) as { events: WebhookEvent[]; nextPage: number };
   return body.events;
 }
+
+/**
+ * getProjectApiTokens returns every API token issued for the project, newest
+ * first. The raw token value is never included in this listing — it is only
+ * ever returned once, in the create response (see types.ApiTokenWithSecret).
+ * Callers must already know the request is authenticated.
+ */
+export const getProjectApiTokens = cache(async (projectId: string): Promise<ApiToken[]> => {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/api-tokens`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load api tokens: ${res.status}`);
+  }
+  return (await res.json()) as ApiToken[];
+});

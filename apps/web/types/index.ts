@@ -168,3 +168,26 @@ export interface SyncRun {
   errorMessage: string;
   createdAt: string;
 }
+
+export type ApiTokenScope = "read" | "write";
+
+/** ApiToken is a project-scoped bearer credential for the AI-facing task
+ *  context API (see the "AI-facing API" section in README.md). The raw
+ *  bearer value is never part of this shape — it exists only in the create
+ *  response, alongside these fields (see apitoken.APIToken). */
+export interface ApiToken {
+  id: string;
+  projectId: string;
+  name: string;
+  scopes: ApiTokenScope[];
+  tokenPrefix: string;
+  lastUsedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+/** ApiTokenWithSecret is the create response's shape: an ApiToken plus the
+ *  raw bearer value, shown exactly once. */
+export interface ApiTokenWithSecret extends ApiToken {
+  token: string;
+}

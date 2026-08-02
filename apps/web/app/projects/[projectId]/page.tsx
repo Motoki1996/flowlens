@@ -5,6 +5,7 @@ import {
   getGitlabConnection,
   getLinkedGitlabProjects,
   getProject,
+  getProjectApiTokens,
   getTasks,
 } from "@/lib/api";
 import { ProjectDetail } from "@/components/ProjectDetail";
@@ -47,6 +48,13 @@ export default async function ProjectPage({
     // the connection screen, which reports the real state.
   }
 
+  let apiTokens: Awaited<ReturnType<typeof getProjectApiTokens>> = [];
+  try {
+    apiTokens = await getProjectApiTokens(projectId);
+  } catch {
+    // Left empty; the section still renders and issuing a token still works.
+  }
+
   return (
     <ProjectDetail
       project={project}
@@ -56,6 +64,7 @@ export default async function ProjectPage({
       countsError={countsError}
       gitlabConnection={gitlabConnection}
       linkedProjectCount={linkedGitlabProjects.length}
+      apiTokens={apiTokens}
     />
   );
 }

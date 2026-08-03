@@ -14,10 +14,13 @@ import type {
   Backlog,
   GitlabConnection,
   LinkedGitlabProject,
+  Priority,
   Project,
   SyncRun,
   Task,
   TaskDependency,
+  TaskStatus,
+  TaskWithProject,
   User,
   WebhookEvent,
 } from "@/types";
@@ -138,6 +141,51 @@ export const getTasks = cache(async (projectId: string): Promise<Task[]> => {
   }
   return (await res.json()) as Task[];
 });
+
+/** AllTasksFilter is GET /api/v1/tasks's query parameters (issue #76) —
+ *  every one is optional, meaning "no filter"; sort/limit are defaulted by
+ *  the API itself, not here. Dates are plain YYYY-MM-DD strings — unlike a
+ *  task's own dueOn/startDate body fields, these are query parameters the
+ *  API parses as a bare date, not an RFC3339 timestamp (see
+ *  parseDateQueryParam, internal/http/task_handler.go). */
+export type AllTasksFilter = {
+  status?: TaskStatus;
+  priority?: Priority;
+  dueBefore?: string;
+  dueAfter?: string;
+  startedBefore?: string;
+  projectIds?: string[];
+  sort?: "dueOn" | "priority" | "updatedAt";
+  limit?: number;
+};
+
+/**
+ * getAllTasks returns every task across every project the current user
+ * owns, matching filter — the cross-project Task collection at /tasks
+ * (issue #76). Callers must already know the request is authenticated.
+ */
+export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TaskWithProject[]> {
+  const cookieStore = await cookies();
+  const params = new URLSearchParams();
+  if (filter.status) params.set("status", filter.status);
+  if (filter.priority) params.set("priority", filter.priority);
+  if (filter.dueBefore) params.set("dueBefore", filter.dueBefore);
+  if (filter.dueAfter) params.set("dueAfter", filter.dueAfter);
+  if (filter.startedBefore) params.set("startedBefore", filter.startedBefore);
+  if (filter.sort) params.set("sort", filter.sort);
+  if (filter.limit) params.set("limit", String(filter.limit));
+  for (const id of filter.projectIds ?? []) params.append("projectId", id);
+  const query = params.toString();
+
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/tasks${query ? `?${query}` : ""}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load tasks: ${res.status}`);
+  }
+  return (await res.json()) as TaskWithProject[];
+}
 
 /**
  * getTask returns one task including its AI context, or null when it

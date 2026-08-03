@@ -786,6 +786,114 @@ func (f *FakeQuerier) ListTasksByProjectPaged(_ context.Context, arg db.ListTask
 	return items, nil
 }
 
+// dueOnLess reports whether a's due_on sorts before b's, matching due_on
+// ASC's default NULLS LAST behaviour: a task with no due date always sorts
+// after one that has one.
+func dueOnLess(a, b pgtype.Date) bool {
+	if a.Valid != b.Valid {
+		return a.Valid
+	}
+	if !a.Valid {
+		return false
+	}
+	return a.Time.Before(b.Time)
+}
+
+func dueOnEqual(a, b pgtype.Date) bool {
+	if a.Valid != b.Valid {
+		return false
+	}
+	if !a.Valid {
+		return true
+	}
+	return a.Time.Equal(b.Time)
+}
+
+// ListTasksForOwner mirrors the SQL: every task across every project
+// ownerUserID owns (through taskOwner, the same join every other owner-scoped
+// task query uses), filtered by status/priority/due-before/due-after/
+// started-before/project_ids — each following the "empty/NULL disables it"
+// convention — then sorted and capped. See the real query's doc comment
+// (internal/database/queries/tasks.sql) for why the ORDER BY tiers apply
+// unconditionally rather than branching per sort value.
+func (f *FakeQuerier) ListTasksForOwner(_ context.Context, arg db.ListTasksForOwnerParams) ([]db.ListTasksForOwnerRow, error) {
+	allowed := map[uuid.UUID]bool{}
+	for _, id := range arg.ProjectIds {
+		allowed[id] = true
+	}
+
+	items := []db.ListTasksForOwnerRow{}
+	for _, t := range f.tasks {
+		owner, ok := f.taskOwner(t)
+		if !ok || owner != arg.OwnerUserID {
+			continue
+		}
+		if arg.Status != "" && t.Status != arg.Status {
+			continue
+		}
+		if arg.Priority != "" && t.Priority != arg.Priority {
+			continue
+		}
+		if arg.DueBefore.Valid && (!t.DueOn.Valid || t.DueOn.Time.After(arg.DueBefore.Time)) {
+			continue
+		}
+		if arg.DueAfter.Valid && (!t.DueOn.Valid || t.DueOn.Time.Before(arg.DueAfter.Time)) {
+			continue
+		}
+		if arg.StartedBefore.Valid && (!t.StartDate.Valid || t.StartDate.Time.After(arg.StartedBefore.Time)) {
+			continue
+		}
+		if len(allowed) > 0 && !allowed[t.ProjectID] {
+			continue
+		}
+		items = append(items, db.ListTasksForOwnerRow{
+			ID:                     t.ID,
+			ProjectID:              t.ProjectID,
+			BacklogID:              t.BacklogID,
+			Title:                  t.Title,
+			Description:            t.Description,
+			Status:                 t.Status,
+			ClosedAt:               t.ClosedAt,
+			AssigneeGitlabUserID:   t.AssigneeGitlabUserID,
+			AssigneeGitlabUsername: t.AssigneeGitlabUsername,
+			Labels:                 t.Labels,
+			DueOn:                  t.DueOn,
+			StartDate:              t.StartDate,
+			Priority:               t.Priority,
+			Position:               t.Position,
+			CreatedByUserID:        t.CreatedByUserID,
+			CreatedAt:              t.CreatedAt,
+			UpdatedAt:              t.UpdatedAt,
+			ProjectName:            f.projectsByID[t.ProjectID].Name,
+		})
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		switch arg.Sort {
+		case "priority":
+			if ri, rj := priorityRank(items[i].Priority), priorityRank(items[j].Priority); ri != rj {
+				return ri > rj
+			}
+		case "updatedAt":
+			if !items[i].UpdatedAt.Time.Equal(items[j].UpdatedAt.Time) {
+				return items[i].UpdatedAt.Time.After(items[j].UpdatedAt.Time)
+			}
+		}
+		if !dueOnEqual(items[i].DueOn, items[j].DueOn) {
+			return dueOnLess(items[i].DueOn, items[j].DueOn)
+		}
+		if items[i].Position != items[j].Position {
+			return items[i].Position < items[j].Position
+		}
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
+	})
+
+	if int(arg.LimitCount) < len(items) {
+		items = items[:arg.LimitCount]
+	}
+	return items, nil
+}
+
 // taskOwner returns the owner_user_id of the project a task belongs to,
 // mirroring the JOIN the real query performs.
 func (f *FakeQuerier) taskOwner(t db.Task) (uuid.UUID, bool) {

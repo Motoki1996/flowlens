@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { User } from "@/types";
+import { allTasksPath } from "@/lib/routes";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { LogoutButton } from "./LogoutButton";
 import { AppIcon } from "./AppIcon";
@@ -25,6 +26,9 @@ export function AppHeader({ user }: { user: User }) {
             </Link>
             <Link href="/projects" className="hover:text-foreground">
               Projects
+            </Link>
+            <Link href={allTasksPath()} className="hover:text-foreground">
+              Tasks
             </Link>
             <Link href="/settings" className="hover:text-foreground">
               Settings

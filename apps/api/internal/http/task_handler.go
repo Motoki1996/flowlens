@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -133,6 +134,117 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tasks, err := s.tasks.List(r.Context(), u.ID, projectID, filter)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tasks)
+}
+
+// parseDateQueryParam reads name as a YYYY-MM-DD date, mirroring the format
+// internal/webhookapply and internal/projectsync already parse task/backlog
+// dates with. An absent value is not an error — it means "no filter" — but a
+// present, malformed one is.
+func parseDateQueryParam(r *http.Request, name string) (*time.Time, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return nil, nil
+	}
+	t, err := time.Parse("2006-01-02", v)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be a YYYY-MM-DD date", name)
+	}
+	return &t, nil
+}
+
+// isValidCrossProjectSort reports whether v is one of the sort values GET
+// /api/v1/tasks accepts.
+func isValidCrossProjectSort(v string) bool {
+	switch v {
+	case task.SortDueOn, task.SortPriority, task.SortUpdatedAt:
+		return true
+	default:
+		return false
+	}
+}
+
+// parseCrossProjectTaskListFilter reads the query parameters GET
+// /api/v1/tasks accepts (issue #76): ?status=, ?priority=, ?dueBefore=,
+// ?dueAfter=, ?startedBefore= (all YYYY-MM-DD), ?projectId= (repeatable —
+// still scoped to the caller's own projects, never a way to reach someone
+// else's), ?sort= and ?limit=. Every filter may be omitted; sort and limit
+// are defaulted by task.Service.ListForOwner itself, not here.
+func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, error) {
+	var filter task.CrossProjectFilter
+
+	if v := r.URL.Query().Get("status"); v != "" {
+		if v != task.StatusOpen && v != task.StatusClosed {
+			return task.CrossProjectFilter{}, errors.New("status must be \"open\" or \"closed\"")
+		}
+		filter.Status = v
+	}
+
+	if v := r.URL.Query().Get("priority"); v != "" {
+		if !isValidPriority(v) {
+			return task.CrossProjectFilter{}, errors.New("priority must be one of low, medium, high, urgent")
+		}
+		filter.Priority = v
+	}
+
+	dueBefore, err := parseDateQueryParam(r, "dueBefore")
+	if err != nil {
+		return task.CrossProjectFilter{}, err
+	}
+	filter.DueBefore = dueBefore
+
+	dueAfter, err := parseDateQueryParam(r, "dueAfter")
+	if err != nil {
+		return task.CrossProjectFilter{}, err
+	}
+	filter.DueAfter = dueAfter
+
+	startedBefore, err := parseDateQueryParam(r, "startedBefore")
+	if err != nil {
+		return task.CrossProjectFilter{}, err
+	}
+	filter.StartedBefore = startedBefore
+
+	for _, v := range r.URL.Query()["projectId"] {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			return task.CrossProjectFilter{}, errors.New("projectId must be a UUID")
+		}
+		filter.ProjectIDs = append(filter.ProjectIDs, id)
+	}
+
+	if v := r.URL.Query().Get("sort"); v != "" {
+		if !isValidCrossProjectSort(v) {
+			return task.CrossProjectFilter{}, errors.New("sort must be one of dueOn, priority, updatedAt")
+		}
+		filter.Sort = v
+	}
+
+	filter.Limit = atoiOrZero(r.URL.Query().Get("limit"))
+
+	return filter, nil
+}
+
+// handleListAllTasks returns every task across every project the
+// authenticated user owns (GET /api/v1/tasks, issue #76) — the task
+// collection's cross-project entry point, "what should I be doing right
+// now" without opening each project separately. Session-only: see this
+// route's registration in server.go for why a project-scoped API token
+// (ADR-0009) never reaches it.
+func (s *Server) handleListAllTasks(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+
+	filter, err := parseCrossProjectTaskListFilter(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
+
+	tasks, err := s.tasks.ListForOwner(r.Context(), u.ID, filter)
 	if err != nil {
 		writeTaskError(w, err)
 		return

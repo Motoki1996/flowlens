@@ -460,6 +460,95 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 	assert.Equal(t, 0, linkCount, "the gitlab sync link row must be gone")
 }
 
+// ListTasksForOwner (GET /api/v1/tasks, issue #76) is hand-written rather
+// than sqlc-generated in this branch, since sqlc wasn't runnable in the
+// environment that authored it — this integration test is the one thing
+// that actually proves the raw SQL parses and does what its doc comment
+// claims against a real Postgres, rather than only the fake querier's
+// approximation of it.
+func TestListTasksForOwner(t *testing.T) {
+	q := testDB(t)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	intruder := createUser(t, q, "intruder")
+	alpha, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("Alpha-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	beta, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("Beta-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	theirs, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: intruder.ID, Name: fmt.Sprintf("Theirs-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: alpha.ID, OwnerUserID: owner.ID})
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: beta.ID, OwnerUserID: owner.ID})
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: theirs.ID, OwnerUserID: intruder.ID})
+	})
+
+	soon := time.Now().AddDate(0, 0, 1)
+	later := time.Now().AddDate(0, 0, 10)
+
+	inAlpha, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID: alpha.ID, Title: "In alpha, due soon", Labels: []string{}, Priority: "urgent",
+		DueOn: pgtype.Date{Time: soon, Valid: true}, CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+	inBeta, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID: beta.ID, Title: "In beta, due later", Labels: []string{}, Priority: "low",
+		DueOn: pgtype.Date{Time: later, Valid: true}, CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID: theirs.ID, Title: "Not the owner's", Labels: []string{}, Priority: "urgent", CreatedByUserID: intruder.ID,
+	})
+	require.NoError(t, err)
+
+	t.Run("spans every owned project, carries project_name, and never leaks another owner's task", func(t *testing.T) {
+		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{}, Sort: "dueOn", LimitCount: 50,
+		})
+		require.NoError(t, err)
+
+		byID := map[uuid.UUID]db.ListTasksForOwnerRow{}
+		for _, r := range rows {
+			byID[r.ID] = r
+		}
+		require.Contains(t, byID, inAlpha.ID)
+		require.Contains(t, byID, inBeta.ID)
+		assert.Equal(t, alpha.Name, byID[inAlpha.ID].ProjectName)
+		assert.Equal(t, beta.Name, byID[inBeta.ID].ProjectName)
+
+		for _, r := range rows {
+			assert.NotEqual(t, "Not the owner's", r.Title, "the intruder's task must never appear")
+		}
+	})
+
+	t.Run("priority filter narrows to one task", func(t *testing.T) {
+		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+			OwnerUserID: owner.ID, Priority: "low", ProjectIds: []uuid.UUID{}, Sort: "dueOn", LimitCount: 50,
+		})
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, inBeta.ID, rows[0].ID)
+	})
+
+	t.Run("sort=priority ranks urgent first regardless of due date", func(t *testing.T) {
+		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{}, Sort: "priority", LimitCount: 50,
+		})
+		require.NoError(t, err)
+		require.Len(t, rows, 2)
+		assert.Equal(t, inAlpha.ID, rows[0].ID, "urgent must rank ahead of low despite its earlier due date")
+	})
+
+	t.Run("project_ids narrows within the caller's own projects, never a way to reach someone else's", func(t *testing.T) {
+		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{theirs.ID}, Sort: "dueOn", LimitCount: 50,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, rows)
+	})
+}
+
 // A duplicate GitLab webhook delivery — the same linked_gitlab_project_id +
 // delivery_uuid — must be a no-op, not an error, so the receiver
 // (internal/webhookevent) can always respond 200 whether or not this is a

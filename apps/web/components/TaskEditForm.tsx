@@ -4,10 +4,11 @@ import { useMemo, useState, type FormEvent } from "react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
-import type { ApiError, Backlog, Priority, Task } from "@/types";
+import type { GitlabLabelOption, GitlabMemberOption, ApiError, Backlog, Priority, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
+import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -20,6 +21,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 
 const UNCLASSIFIED_LABEL = "Unclassified";
+
+// UNASSIGNED is the assignee Combobox's sentinel for "no assignee", mirroring
+// UNCLASSIFIED_BACKLOG's role for the backlog picker — a GitLab user ID is
+// never negative, so it can't collide with a real option's value.
+const UNASSIGNED = "unassigned";
 
 /** parseLabels reads the comma-separated label input back into the API's array. */
 function parseLabels(raw: string): string[] {
@@ -42,11 +48,19 @@ function parseLabels(raw: string): string[] {
 export function TaskEditForm({
   task,
   backlogs,
+  assigneeOptions = null,
+  labelOptions = null,
   onSaved,
   onCancel,
 }: {
   task: Task;
   backlogs: Backlog[];
+  // The task's linked GitLab project's members/labels, or null when the
+  // project has no default linked GitLab project — assignee/labels fall
+  // back to free-text entry in that case, since a GitLab user ID has no
+  // local equivalent to pick from (issue #80).
+  assigneeOptions?: GitlabMemberOption[] | null;
+  labelOptions?: GitlabLabelOption[] | null;
   onSaved: (task: Task) => void;
   onCancel: () => void;
 }) {
@@ -54,7 +68,11 @@ export function TaskEditForm({
   const [description, setDescription] = useState(task.description);
   const [backlogId, setBacklogId] = useState(task.backlogId ?? UNCLASSIFIED_BACKLOG);
   const [assignee, setAssignee] = useState(task.assigneeGitlabUsername);
+  const [assigneeUserId, setAssigneeUserId] = useState(
+    task.assigneeGitlabUserId != null ? String(task.assigneeGitlabUserId) : UNASSIGNED,
+  );
   const [labels, setLabels] = useState(task.labels.join(", "));
+  const [labelsList, setLabelsList] = useState<string[]>(task.labels);
   const [startDate, setStartDate] = useState(fromApiDate(task.startDate));
   const [dueOn, setDueOn] = useState(fromApiDate(task.dueOn));
   const [priority, setPriority] = useState<Priority>(task.priority);
@@ -69,12 +87,55 @@ export function TaskEditForm({
     [backlogs],
   );
 
+  // The current assignee is kept as an option even if it fell off the
+  // fetched member list (e.g. a member removed from the GitLab project),
+  // so opening the form never silently drops the existing selection.
+  const assigneeSelectOptions = useMemo(() => {
+    if (!assigneeOptions) return [];
+    const known = assigneeOptions.map((m) => ({
+      value: String(m.id),
+      label: m.name ? `${m.name} (@${m.username})` : m.username,
+    }));
+    if (task.assigneeGitlabUserId != null && !assigneeOptions.some((m) => m.id === task.assigneeGitlabUserId)) {
+      known.unshift({
+        value: String(task.assigneeGitlabUserId),
+        label: task.assigneeGitlabUsername || `User #${task.assigneeGitlabUserId}`,
+      });
+    }
+    return [{ value: UNASSIGNED, label: "Unassigned" }, ...known];
+  }, [assigneeOptions, task.assigneeGitlabUserId, task.assigneeGitlabUsername]);
+
+  // Same idea for labels: a label already on the task stays selectable even
+  // if it isn't (or is no longer) one of the GitLab project's labels.
+  const labelSelectOptions = useMemo(() => {
+    if (!labelOptions) return [];
+    const known = labelOptions.map((l) => ({ value: l.name, label: l.name }));
+    const knownNames = new Set(known.map((o) => o.value));
+    for (const label of task.labels) {
+      if (!knownNames.has(label)) {
+        known.push({ value: label, label });
+        knownNames.add(label);
+      }
+    }
+    return known;
+  }, [labelOptions, task.labels]);
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) {
       setError("Task title is required.");
       return;
     }
+
+    const assigneeFields = assigneeOptions
+      ? {
+          assigneeGitlabUserId: assigneeUserId === UNASSIGNED ? null : Number(assigneeUserId),
+          assigneeGitlabUsername:
+            assigneeUserId === UNASSIGNED
+              ? ""
+              : (assigneeOptions.find((m) => String(m.id) === assigneeUserId)?.username ?? ""),
+        }
+      : { assigneeGitlabUsername: assignee };
 
     setPending(true);
     setError(null);
@@ -87,8 +148,8 @@ export function TaskEditForm({
           title,
           description,
           backlogId: backlogId === UNCLASSIFIED_BACKLOG ? null : backlogId,
-          assigneeGitlabUsername: assignee,
-          labels: parseLabels(labels),
+          ...assigneeFields,
+          labels: labelOptions ? labelsList : parseLabels(labels),
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
@@ -141,28 +202,54 @@ export function TaskEditForm({
           <label htmlFor="edit-task-assignee" className="text-foreground block text-sm font-medium">
             Assignee
           </label>
-          <Input
-            id="edit-task-assignee"
-            name="assigneeGitlabUsername"
-            value={assignee}
-            onChange={(e) => setAssignee(e.target.value)}
-            placeholder="GitLab username"
-            className="mt-1"
-          />
+          {assigneeOptions ? (
+            <Combobox
+              id="edit-task-assignee"
+              options={assigneeSelectOptions}
+              value={assigneeUserId}
+              onChange={setAssigneeUserId}
+              searchPlaceholder="Search members…"
+              emptyText="No member found."
+              className="mt-1"
+            />
+          ) : (
+            <Input
+              id="edit-task-assignee"
+              name="assigneeGitlabUsername"
+              value={assignee}
+              onChange={(e) => setAssignee(e.target.value)}
+              placeholder="GitLab username"
+              className="mt-1"
+            />
+          )}
         </div>
         <div>
           <label htmlFor="edit-task-labels" className="text-foreground block text-sm font-medium">
             Labels
           </label>
-          <Input
-            id="edit-task-labels"
-            name="labels"
-            value={labels}
-            onChange={(e) => setLabels(e.target.value)}
-            placeholder="bug, urgent"
-            className="mt-1"
-          />
-          <p className="text-muted-foreground mt-1 text-xs">Comma-separated.</p>
+          {labelOptions ? (
+            <MultiCombobox
+              id="edit-task-labels"
+              options={labelSelectOptions}
+              value={labelsList}
+              onChange={setLabelsList}
+              searchPlaceholder="Search or add a label…"
+              emptyText="No label found."
+              className="mt-1"
+            />
+          ) : (
+            <>
+              <Input
+                id="edit-task-labels"
+                name="labels"
+                value={labels}
+                onChange={(e) => setLabels(e.target.value)}
+                placeholder="bug, urgent"
+                className="mt-1"
+              />
+              <p className="text-muted-foreground mt-1 text-xs">Comma-separated.</p>
+            </>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

@@ -289,6 +289,27 @@ GitLab) is idempotent: FlowLens lists the project's existing hooks first and
 updates the one at its own URL rather than creating a duplicate
 (`POST /api/v1/linked-gitlab-projects/{linkID}/webhook`).
 
+### Editing a task's assignee and labels
+
+A task's assignee and labels are edited from the task's single view and
+mirrored to its GitLab issue through the same outbox worker as every other
+field (`issue.update`). Since a GitLab assignee is a GitLab user ID, the web
+app looks up candidates from the task's project's **default** linked GitLab
+project:
+
+- `GET /api/v1/linked-gitlab-projects/{linkID}/members` — the linked GitLab
+  project's members, for the assignee picker (`?search=`, `?page=`/`?per_page=`).
+- `GET /api/v1/linked-gitlab-projects/{linkID}/labels` — the linked GitLab
+  project's existing labels, for the label picker. Labels not already on
+  GitLab can still be typed in freely; they are pushed to GitLab like any
+  other label on the next sync.
+
+Both are session-only (not on the project API token's read/write allowlist —
+only the web app's editing UI needs them). A project with no GitLab
+connection, or no linked GitLab project yet, has no candidates to fetch: the
+web app falls back to free-text entry for both fields, and the assignee field
+carries no GitLab user ID until the project is connected.
+
 ### Sync scope
 
 Each linked GitLab project has its own sync scope, set when linking or

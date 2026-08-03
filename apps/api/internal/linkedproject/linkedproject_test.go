@@ -244,6 +244,67 @@ func TestService_ListAvailable_ReturnsGitlabMemberProjects(t *testing.T) {
 	assert.Equal(t, "demo", opts.Search)
 }
 
+func TestService_ListMembers_ReturnsGitlabProjectMembers(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		Project: &gitlab.Project{ID: 1, Name: "demo"},
+		Members: []gitlab.User{{ID: 7, Username: "alice"}},
+	}
+	f := newFixture(t, fake)
+	link, err := f.svc.Create(context.Background(), f.ownerID, f.projectID, linkedproject.CreateParams{GitlabProjectID: 1, SyncScope: linkedproject.ScopeAll})
+	require.NoError(t, err)
+
+	members, _, err := f.svc.ListMembers(context.Background(), f.ownerID, link.ID, linkedproject.AvailableProjectsParams{Search: "ali"})
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "alice", members[0].Username)
+
+	require.NotEmpty(t, fake.CallLog)
+	last := fake.CallLog[len(fake.CallLog)-1]
+	assert.Equal(t, "ListProjectMembers", last.Method)
+	assert.Equal(t, int64(1), last.Args[1])
+}
+
+func TestService_ListMembers_ReturnsNotFoundForForeignOrMissingLink(t *testing.T) {
+	f := newFixture(t, &gitlab.FakeClient{Project: &gitlab.Project{ID: 1}})
+	link, err := f.svc.Create(context.Background(), f.ownerID, f.projectID, linkedproject.CreateParams{GitlabProjectID: 1, SyncScope: linkedproject.ScopeAll})
+	require.NoError(t, err)
+	other := f.q.SeedUser("hubot", "hubot@example.com").ID
+
+	_, _, err = f.svc.ListMembers(context.Background(), other, link.ID, linkedproject.AvailableProjectsParams{})
+	assert.ErrorIs(t, err, linkedproject.ErrNotFound)
+
+	_, _, err = f.svc.ListMembers(context.Background(), f.ownerID, uuid.New(), linkedproject.AvailableProjectsParams{})
+	assert.ErrorIs(t, err, linkedproject.ErrNotFound)
+}
+
+func TestService_ListLabels_ReturnsGitlabProjectLabels(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		Project: &gitlab.Project{ID: 1, Name: "demo"},
+		Labels:  []gitlab.Label{{Name: "bug", Color: "#ff0000"}},
+	}
+	f := newFixture(t, fake)
+	link, err := f.svc.Create(context.Background(), f.ownerID, f.projectID, linkedproject.CreateParams{GitlabProjectID: 1, SyncScope: linkedproject.ScopeAll})
+	require.NoError(t, err)
+
+	labels, err := f.svc.ListLabels(context.Background(), f.ownerID, link.ID)
+	require.NoError(t, err)
+	require.Len(t, labels, 1)
+	assert.Equal(t, "bug", labels[0].Name)
+}
+
+func TestService_ListLabels_ReturnsNotFoundForForeignOrMissingLink(t *testing.T) {
+	f := newFixture(t, &gitlab.FakeClient{Project: &gitlab.Project{ID: 1}})
+	link, err := f.svc.Create(context.Background(), f.ownerID, f.projectID, linkedproject.CreateParams{GitlabProjectID: 1, SyncScope: linkedproject.ScopeAll})
+	require.NoError(t, err)
+	other := f.q.SeedUser("hubot", "hubot@example.com").ID
+
+	_, err = f.svc.ListLabels(context.Background(), other, link.ID)
+	assert.ErrorIs(t, err, linkedproject.ErrNotFound)
+
+	_, err = f.svc.ListLabels(context.Background(), f.ownerID, uuid.New())
+	assert.ErrorIs(t, err, linkedproject.ErrNotFound)
+}
+
 func TestService_List_ReturnsNotFoundForForeignOrMissingProject(t *testing.T) {
 	f := newFixture(t, &gitlab.FakeClient{})
 	other := f.q.SeedUser("hubot", "hubot@example.com").ID

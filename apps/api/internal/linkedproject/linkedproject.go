@@ -236,6 +236,62 @@ func (s *Service) ListAvailable(ctx context.Context, ownerID, projectID uuid.UUI
 	return projects, page, nil
 }
 
+// ListMembers lists linkID's GitLab project's members, for a task's assignee
+// picker. It returns ErrNotFound if linkID does not exist or belongs to
+// another user.
+func (s *Service) ListMembers(ctx context.Context, ownerID, linkID uuid.UUID, params AvailableProjectsParams) ([]gitlab.User, gitlab.PageInfo, error) {
+	link, err := s.q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{
+		ID:          linkID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, gitlab.PageInfo{}, ErrNotFound
+		}
+		return nil, gitlab.PageInfo{}, fmt.Errorf("linkedproject: list members: %w", err)
+	}
+
+	client, token, err := s.gitlabConns.DialByConnectionID(ctx, ownerID, link.GitlabConnectionID)
+	if err != nil {
+		return nil, gitlab.PageInfo{}, mapConnErr(err)
+	}
+	members, page, err := client.ListProjectMembers(ctx, token, link.GitlabProjectID, gitlab.ListOptions{
+		Search:  params.Search,
+		Page:    params.Page,
+		PerPage: params.PerPage,
+	})
+	if err != nil {
+		return nil, gitlab.PageInfo{}, fmt.Errorf("linkedproject: list members: %w", err)
+	}
+	return members, page, nil
+}
+
+// ListLabels lists linkID's GitLab project's existing labels, for a task's
+// label picker. It returns ErrNotFound if linkID does not exist or belongs
+// to another user.
+func (s *Service) ListLabels(ctx context.Context, ownerID, linkID uuid.UUID) ([]gitlab.Label, error) {
+	link, err := s.q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{
+		ID:          linkID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("linkedproject: list labels: %w", err)
+	}
+
+	client, token, err := s.gitlabConns.DialByConnectionID(ctx, ownerID, link.GitlabConnectionID)
+	if err != nil {
+		return nil, mapConnErr(err)
+	}
+	labels, _, err := client.ListProjectLabels(ctx, token, link.GitlabProjectID, gitlab.ListOptions{PerPage: 100})
+	if err != nil {
+		return nil, fmt.Errorf("linkedproject: list labels: %w", err)
+	}
+	return labels, nil
+}
+
 // Create links a GitLab project to projectID's connection. path_with_namespace,
 // name and web_url are fetched from GitLab rather than trusted from the
 // caller. A GitLab project already linked in the same connection is

@@ -13,6 +13,8 @@ import type {
   ApiToken,
   Backlog,
   GitlabConnection,
+  GitlabLabelOption,
+  GitlabMemberOption,
   LinkedGitlabProject,
   Priority,
   Project,
@@ -274,6 +276,42 @@ export const getLinkedGitlabProjects = cache(async (projectId: string): Promise<
   }
   return (await res.json()) as LinkedGitlabProject[];
 });
+
+/**
+ * getLinkedGitlabProjectMembers returns a linked GitLab project's members,
+ * for a task's assignee picker. Callers must already know the request is
+ * authenticated.
+ */
+export async function getLinkedGitlabProjectMembers(linkId: string): Promise<GitlabMemberOption[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/members`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load linked gitlab project members: ${res.status}`);
+  }
+  const body = (await res.json()) as { members: GitlabMemberOption[]; nextPage: number };
+  return body.members;
+}
+
+/**
+ * getLinkedGitlabProjectLabels returns a linked GitLab project's existing
+ * labels, for a task's label picker. Callers must already know the request
+ * is authenticated.
+ */
+export async function getLinkedGitlabProjectLabels(linkId: string): Promise<GitlabLabelOption[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/labels`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load linked gitlab project labels: ${res.status}`);
+  }
+  const body = (await res.json()) as { labels: GitlabLabelOption[] };
+  return body.labels;
+}
 
 /**
  * getSyncRuns returns a linked GitLab project's sync run history, newest

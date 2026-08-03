@@ -148,6 +148,22 @@ export interface GitlabProjectOption {
   webUrl: string;
 }
 
+/** GitlabMemberOption is one candidate returned by a linked GitLab project's
+ *  member listing, for a task's assignee picker. */
+export interface GitlabMemberOption {
+  id: number;
+  username: string;
+  name: string;
+  avatarUrl: string;
+}
+
+/** GitlabLabelOption is one candidate returned by a linked GitLab project's
+ *  label listing, for a task's label picker. */
+export interface GitlabLabelOption {
+  name: string;
+  color: string;
+}
+
 export type WebhookEventStatus = "pending" | "processed" | "skipped" | "failed";
 
 /** WebhookEvent is one recorded GitLab webhook delivery, without its payload (see docs/plans/issue-sync.md). */

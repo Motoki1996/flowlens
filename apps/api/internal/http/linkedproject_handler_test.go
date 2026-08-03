@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/flowlens/api/internal/gitlab"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -260,4 +261,78 @@ func TestHandleListAvailableGitlabProjects_ReturnsGitlabProjects(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body.Projects, 1)
 	assert.Equal(t, "demo", body.Projects[0]["name"])
+}
+
+func TestHandleListLinkedGitlabProjectMembers_ReturnsGitlabMembers(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},
+		Project:           &gitlab.Project{ID: 42, Name: "demo"},
+		Members:           []gitlab.User{{ID: 7, Username: "octocat", Name: "The Octocat"}},
+	}
+	s, q := newTestServerWithGitlabClient(t, fake)
+	ownerID, token := loginSession(t, s, q)
+	projectID := q.SeedProject(ownerID, "Alpha").ID.String()
+	setUpConnectedProject(t, s, token, projectID)
+	createRec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+projectID+"/linked-gitlab-projects",
+		createLinkedGitlabProjectRequest{GitlabProjectID: 42, SyncScope: "all"}, token)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	linkID := created["id"].(string)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/linked-gitlab-projects/"+linkID+"/members", nil, token)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Members []map[string]any `json:"members"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Members, 1)
+	assert.Equal(t, "octocat", body.Members[0]["username"])
+}
+
+func TestHandleListLinkedGitlabProjectMembers_ForeignLinkGets404(t *testing.T) {
+	fake := &gitlab.FakeClient{AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"}}
+	s, q := newTestServerWithGitlabClient(t, fake)
+	_, token := loginSession(t, s, q)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/linked-gitlab-projects/"+uuid.NewString()+"/members", nil, token)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleListLinkedGitlabProjectLabels_ReturnsGitlabLabels(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},
+		Project:           &gitlab.Project{ID: 42, Name: "demo"},
+		Labels:            []gitlab.Label{{Name: "bug", Color: "#ff0000"}},
+	}
+	s, q := newTestServerWithGitlabClient(t, fake)
+	ownerID, token := loginSession(t, s, q)
+	projectID := q.SeedProject(ownerID, "Alpha").ID.String()
+	setUpConnectedProject(t, s, token, projectID)
+	createRec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+projectID+"/linked-gitlab-projects",
+		createLinkedGitlabProjectRequest{GitlabProjectID: 42, SyncScope: "all"}, token)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	linkID := created["id"].(string)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/linked-gitlab-projects/"+linkID+"/labels", nil, token)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Labels []map[string]any `json:"labels"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Labels, 1)
+	assert.Equal(t, "bug", body.Labels[0]["name"])
+}
+
+func TestHandleListLinkedGitlabProjectLabels_ForeignLinkGets404(t *testing.T) {
+	fake := &gitlab.FakeClient{AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"}}
+	s, q := newTestServerWithGitlabClient(t, fake)
+	_, token := loginSession(t, s, q)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/linked-gitlab-projects/"+uuid.NewString()+"/labels", nil, token)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

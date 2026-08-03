@@ -228,9 +228,26 @@ describe("TaskListSection", () => {
     expect(screen.queryByText("Sprint task")).not.toBeInTheDocument();
   });
 
-  it("does not offer selection for tasks already in a backlog", () => {
+  it("offers selection for tasks already in a backlog, so they can move to another backlog or back to Unclassified", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
     const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
-    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Filed task" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "Backlog to assign" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Unclassified" }));
+    fireEvent.click(screen.getByRole("button", { name: "Assign to backlog" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: null }) }),
+    );
+  });
+
+  it("does not offer selection when the project has no backlogs to move tasks into", () => {
+    const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: null })];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
@@ -396,5 +413,57 @@ describe("TaskListSection", () => {
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
     expect(screen.getByText("Local only")).toBeInTheDocument();
     expect(screen.getByText("Sync failed")).toBeInTheDocument();
+  });
+
+  it("moves a task within its backlog with the move-down button, updating the display order optimistically", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+    const tasks = [
+      makeTask({ id: "t1", title: "First", backlogId: "b1" }),
+      makeTask({ id: "t2", title: "Second", backlogId: "b1" }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move First down" }));
+
+    // The row order updates immediately, ahead of the API round trip.
+    const titles = screen.getAllByText(/^(First|Second)$/).map((el) => el.textContent);
+    expect(titles).toEqual(["Second", "First"]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/projects/p1/tasks/order",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ backlogId: "b1", taskIds: ["t2", "t1"] }),
+      }),
+    );
+  });
+
+  it("reverts the order and shows an error when the reorder request fails", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "task_ids_mismatch", message: "taskIds must match" } }), {
+        status: 400,
+      }),
+    );
+    const tasks = [
+      makeTask({ id: "t1", title: "First", backlogId: "b1" }),
+      makeTask({ id: "t2", title: "Second", backlogId: "b1" }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move First down" }));
+
+    expect(await screen.findByText("taskIds must match")).toBeInTheDocument();
+    const titles = screen.getAllByText(/^(First|Second)$/).map((el) => el.textContent);
+    expect(titles).toEqual(["First", "Second"]);
+  });
+
+  it("hides the drag handle and move buttons while sorted by anything other than the manual order", async () => {
+    const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+    expect(screen.getByRole("button", { name: "Move Only task down" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Priority" }));
+
+    expect(screen.queryByRole("button", { name: "Move Only task down" })).not.toBeInTheDocument();
   });
 });

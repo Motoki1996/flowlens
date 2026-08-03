@@ -195,9 +195,14 @@ func (s *Server) Router() chi.Router {
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/backlogs", s.handleListBacklogs)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/backlogs", s.handleCreateBacklog)
+			// /backlogs/order is a flat leaf next to the {backlogID} mount
+			// below, the same coexistence this file's own doc comment
+			// already relies on for /tasks and /tasks/{taskID}.
+			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Patch("/projects/{projectID}/backlogs/order", s.handleReorderBacklogs)
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks", s.handleListTasks)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/tasks", s.handleCreateTask)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Patch("/projects/{projectID}/tasks/order", s.handleReorderTasks)
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/task-dependencies", s.handleListTaskDependencies)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/task-dependencies", s.handleCreateTaskDependency)

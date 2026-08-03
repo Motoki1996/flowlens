@@ -46,6 +46,23 @@ WHERE b.id = $1 AND p.owner_user_id = $2;
 -- name: GetBacklogProjectID :one
 SELECT project_id FROM backlogs WHERE id = $1;
 
+-- ReorderBacklogs resequences a project's backlogs to backlog_ids' given
+-- order (position 0 for the first id, 1 for the second, ...) in a single
+-- statement, the same all-or-nothing shape as internal/task's ReorderTasks
+-- (issue #79). internal/backlog.Service.Reorder checks backlog_ids is
+-- exactly the project's current backlog set before calling this.
+
+-- name: ReorderBacklogs :exec
+WITH ordered AS (
+    SELECT id, (ord - 1)::int AS position
+    FROM unnest(sqlc.arg(backlog_ids)::uuid[]) WITH ORDINALITY AS t(id, ord)
+)
+UPDATE backlogs
+SET position = ordered.position, updated_at = now()
+FROM ordered
+WHERE backlogs.id = ordered.id
+  AND backlogs.project_id = sqlc.arg(project_id);
+
 -- UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
 -- must arrive already resolved: backlog.Service reads the current row first and
 -- fills in whatever the PATCH body left out (see its Update).

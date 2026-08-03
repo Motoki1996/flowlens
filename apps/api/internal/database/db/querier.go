@@ -318,6 +318,18 @@ type Querier interface {
 	// mid-execution, so it is returned to 'pending' for another worker to pick up.
 	ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgtype.Timestamptz) (int64, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
+	// ReorderBacklogs resequences a project's backlogs to backlog_ids' given
+	// order in a single statement, the same all-or-nothing shape as
+	// ReorderTasks (issue #79). internal/backlog.Service.Reorder checks
+	// backlog_ids is exactly the project's current backlog set before
+	// calling this.
+	ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams) error
+	// ReorderTasks resequences one backlog bucket's tasks to task_ids' given
+	// order in a single statement, so a drag across many tasks either lands
+	// as one committed order or fails outright, never a partially-applied
+	// one (issue #79). internal/task.Service.Reorder checks task_ids is
+	// exactly that bucket's current task set before calling this.
+	ReorderTasks(ctx context.Context, arg ReorderTasksParams) error
 	// Forces the task's most recent pending-or-failed job to run again
 	// immediately with a fresh attempt budget, for POST
 	// /tasks/{taskID}/sync-retry. No matching row (nothing to retry) is not an

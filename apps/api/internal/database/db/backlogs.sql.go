@@ -186,6 +186,34 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 	return items, nil
 }
 
+const reorderBacklogs = `-- name: ReorderBacklogs :exec
+
+WITH ordered AS (
+    SELECT id, (ord - 1)::int AS position
+    FROM unnest($1::uuid[]) WITH ORDINALITY AS t(id, ord)
+)
+UPDATE backlogs
+SET position = ordered.position, updated_at = now()
+FROM ordered
+WHERE backlogs.id = ordered.id
+  AND backlogs.project_id = $2
+`
+
+type ReorderBacklogsParams struct {
+	BacklogIds []uuid.UUID `json:"backlog_ids"`
+	ProjectID  uuid.UUID   `json:"project_id"`
+}
+
+// ReorderBacklogs resequences a project's backlogs to backlog_ids' given
+// order (position 0 for the first id, 1 for the second, ...) in a single
+// statement, the same all-or-nothing shape as internal/task's ReorderTasks
+// (issue #79). internal/backlog.Service.Reorder checks backlog_ids is
+// exactly the project's current backlog set before calling this.
+func (q *Queries) ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams) error {
+	_, err := q.db.Exec(ctx, reorderBacklogs, arg.BacklogIds, arg.ProjectID)
+	return err
+}
+
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
 SET name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, updated_at = now()

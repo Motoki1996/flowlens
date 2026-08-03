@@ -127,6 +127,28 @@ WHERE id = $1 AND project_id = $2;
 -- name: GetTaskProjectID :one
 SELECT project_id FROM tasks WHERE id = $1;
 
+-- ReorderTasks resequences one backlog bucket's tasks to task_ids' given
+-- order (position 0 for the first id, 1 for the second, ...) in a single
+-- statement, so a drag across many tasks either lands as one committed order
+-- or fails outright, never a partially-applied one (issue #79). backlog_id
+-- follows CreateTask's own "IS NOT DISTINCT FROM" convention: NULL scopes to
+-- the Unclassified bucket, a UUID to one specific backlog.
+-- internal/task.Service.Reorder checks task_ids is exactly that bucket's
+-- current task set before calling this, so the WHERE clause can never miss a
+-- row or touch one outside the intended bucket.
+
+-- name: ReorderTasks :exec
+WITH ordered AS (
+    SELECT id, (ord - 1)::int AS position
+    FROM unnest(sqlc.arg(task_ids)::uuid[]) WITH ORDINALITY AS t(id, ord)
+)
+UPDATE tasks
+SET position = ordered.position, updated_at = now()
+FROM ordered
+WHERE tasks.id = ordered.id
+  AND tasks.project_id = sqlc.arg(project_id)
+  AND tasks.backlog_id IS NOT DISTINCT FROM sqlc.narg(backlog_id);
+
 -- name: UpdateTaskForOwner :one
 UPDATE tasks t
 SET backlog_id = $3, title = $4, description = $5,

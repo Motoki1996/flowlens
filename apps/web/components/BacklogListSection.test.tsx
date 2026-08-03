@@ -21,6 +21,13 @@ const backlog: Backlog = {
   updatedAt: "2026-01-01T00:00:00Z",
 };
 
+const otherBacklog: Backlog = {
+  ...backlog,
+  id: "b2",
+  name: "Icebox",
+  position: 1,
+};
+
 describe("BacklogListSection", () => {
   beforeEach(() => {
     refresh.mockClear();
@@ -125,5 +132,47 @@ describe("BacklogListSection", () => {
       "http://localhost:8080/api/v1/backlogs/b1",
       expect.objectContaining({ method: "DELETE" }),
     );
+  });
+
+  it("moves a backlog down with the move-down button, updating the display order optimistically", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} tasks={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Sprint 1 down" }));
+
+    const names = screen
+      .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+      .map((el) => el.textContent);
+    expect(names).toEqual(["Icebox (0)", "Sprint 1 (0)"]);
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/projects/p1/backlogs/order",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ backlogIds: ["b2", "b1"] }),
+      }),
+    );
+  });
+
+  it("reverts the order and shows an error when the reorder request fails", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "backlog_ids_mismatch", message: "backlogIds must match" } }), {
+        status: 400,
+      }),
+    );
+    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} tasks={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Move Sprint 1 down" }));
+
+    expect(await screen.findByText("backlogIds must match")).toBeInTheDocument();
+    const names = screen
+      .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+      .map((el) => el.textContent);
+    expect(names).toEqual(["Sprint 1 (0)", "Icebox (0)"]);
+  });
+
+  it("disables the move buttons at the ends of the list", () => {
+    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} tasks={[]} />);
+    expect(screen.getByRole("button", { name: "Move Sprint 1 up" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Move Icebox down" })).toBeDisabled();
   });
 });

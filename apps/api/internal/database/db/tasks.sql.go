@@ -530,6 +530,131 @@ func (q *Queries) ListTasksByProjectPaged(ctx context.Context, arg ListTasksByPr
 	return items, nil
 }
 
+const listTasksForOwner = `-- name: ListTasksForOwner :many
+
+SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at,
+       t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.start_date,
+       t.priority, t.position, t.created_by_user_id, t.created_at, t.updated_at,
+       p.name AS project_name
+FROM tasks t
+JOIN projects p ON p.id = t.project_id
+WHERE p.owner_user_id = $1
+  AND ($2::text = '' OR t.status = $2)
+  AND ($3::text = '' OR t.priority = $3)
+  AND ($4::date IS NULL OR t.due_on <= $4)
+  AND ($5::date IS NULL OR t.due_on >= $5)
+  AND ($6::date IS NULL OR t.start_date <= $6)
+  AND (cardinality($7::uuid[]) = 0 OR t.project_id = ANY($7::uuid[]))
+ORDER BY
+  (CASE WHEN $8::text = 'priority' THEN
+     CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
+   END) DESC,
+  (CASE WHEN $8::text = 'updatedAt' THEN t.updated_at END) DESC,
+  t.due_on ASC,
+  t.position ASC, t.created_at ASC
+LIMIT $9
+`
+
+type ListTasksForOwnerParams struct {
+	OwnerUserID   uuid.UUID   `json:"owner_user_id"`
+	Status        string      `json:"status"`
+	Priority      string      `json:"priority"`
+	DueBefore     pgtype.Date `json:"due_before"`
+	DueAfter      pgtype.Date `json:"due_after"`
+	StartedBefore pgtype.Date `json:"started_before"`
+	ProjectIds    []uuid.UUID `json:"project_ids"`
+	Sort          string      `json:"sort"`
+	LimitCount    int32       `json:"limit_count"`
+}
+
+type ListTasksForOwnerRow struct {
+	ID                     uuid.UUID          `json:"id"`
+	ProjectID              uuid.UUID          `json:"project_id"`
+	BacklogID              pgtype.UUID        `json:"backlog_id"`
+	Title                  string             `json:"title"`
+	Description            string             `json:"description"`
+	Status                 string             `json:"status"`
+	ClosedAt               pgtype.Timestamptz `json:"closed_at"`
+	AssigneeGitlabUserID   pgtype.Int8        `json:"assignee_gitlab_user_id"`
+	AssigneeGitlabUsername string             `json:"assignee_gitlab_username"`
+	Labels                 []string           `json:"labels"`
+	DueOn                  pgtype.Date        `json:"due_on"`
+	StartDate              pgtype.Date        `json:"start_date"`
+	Priority               string             `json:"priority"`
+	Position               int32              `json:"position"`
+	CreatedByUserID        uuid.UUID          `json:"created_by_user_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	ProjectName            string             `json:"project_name"`
+}
+
+// ListTasksForOwner backs the cross-project task collection (GET
+// /api/v1/tasks, issue #76): every task across every project ownerID owns,
+// narrowed by the same status/priority filters as ListTasksByProject plus
+// due/start date ranges and an optional project_id allowlist — each
+// following the same "empty/NULL disables it" convention. project_name is
+// joined in for the same reason GetTaskGitlabLinkWithProjectPathByTaskID
+// joins in path_with_namespace: a cross-project row is unreadable without
+// knowing which project it belongs to, and a second per-row fetch would
+// cost the same round trip anyway.
+//
+// The ORDER BY leans on two properties: sqlc.arg(sort) is a single bound
+// value for the whole query, not a per-row one, so a CASE guarded by it is
+// either non-NULL for every row or NULL for every row — never a mix: sort
+// values not being ranked stay a true tie and fall through instead of
+// corrupting the row order. And due_on ASC's default NULLS LAST (Postgres
+// sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
+// sink to the bottom", so it works unguarded both as sort=dueOn's primary
+// key and as every other sort's final tiebreak.
+func (q *Queries) ListTasksForOwner(ctx context.Context, arg ListTasksForOwnerParams) ([]ListTasksForOwnerRow, error) {
+	rows, err := q.db.Query(ctx, listTasksForOwner,
+		arg.OwnerUserID,
+		arg.Status,
+		arg.Priority,
+		arg.DueBefore,
+		arg.DueAfter,
+		arg.StartedBefore,
+		arg.ProjectIds,
+		arg.Sort,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTasksForOwnerRow{}
+	for rows.Next() {
+		var i ListTasksForOwnerRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.BacklogID,
+			&i.Title,
+			&i.Description,
+			&i.Status,
+			&i.ClosedAt,
+			&i.AssigneeGitlabUserID,
+			&i.AssigneeGitlabUsername,
+			&i.Labels,
+			&i.DueOn,
+			&i.StartDate,
+			&i.Priority,
+			&i.Position,
+			&i.CreatedByUserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ProjectName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reopenTaskForOwner = `-- name: ReopenTaskForOwner :one
 UPDATE tasks t
 SET status = 'open', closed_at = NULL, updated_at = now()

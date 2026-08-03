@@ -133,6 +133,105 @@ func TestHandleListTasks_FiltersAndSortsByPriorityQuery(t *testing.T) {
 	assert.Equal(t, "Low", sorted[1]["title"])
 }
 
+func TestHandleListAllTasks_NoCookie(t *testing.T) {
+	s, _ := newTestServer(t)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks", nil, "")
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestHandleListAllTasks_SpansOwnProjectsAndExcludesOthers is the completion
+// condition issue #76 calls out explicitly: the cross-project endpoint must
+// gather every task the caller owns and never leak another user's.
+func TestHandleListAllTasks_SpansOwnProjectsAndExcludesOthers(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	alpha := q.SeedProject(ownerID, "Alpha")
+	beta := q.SeedProject(ownerID, "Beta")
+	q.SeedTask(alpha.ID, ownerID, "In alpha")
+	q.SeedTask(beta.ID, ownerID, "In beta")
+
+	otherID, _ := loginSession(t, s, q)
+	theirs := q.SeedProject(otherID, "Theirs")
+	q.SeedTask(theirs.ID, otherID, "Not mine")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	titles := make([]string, len(body))
+	projectNames := make([]string, len(body))
+	for i, tk := range body {
+		titles[i] = tk["title"].(string)
+		projectNames[i] = tk["projectName"].(string)
+	}
+	assert.ElementsMatch(t, []string{"In alpha", "In beta"}, titles)
+	assert.ElementsMatch(t, []string{"Alpha", "Beta"}, projectNames)
+}
+
+func TestHandleListAllTasks_FiltersByStatusQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Open task"}, token)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	rec = doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Closed task"}, token)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+created["id"].(string)+"/close", nil, token)
+
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/tasks?status=open", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, "Open task", body[0]["title"])
+}
+
+func TestHandleListAllTasks_RejectsInvalidQuery(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"invalid status", "?status=bogus"},
+		{"invalid priority", "?priority=bogus"},
+		{"invalid sort", "?sort=bogus"},
+		{"invalid dueBefore", "?dueBefore=not-a-date"},
+		{"invalid dueAfter", "?dueAfter=not-a-date"},
+		{"invalid startedBefore", "?startedBefore=not-a-date"},
+		{"invalid projectId", "?projectId=not-a-uuid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, q := newTestServer(t)
+			_, token := loginSession(t, s, q)
+
+			rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks"+tt.query, nil, token)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+func TestHandleListAllTasks_LimitCapsResults(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	q.SeedTask(p.ID, ownerID, "One")
+	q.SeedTask(p.ID, ownerID, "Two")
+	q.SeedTask(p.ID, ownerID, "Three")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks?limit=2", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Len(t, body, 2)
+}
+
 func TestHandleCreateTask(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

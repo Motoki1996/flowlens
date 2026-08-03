@@ -120,6 +120,15 @@ func (s *Server) Router() chi.Router {
 			protected.Use(s.requireAuth)
 			protected.Get("/me", s.handleMe)
 
+			// Cross-project task collection (issue #76): every task across
+			// every project the caller owns, "what should I be doing right
+			// now" without opening each project in turn. Deliberately
+			// session-only, not part of the read/write bearer allowlist
+			// below — a project API token is scoped to a single project
+			// (ADR-0009) and has no notion of "every project I own", so
+			// there is no token-shaped version of this route to add.
+			protected.Get("/tasks", s.handleListAllTasks)
+
 			protected.Route("/projects", func(projects chi.Router) {
 				projects.Post("/", s.handleCreateProject)
 				projects.Patch("/{projectID}", s.handleUpdateProject)

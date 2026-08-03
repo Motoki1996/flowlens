@@ -593,9 +593,10 @@ so it is unit-testable without rendering a chart.
 ### Task & backlog priority
 
 A task and a backlog each carry a `priority` — one of `low`, `medium`, `high`,
-`urgent`, defaulting to `medium` — used to decide what to work on next ahead
-of the delivery-flow dashboard and cross-project task views planned later.
-Like `startDate`, task dependencies and a backlog's own dates, priority is
+`urgent`, defaulting to `medium` — used to decide what to work on next, ahead
+of the delivery-flow dashboard planned later and the
+[cross-project task collection](#cross-project-task-collection) built on it
+today. Like `startDate`, task dependencies and a backlog's own dates, priority is
 **app-only and never synced to GitLab**: GitLab CE issues have no native
 priority field (a priority label or weight is a GitLab EE feature), so it has
 no GitLab-side counterpart to push to or pull from.
@@ -628,6 +629,36 @@ on the Backlog collection view, not its single view, per
 component for both tasks and backlogs, in list rows, timeline name columns
 and the task single view. A backlog's priority is independent of its tasks':
 creating or editing one never reads or writes the other.
+
+### Cross-project task collection
+
+`GET /api/v1/tasks` returns every task across every project the authenticated
+user owns — "what should I be doing right now" without opening each project
+in turn, and the same underlying query the delivery-flow dashboard (planned)
+will build on. Unlike every other task route, it takes no `{projectID}`: it
+already spans every project that owner has.
+
+- Query parameters, all optional and independent: `status=open|closed`,
+  `priority=low|medium|high|urgent`, `dueBefore=`/`dueAfter=`/`startedBefore=`
+  (`YYYY-MM-DD`, inclusive), `projectId=` (repeatable — narrows within the
+  caller's own projects, never a way to reach someone else's), and
+  `sort=dueOn|priority|updatedAt` (default `dueOn`, ascending, tasks with no
+  due date last). `limit=` caps the result count (default 50, max 200); there
+  is no cursor/offset pagination yet.
+- Each task in the response carries a `projectName` field alongside every
+  field `GET .../tasks/{taskID}` returns, so a cross-project list is readable
+  without a second look-up per row. It never resolves GitLab sync state,
+  unlike the per-project list — that would turn one query back into an N+1
+  lookup; a task's own single view is still where to check that.
+- **Session-only.** A project-scoped API token ([ADR-0009](docs/decisions/0009-why-project-scoped-api-tokens.md))
+  is issued for exactly one project and has no notion of "every project I
+  own", so this route is deliberately left off the bearer-token allowlist —
+  see the route registration in `internal/http/server.go`.
+
+In the web app, `/tasks` is the cross-project Task collection (see
+[`docs/ui-design.md`](docs/ui-design.md)): the default view is open tasks
+with a due date, sorted soonest-first; each row links to that task's
+canonical single view under its own project.
 
 ## Current limitations
 

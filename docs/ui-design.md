@@ -78,6 +78,7 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single |
 | `/projects/[projectId]/tasks` | `Task` | Collection (List / Timeline view modes, `?backlog=` filter) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |
+| `/tasks` | `Task` | Collection, cross-project (`?status=`/`?priority=`/`?sort=`/`?projectId=` filters) |
 | `/projects/[projectId]/gitlab-connection` | `GitLabConnection` | Single (+ the `LinkedGitLabProject` collection) |
 | `/projects/[projectId]/linked-gitlab-projects/[linkId]` | `LinkedGitLabProject` | Single (+ its `SyncRun` and `WebhookEvent` history) |
 | `/login`, `/signup` | — | Auth flows (rule 7) |
@@ -86,6 +87,12 @@ Backlogs and tasks exist only inside a project, so both halves of each pair are
 nested under it. The flat `/backlogs/[id]` and `/tasks/[id]` routes predate the
 nesting and now only redirect to their nested equivalents, so older links keep
 working. Route strings are built by `lib/routes.ts` rather than written inline.
+
+`/tasks` is the one deliberate exception to that nesting: the same `Task`
+object, but queried across every project a user owns instead of scoped to
+one, so "what should I be doing right now" doesn't mean opening each project
+in turn. It has no single view of its own — each row still links to its
+`Task`'s one canonical single view, `/projects/[projectId]/tasks/[taskId]`.
 
 The project single view is a **hub**: identity and attributes, then a link per
 related collection with a count, not the collections themselves. A screen that

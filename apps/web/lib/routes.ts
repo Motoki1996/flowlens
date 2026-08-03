@@ -9,6 +9,14 @@ export function projectPath(projectId: string) {
   return `/projects/${projectId}`;
 }
 
+/** The cross-project Task collection (issue #76): every task across every
+ *  project the user owns, "what should I be doing right now" without opening
+ *  each project in turn. It has no single view of its own — each row still
+ *  links to `taskPath`, the Task's one canonical single view. */
+export function allTasksPath() {
+  return "/tasks";
+}
+
 export function backlogsPath(projectId: string) {
   return `/projects/${projectId}/backlogs`;
 }

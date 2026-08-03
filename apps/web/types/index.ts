@@ -89,6 +89,13 @@ export interface Task {
   aiContext: TaskAIContext;
 }
 
+/** TaskWithProject is Task plus the name of the project it belongs to — what
+ *  the cross-project Task collection at /tasks returns (GET /api/v1/tasks,
+ *  issue #76), since a task alone doesn't say which project it's in. */
+export interface TaskWithProject extends Task {
+  projectName: string;
+}
+
 /** TaskDependency records that predecessorTaskId must finish before successorTaskId starts. */
 export interface TaskDependency {
   id: string;

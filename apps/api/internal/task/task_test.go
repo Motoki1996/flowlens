@@ -304,6 +304,161 @@ func TestService_List_ReturnsNotFoundForForeignProject(t *testing.T) {
 	assert.ErrorIs(t, err, task.ErrNotFound)
 }
 
+func TestService_ListForOwner_SpansEveryOwnedProjectAndCarriesProjectName(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	alpha := q.SeedProject(owner, "Alpha")
+	beta := q.SeedProject(owner, "Beta")
+
+	inAlpha, err := svc.Create(ctx, owner, alpha.ID, task.CreateParams{Title: "In alpha"})
+	require.NoError(t, err)
+	inBeta, err := svc.Create(ctx, owner, beta.ID, task.CreateParams{Title: "In beta"})
+	require.NoError(t, err)
+
+	got, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	byID := map[uuid.UUID]task.TaskWithProject{}
+	for _, tk := range got {
+		byID[tk.ID] = tk
+	}
+	assert.Equal(t, "Alpha", byID[inAlpha.ID].ProjectName)
+	assert.Equal(t, "Beta", byID[inBeta.ID].ProjectName)
+}
+
+// TestService_ListForOwner_NeverLeaksAnotherOwnersTasks is the completion
+// condition issue #76 calls out explicitly: a cross-project query is exactly
+// the shape of bug that could leak another user's tasks if the owner filter
+// were ever dropped, so this is asserted directly rather than left to the
+// per-project tests' coverage.
+func TestService_ListForOwner_NeverLeaksAnotherOwnersTasks(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	other := q.SeedUser("hubot", "hubot@example.com").ID
+	mine := q.SeedProject(owner, "Mine")
+	theirs := q.SeedProject(other, "Theirs")
+
+	myTask, err := svc.Create(ctx, owner, mine.ID, task.CreateParams{Title: "Mine"})
+	require.NoError(t, err)
+	_, err = svc.Create(ctx, other, theirs.ID, task.CreateParams{Title: "Theirs"})
+	require.NoError(t, err)
+
+	got, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, myTask.ID, got[0].ID)
+
+	// Even asking for the other owner's project by ID directly must not
+	// surface it — ProjectIDs only ever narrows within the caller's own
+	// projects, never a way to reach someone else's.
+	got, err = svc.ListForOwner(ctx, owner, task.CrossProjectFilter{ProjectIDs: []uuid.UUID{theirs.ID}})
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+func TestService_ListForOwner_FiltersByStatusPriorityAndDates(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	soon := time.Now().AddDate(0, 0, 1)
+	later := time.Now().AddDate(0, 0, 10)
+
+	dueSoonUrgent, err := svc.Create(ctx, owner, p.ID, task.CreateParams{
+		Title: "Due soon, urgent", Priority: task.PriorityUrgent, DueOn: &soon,
+	})
+	require.NoError(t, err)
+	dueLater, err := svc.Create(ctx, owner, p.ID, task.CreateParams{
+		Title: "Due later", Priority: task.PriorityLow, DueOn: &later,
+	})
+	require.NoError(t, err)
+	closed, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Closed", DueOn: &soon})
+	require.NoError(t, err)
+	_, err = svc.Close(ctx, owner, closed.ID)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		filter task.CrossProjectFilter
+		want   []uuid.UUID
+	}{
+		{"status=open excludes closed", task.CrossProjectFilter{Status: task.StatusOpen}, []uuid.UUID{dueSoonUrgent.ID, dueLater.ID}},
+		{"priority narrows to one task", task.CrossProjectFilter{Priority: task.PriorityUrgent}, []uuid.UUID{dueSoonUrgent.ID}},
+		{"dueBefore excludes the later task", task.CrossProjectFilter{DueBefore: timePtr(soon.AddDate(0, 0, 1))}, []uuid.UUID{dueSoonUrgent.ID, closed.ID}},
+		{"dueAfter excludes the soon tasks", task.CrossProjectFilter{DueAfter: timePtr(soon.AddDate(0, 0, 1))}, []uuid.UUID{dueLater.ID}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.ListForOwner(ctx, owner, tt.filter)
+			require.NoError(t, err)
+			ids := make([]uuid.UUID, len(got))
+			for i, tk := range got {
+				ids[i] = tk.ID
+			}
+			assert.ElementsMatch(t, tt.want, ids)
+		})
+	}
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
+
+func TestService_ListForOwner_Sorts(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	soon := time.Now().AddDate(0, 0, 1)
+	later := time.Now().AddDate(0, 0, 10)
+
+	noDueDate, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "No due date", Priority: task.PriorityLow})
+	require.NoError(t, err)
+	dueLater, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Due later", Priority: task.PriorityUrgent, DueOn: &later})
+	require.NoError(t, err)
+	dueSoon, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Due soon", Priority: task.PriorityLow, DueOn: &soon})
+	require.NoError(t, err)
+
+	// Default (no Sort given) behaves like sort=dueOn: ascending due date,
+	// with the no-due-date task sinking to the bottom.
+	byDueOn, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	require.NoError(t, err)
+	require.Len(t, byDueOn, 3)
+	assert.Equal(t, []uuid.UUID{dueSoon.ID, dueLater.ID, noDueDate.ID}, []uuid.UUID{
+		byDueOn[0].ID, byDueOn[1].ID, byDueOn[2].ID,
+	})
+
+	// sort=priority ranks urgent first regardless of due date.
+	byPriority, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{Sort: task.SortPriority})
+	require.NoError(t, err)
+	require.Len(t, byPriority, 3)
+	assert.Equal(t, dueLater.ID, byPriority[0].ID)
+}
+
+func TestService_ListForOwner_CapsAtLimit(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	for i := 0; i < 3; i++ {
+		_, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: fmt.Sprintf("Task %d", i)})
+		require.NoError(t, err)
+	}
+
+	got, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{Limit: 2})
+	require.NoError(t, err)
+	assert.Len(t, got, 2)
+}
+
 func TestService_Close_IsIdempotent(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

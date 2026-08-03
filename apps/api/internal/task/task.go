@@ -62,6 +62,22 @@ const (
 	SortPriority = "priority"
 )
 
+// Sort values accepted by ListForOwner's CrossProjectFilter.Sort, alongside
+// SortPriority above (the cross-project list has no manual/DnD order to fall
+// back to, so unlike ListFilter.Sort, "" is not itself a valid value —
+// ListForOwner normalizes it to SortDueOn).
+const (
+	SortDueOn     = "dueOn"
+	SortUpdatedAt = "updatedAt"
+)
+
+// Pagination bounds for ListForOwner, mirroring
+// DefaultContextPerPage/MaxContextPerPage's role for ListContext.
+const (
+	DefaultCrossProjectLimit = 50
+	MaxCrossProjectLimit     = 200
+)
+
 // GitLab sync status values, mirroring task_gitlab_links.sync_status
 // (docs/plans/issue-sync.md). SyncStatusPending also covers a task whose
 // issue.create job hasn't run yet — it has no task_gitlab_links row at all,
@@ -236,6 +252,23 @@ func toInt8(v *int64) pgtype.Int8 {
 		return pgtype.Int8{}
 	}
 	return pgtype.Int8{Int64: *v, Valid: true}
+}
+
+// TaskWithProject is Task plus the name of the project it belongs to — the
+// minimum extra context the cross-project task collection (GET
+// /api/v1/tasks, issue #76) needs to be readable, since a task alone doesn't
+// say which project it's in. Task is embedded rather than nested so its
+// fields flatten into the same JSON object, the same way
+// http.createAPITokenResponse embeds apitoken.APIToken.
+//
+// It intentionally carries no Gitlab sync state: ListForOwner is a single
+// query across every owned project, and resolving sync state per task would
+// turn that back into the N+1 lookup List already accepts for a single
+// project's board view. A task's own single view (GET /tasks/{taskID}) is
+// still the place to check that.
+type TaskWithProject struct {
+	Task
+	ProjectName string `json:"projectName"`
 }
 
 // CreateParams holds the fields accepted when creating a task. A nil
@@ -600,6 +633,99 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		out[i] = t
 	}
 	return out, nil
+}
+
+// CrossProjectFilter narrows ListForOwner to a subset of every task the
+// caller owns across every project. Every field's zero value means "no
+// filter", the same convention ListFilter uses, except Sort and Limit, which
+// ListForOwner defaults rather than leaves off (there is no manual/DnD order
+// to fall back to, and an unbounded cross-project scan has no natural cap).
+type CrossProjectFilter struct {
+	Status        string      // "open" | "closed" | "" (no filter)
+	Priority      string      // one of the Priority* constants, or "" (no filter)
+	DueBefore     *time.Time  // non-nil: only tasks due on or before this date
+	DueAfter      *time.Time  // non-nil: only tasks due on or after this date
+	StartedBefore *time.Time  // non-nil: only tasks whose start date has arrived (start_date <= this date)
+	ProjectIDs    []uuid.UUID // non-empty: only these projects, still scoped to the caller's own
+	// Sort is one of SortDueOn (default), SortPriority or SortUpdatedAt.
+	Sort string
+	// Limit caps the number of tasks returned; non-positive defaults to
+	// DefaultCrossProjectLimit, and anything above MaxCrossProjectLimit is
+	// capped to it.
+	Limit int
+}
+
+// ListForOwner returns every task across every project ownerID owns, per
+// filter, for the cross-project task collection (GET /api/v1/tasks, issue
+// #76) — "what should I be doing right now" without opening each project in
+// turn. Unlike every other method here, it takes no projectID: there is
+// nothing further to scope by ownerID with, since it already spans every
+// project that owner has.
+func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter CrossProjectFilter) ([]TaskWithProject, error) {
+	sortBy := filter.Sort
+	if sortBy == "" {
+		sortBy = SortDueOn
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = DefaultCrossProjectLimit
+	}
+	if limit > MaxCrossProjectLimit {
+		limit = MaxCrossProjectLimit
+	}
+	projectIDs := filter.ProjectIDs
+	if projectIDs == nil {
+		projectIDs = []uuid.UUID{}
+	}
+
+	rows, err := s.q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+		OwnerUserID:   ownerID,
+		Status:        filter.Status,
+		Priority:      filter.Priority,
+		DueBefore:     toDate(filter.DueBefore),
+		DueAfter:      toDate(filter.DueAfter),
+		StartedBefore: toDate(filter.StartedBefore),
+		ProjectIds:    projectIDs,
+		Sort:          sortBy,
+		LimitCount:    int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("task: list for owner: %w", err)
+	}
+	out := make([]TaskWithProject, len(rows))
+	for i, row := range rows {
+		out[i] = fromCrossProjectRow(row)
+	}
+	return out, nil
+}
+
+// fromCrossProjectRow maps a ListTasksForOwner row to TaskWithProject. It is
+// separate from fromRow because db.ListTasksForOwnerRow is its own sqlc type
+// (the joined project_name column keeps it from matching db.Task), not
+// because the two ever disagree about a shared field.
+func fromCrossProjectRow(row db.ListTasksForOwnerRow) TaskWithProject {
+	return TaskWithProject{
+		Task: fromRow(db.Task{
+			ID:                     row.ID,
+			ProjectID:              row.ProjectID,
+			BacklogID:              row.BacklogID,
+			Title:                  row.Title,
+			Description:            row.Description,
+			Status:                 row.Status,
+			ClosedAt:               row.ClosedAt,
+			AssigneeGitlabUserID:   row.AssigneeGitlabUserID,
+			AssigneeGitlabUsername: row.AssigneeGitlabUsername,
+			Labels:                 row.Labels,
+			DueOn:                  row.DueOn,
+			StartDate:              row.StartDate,
+			Priority:               row.Priority,
+			Position:               row.Position,
+			CreatedByUserID:        row.CreatedByUserID,
+			CreatedAt:              row.CreatedAt,
+			UpdatedAt:              row.UpdatedAt,
+		}),
+		ProjectName: row.ProjectName,
+	}
 }
 
 // Get returns the task by ID, scoped through its project's owner. It

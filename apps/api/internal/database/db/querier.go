@@ -267,6 +267,13 @@ type Querier interface {
 	// established. It has no "unassigned" filter, unlike the board view
 	// ListTasksByProject serves.
 	ListTasksByProjectPaged(ctx context.Context, arg ListTasksByProjectPagedParams) ([]Task, error)
+	// ListTasksForOwner backs the cross-project task collection (GET
+	// /api/v1/tasks, issue #76): every task across every project ownerID
+	// owns, narrowed by status/priority/due/start-date filters and an
+	// optional project_id allowlist, joined with project_name since a
+	// cross-project row is unreadable without knowing which project it
+	// belongs to.
+	ListTasksForOwner(ctx context.Context, arg ListTasksForOwnerParams) ([]ListTasksForOwnerRow, error)
 	// status = '' disables the filter, matching ListTasksByProject's
 	// convention. Ownership of linkID must already be verified by the caller
 	// via GetLinkedGitlabProjectForOwner before this runs.

@@ -143,6 +143,27 @@ func TestHandleGetProject_IncludesFailedSyncTaskCount(t *testing.T) {
 	assert.Equal(t, float64(1), body["failedSyncTaskCount"])
 }
 
+func TestHandleListProjects_FailedSyncFiltersToProjectsWithFailures(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+
+	clean := q.SeedProject(ownerID, "Clean")
+	q.SeedTask(clean.ID, ownerID, "Fine")
+
+	broken := q.SeedProject(ownerID, "Broken")
+	failedTask := q.SeedTask(broken.ID, ownerID, "Broken task")
+	q.SeedSyncJobForTask(failedTask.ID, broken.ID, issuesync.KindIssueCreate, "failed", "gitlab unreachable")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects?failedSync=true", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, "Broken", body[0]["name"])
+	assert.Equal(t, float64(1), body[0]["failedSyncTaskCount"])
+}
+
 func TestHandleUpdateProject(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, ownerToken := loginSession(t, s, q)

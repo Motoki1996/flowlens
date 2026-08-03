@@ -251,6 +251,11 @@ type Querier interface {
 	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error)
 	// Ownership of linkID must already be verified by the caller via
 	// GetLinkedGitlabProjectForOwner before this runs.
+	// Backs the dashboard's "sync failures" section (issue #77): every project
+	// ownerID owns that has at least one task with a failed GitLab sync,
+	// counted the same way CountFailedSyncTasksByProjectForOwner counts a
+	// single project, joined across every project in one round trip.
+	ListFailedSyncProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]ListFailedSyncProjectsByOwnerRow, error)
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)

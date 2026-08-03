@@ -634,9 +634,10 @@ creating or editing one never reads or writes the other.
 
 `GET /api/v1/tasks` returns every task across every project the authenticated
 user owns — "what should I be doing right now" without opening each project
-in turn, and the same underlying query the delivery-flow dashboard (planned)
-will build on. Unlike every other task route, it takes no `{projectID}`: it
-already spans every project that owner has.
+in turn, and the same underlying query both `/dashboard` (below) and the
+future merge-request/CI delivery-flow dashboard build on. Unlike every other
+task route, it takes no `{projectID}`: it already spans every project that
+owner has.
 
 - Query parameters, all optional and independent: `status=open|closed`,
   `priority=low|medium|high|urgent`, `dueBefore=`/`dueAfter=`/`startedBefore=`
@@ -659,6 +660,39 @@ In the web app, `/tasks` is the cross-project Task collection (see
 [`docs/ui-design.md`](docs/ui-design.md)): the default view is open tasks
 with a due date, sorted soonest-first; each row links to that task's
 canonical single view under its own project.
+
+### Dashboard
+
+`/dashboard`, the screen every login lands on, is a set of read-only teasers
+built entirely from `GET /api/v1/tasks` and `GET /api/v1/projects`, not an
+object of its own — it carries no edit actions, and every section links out
+to the Task or Project collection it's a filtered view of
+([`docs/ui-design.md`](docs/ui-design.md) rules 4/5):
+
+- **Overdue** — open tasks whose `dueOn` is before today.
+- **Due today / this week** — open tasks due between today and the end of
+  this week. "This week" is Monday–Sunday and the boundary is computed from
+  the web server's local time, the same convention `toApiDate` already uses
+  for a picked calendar day; there is no other week-boundary convention in
+  the codebase to match yet.
+- **Waiting to start** — open tasks whose `startDate` has already arrived
+  (`startedBefore=<today>`).
+- **High priority** — open tasks with `priority` `urgent` or `high`, read off
+  the same `GET /api/v1/tasks?sort=priority` ranking `?sort=priority` itself
+  uses.
+- **Sync failures** — projects with at least one task whose GitLab sync
+  failed. `GET /api/v1/projects?failedSync=true` narrows to just those and
+  populates `failedSyncTaskCount` for each — the plain (unfiltered) project
+  list still always reports `0` there, same as `GET /api/v1/projects/{id}`
+  is the only other place that count is populated. Each row links to that
+  project's own view for the warning banner and retry.
+- **Projects** — the most recently updated projects, linking to `/projects`.
+
+A task with no due date never appears in the overdue/due-soon sections; if
+the user has open tasks but none of them has a due date at all, those two
+sections explain what setting one would surface instead of implying nothing
+is due. A user with no projects yet sees a prompt to create one instead of
+the sections.
 
 ## Current limitations
 

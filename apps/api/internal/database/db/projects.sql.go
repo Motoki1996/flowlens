@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createProject = `-- name: CreateProject :one
@@ -104,6 +105,68 @@ func (q *Queries) GetProjectByID(ctx context.Context, id uuid.UUID) (Project, er
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listFailedSyncProjectsByOwner = `-- name: ListFailedSyncProjectsByOwner :many
+
+SELECT p.id, p.owner_user_id, p.name, p.description, p.created_at, p.updated_at, COUNT(*) AS failed_sync_task_count
+FROM projects p
+JOIN tasks t ON t.project_id = p.id
+LEFT JOIN task_gitlab_links tgl ON tgl.task_id = t.id
+WHERE p.owner_user_id = $1
+  AND (
+    tgl.sync_status = 'failed'
+    OR (tgl.task_id IS NULL AND EXISTS (
+      SELECT 1 FROM sync_jobs sj WHERE sj.task_id = t.id AND sj.status = 'failed'
+    ))
+  )
+GROUP BY p.id
+ORDER BY p.updated_at DESC
+`
+
+type ListFailedSyncProjectsByOwnerRow struct {
+	ID                  uuid.UUID          `json:"id"`
+	OwnerUserID         uuid.UUID          `json:"owner_user_id"`
+	Name                string             `json:"name"`
+	Description         string             `json:"description"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	FailedSyncTaskCount int64              `json:"failed_sync_task_count"`
+}
+
+// ListFailedSyncProjectsByOwner backs the dashboard's "sync failures"
+// section (issue #77): every project ownerID owns that has at least one
+// task with a failed GitLab sync, counted the same way
+// CountFailedSyncTasksByProjectForOwner counts a single project — from
+// task_gitlab_links when a link exists, or from the task's most recent
+// sync_jobs row otherwise — but joined across every project in one round
+// trip instead of one query per project.
+func (q *Queries) ListFailedSyncProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]ListFailedSyncProjectsByOwnerRow, error) {
+	rows, err := q.db.Query(ctx, listFailedSyncProjectsByOwner, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFailedSyncProjectsByOwnerRow{}
+	for rows.Next() {
+		var i ListFailedSyncProjectsByOwnerRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerUserID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FailedSyncTaskCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProjectsByOwner = `-- name: ListProjectsByOwner :many

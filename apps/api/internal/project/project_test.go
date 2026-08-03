@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/issuesync"
 	"github.com/flowlens/api/internal/project"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -132,6 +133,30 @@ func TestService_List_ScopesToOwner(t *testing.T) {
 	projects, err := svc.List(context.Background(), owner)
 	require.NoError(t, err)
 	assert.Len(t, projects, 2)
+}
+
+func TestService_ListFailedSync_ReturnsOnlyProjectsWithFailures(t *testing.T) {
+	q := dbtest.New()
+	svc := project.NewService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	other := q.SeedUser("hubot", "hubot@example.com").ID
+
+	clean := q.SeedProject(owner, "Clean")
+	q.SeedTask(clean.ID, owner, "Fine")
+
+	broken := q.SeedProject(owner, "Broken")
+	failedTask := q.SeedTask(broken.ID, owner, "Broken task")
+	q.SeedSyncJobForTask(failedTask.ID, broken.ID, issuesync.KindIssueCreate, "failed", "gitlab unreachable")
+
+	otherBroken := q.SeedProject(other, "Other's broken project")
+	otherFailedTask := q.SeedTask(otherBroken.ID, other, "Not mine")
+	q.SeedSyncJobForTask(otherFailedTask.ID, otherBroken.ID, issuesync.KindIssueCreate, "failed", "gitlab unreachable")
+
+	projects, err := svc.ListFailedSync(context.Background(), owner)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	assert.Equal(t, "Broken", projects[0].Name)
+	assert.Equal(t, int64(1), projects[0].FailedSyncTaskCount)
 }
 
 func TestService_Update_RejectsDuplicateName(t *testing.T) {

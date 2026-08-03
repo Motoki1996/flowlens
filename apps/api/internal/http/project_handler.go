@@ -37,6 +37,12 @@ func projectIDFromURL(r *http.Request) (uuid.UUID, bool) {
 // project (issue #66): unlike every other handler, this one cannot lean on
 // userFromContext's owner-scoped List alone, since the token's owner may
 // have other projects the token was never issued for.
+//
+// ?failedSync=true narrows to projects with at least one failed-sync task,
+// for the dashboard's "sync failures" section (issue #77). It is ignored on
+// a bearer-authenticated request, which always returns its single project
+// regardless — a project token has no notion of "every project I own" to
+// narrow in the first place.
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 
@@ -47,6 +53,17 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, []project.Project{p})
+		return
+	}
+
+	if r.URL.Query().Get("failedSync") == "true" {
+		projects, err := s.projects.ListFailedSync(r.Context(), u.ID)
+		if err != nil {
+			slog.Error("list failed sync projects", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+			return
+		}
+		writeJSON(w, http.StatusOK, projects)
 		return
 	}
 

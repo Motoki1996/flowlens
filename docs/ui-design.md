@@ -81,6 +81,7 @@ The routes that exist today, and the object each one is about:
 | `/tasks` | `Task` | Collection, cross-project (`?status=`/`?priority=`/`?sort=`/`?projectId=` filters) |
 | `/projects/[projectId]/gitlab-connection` | `GitLabConnection` | Single (+ the `LinkedGitLabProject` collection) |
 | `/projects/[projectId]/linked-gitlab-projects/[linkId]` | `LinkedGitLabProject` | Single (+ its `SyncRun` and `WebhookEvent` history) |
+| `/dashboard` | — | Aggregation of teasers onto `Task` and `Project` (see below) |
 | `/login`, `/signup` | — | Auth flows (rule 7) |
 
 Backlogs and tasks exist only inside a project, so both halves of each pair are
@@ -112,6 +113,16 @@ same section when you change project.
 Because the sidebar always names the project, breadcrumbs inside it start at the
 collection (`Backlogs / Sprint 1`), and the collection views drop them
 altogether — their own entry in the sidebar is already marked current.
+
+`/dashboard`, the screen every login lands on, is the other deliberate
+exception: it is not a view of one object, but read-only teasers onto two —
+overdue/due-soon/waiting-to-start/high-priority slices of the `Task`
+collection and a sync-failures/recently-updated slice of the `Project`
+collection, each capped and linking out to the full collection view it's
+filtered from (rule 5). It carries no edit actions of its own (rule 4): a
+sync failure links to that `Project`'s single view rather than growing a
+retry button here, the same as every other section defers to the single view
+it teases.
 
 Three objects deliberately skip routes of their own (rule 3's escape hatch):
 

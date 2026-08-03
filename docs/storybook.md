@@ -146,4 +146,5 @@ layers.** If a play function covers a click, a Vitest test shouldn't re-cover it
       that can run Playwright, or add `@storybook/addon-vitest` (needs
       `@vitest/browser` + a Playwright provider).
 - [ ] Decide on Chromatic or an alternative for visual regression.
-- [ ] Backfill stories for the remaining existing screens (dashboard).
+- [x] Backfill stories for the remaining existing screens (dashboard —
+      `DashboardView.stories.tsx`).

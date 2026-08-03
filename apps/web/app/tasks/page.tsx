@@ -47,6 +47,14 @@ export default async function AllTasksPage({
   const projectIds = (Array.isArray(params.projectId) ? params.projectId : [params.projectId]).filter(
     (v): v is string => Boolean(v),
   );
+  // dueBefore/dueAfter/startedBefore have no filter control of their own on
+  // this screen — they exist so the dashboard's overdue/due-soon/
+  // waiting-to-start sections (issue #77) can deep-link here pre-filtered,
+  // the same hand-off `?backlog=` already does for the project-scoped Task
+  // collection.
+  const dueBefore = firstParam(params.dueBefore);
+  const dueAfter = firstParam(params.dueAfter);
+  const startedBefore = firstParam(params.startedBefore);
 
   let tasks: Awaited<ReturnType<typeof getAllTasks>> = [];
   let projects: Awaited<ReturnType<typeof getProjects>> = [];
@@ -58,6 +66,9 @@ export default async function AllTasksPage({
         priority,
         sort,
         projectIds: projectIds.length > 0 ? projectIds : undefined,
+        dueBefore,
+        dueAfter,
+        startedBefore,
       }),
       getProjects(),
     ]);

@@ -947,10 +947,16 @@ func (f *FakeQuerier) CountFailedSyncTasksByProjectForOwner(_ context.Context, a
 	if !ok || p.OwnerUserID != arg.OwnerUserID {
 		return 0, nil
 	}
+	return f.countFailedSyncTasks(arg.ProjectID), nil
+}
 
+// countFailedSyncTasks counts projectID's failed-sync tasks the same way the
+// real SQL does, shared by CountFailedSyncTasksByProjectForOwner and
+// ListFailedSyncProjectsByOwner.
+func (f *FakeQuerier) countFailedSyncTasks(projectID uuid.UUID) int64 {
 	var count int64
 	for _, t := range f.tasks {
-		if t.ProjectID != arg.ProjectID {
+		if t.ProjectID != projectID {
 			continue
 		}
 		if link, ok := f.taskGitlabLinksByTaskID[t.ID]; ok {
@@ -967,7 +973,35 @@ func (f *FakeQuerier) CountFailedSyncTasksByProjectForOwner(_ context.Context, a
 			}
 		}
 	}
-	return count, nil
+	return count
+}
+
+// ListFailedSyncProjectsByOwner mirrors the SQL: every project ownerUserID
+// owns with a non-zero failed-sync task count, ordered by updated_at DESC.
+func (f *FakeQuerier) ListFailedSyncProjectsByOwner(_ context.Context, ownerUserID uuid.UUID) ([]db.ListFailedSyncProjectsByOwnerRow, error) {
+	items := []db.ListFailedSyncProjectsByOwnerRow{}
+	for _, p := range f.projects {
+		if p.OwnerUserID != ownerUserID {
+			continue
+		}
+		count := f.countFailedSyncTasks(p.ID)
+		if count == 0 {
+			continue
+		}
+		items = append(items, db.ListFailedSyncProjectsByOwnerRow{
+			ID:                  p.ID,
+			OwnerUserID:         p.OwnerUserID,
+			Name:                p.Name,
+			Description:         p.Description,
+			CreatedAt:           p.CreatedAt,
+			UpdatedAt:           p.UpdatedAt,
+			FailedSyncTaskCount: count,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].UpdatedAt.Time.After(items[j].UpdatedAt.Time)
+	})
+	return items, nil
 }
 
 func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskForOwnerParams) (db.Task, error) {

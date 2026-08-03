@@ -40,6 +40,9 @@ var (
 // Service.FailedSyncTaskCount — only the single-project HTTP handler does,
 // for the single view's warning banner (docs/plans/issue-sync.md). Get and
 // List never populate it themselves; see Get's doc comment for why.
+// ListFailedSync is the exception: it populates FailedSyncTaskCount as part
+// of its own query, since every project it returns has a non-zero count by
+// construction.
 type Project struct {
 	ID                  uuid.UUID `json:"id"`
 	Name                string    `json:"name"`
@@ -150,6 +153,31 @@ func (s *Service) FailedSyncTaskCount(ctx context.Context, ownerID, projectID uu
 		return 0, fmt.Errorf("project: count failed sync tasks: %w", err)
 	}
 	return count, nil
+}
+
+// ListFailedSync returns every project owned by ownerID that currently has
+// at least one task with a failed GitLab sync, ordered most-recently-updated
+// first, for the dashboard's "sync failures" section. Unlike List, the
+// returned Projects have FailedSyncTaskCount populated — every one of them
+// is non-zero by construction, since a zero-count project never has a
+// failed-sync task to match on.
+func (s *Service) ListFailedSync(ctx context.Context, ownerID uuid.UUID) ([]Project, error) {
+	rows, err := s.q.ListFailedSyncProjectsByOwner(ctx, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("project: list failed sync: %w", err)
+	}
+	out := make([]Project, len(rows))
+	for i, row := range rows {
+		out[i] = Project{
+			ID:                  row.ID,
+			Name:                row.Name,
+			Description:         row.Description,
+			CreatedAt:           row.CreatedAt.Time,
+			UpdatedAt:           row.UpdatedAt.Time,
+			FailedSyncTaskCount: row.FailedSyncTaskCount,
+		}
+	}
+	return out, nil
 }
 
 // Update overwrites name and description. Ownership is enforced by the

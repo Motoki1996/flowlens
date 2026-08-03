@@ -77,6 +77,24 @@ export const getProjects = cache(async (): Promise<Project[]> => {
 });
 
 /**
+ * getFailedSyncProjects returns every project owned by the current user with
+ * at least one task whose GitLab sync failed, most-recently-updated first —
+ * the dashboard's "sync failures" section (issue #77). Callers must already
+ * know the request is authenticated.
+ */
+export const getFailedSyncProjects = cache(async (): Promise<Project[]> => {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects?failedSync=true`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load failed-sync projects: ${res.status}`);
+  }
+  return (await res.json()) as Project[];
+});
+
+/**
  * getProject returns one project, or null when it doesn't exist or isn't
  * owned by the current user (the API reports both cases as 404).
  */

@@ -30,3 +30,16 @@ export function toApiDate(date: Date | undefined): string | null {
 export function fromApiDate(iso: string | null): Date | undefined {
   return iso ? new Date(iso) : undefined;
 }
+
+/**
+ * toDateParam renders a Date as the bare YYYY-MM-DD that the cross-project
+ * Task collection's dueBefore/dueAfter/startedBefore query params expect
+ * (parseDateQueryParam, apps/api/internal/http/task_handler.go) — unlike
+ * toApiDate, which produces the full RFC3339 timestamp a task's own body
+ * fields need. The day is read in local time, same as toApiDate.
+ */
+export function toDateParam(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}

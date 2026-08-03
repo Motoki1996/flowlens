@@ -408,6 +408,7 @@ func (s *Service) applyAsNewTask(ctx context.Context, link db.LinkedGitlabProjec
 			AssigneeGitlabUsername: fields.AssigneeUsername,
 			Labels:                 fields.Labels,
 			DueOn:                  toDate(fields.DueDate),
+			Priority:               task.PriorityMedium,
 			CreatedByUserID:        project.OwnerUserID,
 		})
 		if err != nil {

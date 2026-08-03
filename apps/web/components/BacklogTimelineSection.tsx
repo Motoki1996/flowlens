@@ -12,6 +12,7 @@ import {
   toBacklogGanttRows,
 } from "@/lib/timeline";
 import { AXIS_HEIGHT, GanttChart, percent, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
+import { PriorityBadge } from "@/components/PriorityBadge";
 
 /** The name column is a fixed width so every row's bar starts at the same x,
  *  and the plot gets a minimum width per day so a long project scrolls
@@ -119,13 +120,16 @@ export function BacklogTimelineSection({
                 className="flex flex-col justify-center pr-3"
                 style={{ height: ROW_HEIGHT }}
               >
-                <Link
-                  href={backlogPath(projectId, row.id)}
-                  className="text-foreground truncate text-sm hover:underline"
-                  title={row.title}
-                >
-                  {row.title}
-                </Link>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <Link
+                    href={backlogPath(projectId, row.id)}
+                    className="text-foreground truncate text-sm hover:underline"
+                    title={row.title}
+                  >
+                    {row.title}
+                  </Link>
+                  <PriorityBadge priority={row.priority} />
+                </div>
                 {!tasksError && row.progress ? (
                   <span className="text-muted-foreground truncate text-xs tabular-nums">
                     {row.progress.total === 0

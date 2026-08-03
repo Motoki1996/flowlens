@@ -14,16 +14,17 @@ import (
 
 const createBacklog = `-- name: CreateBacklog :one
 
-INSERT INTO backlogs (project_id, name, description, position, start_date, due_on)
+INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority)
 VALUES (
     $1,
     $2,
     $3,
     COALESCE((SELECT MAX(position) + 1 FROM backlogs WHERE project_id = $1), 0),
     $4,
-    $5
+    $5,
+    $6
 )
-RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on
+RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority
 `
 
 type CreateBacklogParams struct {
@@ -32,6 +33,7 @@ type CreateBacklogParams struct {
 	Description string      `json:"description"`
 	StartDate   pgtype.Date `json:"start_date"`
 	DueOn       pgtype.Date `json:"due_on"`
+	Priority    string      `json:"priority"`
 }
 
 // Backlogs have no owner column of their own; ownership is always checked
@@ -46,6 +48,7 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		arg.Description,
 		arg.StartDate,
 		arg.DueOn,
+		arg.Priority,
 	)
 	var i Backlog
 	err := row.Scan(
@@ -58,6 +61,7 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		&i.UpdatedAt,
 		&i.StartDate,
 		&i.DueOn,
+		&i.Priority,
 	)
 	return i, err
 }
@@ -82,7 +86,7 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 }
 
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on
+SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority
 FROM backlogs b
 JOIN projects p ON p.id = b.project_id
 WHERE b.id = $1 AND p.owner_user_id = $2
@@ -106,6 +110,7 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 		&i.UpdatedAt,
 		&i.StartDate,
 		&i.DueOn,
+		&i.Priority,
 	)
 	return i, err
 }
@@ -128,11 +133,30 @@ func (q *Queries) GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.U
 }
 
 const listBacklogsByProject = `-- name: ListBacklogsByProject :many
-SELECT id, project_id, name, description, position, created_at, updated_at, start_date, due_on FROM backlogs WHERE project_id = $1 ORDER BY position ASC, created_at ASC
+
+SELECT id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority
+FROM backlogs
+WHERE project_id = $1
+  AND ($2::text = '' OR priority = $2)
+ORDER BY
+  (CASE WHEN $3::boolean THEN
+     CASE priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
+   ELSE 0 END) DESC,
+  position ASC, created_at ASC
 `
 
-func (q *Queries) ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error) {
-	rows, err := q.db.Query(ctx, listBacklogsByProject, projectID)
+type ListBacklogsByProjectParams struct {
+	ProjectID      uuid.UUID `json:"project_id"`
+	Priority       string    `json:"priority"`
+	SortByPriority bool      `json:"sort_by_priority"`
+}
+
+// ListBacklogsByProject's priority filter and sort follow the same
+// "empty/false disables it" convention as internal/task's ListTasksByProject.
+// Sorting by priority ranks urgent > high > medium > low and falls back to
+// the usual position/created_at order as a tiebreak.
+func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error) {
+	rows, err := q.db.Query(ctx, listBacklogsByProject, arg.ProjectID, arg.Priority, arg.SortByPriority)
 	if err != nil {
 		return nil, err
 	}
@@ -150,6 +174,7 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, projectID uuid.UUID
 			&i.UpdatedAt,
 			&i.StartDate,
 			&i.DueOn,
+			&i.Priority,
 		); err != nil {
 			return nil, err
 		}
@@ -163,10 +188,10 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, projectID uuid.UUID
 
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $3, description = $4, position = $5, start_date = $6, due_on = $7, updated_at = now()
+SET name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, updated_at = now()
 FROM projects p
 WHERE b.id = $1 AND b.project_id = p.id AND p.owner_user_id = $2
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on
+RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority
 `
 
 type UpdateBacklogForOwnerParams struct {
@@ -177,6 +202,7 @@ type UpdateBacklogForOwnerParams struct {
 	Position    int32       `json:"position"`
 	StartDate   pgtype.Date `json:"start_date"`
 	DueOn       pgtype.Date `json:"due_on"`
+	Priority    string      `json:"priority"`
 }
 
 // UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
@@ -191,6 +217,7 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		arg.Position,
 		arg.StartDate,
 		arg.DueOn,
+		arg.Priority,
 	)
 	var i Backlog
 	err := row.Scan(
@@ -203,6 +230,7 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		&i.UpdatedAt,
 		&i.StartDate,
 		&i.DueOn,
+		&i.Priority,
 	)
 	return i, err
 }

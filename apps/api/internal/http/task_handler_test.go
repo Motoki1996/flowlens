@@ -89,6 +89,50 @@ func TestHandleListTasks_RejectsInvalidStatusQuery(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestHandleListTasks_RejectsInvalidPriorityQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?priority=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListTasks_RejectsInvalidSortQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListTasks_FiltersAndSortsByPriorityQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Low", Priority: "low"}, token)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Urgent", Priority: "urgent"}, token)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?priority=urgent", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var filtered []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "Urgent", filtered[0]["title"])
+
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort=priority", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var sorted []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sorted))
+	require.Len(t, sorted, 2)
+	assert.Equal(t, "Urgent", sorted[0]["title"])
+	assert.Equal(t, "Low", sorted[1]["title"])
+}
+
 func TestHandleCreateTask(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)
@@ -139,6 +183,31 @@ func TestHandleCreateTask_RejectsInvalidTitle(t *testing.T) {
 	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
 		createTaskRequest{Title: "   "}, token)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleCreateTask_RejectsInvalidPriority(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Fix bug", Priority: "critical"}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// An absent priority on create defaults to "medium", the same as the domain
+// layer's own default.
+func TestHandleCreateTask_DefaultsPriorityToMedium(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Fix bug"}, token)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "medium", body["priority"])
 }
 
 func TestHandleCreateTask_ForeignProjectGets404(t *testing.T) {
@@ -224,6 +293,19 @@ func TestHandleUpdateTask(t *testing.T) {
 		assert.Equal(t, "Renamed", body["title"])
 		assert.Equal(t, "new", body["description"])
 		assert.Equal(t, float64(3), body["position"])
+	})
+
+	t.Run("owner can change priority; invalid priority is rejected", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
+			map[string]any{"priority": "urgent"}, ownerToken)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "urgent", body["priority"])
+
+		rec = doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
+			map[string]any{"priority": "critical"}, ownerToken)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
 

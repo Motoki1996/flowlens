@@ -248,7 +248,7 @@ type Querier interface {
 	// already be verified by the caller via GetLinkedGitlabProjectForOwner
 	// before this runs.
 	GetWebhookEventByLinkedGitlabProjectIDAndID(ctx context.Context, arg GetWebhookEventByLinkedGitlabProjectIDAndIDParams) (WebhookEvent, error)
-	ListBacklogsByProject(ctx context.Context, projectID uuid.UUID) ([]Backlog, error)
+	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error)
 	// Ownership of linkID must already be verified by the caller via
 	// GetLinkedGitlabProjectForOwner before this runs.
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)

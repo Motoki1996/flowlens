@@ -442,6 +442,7 @@ func (f *FakeQuerier) SeedBacklog(projectID uuid.UUID, name string) db.Backlog {
 		ProjectID: projectID,
 		Name:      name,
 		Position:  f.nextBacklogPosition(projectID),
+		Priority:  "medium",
 		CreatedAt: now(),
 		UpdatedAt: now(),
 	}
@@ -469,6 +470,7 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 		Position:    f.nextBacklogPosition(arg.ProjectID),
 		StartDate:   arg.StartDate,
 		DueOn:       arg.DueOn,
+		Priority:    arg.Priority,
 		CreatedAt:   now(),
 		UpdatedAt:   now(),
 	}
@@ -477,14 +479,42 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 	return b, nil
 }
 
-func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, projectID uuid.UUID) ([]db.Backlog, error) {
+// priorityRank mirrors the SQL query's CASE expression: urgent > high >
+// medium > low > anything else.
+func priorityRank(priority string) int {
+	switch priority {
+	case "urgent":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	case "low":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklogsByProjectParams) ([]db.Backlog, error) {
 	items := []db.Backlog{}
 	for _, b := range f.backlogs {
-		if b.ProjectID == projectID {
-			items = append(items, b)
+		if b.ProjectID != arg.ProjectID {
+			continue
 		}
+		if arg.Priority != "" && b.Priority != arg.Priority {
+			continue
+		}
+		items = append(items, b)
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Position < items[j].Position })
+	sort.SliceStable(items, func(i, j int) bool {
+		if arg.SortByPriority {
+			if ri, rj := priorityRank(items[i].Priority), priorityRank(items[j].Priority); ri != rj {
+				return ri > rj
+			}
+		}
+		return items[i].Position < items[j].Position
+	})
 	return items, nil
 }
 
@@ -540,6 +570,7 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	existing.Position = arg.Position
 	existing.StartDate = arg.StartDate
 	existing.DueOn = arg.DueOn
+	existing.Priority = arg.Priority
 	existing.UpdatedAt = now()
 
 	f.backlogsByID[arg.ID] = existing
@@ -594,6 +625,7 @@ func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title strin
 		Title:           title,
 		Status:          "open",
 		Labels:          []string{},
+		Priority:        "medium",
 		Position:        f.nextTaskPosition(projectID, backlogID),
 		CreatedByUserID: createdByUserID,
 		CreatedAt:       now(),
@@ -645,6 +677,7 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 		Labels:                 arg.Labels,
 		DueOn:                  arg.DueOn,
 		StartDate:              arg.StartDate,
+		Priority:               arg.Priority,
 		Position:               f.nextTaskPosition(arg.ProjectID, arg.BacklogID),
 		CreatedByUserID:        arg.CreatedByUserID,
 		CreatedAt:              now(),
@@ -698,9 +731,19 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.Status != "" && t.Status != arg.Status {
 			continue
 		}
+		if arg.Priority != "" && t.Priority != arg.Priority {
+			continue
+		}
 		items = append(items, t)
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Position < items[j].Position })
+	sort.SliceStable(items, func(i, j int) bool {
+		if arg.SortByPriority {
+			if ri, rj := priorityRank(items[i].Priority), priorityRank(items[j].Priority); ri != rj {
+				return ri > rj
+			}
+		}
+		return items[i].Position < items[j].Position
+	})
 	return items, nil
 }
 
@@ -837,6 +880,7 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	existing.Labels = arg.Labels
 	existing.DueOn = arg.DueOn
 	existing.StartDate = arg.StartDate
+	existing.Priority = arg.Priority
 	existing.Position = arg.Position
 	existing.UpdatedAt = now()
 

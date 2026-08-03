@@ -36,6 +36,50 @@ func TestHandleListBacklogs_ScopesToProjectAndOwner(t *testing.T) {
 	assert.Len(t, body, 2)
 }
 
+func TestHandleListBacklogs_RejectsInvalidPriorityQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs?priority=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListBacklogs_RejectsInvalidSortQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs?sort=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListBacklogs_FiltersAndSortsByPriorityQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Low", Priority: "low"}, token)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Urgent", Priority: "urgent"}, token)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs?priority=urgent", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var filtered []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "Urgent", filtered[0]["name"])
+
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs?sort=priority", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var sorted []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sorted))
+	require.Len(t, sorted, 2)
+	assert.Equal(t, "Urgent", sorted[0]["name"])
+	assert.Equal(t, "Low", sorted[1]["name"])
+}
+
 func TestHandleListBacklogs_ForeignProjectGets404(t *testing.T) {
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")
@@ -86,6 +130,29 @@ func TestHandleCreateBacklog_RejectsInvalidName(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
 		createBacklogRequest{Name: "   "}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleCreateBacklog_DefaultsPriorityToMedium(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Sprint 1"}, token)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "medium", body["priority"])
+}
+
+func TestHandleCreateBacklog_RejectsInvalidPriority(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Sprint 1", Priority: "critical"}, token)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
@@ -149,6 +216,19 @@ func TestHandleUpdateBacklog(t *testing.T) {
 		assert.Equal(t, "Renamed", body["name"])
 		assert.Equal(t, "new", body["description"])
 		assert.Equal(t, float64(3), body["position"])
+	})
+
+	t.Run("owner can change priority; invalid priority is rejected", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+			map[string]any{"name": "Sprint 1", "priority": "urgent"}, ownerToken)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "urgent", body["priority"])
+
+		rec = doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+			map[string]any{"name": "Sprint 1", "priority": "critical"}, ownerToken)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
 

@@ -7,13 +7,21 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { formatDate, fromApiDate, toApiDate } from "@/lib/dates";
-import type { ApiError, Backlog, Task } from "@/types";
+import type { ApiError, Backlog, Priority, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
+import { PriorityBadge } from "@/components/PriorityBadge";
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
@@ -49,6 +57,7 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
   const [description, setDescription] = useState("");
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
+  const [priority, setPriority] = useState<Priority>("medium");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -71,6 +80,7 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
           description,
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
+          priority,
         }),
       });
       if (!res.ok) {
@@ -125,6 +135,22 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
         />
         <DateField id="new-backlog-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
       </div>
+      <div>
+        <label htmlFor="new-backlog-priority" className="text-foreground block text-sm font-medium">
+          Priority
+        </label>
+        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
+          <SelectTrigger id="new-backlog-priority" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="urgent">Urgent</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Creating…" : "Create backlog"}
@@ -154,6 +180,7 @@ function EditBacklogForm({
   const [description, setDescription] = useState(backlog.description);
   const [startDate, setStartDate] = useState(fromApiDate(backlog.startDate));
   const [dueOn, setDueOn] = useState(fromApiDate(backlog.dueOn));
+  const [priority, setPriority] = useState<Priority>(backlog.priority);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -177,6 +204,7 @@ function EditBacklogForm({
           position: backlog.position,
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
+          priority,
         }),
       });
       if (!res.ok) {
@@ -238,6 +266,25 @@ function EditBacklogForm({
           value={dueOn}
           onChange={setDueOn}
         />
+      </div>
+      <div>
+        <label
+          htmlFor={`edit-backlog-priority-${backlog.id}`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Priority
+        </label>
+        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
+          <SelectTrigger id={`edit-backlog-priority-${backlog.id}`} className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="urgent">Urgent</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
@@ -398,15 +445,18 @@ export function BacklogListSection({
                 ) : (
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0">
-                      <Link
-                        href={backlogPath(projectId, backlog.id)}
-                        className="text-foreground text-sm hover:underline"
-                      >
-                        {backlog.name}{" "}
-                        <span className="text-muted-foreground text-xs">
-                          ({taskCount(tasks, backlog.id)})
-                        </span>
-                      </Link>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          href={backlogPath(projectId, backlog.id)}
+                          className="text-foreground text-sm hover:underline"
+                        >
+                          {backlog.name}{" "}
+                          <span className="text-muted-foreground text-xs">
+                            ({taskCount(tasks, backlog.id)})
+                          </span>
+                        </Link>
+                        <PriorityBadge priority={backlog.priority} />
+                      </div>
                       {scheduleLabel(backlog) ? (
                         <p className="text-muted-foreground truncate text-xs">
                           {scheduleLabel(backlog)}

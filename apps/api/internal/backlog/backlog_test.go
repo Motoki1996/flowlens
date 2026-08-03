@@ -49,6 +49,91 @@ func TestService_Create_ValidatesName(t *testing.T) {
 	}
 }
 
+func TestService_Create_DefaultsAndValidatesPriority(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr error
+	}{
+		{"empty defaults to medium", "", backlog.PriorityMedium, nil},
+		{"accepts low", backlog.PriorityLow, backlog.PriorityLow, nil},
+		{"accepts urgent", backlog.PriorityUrgent, backlog.PriorityUrgent, nil},
+		{"rejects unknown value", "critical", "", backlog.ErrInvalidPriority},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+
+			got, err := svc.Create(context.Background(), owner, p.ID, backlog.CreateParams{Name: "Sprint 1", Priority: tt.input})
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.Priority)
+		})
+	}
+}
+
+func TestService_Update_ChangesPriority(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1", Priority: backlog.PriorityLow})
+	require.NoError(t, err)
+	require.Equal(t, backlog.PriorityLow, created.Priority)
+
+	// An absent Priority leaves the stored value alone, the same as the two
+	// dates on UpdateParams.
+	untouched, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"})
+	require.NoError(t, err)
+	assert.Equal(t, backlog.PriorityLow, untouched.Priority)
+
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name:     "Sprint 1",
+		Priority: optional.Present(backlog.PriorityUrgent),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, backlog.PriorityUrgent, updated.Priority)
+
+	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name:     "Sprint 1",
+		Priority: optional.Present("not-a-priority"),
+	})
+	assert.ErrorIs(t, err, backlog.ErrInvalidPriority)
+}
+
+func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	low, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Low", Priority: backlog.PriorityLow})
+	require.NoError(t, err)
+	medium, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Medium", Priority: backlog.PriorityMedium})
+	require.NoError(t, err)
+	urgent, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Urgent", Priority: backlog.PriorityUrgent})
+	require.NoError(t, err)
+
+	filtered, err := svc.List(ctx, owner, p.ID, backlog.ListFilter{Priority: backlog.PriorityUrgent})
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, urgent.ID, filtered[0].ID)
+
+	sorted, err := svc.List(ctx, owner, p.ID, backlog.ListFilter{Sort: backlog.SortPriority})
+	require.NoError(t, err)
+	require.Len(t, sorted, 3)
+	assert.Equal(t, []uuid.UUID{urgent.ID, medium.ID, low.ID}, []uuid.UUID{sorted[0].ID, sorted[1].ID, sorted[2].ID})
+}
+
 func TestService_Create_ReturnsNotFoundForForeignProject(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
@@ -100,7 +185,7 @@ func TestService_List_ScopesToProjectAndOrdersByPosition(t *testing.T) {
 	_, err = svc.Create(ctx, owner, otherProject.ID, backlog.CreateParams{Name: "Unrelated"})
 	require.NoError(t, err)
 
-	backlogs, err := svc.List(ctx, owner, p.ID)
+	backlogs, err := svc.List(ctx, owner, p.ID, backlog.ListFilter{})
 	require.NoError(t, err)
 	require.Len(t, backlogs, 2)
 	assert.Equal(t, "Sprint 1", backlogs[0].Name)
@@ -114,7 +199,7 @@ func TestService_List_ReturnsNotFoundForForeignProject(t *testing.T) {
 	other := q.SeedUser("hubot", "hubot@example.com").ID
 	p := q.SeedProject(owner, "Alpha")
 
-	_, err := svc.List(context.Background(), other, p.ID)
+	_, err := svc.List(context.Background(), other, p.ID, backlog.ListFilter{})
 	assert.ErrorIs(t, err, backlog.ErrNotFound)
 }
 

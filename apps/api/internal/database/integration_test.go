@@ -162,7 +162,7 @@ func TestBacklogQueriesEnforceOwnership(t *testing.T) {
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
 	require.NoError(t, err)
 
-	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1"})
+	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium"})
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), b.Position)
 
@@ -217,7 +217,7 @@ func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
 	owner := createUser(t, q, "owner")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
 	require.NoError(t, err)
-	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1"})
+	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium"})
 	require.NoError(t, err)
 
 	var taskID uuid.UUID
@@ -438,6 +438,7 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 		ProjectID:       p.ID,
 		Title:           "Task synced with GitLab",
 		Labels:          []string{},
+		Priority:        "medium",
 		CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)

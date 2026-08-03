@@ -25,6 +25,11 @@ export interface Project {
   failedSyncTaskCount: number;
 }
 
+// Priority is shared by Task and Backlog. App-only, like startDate — GitLab
+// CE issues have no native priority field, so it never syncs to GitLab. A
+// backlog's priority is independent of its tasks'.
+export type Priority = "low" | "medium" | "high" | "urgent";
+
 export interface Backlog {
   id: string;
   projectId: string;
@@ -35,6 +40,7 @@ export interface Backlog {
   // App-only, like a task's startDate — neither ever syncs to GitLab.
   startDate: string | null;
   dueOn: string | null;
+  priority: Priority;
   createdAt: string;
   updatedAt: string;
 }
@@ -72,6 +78,7 @@ export interface Task {
   labels: string[];
   dueOn: string | null;
   startDate: string | null;
+  priority: Priority;
   position: number;
   createdByUserId: string;
   createdAt: string;

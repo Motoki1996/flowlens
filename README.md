@@ -590,6 +590,45 @@ says progress is unavailable instead of showing everything at 0%.
 The date math lives in `apps/web/lib/timeline.ts`, separate from the components
 so it is unit-testable without rendering a chart.
 
+### Task & backlog priority
+
+A task and a backlog each carry a `priority` — one of `low`, `medium`, `high`,
+`urgent`, defaulting to `medium` — used to decide what to work on next ahead
+of the delivery-flow dashboard and cross-project task views planned later.
+Like `startDate`, task dependencies and a backlog's own dates, priority is
+**app-only and never synced to GitLab**: GitLab CE issues have no native
+priority field (a priority label or weight is a GitLab EE feature), so it has
+no GitLab-side counterpart to push to or pull from.
+
+- `POST`/`PATCH` on both `/api/v1/projects/{projectID}/tasks` /
+  `/api/v1/tasks/{taskID}` and `/api/v1/projects/{projectID}/backlogs` /
+  `/api/v1/backlogs/{backlogID}` accept `priority`. On the task PATCH,
+  priority is part of the same partial-update contract as the rest of the
+  task: a body without `priority` leaves the stored value alone. An absent
+  `priority` on create, or an explicit empty string on either create or
+  update, resets it to `medium` rather than erroring — there is no "no
+  priority" state to represent. Any other value is rejected with 400
+  `invalid_priority`.
+- `GET .../tasks` and `GET .../backlogs` accept `?priority=low|medium|high|urgent`
+  to narrow the list, and `?sort=priority` to order results by priority
+  (`urgent` → `low`) instead of the manual/position order, falling back to
+  that same position order to break ties between equal priorities. Both
+  parameters are independent of the manual drag-reorder `position` field —
+  sorting by priority is a display order for this request only and never
+  rewrites `position`; a UI that lets a user pick `?sort=priority` deciding
+  whether to also disable drag-to-reorder while active is left to that UI
+  (tracked with the drag-and-drop work, not decided here).
+
+In the web app, priority is selectable wherever a task or backlog is created
+or edited: the task single view's edit form, the task collection's inline
+"New task" form, and — since a backlog's own rename/edit action already lives
+on the Backlog collection view, not its single view, per
+[`docs/ui-design.md`](docs/ui-design.md) — the backlog collection's inline
+"New backlog" and per-row "Edit" forms. It is shown as a badge, the same
+component for both tasks and backlogs, in list rows, timeline name columns
+and the task single view. A backlog's priority is independent of its tasks':
+creating or editing one never reads or writes the other.
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault

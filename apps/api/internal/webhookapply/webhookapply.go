@@ -263,6 +263,7 @@ func (s *Service) applyAsNewTask(ctx context.Context, q db.Querier, event db.Web
 		AssigneeGitlabUsername: fields.AssigneeUsername,
 		Labels:                 fields.Labels,
 		DueOn:                  toDate(fields.DueDate),
+		Priority:               task.PriorityMedium,
 		CreatedByUserID:        ownerID,
 	})
 	if err != nil {

@@ -7,7 +7,7 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { formatDate, toApiDate } from "@/lib/dates";
-import type { ApiError, Backlog, Task, TaskDependency, TaskStatus } from "@/types";
+import type { ApiError, Backlog, Priority, Task, TaskDependency, TaskStatus } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
+import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 
 /**
@@ -69,6 +70,7 @@ function NewTaskForm({
   const [backlogId, setBacklogId] = useState(UNCLASSIFIED);
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
+  const [priority, setPriority] = useState<Priority>("medium");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -102,6 +104,7 @@ function NewTaskForm({
           backlogId: backlogId === UNCLASSIFIED ? null : backlogId,
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
+          priority,
         }),
       });
       if (!res.ok) {
@@ -169,6 +172,22 @@ function NewTaskForm({
           onChange={setStartDate}
         />
         <DateField id="new-task-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
+      </div>
+      <div>
+        <label htmlFor="new-task-priority" className="text-foreground block text-sm font-medium">
+          Priority
+        </label>
+        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
+          <SelectTrigger id="new-task-priority" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+            <SelectItem value="urgent">Urgent</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
@@ -485,6 +504,7 @@ export function TaskListSection({
                               <span>{task.assigneeGitlabUsername}</span>
                             ) : null}
                             {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
+                            <PriorityBadge priority={task.priority} />
                             <StatusBadge status={task.status} />
                             <SyncBadge gitlab={task.gitlab} />
                           </span>

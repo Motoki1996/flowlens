@@ -6,6 +6,7 @@ import type { Task, TaskDependency } from "@/types";
 import { taskPath } from "@/lib/routes";
 import { computeTimelineBounds, hasSchedule, spanDays, toTaskGanttRows } from "@/lib/timeline";
 import { AXIS_HEIGHT, GanttChart, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
+import { PriorityBadge } from "@/components/PriorityBadge";
 
 /** The name column is a fixed width so every row's bar starts at the same x,
  *  and the plot gets a minimum width per day so a long project scrolls
@@ -114,13 +115,16 @@ export function TaskTimelineSection({
                   className="flex flex-col justify-center pr-3"
                   style={{ height: ROW_HEIGHT }}
                 >
-                  <Link
-                    href={taskPath(projectId, row.id)}
-                    className="text-foreground truncate text-sm hover:underline"
-                    title={row.title}
-                  >
-                    {row.title}
-                  </Link>
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    <Link
+                      href={taskPath(projectId, row.id)}
+                      className="text-foreground truncate text-sm hover:underline"
+                      title={row.title}
+                    >
+                      {row.title}
+                    </Link>
+                    <PriorityBadge priority={row.priority} />
+                  </div>
                   {predecessors ? (
                     <span className="text-muted-foreground truncate text-xs">
                       After: {predecessors.join(", ")}

@@ -13,6 +13,7 @@ const backlog: Backlog = {
   position: 0,
   startDate: null,
   dueOn: null,
+  priority: "medium",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };
@@ -31,6 +32,7 @@ function makeTask(overrides: Partial<Task>): Task {
     labels: [],
     dueOn: null,
     startDate: null,
+    priority: "medium",
     position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",

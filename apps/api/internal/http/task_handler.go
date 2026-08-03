@@ -21,6 +21,7 @@ type createTaskRequest struct {
 	Labels                 []string   `json:"labels"`
 	DueOn                  *time.Time `json:"dueOn"`
 	StartDate              *time.Time `json:"startDate"`
+	Priority               string     `json:"priority"`
 }
 
 // updateTaskRequest is a true partial update: a key absent from the body
@@ -35,6 +36,7 @@ type updateTaskRequest struct {
 	Labels                 task.Optional[[]string]   `json:"labels"`
 	DueOn                  task.Optional[*time.Time] `json:"dueOn"`
 	StartDate              task.Optional[*time.Time] `json:"startDate"`
+	Priority               task.Optional[string]     `json:"priority"`
 	Position               task.Optional[int32]      `json:"position"`
 }
 
@@ -59,9 +61,22 @@ func taskIDFromURL(r *http.Request) (uuid.UUID, bool) {
 	return id, true
 }
 
-// parseTaskListFilter reads the ?backlog_id= and ?status= query parameters.
-// backlog_id accepts a UUID or the literal "unassigned"; status accepts
-// "open" or "closed". Either may be omitted to mean "no filter".
+// isValidPriority reports whether v is one of the fixed priority values.
+func isValidPriority(v string) bool {
+	switch v {
+	case task.PriorityLow, task.PriorityMedium, task.PriorityHigh, task.PriorityUrgent:
+		return true
+	default:
+		return false
+	}
+}
+
+// parseTaskListFilter reads the ?backlog_id=, ?status=, ?priority= and
+// ?sort= query parameters. backlog_id accepts a UUID or the literal
+// "unassigned"; status accepts "open" or "closed"; priority accepts "low",
+// "medium", "high" or "urgent"; sort accepts "priority" to rank by priority
+// instead of the default manual/position order. Any may be omitted to mean
+// "no filter"/"default order".
 func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 	var filter task.ListFilter
 
@@ -82,6 +97,20 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 			return task.ListFilter{}, errors.New("status must be \"open\" or \"closed\"")
 		}
 		filter.Status = v
+	}
+
+	if v := r.URL.Query().Get("priority"); v != "" {
+		if !isValidPriority(v) {
+			return task.ListFilter{}, errors.New("priority must be one of low, medium, high, urgent")
+		}
+		filter.Priority = v
+	}
+
+	if v := r.URL.Query().Get("sort"); v != "" {
+		if v != task.SortPriority {
+			return task.ListFilter{}, errors.New("sort must be \"priority\"")
+		}
+		filter.Sort = v
 	}
 
 	return filter, nil
@@ -136,6 +165,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Labels:                 req.Labels,
 		DueOn:                  req.DueOn,
 		StartDate:              req.StartDate,
+		Priority:               req.Priority,
 	})
 	if err != nil {
 		writeTaskError(w, err)
@@ -194,6 +224,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		Labels:                 req.Labels,
 		DueOn:                  req.DueOn,
 		StartDate:              req.StartDate,
+		Priority:               req.Priority,
 		Position:               req.Position,
 	})
 	if err != nil {
@@ -337,6 +368,8 @@ func writeTaskError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, task.ErrInvalidTitle):
 		writeError(w, http.StatusBadRequest, "invalid_title", "title must be 1-255 characters")
+	case errors.Is(err, task.ErrInvalidPriority):
+		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
 	case errors.Is(err, task.ErrBacklogNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_backlog", "backlog belongs to a different project")
 	case errors.Is(err, task.ErrAIContextFieldTooLong):

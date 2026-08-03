@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { formatDate, toApiDate } from "@/lib/dates";
@@ -58,6 +59,50 @@ function compareByDueOn(a: Task, b: Task): number {
   if (!a.dueOn) return 1;
   if (!b.dueOn) return -1;
   return a.dueOn.localeCompare(b.dueOn);
+}
+
+/** moveItem returns a copy of list with the item at fromIndex relocated to
+ *  toIndex, used by both drag-and-drop and the up/down move buttons so the
+ *  two interactions produce identical orderings. */
+function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
+  const next = [...list];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+  return next;
+}
+
+/** applyBucketOrder resequences the tasks named in newOrderIds to that exact
+ *  order, leaving every other task's slot in current untouched — used for a
+ *  same-backlog reorder, where newOrderIds is that backlog's (or
+ *  Unclassified's) full task ID list in its new order. */
+function applyBucketOrder(current: Task[], newOrderIds: string[]): Task[] {
+  const idSet = new Set(newOrderIds);
+  const byId = new Map(current.filter((t) => idSet.has(t.id)).map((t) => [t.id, t]));
+  let cursor = 0;
+  return current.map((t) => (idSet.has(t.id) ? (byId.get(newOrderIds[cursor++]) ?? t) : t));
+}
+
+/** moveTaskToBucket relocates one task to targetBacklogId, landing at
+ *  targetIndex among that bucket's other tasks (their relative order is
+ *  otherwise unchanged) — used for a drag-and-drop move between backlogs.
+ *  Only the moved task's backlogId is updated locally; the caller is
+ *  responsible for the matching assign-backlog API call. */
+function moveTaskToBucket(
+  current: Task[],
+  taskId: string,
+  targetBacklogId: string | null,
+  targetIndex: number,
+): Task[] {
+  const moved = current.find((t) => t.id === taskId);
+  if (!moved) return current;
+  const updatedMoved: Task = { ...moved, backlogId: targetBacklogId };
+  const withoutMoved = current.filter((t) => t.id !== taskId);
+  const targetKey = targetBacklogId ?? UNCLASSIFIED;
+  const bucketItems = withoutMoved.filter((t) => (t.backlogId ?? UNCLASSIFIED) === targetKey);
+  const anchor = bucketItems[targetIndex];
+  if (!anchor) return [...withoutMoved, updatedMoved];
+  const anchorIndex = withoutMoved.findIndex((t) => t.id === anchor.id);
+  return [...withoutMoved.slice(0, anchorIndex), updatedMoved, ...withoutMoved.slice(anchorIndex)];
 }
 
 function StatusBadge({ status }: { status: TaskStatus }) {
@@ -275,6 +320,17 @@ export function TaskListSection({
   const [assigning, setAssigning] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
+  // `localTasks` mirrors `tasks` but is reordered/reassigned optimistically
+  // by drag-and-drop and the up/down move buttons, ahead of the PATCH
+  // .../tasks/order round trip — the `fetch` → router.refresh() pattern used
+  // elsewhere in this file would otherwise force a full server-component
+  // re-render per drag, which doesn't read as drag-and-drop at all (issue
+  // #79). It resyncs whenever the server data changes under it.
+  const [localTasks, setLocalTasks] = useState(tasks);
+  useEffect(() => setLocalTasks(tasks), [tasks]);
+  const [reorderError, setReorderError] = useState<string | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+
   // The filter offers every backlog plus the two groupings that aren't
   // backlogs: "all" and the trailing Unclassified group.
   const filterOptions = useMemo(
@@ -286,15 +342,19 @@ export function TaskListSection({
     [backlogs],
   );
 
-  // Bulk assign moves tasks *into* a backlog, so Unclassified is not a destination.
+  // Bulk assign can move a task into any backlog, or back to Unclassified —
+  // both are valid destinations, unlike the backlog filter's "all" option.
   const assignOptions = useMemo(
-    () => backlogs.map((b) => ({ value: b.id, label: b.name })),
+    () => [
+      ...backlogs.map((b) => ({ value: b.id, label: b.name })),
+      { value: UNCLASSIFIED, label: UNCLASSIFIED_LABEL },
+    ],
     [backlogs],
   );
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return tasks.filter((t) => {
+    return localTasks.filter((t) => {
       if (statusFilter !== "all" && t.status !== statusFilter) return false;
       if (backlogFilter !== "all") {
         const key = t.backlogId ?? UNCLASSIFIED;
@@ -306,7 +366,7 @@ export function TaskListSection({
       }
       return true;
     });
-  }, [tasks, statusFilter, backlogFilter, search]);
+  }, [localTasks, statusFilter, backlogFilter, search]);
 
   // "manual" is the API's own order (filtered inherits it from `tasks`), so
   // there's nothing to re-sort. The rest re-sort a copy — sorting is a
@@ -420,13 +480,14 @@ export function TaskListSection({
     setAssigning(true);
     setAssignError(null);
     try {
+      const backlogId = targetBacklogId === UNCLASSIFIED ? null : targetBacklogId;
       const responses = await Promise.all(
         Array.from(selected).map((taskId) =>
           fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/assign-backlog`, {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ backlogId: targetBacklogId }),
+            body: JSON.stringify({ backlogId }),
           }),
         ),
       );
@@ -441,6 +502,114 @@ export function TaskListSection({
       router.refresh();
     } finally {
       setAssigning(false);
+    }
+  }
+
+  // groupKeyOf mirrors the `groups` memo's own grouping key, so the reorder
+  // helpers below and the render's group loop always agree on which bucket a
+  // task belongs to.
+  function groupKeyOf(t: Task): string {
+    return t.backlogId ?? UNCLASSIFIED;
+  }
+
+  async function commitSameBucketOrder(groupKey: string, newOrderIds: string[]) {
+    const previous = localTasks;
+    setLocalTasks((current) => applyBucketOrder(current, newOrderIds));
+    setReorderError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/tasks/order`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          backlogId: groupKey === UNCLASSIFIED ? null : groupKey,
+          taskIds: newOrderIds,
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setLocalTasks(previous);
+        setReorderError(body?.error.message ?? "Failed to reorder tasks.");
+      }
+    } catch {
+      setLocalTasks(previous);
+      setReorderError("Failed to reorder tasks.");
+    }
+  }
+
+  async function commitCrossBucketMove(taskId: string, targetGroupKey: string, targetIndex: number) {
+    const previous = localTasks;
+    const targetBacklogId = targetGroupKey === UNCLASSIFIED ? null : targetGroupKey;
+    const next = moveTaskToBucket(localTasks, taskId, targetBacklogId, targetIndex);
+    setLocalTasks(next);
+    setReorderError(null);
+    try {
+      const assignRes = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/assign-backlog`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backlogId: targetBacklogId }),
+      });
+      if (!assignRes.ok) {
+        const body = (await assignRes.json().catch(() => null)) as ApiError | null;
+        setLocalTasks(previous);
+        setReorderError(body?.error.message ?? "Failed to move task.");
+        return;
+      }
+      const orderedIds = next.filter((t) => groupKeyOf(t) === targetGroupKey).map((t) => t.id);
+      const orderRes = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/tasks/order`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backlogId: targetBacklogId, taskIds: orderedIds }),
+      });
+      if (!orderRes.ok) {
+        const body = (await orderRes.json().catch(() => null)) as ApiError | null;
+        // The backlog move itself already succeeded server-side here; only
+        // the position within the new backlog failed to apply. Reverting the
+        // whole local move keeps the UI's error state simple, at the cost of
+        // briefly disagreeing with the server until the next refresh.
+        setLocalTasks(previous);
+        setReorderError(body?.error.message ?? "Failed to reorder tasks.");
+      }
+    } catch {
+      setLocalTasks(previous);
+      setReorderError("Failed to move task.");
+    }
+  }
+
+  function moveTaskWithinGroup(groupKey: string, groupTasks: Task[], index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= groupTasks.length) return;
+    void commitSameBucketOrder(
+      groupKey,
+      moveItem(
+        groupTasks.map((t) => t.id),
+        index,
+        target,
+      ),
+    );
+  }
+
+  function handleDropOnTask(groupKey: string, groupTasks: Task[], targetIndex: number) {
+    const taskId = draggingTaskId;
+    setDraggingTaskId(null);
+    if (!taskId) return;
+    const dragged = localTasks.find((t) => t.id === taskId);
+    if (!dragged) return;
+    if (groupKeyOf(dragged) === groupKey) {
+      const fromIndex = groupTasks.findIndex((t) => t.id === taskId);
+      if (fromIndex === -1 || fromIndex === targetIndex) return;
+      void commitSameBucketOrder(
+        groupKey,
+        moveItem(
+          groupTasks.map((t) => t.id),
+          fromIndex,
+          targetIndex,
+        ),
+      );
+    } else {
+      void commitCrossBucketMove(taskId, groupKey, targetIndex);
     }
   }
 
@@ -561,77 +730,133 @@ export function TaskListSection({
             dependencies={dependencies}
           />
         ) : (
-          <div className="space-y-6">
-            {groups.map((group) => {
-              const selectable = group.key === UNCLASSIFIED && backlogs.length > 0;
-              return (
-                <div key={group.key}>
-                  <h3 className="text-muted-foreground mb-2 text-sm font-medium">
-                    {group.name} ({group.tasks.length})
-                  </h3>
-                  {selectable && selected.size > 0 ? (
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      {assignError ? <span className="text-destructive text-xs">{assignError}</span> : null}
-                      <span className="text-muted-foreground text-xs">{selected.size} selected</span>
-                      {/* Named apart from the "Assign to backlog" button next
-                          to it, which is the action rather than the picker. */}
-                      <Combobox
-                        aria-label="Backlog to assign"
-                        options={assignOptions}
-                        value={targetBacklogId}
-                        onChange={setTargetBacklogId}
-                        size="sm"
-                        className="w-44"
-                        placeholder="Choose a backlog…"
-                        searchPlaceholder="Search backlogs…"
-                        emptyText="No backlog found."
-                      />
-                      <Button size="sm" onClick={handleAssignSelected} disabled={!targetBacklogId || assigning}>
-                        {assigning ? "Assigning…" : "Assign to backlog"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setSelected(new Set())}
-                        disabled={assigning}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  ) : null}
-                  <ul className="space-y-2">
-                    {group.tasks.map((task) => (
-                      <li key={task.id} className="flex items-center gap-2">
-                        {selectable ? (
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${task.title}`}
-                            checked={selected.has(task.id)}
-                            onChange={() => toggleSelected(task.id)}
-                            className="border-input h-4 w-4 shrink-0 rounded"
-                          />
-                        ) : null}
-                        <Link
-                          href={taskPath(projectId, task.id)}
-                          className="border-border hover:border-ring flex flex-1 items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
+          <div className="space-y-4">
+            {/* Manual reordering only makes sense against the API's own
+                position order — while sorted by due date/priority/recency,
+                a drag would silently fight the display order it's shown in
+                (issue #79), so drag handles and move buttons only appear
+                for "manual". Reassigning a task to a different backlog has
+                no such conflict and stays available regardless of sort. */}
+            {reorderError ? <p className="text-destructive text-sm">{reorderError}</p> : null}
+            {selected.size > 0 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {assignError ? <span className="text-destructive text-xs">{assignError}</span> : null}
+                <span className="text-muted-foreground text-xs">{selected.size} selected</span>
+                {/* Named apart from the "Assign to backlog" button next to
+                    it, which is the action rather than the picker. */}
+                <Combobox
+                  aria-label="Backlog to assign"
+                  options={assignOptions}
+                  value={targetBacklogId}
+                  onChange={setTargetBacklogId}
+                  size="sm"
+                  className="w-44"
+                  placeholder="Choose a backlog…"
+                  searchPlaceholder="Search backlogs…"
+                  emptyText="No backlog found."
+                />
+                <Button size="sm" onClick={handleAssignSelected} disabled={!targetBacklogId || assigning}>
+                  {assigning ? "Assigning…" : "Assign to backlog"}
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setSelected(new Set())} disabled={assigning}>
+                  Cancel
+                </Button>
+              </div>
+            ) : null}
+            <div className="space-y-6">
+              {groups.map((group) => {
+                const selectable = backlogs.length > 0;
+                const manualOrder = sort === "manual";
+                return (
+                  <div key={group.key}>
+                    <h3 className="text-muted-foreground mb-2 text-sm font-medium">
+                      {group.name} ({group.tasks.length})
+                    </h3>
+                    <ul
+                      className="space-y-2"
+                      onDragOver={(e) => manualOrder && e.preventDefault()}
+                      onDrop={(e) => {
+                        if (!manualOrder) return;
+                        e.preventDefault();
+                        handleDropOnTask(group.key, group.tasks, group.tasks.length);
+                      }}
+                    >
+                      {group.tasks.map((task, index) => (
+                        <li
+                          key={task.id}
+                          className="flex items-center gap-2"
+                          onDragOver={(e) => manualOrder && e.preventDefault()}
+                          onDrop={(e) => {
+                            if (!manualOrder) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDropOnTask(group.key, group.tasks, index);
+                          }}
                         >
-                          <span className="text-foreground">{task.title}</span>
-                          <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
-                            {task.assigneeGitlabUsername ? (
-                              <span>{task.assigneeGitlabUsername}</span>
-                            ) : null}
-                            {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
-                            <PriorityBadge priority={task.priority} />
-                            <StatusBadge status={task.status} />
-                            <SyncBadge gitlab={task.gitlab} />
-                          </span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
+                          {selectable ? (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${task.title}`}
+                              checked={selected.has(task.id)}
+                              onChange={() => toggleSelected(task.id)}
+                              className="border-input h-4 w-4 shrink-0 rounded"
+                            />
+                          ) : null}
+                          {manualOrder ? (
+                            <div className="flex shrink-0 flex-col items-center">
+                              <button
+                                type="button"
+                                aria-label={`Move ${task.title} up`}
+                                disabled={index === 0}
+                                onClick={() => moveTaskWithinGroup(group.key, group.tasks, index, -1)}
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              >
+                                <ChevronUp className="size-3" />
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Move ${task.title} down`}
+                                disabled={index === group.tasks.length - 1}
+                                onClick={() => moveTaskWithinGroup(group.key, group.tasks, index, 1)}
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              >
+                                <ChevronDown className="size-3" />
+                              </button>
+                            </div>
+                          ) : null}
+                          {manualOrder ? (
+                            <span
+                              draggable
+                              aria-hidden="true"
+                              onDragStart={() => setDraggingTaskId(task.id)}
+                              onDragEnd={() => setDraggingTaskId(null)}
+                              className="text-muted-foreground shrink-0 cursor-grab active:cursor-grabbing"
+                            >
+                              <GripVertical className="size-4" />
+                            </span>
+                          ) : null}
+                          <Link
+                            href={taskPath(projectId, task.id)}
+                            className="border-border hover:border-ring flex flex-1 items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
+                          >
+                            <span className="text-foreground">{task.title}</span>
+                            <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
+                              {task.assigneeGitlabUsername ? (
+                                <span>{task.assigneeGitlabUsername}</span>
+                              ) : null}
+                              {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
+                              <PriorityBadge priority={task.priority} />
+                              <StatusBadge status={task.status} />
+                              <SyncBadge gitlab={task.gitlab} />
+                            </span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </CardContent>

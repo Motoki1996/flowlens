@@ -35,6 +35,13 @@ type updateBacklogRequest struct {
 	Priority    optional.Optional[string]     `json:"priority"`
 }
 
+// reorderBacklogsRequest carries a project's full, newly-ordered backlog ID
+// list (issue #79). backlogIds must be exactly the project's current
+// backlogs — see backlog.Service.Reorder.
+type reorderBacklogsRequest struct {
+	BacklogIDs []uuid.UUID `json:"backlogIds"`
+}
+
 // backlogIDFromURL parses the {backlogID} path parameter. A malformed ID is
 // reported as "not found" so it is indistinguishable from an unknown one.
 func backlogIDFromURL(r *http.Request) (uuid.UUID, bool) {
@@ -62,6 +69,32 @@ func (s *Server) handleListBacklogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	backlogs, err := s.backlogs.List(r.Context(), u.ID, projectID, filter)
+	if err != nil {
+		writeBacklogError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, backlogs)
+}
+
+// handleReorderBacklogs resequences a project's backlogs to the given order
+// in a single request, scoped to the authenticated user (issue #79).
+// backlogIds must be exactly the project's current backlogs; a mismatched
+// set is rejected as a whole rather than partially applied.
+func (s *Server) handleReorderBacklogs(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	projectID, ok := projectIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+
+	var req reorderBacklogsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
+		return
+	}
+
+	backlogs, err := s.backlogs.Reorder(r.Context(), u.ID, projectID, req.BacklogIDs)
 	if err != nil {
 		writeBacklogError(w, err)
 		return
@@ -209,6 +242,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", "start date must not be after due date")
 	case errors.Is(err, backlog.ErrInvalidPriority):
 		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
+	case errors.Is(err, backlog.ErrBacklogIDsMismatch):
+		writeError(w, http.StatusBadRequest, "backlog_ids_mismatch", "backlogIds must exactly match the project's current backlogs")
 	case errors.Is(err, backlog.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "backlog not found")
 	default:

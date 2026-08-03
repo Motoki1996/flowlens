@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { formatDate, fromApiDate, toApiDate } from "@/lib/dates";
@@ -38,6 +39,16 @@ type ViewMode = "list" | "timeline";
 
 function taskCount(tasks: Task[], backlogId: string) {
   return tasks.filter((t) => t.backlogId === backlogId).length;
+}
+
+/** moveItem returns a copy of list with the item at fromIndex relocated to
+ *  toIndex, used by both drag-and-drop and the up/down move buttons so the
+ *  two interactions produce identical orderings. */
+function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
+  const next = [...list];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+  return next;
 }
 
 /** scheduleLabel renders a backlog's planned period for the list row. */
@@ -379,6 +390,52 @@ export function BacklogListSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("list");
 
+  // `order` mirrors `backlogs` but is reordered optimistically on drag/move,
+  // ahead of the PATCH .../backlogs/order round trip — router.refresh()
+  // (used everywhere else in this file) would otherwise force a full
+  // server-component re-render per drag, which doesn't read as drag-and-drop
+  // at all (issue #79). It resyncs whenever the server data changes under it
+  // (e.g. after a create/delete elsewhere on the page).
+  const [order, setOrder] = useState(backlogs);
+  useEffect(() => setOrder(backlogs), [backlogs]);
+  const [reorderError, setReorderError] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  async function commitOrder(next: Backlog[]) {
+    const previous = order;
+    setOrder(next);
+    setReorderError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs/order`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backlogIds: next.map((b) => b.id) }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setOrder(previous);
+        setReorderError(body?.error.message ?? "Failed to reorder backlogs.");
+      }
+    } catch {
+      setOrder(previous);
+      setReorderError("Failed to reorder backlogs.");
+    }
+  }
+
+  function moveBacklog(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= order.length) return;
+    void commitOrder(moveItem(order, index, target));
+  }
+
+  function handleDrop(index: number) {
+    const fromIndex = order.findIndex((b) => b.id === draggingId);
+    setDraggingId(null);
+    if (fromIndex === -1 || fromIndex === index) return;
+    void commitOrder(moveItem(order, fromIndex, index));
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -433,9 +490,23 @@ export function BacklogListSection({
             tasksError={tasksError}
           />
         ) : (
-          <ul className="space-y-2">
-            {backlogs.map((backlog) => (
-              <li key={backlog.id} className="border-border rounded-md border px-3 py-2">
+          <div className="space-y-2">
+            {reorderError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{reorderError}</AlertDescription>
+              </Alert>
+            ) : null}
+            <ul className="space-y-2">
+              {order.map((backlog, index) => (
+              <li
+                key={backlog.id}
+                className="border-border rounded-md border px-3 py-2"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleDrop(index);
+                }}
+              >
                 {editingId === backlog.id ? (
                   <EditBacklogForm
                     backlog={backlog}
@@ -444,7 +515,36 @@ export function BacklogListSection({
                   />
                 ) : (
                   <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0">
+                    <div className="flex shrink-0 flex-col items-center self-stretch">
+                      <button
+                        type="button"
+                        aria-label={`Move ${backlog.name} up`}
+                        disabled={index === 0}
+                        onClick={() => moveBacklog(index, -1)}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                      >
+                        <ChevronUp className="size-4" />
+                      </button>
+                      <span
+                        draggable
+                        aria-hidden="true"
+                        onDragStart={() => setDraggingId(backlog.id)}
+                        onDragEnd={() => setDraggingId(null)}
+                        className="text-muted-foreground cursor-grab active:cursor-grabbing"
+                      >
+                        <GripVertical className="size-4" />
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Move ${backlog.name} down`}
+                        disabled={index === order.length - 1}
+                        onClick={() => moveBacklog(index, 1)}
+                        className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                      >
+                        <ChevronDown className="size-4" />
+                      </button>
+                    </div>
+                    <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <Link
                           href={backlogPath(projectId, backlog.id)}
@@ -481,8 +581,9 @@ export function BacklogListSection({
                   </div>
                 )}
               </li>
-            ))}
-          </ul>
+              ))}
+            </ul>
+          </div>
         )}
       </CardContent>
     </Card>

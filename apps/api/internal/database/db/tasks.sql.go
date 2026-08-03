@@ -693,6 +693,40 @@ func (q *Queries) ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwner
 	return i, err
 }
 
+const reorderTasks = `-- name: ReorderTasks :exec
+
+WITH ordered AS (
+    SELECT id, (ord - 1)::int AS position
+    FROM unnest($1::uuid[]) WITH ORDINALITY AS t(id, ord)
+)
+UPDATE tasks
+SET position = ordered.position, updated_at = now()
+FROM ordered
+WHERE tasks.id = ordered.id
+  AND tasks.project_id = $2
+  AND tasks.backlog_id IS NOT DISTINCT FROM $3
+`
+
+type ReorderTasksParams struct {
+	TaskIds   []uuid.UUID `json:"task_ids"`
+	ProjectID uuid.UUID   `json:"project_id"`
+	BacklogID pgtype.UUID `json:"backlog_id"`
+}
+
+// ReorderTasks resequences one backlog bucket's tasks to task_ids' given
+// order (position 0 for the first id, 1 for the second, ...) in a single
+// statement, so a drag across many tasks either lands as one committed order
+// or fails outright, never a partially-applied one (issue #79). backlog_id
+// follows CreateTask's own "IS NOT DISTINCT FROM" convention: NULL scopes to
+// the Unclassified bucket, a UUID to one specific backlog.
+// internal/task.Service.Reorder checks task_ids is exactly that bucket's
+// current task set before calling this, so the WHERE clause can never miss a
+// row or touch one outside the intended bucket.
+func (q *Queries) ReorderTasks(ctx context.Context, arg ReorderTasksParams) error {
+	_, err := q.db.Exec(ctx, reorderTasks, arg.TaskIds, arg.ProjectID, arg.BacklogID)
+	return err
+}
+
 const updateTaskForOwner = `-- name: UpdateTaskForOwner :one
 UPDATE tasks t
 SET backlog_id = $3, title = $4, description = $5,

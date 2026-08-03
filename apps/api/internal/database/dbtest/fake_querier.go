@@ -583,6 +583,30 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	return existing, nil
 }
 
+// ReorderBacklogs mirrors the SQL: resequences position 0..n-1 for every
+// backlog in arg.BacklogIds belonging to arg.ProjectID, in the order given.
+// A backlog ID not in that project is silently skipped, matching the real
+// query's WHERE clause — internal/backlog.Service.Reorder is what guarantees
+// the set matches before calling this.
+func (f *FakeQuerier) ReorderBacklogs(_ context.Context, arg db.ReorderBacklogsParams) error {
+	for i, id := range arg.BacklogIds {
+		b, ok := f.backlogsByID[id]
+		if !ok || b.ProjectID != arg.ProjectID {
+			continue
+		}
+		b.Position = int32(i)
+		b.UpdatedAt = now()
+		f.backlogsByID[id] = b
+		for j, x := range f.backlogs {
+			if x.ID == id {
+				f.backlogs[j] = b
+				break
+			}
+		}
+	}
+	return nil
+}
+
 // DeleteBacklogForOwner returns the number of rows affected, so callers can
 // tell "deleted" from "not yours / not there" exactly as Postgres does.
 func (f *FakeQuerier) DeleteBacklogForOwner(_ context.Context, arg db.DeleteBacklogForOwnerParams) (int64, error) {
@@ -1043,6 +1067,29 @@ func (f *FakeQuerier) AssignTaskBacklogForOwner(_ context.Context, arg db.Assign
 	existing.UpdatedAt = now()
 	f.storeTask(existing)
 	return existing, nil
+}
+
+// ReorderTasks mirrors the SQL: resequences position 0..n-1 for every task
+// in arg.TaskIds belonging to arg.ProjectID and matching arg.BacklogID (nil
+// backlog_id matches Unclassified tasks, an IsNotDistinctFrom-style
+// comparison), in the order given. A task ID outside that project/backlog
+// bucket is silently skipped, matching the real query's WHERE clause —
+// internal/task.Service.Reorder is what guarantees the set matches before
+// calling this.
+func (f *FakeQuerier) ReorderTasks(_ context.Context, arg db.ReorderTasksParams) error {
+	for i, id := range arg.TaskIds {
+		t, ok := f.tasksByID[id]
+		if !ok || t.ProjectID != arg.ProjectID {
+			continue
+		}
+		if t.BacklogID.Valid != arg.BacklogID.Valid || (t.BacklogID.Valid && t.BacklogID.Bytes != arg.BacklogID.Bytes) {
+			continue
+		}
+		t.Position = int32(i)
+		t.UpdatedAt = now()
+		f.storeTask(t)
+	}
+	return nil
 }
 
 func (f *FakeQuerier) CloseTaskForOwner(_ context.Context, arg db.CloseTaskForOwnerParams) (db.Task, error) {

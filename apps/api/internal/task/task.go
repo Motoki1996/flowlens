@@ -39,6 +39,7 @@ var (
 	ErrBacklogNotInProject   = errors.New("task: backlog belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
 	ErrSyncNotFailed         = errors.New("task: gitlab sync is not currently failed")
+	ErrTaskIDsMismatch       = errors.New("task: taskIds must exactly match the current tasks in that backlog")
 )
 
 // maxAIContextFieldLength bounds each of the four task_ai_contexts fields.
@@ -1048,6 +1049,78 @@ func (s *Service) AssignBacklog(ctx context.Context, ownerID, taskID uuid.UUID, 
 		return Task{}, fmt.Errorf("task: assign backlog: %w", err)
 	}
 	return fromRow(row), nil
+}
+
+// Reorder resequences the position of every task in one backlog bucket
+// (backlogID's tasks, or the Unclassified group when backlogID is nil) to
+// match taskIDs' order — position 0 for the first ID, 1 for the second, and
+// so on. taskIDs must be exactly that bucket's current task set (same
+// length, no duplicates, nothing missing or foreign), or it returns
+// ErrTaskIDsMismatch without writing anything: a partial reorder would leave
+// some tasks with a stale position relative to their new neighbors, and the
+// D&D UI always knows the bucket's full membership before it calls this
+// (issue #79). Moving a task to a *different* backlog is a separate step
+// (AssignBacklog or Update's BacklogID), done before calling Reorder for the
+// destination bucket — this method never changes backlog_id itself.
+func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, backlogID *uuid.UUID, taskIDs []uuid.UUID) ([]Task, error) {
+	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
+		if errors.Is(err, project.ErrNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("task: reorder: %w", err)
+	}
+	if err := s.validateBacklog(ctx, ownerID, projectID, backlogID); err != nil {
+		return nil, err
+	}
+
+	filter := ListFilter{}
+	if backlogID != nil {
+		filter.BacklogID = backlogID
+	} else {
+		filter.Unassigned = true
+	}
+	current, err := s.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
+		ProjectID:  projectID,
+		Unassigned: filter.Unassigned,
+		BacklogID:  toUUID(filter.BacklogID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("task: reorder: %w", err)
+	}
+	if !sameTaskIDSet(current, taskIDs) {
+		return nil, ErrTaskIDsMismatch
+	}
+
+	if err := s.q.ReorderTasks(ctx, db.ReorderTasksParams{
+		TaskIds:   taskIDs,
+		ProjectID: projectID,
+		BacklogID: toUUID(backlogID),
+	}); err != nil {
+		return nil, fmt.Errorf("task: reorder: %w", err)
+	}
+
+	return s.List(ctx, ownerID, projectID, filter)
+}
+
+// sameTaskIDSet reports whether taskIDs is exactly current's task IDs, in
+// any order: same length, no duplicates, nothing missing or foreign.
+func sameTaskIDSet(current []db.Task, taskIDs []uuid.UUID) bool {
+	if len(current) != len(taskIDs) {
+		return false
+	}
+	seen := make(map[uuid.UUID]struct{}, len(taskIDs))
+	for _, id := range taskIDs {
+		if _, dup := seen[id]; dup {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	for _, t := range current {
+		if _, ok := seen[t.ID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // Close marks the task closed and stamps closed_at. Closing an

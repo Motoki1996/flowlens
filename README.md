@@ -637,9 +637,9 @@ no GitLab-side counterpart to push to or pull from.
   that same position order to break ties between equal priorities. Both
   parameters are independent of the manual drag-reorder `position` field —
   sorting by priority is a display order for this request only and never
-  rewrites `position`; a UI that lets a user pick `?sort=priority` deciding
-  whether to also disable drag-to-reorder while active is left to that UI
-  (tracked with the drag-and-drop work, not decided here).
+  rewrites `position`; see [Task & backlog reordering](#task--backlog-reordering)
+  below for how the web app disables drag-to-reorder while a non-manual sort
+  is active.
 
 In the web app, priority is selectable wherever a task or backlog is created
 or edited: the task single view's edit form, the task collection's inline
@@ -650,6 +650,47 @@ on the Backlog collection view, not its single view, per
 component for both tasks and backlogs, in list rows, timeline name columns
 and the task single view. A backlog's priority is independent of its tasks':
 creating or editing one never reads or writes the other.
+
+### Task & backlog reordering
+
+A task's `position` within its backlog (or the Unclassified group) and a
+backlog's `position` within its project can be changed in bulk, one request
+per reorder, instead of one `PATCH` per moved row:
+
+- `PATCH /api/v1/projects/{projectID}/tasks/order` takes `{backlogId,
+  taskIds}` (`backlogId: null` targets Unclassified) and resequences that
+  bucket's tasks to `taskIds`' given order — position `0` for the first ID,
+  `1` for the second, and so on. `taskIds` must be exactly that bucket's
+  current task set (same length, no duplicates, nothing missing or foreign);
+  otherwise nothing is written and the request fails with 400
+  `task_ids_mismatch`, so a dropped request never leaves a bucket half
+  reordered.
+- `PATCH /api/v1/projects/{projectID}/backlogs/order` is the same shape for a
+  project's backlogs: `{backlogIds}`, all-or-nothing, 400
+  `backlog_ids_mismatch` on a mismatched set.
+- Moving a task to a *different* backlog is not part of either endpoint: it
+  still goes through `POST /tasks/{taskID}/assign-backlog` (or `PATCH`'s
+  `backlogId`) exactly as before, followed by a `tasks/order` call for the
+  destination bucket to place it at the intended position. `position` is
+  app-only on both tasks and backlogs and is never synced to GitLab, the same
+  as priority above — a position-only or order-only change never enqueues a
+  GitLab sync job.
+
+In the web app, the Task and Backlog collections' List views (Timeline is out
+of scope) support reordering both by dragging a row and, for keyboard users,
+by a pair of move-up/move-down buttons on each row — both call the same
+`.../order` endpoint. A task can also be dragged onto a different backlog's
+group to move it there. Reordering updates the on-screen order immediately
+and only calls the API in the background (rather than this app's usual
+`fetch` → `router.refresh()` pattern, which would otherwise force a full
+server-component re-render per drag); a failed request reverts the order and
+shows the error inline. Drag handles and move buttons are hidden while the
+Task collection is sorted by anything other than the manual order, since a
+drag would otherwise fight the display order it's shown in. The
+drag-and-drop itself is native HTML5 drag-and-drop, not a dedicated library —
+no new frontend dependency was available to add when this shipped; swapping
+in a library like `@dnd-kit` later is a UI-only change, since it would still
+call the same `.../order` endpoints.
 
 ### Cross-project task collection
 

@@ -713,3 +713,44 @@ func TestHandleRetryTaskSync_ResetsFailedTaskToPending(t *testing.T) {
 	require.True(t, ok, "gitlab must be an object once the task has a sync job")
 	assert.Equal(t, "pending", gitlab["syncStatus"])
 }
+
+func TestHandleReorderTasks(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	first := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "First")
+	second := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Second")
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/tasks/order",
+		reorderTasksRequest{BacklogID: &b.ID, TaskIDs: []uuid.UUID{second.ID, first.ID}}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body, 2)
+	assert.Equal(t, second.ID.String(), body[0]["id"])
+	assert.Equal(t, first.ID.String(), body[1]["id"])
+}
+
+func TestHandleReorderTasks_RejectsMismatchedTaskIDs(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	q.SeedTask(p.ID, ownerID, "Only task")
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/tasks/order",
+		reorderTasksRequest{TaskIDs: []uuid.UUID{uuid.New()}}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleReorderTasks_ForeignProjectGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+
+	_, intruderToken := loginSession(t, s, q)
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/tasks/order",
+		reorderTasksRequest{}, intruderToken)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}

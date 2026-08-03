@@ -590,6 +590,27 @@ says progress is unavailable instead of showing everything at 0%.
 The date math lives in `apps/web/lib/timeline.ts`, separate from the components
 so it is unit-testable without rendering a chart.
 
+### Task collection search, filters and sort
+
+The project-scoped Task collection (`/projects/{projectId}/tasks`) narrows and
+orders its List and Timeline view modes together, since both are presentations
+of the same filtered set (`docs/ui-design.md` rule 5):
+
+- A free-text box matches a task's title or description, case-insensitively.
+- The status filter (All / Open / Closed) defaults to **Open**, so closed
+  tasks don't fill the list; the backlog filter (unchanged) narrows further.
+- Sort offers **Manual** (the API's own `position` order — the default),
+  **Due date**, **Priority** and **Recently updated**, the same three
+  non-manual values the cross-project Task collection's `?sort=` accepts
+  (below), so the two screens agree on what each one means. Sorting is a
+  display order only; it never rewrites `position`.
+- All of this stays client-side — this screen already has every one of the
+  project's tasks in hand (unlike the cross-project collection, which
+  re-fetches from the API per filter change) — and is held in the URL
+  (`?q=`, `?status=`, `?sort=`, alongside the existing `?backlog=`) the same
+  way the backlog filter already was, so a reload or the browser's back
+  button restores it.
+
 ### Task & backlog priority
 
 A task and a backlog each carry a `priority` — one of `low`, `medium`, `high`,

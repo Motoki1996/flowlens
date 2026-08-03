@@ -13,13 +13,17 @@ export default async function TasksPage({
   searchParams,
 }: {
   params: Promise<{ projectId: string }>;
-  searchParams?: Promise<{ backlog?: string }>;
+  searchParams?: Promise<{ backlog?: string; q?: string; status?: string; sort?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
   const { projectId } = await params;
-  const backlogFilter = (await searchParams)?.backlog;
+  const resolvedSearchParams = await searchParams;
+  const backlogFilter = resolvedSearchParams?.backlog;
+  const search = resolvedSearchParams?.q;
+  const statusFilter = resolvedSearchParams?.status;
+  const sort = resolvedSearchParams?.sort;
   const project = await getProject(projectId);
   if (!project) notFound();
 
@@ -47,6 +51,9 @@ export default async function TasksPage({
       backlogs={backlogs}
       dependencies={taskDependencies}
       initialBacklogFilter={backlogFilter}
+      initialSearch={search}
+      initialStatusFilter={statusFilter}
+      initialSort={sort}
       error={tasksError}
     />
   );

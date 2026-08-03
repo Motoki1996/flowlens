@@ -91,11 +91,95 @@ describe("TaskListSection", () => {
     expect(headings).toEqual(["Sprint 1 (1)", "Unclassified (1)"]);
   });
 
-  it("includes closed tasks by default", () => {
-    const tasks = [makeTask({ id: "t1", title: "Closed task", status: "closed" })];
+  it("hides closed tasks by default, showing them once the status filter is widened", async () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Open task", status: "open" }),
+      makeTask({ id: "t2", title: "Closed task", status: "closed" }),
+    ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+    expect(screen.getByText("Open task")).toBeInTheDocument();
+    expect(screen.queryByText("Closed task")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(await screen.findByRole("option", { name: "All statuses" }));
+
     expect(screen.getByText("Closed task")).toBeInTheDocument();
     expect(screen.getByText("Closed", { selector: "span" })).toBeInTheDocument();
+  });
+
+  it("narrows the list to tasks whose title or description matches the search text", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Fix login bug" }),
+      makeTask({ id: "t2", title: "Something else", description: "touches the login flow" }),
+      makeTask({ id: "t3", title: "Unrelated task" }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Search tasks" }), {
+      target: { value: "login" },
+    });
+
+    expect(screen.getByText("Fix login bug")).toBeInTheDocument();
+    expect(screen.getByText("Something else")).toBeInTheDocument();
+    expect(screen.queryByText("Unrelated task")).not.toBeInTheDocument();
+  });
+
+  it("sorts by due date, priority or updated-at instead of the manual order", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Low, no due date", priority: "low", updatedAt: "2026-01-01T00:00:00Z" }),
+      makeTask({
+        id: "t2",
+        title: "Urgent, due later",
+        priority: "urgent",
+        dueOn: "2026-02-01",
+        updatedAt: "2026-01-03T00:00:00Z",
+      }),
+      makeTask({
+        id: "t3",
+        title: "Medium, due sooner",
+        priority: "medium",
+        dueOn: "2026-01-15",
+        updatedAt: "2026-01-02T00:00:00Z",
+      }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+
+    function titlesInOrder() {
+      return screen.getAllByRole("link").map((el) => el.querySelector("span")?.textContent);
+    }
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
+    fireEvent.click(screen.getByRole("option", { name: "Due date" }));
+    expect(titlesInOrder()).toEqual(["Medium, due sooner", "Urgent, due later", "Low, no due date"]);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
+    fireEvent.click(screen.getByRole("option", { name: "Priority" }));
+    expect(titlesInOrder()).toEqual(["Urgent, due later", "Medium, due sooner", "Low, no due date"]);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
+    fireEvent.click(screen.getByRole("option", { name: "Recently updated" }));
+    expect(titlesInOrder()).toEqual(["Urgent, due later", "Medium, due sooner", "Low, no due date"]);
+  });
+
+  it("reads the initial search, status and sort from the URL query it was opened with", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Closed matching task", status: "closed", description: "urgent fix" }),
+      makeTask({ id: "t2", title: "Other task", status: "open" }),
+    ];
+    render(
+      <TaskListSection
+        projectId="p1"
+        tasks={tasks}
+        backlogs={[]}
+        initialSearch="urgent"
+        initialStatusFilter="all"
+        initialSort="priority"
+      />,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Search tasks" })).toHaveValue("urgent");
+    expect(screen.getByText("Closed matching task")).toBeInTheDocument();
+    expect(screen.queryByText("Other task")).not.toBeInTheDocument();
   });
 
   it("shows a load error", () => {
@@ -191,10 +275,10 @@ describe("TaskListSection", () => {
 
     fireEvent.click(screen.getByRole("combobox", { name: "Backlog" }));
     fireEvent.click(await screen.findByRole("option", { name: "Icebox" }));
-    expect(screen.getByText("No tasks match the current filters.")).toBeInTheDocument();
+    expect(screen.getByText("No open tasks in Icebox.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-    expect(screen.getByText("No tasks match the current filters.")).toBeInTheDocument();
+    expect(screen.getByText("No open tasks in Icebox.")).toBeInTheDocument();
   });
 
   it("offers task creation even when the project has no tasks yet", () => {

@@ -38,8 +38,27 @@ const TaskTimelineSection = dynamic(
 
 type ViewMode = "list" | "timeline";
 
+// "manual" keeps the API's own order (the drag-reorderable `position` field);
+// the rest mirror the sort values the cross-project Task collection accepts
+// (issue #76's `?sort=dueOn|priority|updatedAt` on `GET /api/v1/tasks`, see
+// AllTasksSection) so the two screens don't disagree on what "sort by
+// priority" means.
+type TaskSort = "manual" | "dueOn" | "priority" | "updatedAt";
+
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
+
+const PRIORITY_RANK: Record<Priority, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
+
+// dueOn/updatedAt are RFC3339 strings, so a plain string compare already
+// sorts chronologically. A missing dueOn always sorts last, matching the
+// cross-project collection's `?sort=dueOn` default.
+function compareByDueOn(a: Task, b: Task): number {
+  if (!a.dueOn && !b.dueOn) return 0;
+  if (!a.dueOn) return 1;
+  if (!b.dueOn) return -1;
+  return a.dueOn.localeCompare(b.dueOn);
+}
 
 function StatusBadge({ status }: { status: TaskStatus }) {
   return (
@@ -213,6 +232,9 @@ export function TaskListSection({
   backlogs,
   dependencies = [],
   initialBacklogFilter,
+  initialSearch,
+  initialStatusFilter,
+  initialSort,
   error = false,
 }: {
   projectId: string;
@@ -222,14 +244,31 @@ export function TaskListSection({
   /** The `?backlog=` the screen was opened with, if any — how the backlog
    *  screens hand off to this collection. */
   initialBacklogFilter?: string;
+  /** The `?q=` the screen was opened with, if any. */
+  initialSearch?: string;
+  /** The `?status=` the screen was opened with. Defaults to "open" so closed
+   *  tasks don't fill the list — anything other than "all"/"closed" falls
+   *  back to that default rather than erroring. */
+  initialStatusFilter?: string;
+  /** The `?sort=` the screen was opened with. Falls back to "manual" (the
+   *  API's own position order) for anything not one of the known values. */
+  initialSort?: string;
   error?: boolean;
 }) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("list");
   const [creating, setCreating] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>(
+    initialStatusFilter === "all" || initialStatusFilter === "closed" ? initialStatusFilter : "open",
+  );
   const [backlogFilter, setBacklogFilter] = useState<"all" | string>(
     initialBacklogFilter ?? "all",
+  );
+  const [search, setSearch] = useState(initialSearch ?? "");
+  const [sort, setSort] = useState<TaskSort>(
+    initialSort === "dueOn" || initialSort === "priority" || initialSort === "updatedAt"
+      ? initialSort
+      : "manual",
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [targetBacklogId, setTargetBacklogId] = useState("");
@@ -254,19 +293,42 @@ export function TaskListSection({
   );
 
   const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
     return tasks.filter((t) => {
       if (statusFilter !== "all" && t.status !== statusFilter) return false;
       if (backlogFilter !== "all") {
         const key = t.backlogId ?? UNCLASSIFIED;
         if (key !== backlogFilter) return false;
       }
+      if (query) {
+        const haystack = `${t.title}\n${t.description}`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
       return true;
     });
-  }, [tasks, statusFilter, backlogFilter]);
+  }, [tasks, statusFilter, backlogFilter, search]);
+
+  // "manual" is the API's own order (filtered inherits it from `tasks`), so
+  // there's nothing to re-sort. The rest re-sort a copy — sorting is a
+  // display order for this screen only, same as the API's own `?sort=`
+  // never rewrites `position` (see the "Task & backlog priority" section in
+  // README.md).
+  const sorted = useMemo(() => {
+    if (sort === "manual") return filtered;
+    const list = [...filtered];
+    if (sort === "dueOn") {
+      list.sort(compareByDueOn);
+    } else if (sort === "priority") {
+      list.sort((a, b) => PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]);
+    } else {
+      list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    }
+    return list;
+  }, [filtered, sort]);
 
   const groups = useMemo(() => {
     const byBacklog = new Map<string, Task[]>();
-    for (const t of filtered) {
+    for (const t of sorted) {
       const key = t.backlogId ?? UNCLASSIFIED;
       const list = byBacklog.get(key) ?? [];
       list.push(t);
@@ -282,25 +344,62 @@ export function TaskListSection({
       ordered.push({ key: UNCLASSIFIED, name: UNCLASSIFIED_LABEL, tasks: unclassified });
     }
     return ordered;
-  }, [filtered, backlogs]);
+  }, [sorted, backlogs]);
 
   /**
-   * Filtering by backlog is how the backlog screens hand off to this one, so
-   * the choice belongs in the URL: the screen stays shareable and the browser's
-   * back button walks the filter. history.replaceState keeps that a client-side
-   * edit — router.replace would re-render the whole tree just to change a
-   * filter the client already applied.
+   * Every filter/sort choice belongs in the URL: the screen stays shareable
+   * and the browser's back button walks the filter history.replaceState
+   * keeps that a client-side edit — router.replace would re-render the whole
+   * tree just to change a filter the client already applied.
    */
-  function changeBacklogFilter(value: string) {
-    setBacklogFilter(value);
+  function updateQueryParam(key: string, value: string | undefined) {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    if (value === "all") {
-      url.searchParams.delete("backlog");
+    if (!value) {
+      url.searchParams.delete(key);
     } else {
-      url.searchParams.set("backlog", value);
+      url.searchParams.set(key, value);
     }
     window.history.replaceState(null, "", url);
+  }
+
+  function changeBacklogFilter(value: string) {
+    setBacklogFilter(value);
+    updateQueryParam("backlog", value === "all" ? undefined : value);
+  }
+
+  function changeStatusFilter(value: "all" | TaskStatus) {
+    setStatusFilter(value);
+    updateQueryParam("status", value === "open" ? undefined : value);
+  }
+
+  function changeSearch(value: string) {
+    setSearch(value);
+    updateQueryParam("q", value.trim() === "" ? undefined : value);
+  }
+
+  function changeSort(value: TaskSort) {
+    setSort(value);
+    updateQueryParam("sort", value === "manual" ? undefined : value);
+  }
+
+  // Distinguishes *why* the filtered list is empty — a bare "no matches"
+  // reads the same whether it's the search term, the status default hiding
+  // every closed task, or the backlog picker, so each gets its own wording.
+  function emptyFilterMessage(): string {
+    const query = search.trim();
+    if (query) {
+      return `No tasks match "${query}".`;
+    }
+    if (backlogFilter !== "all") {
+      const label = filterOptions.find((o) => o.value === backlogFilter)?.label ?? "this backlog";
+      const statusPart = statusFilter === "all" ? "" : `${statusFilter} `;
+      return `No ${statusPart}tasks in ${label}.`;
+    }
+    if (statusFilter !== "all") {
+      return `No ${statusFilter} tasks.`;
+    }
+    return "No tasks match the current filters.";
   }
 
   function toggleSelected(taskId: string) {
@@ -385,9 +484,16 @@ export function TaskListSection({
 
                     Status is a short fixed list, so it stays a Select; backlogs
                     grow with the project and get the searchable Combobox. */}
+                <Input
+                  aria-label="Search tasks"
+                  placeholder="Search tasks…"
+                  value={search}
+                  onChange={(e) => changeSearch(e.target.value)}
+                  className="h-8 w-40"
+                />
                 <Select
                   value={statusFilter}
-                  onValueChange={(value) => setStatusFilter(value as "all" | TaskStatus)}
+                  onValueChange={(value) => changeStatusFilter(value as "all" | TaskStatus)}
                 >
                   <SelectTrigger size="sm" aria-label="Status" className="w-36">
                     <SelectValue />
@@ -408,6 +514,17 @@ export function TaskListSection({
                   searchPlaceholder="Search backlogs…"
                   emptyText="No backlog found."
                 />
+                <Select value={sort} onValueChange={(value) => changeSort(value as TaskSort)}>
+                  <SelectTrigger size="sm" aria-label="Sort" className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="manual">Manual order</SelectItem>
+                    <SelectItem value="dueOn">Due date</SelectItem>
+                    <SelectItem value="priority">Priority</SelectItem>
+                    <SelectItem value="updatedAt">Recently updated</SelectItem>
+                  </SelectContent>
+                </Select>
               </>
             ) : null}
             {!creating ? (
@@ -435,11 +552,11 @@ export function TaskListSection({
         ) : filtered.length === 0 ? (
           // Checked before the view branch so the timeline doesn't answer an
           // empty filter result with its own "set a start or due date" hint.
-          <p className="text-muted-foreground text-sm">No tasks match the current filters.</p>
+          <p className="text-muted-foreground text-sm">{emptyFilterMessage()}</p>
         ) : view === "timeline" ? (
           <TaskTimelineSection
             projectId={projectId}
-            tasks={filtered}
+            tasks={sorted}
             allTasks={tasks}
             dependencies={dependencies}
           />

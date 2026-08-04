@@ -159,6 +159,11 @@ func (s *Server) Router() chi.Router {
 				linked.Get("/{linkID}/webhook-events", s.handleListWebhookEvents)
 				linked.Get("/{linkID}/webhook-events/{eventID}", s.handleGetWebhookEvent)
 				linked.Post("/{linkID}/webhook-events/{eventID}/retry", s.handleRetryWebhookEvent)
+				// Members/labels back a task's assignee/label pickers (issue
+				// #80) — session-only like the rest of this route group,
+				// since only the web app's editing UI needs them.
+				linked.Get("/{linkID}/members", s.handleListLinkedGitlabProjectMembers)
+				linked.Get("/{linkID}/labels", s.handleListLinkedGitlabProjectLabels)
 			})
 		})
 

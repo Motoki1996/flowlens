@@ -116,8 +116,8 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 /**
  * NewTaskForm is the inline creation form shown in the task list. Assignee and
  * labels are deliberately absent: on a project with a linked GitLab project the
- * API fills the assignee in itself, and neither field is editable on the task
- * single view yet.
+ * API fills the assignee in itself, and both fields are edited on the task
+ * single view instead (issue #80), once the task exists.
  */
 function NewTaskForm({
   projectId,
@@ -839,7 +839,18 @@ export function TaskListSection({
                             href={taskPath(projectId, task.id)}
                             className="border-border hover:border-ring flex flex-1 items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
                           >
-                            <span className="text-foreground">{task.title}</span>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <span className="text-foreground truncate">{task.title}</span>
+                              {task.labels.length > 0 ? (
+                                <span className="flex shrink-0 flex-wrap gap-1">
+                                  {task.labels.map((label) => (
+                                    <Badge key={label} variant="outline">
+                                      {label}
+                                    </Badge>
+                                  ))}
+                                </span>
+                              ) : null}
+                            </span>
                             <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
                               {task.assigneeGitlabUsername ? (
                                 <span>{task.assigneeGitlabUsername}</span>

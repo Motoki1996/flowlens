@@ -156,6 +156,42 @@ describe("TaskDetail", () => {
     });
   });
 
+  it("edits the assignee and labels via GitLab-backed pickers when the project is connected", async () => {
+    const saved = makeTask({ assigneeGitlabUserId: 7, assigneeGitlabUsername: "alice", labels: ["bug", "urgent"] });
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(saved), { status: 200 }));
+
+    render(
+      <TaskDetail
+        task={makeTask({ assigneeGitlabUserId: null, assigneeGitlabUsername: "", labels: ["bug"] })}
+        backlogs={[backlog]}
+        tasks={[]}
+        dependencies={[]}
+        assigneeOptions={[{ id: 7, username: "alice", name: "Alice", avatarUrl: "" }]}
+        labelOptions={[
+          { name: "bug", color: "#ff0000" },
+          { name: "urgent", color: "#00ff00" },
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Assignee" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Alice (@alice)" }));
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Labels" }));
+    fireEvent.click(await screen.findByRole("option", { name: "urgent" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8080/api/v1/tasks/t1");
+    const body = JSON.parse(init.body as string);
+    expect(body.assigneeGitlabUserId).toBe(7);
+    expect(body.assigneeGitlabUsername).toBe("alice");
+    expect(body.labels).toEqual(["bug", "urgent"]);
+  });
+
   it("leaves the task unchanged when the edit is cancelled", () => {
     render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "Edit task" }));

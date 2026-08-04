@@ -2,7 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, Backlog, Task, TaskDependency } from "@/types";
+import type {
+  ApiError,
+  Backlog,
+  GitlabLabelOption,
+  GitlabMemberOption,
+  Task,
+  TaskDependency,
+} from "@/types";
 import { formatDate } from "@/lib/dates";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -204,6 +211,8 @@ export function TaskDetail({
   backlogs,
   tasks,
   dependencies,
+  assigneeOptions = null,
+  labelOptions = null,
 }: {
   task: Task;
   backlogs: Backlog[];
@@ -211,6 +220,11 @@ export function TaskDetail({
   // predecessor/successor pickers choose from.
   tasks: Task[];
   dependencies: TaskDependency[];
+  // The task's linked GitLab project's members/labels, or null when the
+  // project has no default linked GitLab project — the edit form falls back
+  // to free-text assignee/label entry in that case (issue #80).
+  assigneeOptions?: GitlabMemberOption[] | null;
+  labelOptions?: GitlabLabelOption[] | null;
 }) {
   const [task, setTask] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -223,6 +237,8 @@ export function TaskDetail({
             <TaskEditForm
               task={task}
               backlogs={backlogs}
+              assigneeOptions={assigneeOptions}
+              labelOptions={labelOptions}
               onSaved={(updated) => {
                 setTask(updated);
                 setEditing(false);

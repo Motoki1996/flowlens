@@ -95,6 +95,86 @@ func atoiOrZero(v string) int {
 	return n
 }
 
+// gitlabUserDTO mirrors gitlab.User's JSON shape with FlowLens's camelCase
+// convention, since gitlab.User itself uses GitLab's own snake_case tags.
+type gitlabUserDTO struct {
+	ID        int64  `json:"id"`
+	Username  string `json:"username"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatarUrl"`
+}
+
+func toGitlabUserDTOs(in []gitlab.User) []gitlabUserDTO {
+	out := make([]gitlabUserDTO, len(in))
+	for i, u := range in {
+		out[i] = gitlabUserDTO{ID: u.ID, Username: u.Username, Name: u.Name, AvatarURL: u.AvatarURL}
+	}
+	return out
+}
+
+// gitlabLabelDTO mirrors gitlab.Label's JSON shape.
+type gitlabLabelDTO struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+func toGitlabLabelDTOs(in []gitlab.Label) []gitlabLabelDTO {
+	out := make([]gitlabLabelDTO, len(in))
+	for i, l := range in {
+		out[i] = gitlabLabelDTO{Name: l.Name, Color: l.Color}
+	}
+	return out
+}
+
+// handleListLinkedGitlabProjectMembers lists linkID's GitLab project's
+// members, for a task's assignee picker, filtered by the optional ?search=
+// query and paged with ?page=/?per_page=.
+func (s *Server) handleListLinkedGitlabProjectMembers(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	linkID, ok := linkIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "linked gitlab project not found")
+		return
+	}
+
+	q := r.URL.Query()
+	params := linkedproject.AvailableProjectsParams{
+		Search:  q.Get("search"),
+		Page:    atoiOrZero(q.Get("page")),
+		PerPage: atoiOrZero(q.Get("per_page")),
+	}
+
+	members, page, err := s.linkedProjects.ListMembers(r.Context(), u.ID, linkID, params)
+	if err != nil {
+		writeLinkedProjectError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Members  []gitlabUserDTO `json:"members"`
+		NextPage int             `json:"nextPage"`
+	}{Members: toGitlabUserDTOs(members), NextPage: page.NextPage})
+}
+
+// handleListLinkedGitlabProjectLabels lists linkID's GitLab project's
+// existing labels, for a task's label picker.
+func (s *Server) handleListLinkedGitlabProjectLabels(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	linkID, ok := linkIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "linked gitlab project not found")
+		return
+	}
+
+	labels, err := s.linkedProjects.ListLabels(r.Context(), u.ID, linkID)
+	if err != nil {
+		writeLinkedProjectError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Labels []gitlabLabelDTO `json:"labels"`
+	}{Labels: toGitlabLabelDTOs(labels)})
+}
+
 // handleListLinkedGitlabProjects returns every GitLab project linked to the
 // project, scoped to the authenticated user.
 func (s *Server) handleListLinkedGitlabProjects(w http.ResponseWriter, r *http.Request) {

@@ -36,6 +36,12 @@ type Project struct {
 	WebURL            string `json:"web_url"`
 }
 
+// Label is a GitLab project label, for populating a task's label picker.
+type Label struct {
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
 // Issue is the subset of a GitLab issue FlowLens reads and writes.
 type Issue struct {
 	ID          int64     `json:"id"`
@@ -129,6 +135,8 @@ type Client interface {
 	GetProject(ctx context.Context, personalAccessToken string, projectID int64) (*Project, error)
 	// ListProjectMembers lists a project's members, for assignee selection.
 	ListProjectMembers(ctx context.Context, personalAccessToken string, projectID int64, opts ListOptions) ([]User, PageInfo, error)
+	// ListProjectLabels lists a project's existing labels, for label selection.
+	ListProjectLabels(ctx context.Context, personalAccessToken string, projectID int64, opts ListOptions) ([]Label, PageInfo, error)
 
 	// ListIssues lists a project's issues, for initial import and resync.
 	ListIssues(ctx context.Context, personalAccessToken string, projectID int64, opts ListIssuesOptions) ([]Issue, PageInfo, error)
@@ -240,6 +248,15 @@ func (c *HTTPClient) ListProjectMembers(ctx context.Context, personalAccessToken
 	var members []User
 	page, err := c.getList(ctx, personalAccessToken, fmt.Sprintf("/api/v4/projects/%d/members/all", projectID), q, &members)
 	return members, page, err
+}
+
+func (c *HTTPClient) ListProjectLabels(ctx context.Context, personalAccessToken string, projectID int64, opts ListOptions) ([]Label, PageInfo, error) {
+	q := url.Values{}
+	opts.addTo(q)
+
+	var labels []Label
+	page, err := c.getList(ctx, personalAccessToken, fmt.Sprintf("/api/v4/projects/%d/labels", projectID), q, &labels)
+	return labels, page, err
 }
 
 func (c *HTTPClient) ListIssues(ctx context.Context, personalAccessToken string, projectID int64, opts ListIssuesOptions) ([]Issue, PageInfo, error) {

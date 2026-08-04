@@ -34,6 +34,10 @@ type FakeClient struct {
 	Members []User
 	// MembersErr, when set, is returned by ListProjectMembers.
 	MembersErr error
+	// Labels is returned by ListProjectLabels.
+	Labels []Label
+	// LabelsErr, when set, is returned by ListProjectLabels.
+	LabelsErr error
 
 	// Issues is returned by ListIssues. Ignored once IssuesPages is set.
 	Issues []Issue
@@ -115,6 +119,15 @@ func (f *FakeClient) ListProjectMembers(ctx context.Context, personalAccessToken
 		return nil, PageInfo{}, f.MembersErr
 	}
 	return f.Members, PageInfo{NextPage: f.NextPage}, nil
+}
+
+// ListProjectLabels implements Client.
+func (f *FakeClient) ListProjectLabels(ctx context.Context, personalAccessToken string, projectID int64, opts ListOptions) ([]Label, PageInfo, error) {
+	f.record("ListProjectLabels", personalAccessToken, projectID, opts)
+	if f.LabelsErr != nil {
+		return nil, PageInfo{}, f.LabelsErr
+	}
+	return f.Labels, PageInfo{NextPage: f.NextPage}, nil
 }
 
 // ListIssues implements Client.

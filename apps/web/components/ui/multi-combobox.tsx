@@ -129,7 +129,7 @@ export function MultiCombobox({
                       setSearch("")
                     }}
                   >
-                    Add "{trimmedSearch}"
+                    Add &quot;{trimmedSearch}&quot;
                   </CommandItem>
                 ) : null}
               </CommandGroup>

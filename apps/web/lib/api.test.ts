@@ -52,8 +52,7 @@ describe("getCurrentUser", () => {
 
   it("forwards the session cookie", async () => {
     const fetchMock = vi.fn(
-      async (_url: RequestInfo | URL, _init?: RequestInit) =>
-        new Response(JSON.stringify({}), { status: 200 }),
+      async () => new Response(JSON.stringify({}), { status: 200 }),
     );
     vi.stubGlobal("fetch", fetchMock);
 

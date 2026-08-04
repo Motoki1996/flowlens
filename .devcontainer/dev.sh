@@ -7,13 +7,23 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# .env holds the host-oriented defaults (e.g. Postgres on localhost:55432).
+# Values already exported into this container by compose describe the compose
+# network instead (db:5432), so they must survive sourcing .env.
+declare -A preset=()
+for var in APP_ENV DATABASE_URL API_INTERNAL_URL NEXT_PUBLIC_API_BASE_URL; do
+  if [ -n "${!var:-}" ]; then
+    preset["$var"]="${!var}"
+  fi
+done
+
 set -a
 source .env
 set +a
 
-# Inside the devcontainer, Postgres is reached via the compose service name,
-# not the host port (localhost:55432) recorded in .env.
-export DATABASE_URL="postgres://flowlens:flowlens@db:5432/flowlens?sslmode=disable"
+for var in "${!preset[@]}"; do
+  export "$var=${preset[$var]}"
+done
 
 pids=()
 cleanup() {

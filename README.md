@@ -109,11 +109,12 @@ Requires Docker and an editor with Dev Containers support (VS Code + the
    app on 3000 and the API on 8080.
 
 Inside the container Postgres is reachable at `db:5432` (the app picks this up
-from the container environment). Makefile DB targets read `.env`, which points
-at the host port, so pass the container URL explicitly when needed:
+from the container environment). `.env` points at the host port instead
+(`localhost:55432`), but the Makefile keeps the environment's `DATABASE_URL` in
+preference to the `.env` value, so DB targets just work in both places:
 
 ```bash
-make migrate DATABASE_URL="$DATABASE_URL"
+make migrate
 ```
 
 ### Option B: Host + Docker Compose

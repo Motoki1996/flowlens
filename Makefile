@@ -1,8 +1,18 @@
 # FlowLens developer commands.
 # Most targets load variables from .env when present.
 SHELL := /bin/bash
+
+# A makefile assignment beats an environment variable in GNU Make, so plain
+# `-include .env` would let the .env value (host port 55432) shadow the
+# DATABASE_URL the devcontainer exports (db:5432). Snapshot the environment
+# first and restore it after the include, so the precedence is:
+#   command line > environment > .env > default below.
+ENV_DATABASE_URL := $(DATABASE_URL)
 -include .env
 export
+ifneq ($(ENV_DATABASE_URL),)
+DATABASE_URL := $(ENV_DATABASE_URL)
+endif
 
 API_DIR := apps/api
 WEB_DIR := apps/web

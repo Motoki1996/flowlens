@@ -319,8 +319,6 @@ export function TaskDetail({
                     <Badge variant={task.status === "open" ? "default" : "secondary"}>
                       {task.status === "open" ? "Open" : "Closed"}
                     </Badge>
-                    <PriorityBadge priority={task.priority} />
-                    <ProgressBadge progress={task.progress} />
                   </div>
                   {task.description ? (
                     <CardDescription className="mt-1.5 whitespace-pre-wrap">
@@ -342,6 +340,21 @@ export function TaskDetail({
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+                {/* Priority and progress are FlowLens's own axes, not the
+                    GitLab issue state, so they sit with the other attributes
+                    rather than beside the title. */}
+                <div>
+                  <dt className="text-muted-foreground">Priority</dt>
+                  <dd className="text-foreground">
+                    <PriorityBadge priority={task.priority} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Progress</dt>
+                  <dd className="text-foreground">
+                    <ProgressBadge progress={task.progress} />
+                  </dd>
+                </div>
                 <div>
                   <dt className="text-muted-foreground">Assignee</dt>
                   <dd className="text-foreground">{task.assigneeGitlabUsername || "Unassigned"}</dd>

@@ -61,8 +61,6 @@ export function BacklogDetail({
         <CardHeader>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-foreground text-xl leading-none font-semibold">{backlog.name}</h1>
-            <PriorityBadge priority={backlog.priority} />
-            <ProgressBadge progress={backlog.progress} />
           </div>
           <CardDescription className="mt-1.5">
             {backlog.description || "No description"}
@@ -70,6 +68,18 @@ export function BacklogDetail({
         </CardHeader>
         <CardContent>
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">Priority</dt>
+              <dd className="text-foreground">
+                <PriorityBadge priority={backlog.priority} />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Progress</dt>
+              <dd className="text-foreground">
+                <ProgressBadge progress={backlog.progress} />
+              </dd>
+            </div>
             <div>
               <dt className="text-muted-foreground">Start date</dt>
               <dd className="text-foreground">
@@ -85,7 +95,7 @@ export function BacklogDetail({
             {/* The same closed/total ratio the Backlog timeline fills its bar
                 with, stated here as the number it is. */}
             <div>
-              <dt className="text-muted-foreground">Progress</dt>
+              <dt className="text-muted-foreground">Completed tasks</dt>
               <dd className="text-foreground">
                 {tasksError
                   ? "Unavailable"

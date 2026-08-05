@@ -6,6 +6,7 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { taskPath } from "@/lib/routes";
 import { formatDate } from "@/lib/dates";
+import { isCardBackgroundClick } from "@/lib/cards";
 import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
 import type { ApiError, Backlog, Progress, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -149,7 +150,15 @@ export function TaskBoardSection({
                         setDraggingId(null);
                         setDragOverProgress(null);
                       }}
-                      className={`bg-card border-border cursor-grab space-y-2 rounded-md border p-3 shadow-xs active:cursor-grabbing ${
+                      // The whole card opens the task, not just its title — the
+                      // card *is* the task here. Its own controls (the title
+                      // link, the progress select) keep their behaviour; the
+                      // title link is also what keeps this reachable by
+                      // keyboard, which a click handler alone would not be.
+                      onClick={(e) => {
+                        if (isCardBackgroundClick(e)) router.push(taskPath(projectId, task.id));
+                      }}
+                      className={`bg-card border-border hover:border-ring cursor-grab space-y-2 rounded-md border p-3 shadow-xs transition-colors active:cursor-grabbing ${
                         draggingId === task.id ? "opacity-50" : ""
                       } ${task.status === "closed" ? "opacity-70" : ""}`}
                     >

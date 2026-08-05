@@ -18,6 +18,8 @@ import {
  *  so the labels are inside the container rather than clipped by it. */
 export const ROW_HEIGHT = 44;
 export const AXIS_HEIGHT = 28;
+/** A bar is deliberately shorter than its row: the leftover height is the gap
+ *  that keeps neighbouring bars from reading as one block. */
 const BAR_SIZE = 20;
 
 /** A bar's colour is a status, not a series identity: open work carries the
@@ -149,7 +151,6 @@ export function GanttChart({
         data={rows}
         layout="vertical"
         margin={{ top: 0, right: 8, bottom: 0, left: 0 }}
-        barCategoryGap={0}
       >
         <CartesianGrid horizontal={false} />
         {/* The axis is a date scale, not a measure of any one series, so it
@@ -181,8 +182,17 @@ export function GanttChart({
           />
         ) : null}
         {/* The leading segment positions the visible bar at its start date; it
-            carries no meaning of its own, so it is transparent and unlabelled. */}
-        <Bar dataKey="offset" stackId="schedule" fill="transparent" isAnimationActive={false} />
+            carries no meaning of its own, so it is transparent and unlabelled.
+            It still needs barSize: recharts sizes a whole stack from its *first*
+            bar, so leaving this one unsized let every stack fill its row band
+            edge to edge and the bars ran together vertically. */}
+        <Bar
+          dataKey="offset"
+          stackId="schedule"
+          barSize={BAR_SIZE}
+          fill="transparent"
+          isAnimationActive={false}
+        />
         <Bar
           dataKey={doneWidth}
           name="done"

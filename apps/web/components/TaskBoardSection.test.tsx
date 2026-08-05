@@ -4,8 +4,9 @@ import type { Backlog, Task } from "@/types";
 import { TaskBoardSection } from "./TaskBoardSection";
 
 const refresh = vi.fn();
+const push = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh }),
+  useRouter: () => ({ refresh, push }),
 }));
 
 const backlog: Backlog = {
@@ -55,6 +56,7 @@ function card(name: string) {
 describe("TaskBoardSection", () => {
   beforeEach(() => {
     refresh.mockClear();
+    push.mockClear();
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -135,6 +137,17 @@ describe("TaskBoardSection", () => {
     fireEvent.drop(screen.getByRole("region", { name: "Not started tasks" }));
 
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("opens the task when the card itself is clicked, but not when one of its controls is", () => {
+    render(<TaskBoardSection projectId="p1" tasks={[task]} backlogs={[backlog]} />);
+
+    fireEvent.click(card("Fix login"));
+    expect(push).toHaveBeenCalledWith("/projects/p1/tasks/t1");
+
+    push.mockClear();
+    fireEvent.click(screen.getByRole("combobox", { name: "Progress of Fix login" }));
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("keeps a closed task's status and priority visible on its card", () => {

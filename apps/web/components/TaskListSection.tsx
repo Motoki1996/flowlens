@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, GripVertical } from "lucide-react";
+import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { formatDate, toApiDate } from "@/lib/dates";
@@ -37,6 +37,7 @@ import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskBoardSection } from "@/components/TaskBoardSection";
+import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
@@ -47,8 +48,6 @@ const TaskTimelineSection = dynamic(
   () => import("@/components/TaskTimelineSection").then((m) => m.TaskTimelineSection),
   { loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p> },
 );
-
-type ViewMode = "board" | "list" | "timeline";
 
 // "manual" keeps the API's own order (the drag-reorderable `position` field);
 // the rest mirror the sort values the cross-project Task collection accepts
@@ -690,35 +689,7 @@ export function TaskListSection({
                 "New task" must stay reachable on an empty project. */}
             {!error && tasks.length > 0 ? (
               <>
-                <div className="flex" role="group" aria-label="View">
-                  <Button
-                    type="button"
-                    variant={view === "board" ? "default" : "outline"}
-                    size="sm"
-                    className="rounded-r-none"
-                    onClick={() => setView("board")}
-                  >
-                    Board
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={view === "list" ? "default" : "outline"}
-                    size="sm"
-                    className="rounded-none"
-                    onClick={() => setView("list")}
-                  >
-                    List
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={view === "timeline" ? "default" : "outline"}
-                    size="sm"
-                    className="rounded-l-none"
-                    onClick={() => setView("timeline")}
-                  >
-                    Timeline
-                  </Button>
-                </div>
+                <ViewModeToggle value={view} onChange={setView} />
                 {/* Filters belong to the collection, not to one presentation of
                     it (docs/ui-design.md rule 5), so they stay put across view
                     modes and narrow the timeline the same way they narrow the
@@ -791,6 +762,7 @@ export function TaskListSection({
             ) : null}
             {!creating ? (
               <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+                <Plus className="size-4" aria-hidden />
                 New task
               </Button>
             ) : null}

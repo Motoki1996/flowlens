@@ -6,6 +6,7 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { backlogScheduleLabel } from "@/lib/backlogs";
+import { isCardBackgroundClick } from "@/lib/cards";
 import { backlogCompletion } from "@/lib/timeline";
 import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
 import type { ApiError, Backlog, Progress, Task } from "@/types";
@@ -160,7 +161,18 @@ export function BacklogBoardSection({
                           setDraggingId(null);
                           setDragOverProgress(null);
                         }}
-                        className={`bg-card border-border cursor-grab space-y-2 rounded-md border p-3 shadow-xs active:cursor-grabbing ${
+                        // The whole card opens the backlog, not just its name —
+                        // the card *is* the backlog here. Its own controls (the
+                        // name link, "View tasks", the progress select) keep
+                        // their behaviour; the name link is also what keeps this
+                        // reachable by keyboard, which a click handler alone
+                        // would not be.
+                        onClick={(e) => {
+                          if (isCardBackgroundClick(e)) {
+                            router.push(backlogPath(projectId, backlog.id));
+                          }
+                        }}
+                        className={`bg-card border-border hover:border-ring cursor-grab space-y-2 rounded-md border p-3 shadow-xs transition-colors active:cursor-grabbing ${
                           draggingId === backlog.id ? "opacity-50" : ""
                         }`}
                       >

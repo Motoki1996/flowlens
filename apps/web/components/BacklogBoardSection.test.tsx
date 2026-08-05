@@ -4,8 +4,9 @@ import type { Backlog, Task } from "@/types";
 import { BacklogBoardSection } from "./BacklogBoardSection";
 
 const refresh = vi.fn();
+const push = vi.fn();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh }),
+  useRouter: () => ({ refresh, push }),
 }));
 
 const backlog: Backlog = {
@@ -32,6 +33,7 @@ function card(name: string) {
 describe("BacklogBoardSection", () => {
   beforeEach(() => {
     refresh.mockClear();
+    push.mockClear();
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -117,6 +119,19 @@ describe("BacklogBoardSection", () => {
     fireEvent.drop(screen.getByRole("region", { name: "Not started backlogs" }));
 
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("opens the backlog when the card itself is clicked, but not when one of its controls is", () => {
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+
+    fireEvent.click(card("Sprint 1"));
+    expect(push).toHaveBeenCalledWith("/projects/p1/backlogs/b1");
+
+    push.mockClear();
+    // "View tasks" is a link of its own, so it must not be swallowed by the
+    // card's own navigation.
+    fireEvent.click(screen.getByRole("link", { name: "View tasks" }));
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("says so instead of showing every backlog as taskless when tasks failed to load", () => {

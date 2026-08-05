@@ -353,6 +353,36 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 	return fromRow(row), nil
 }
 
+// Get returns one of projectID's linked GitLab projects. A link that does not
+// exist, one belonging to another user, and one belonging to another project
+// of the same user are all ErrNotFound — the indistinguishable-404 convention
+// the rest of this Service follows, extended to the project boundary because
+// the caller reaches a link through a project's URL. The project is resolved
+// separately rather than being part of the link row: a linked project has no
+// project_id column of its own, only a path through gitlab_connections (see
+// the queries file).
+func (s *Service) Get(ctx context.Context, ownerID, projectID, linkID uuid.UUID) (LinkedProject, error) {
+	row, err := s.q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{
+		ID:          linkID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return LinkedProject{}, ErrNotFound
+		}
+		return LinkedProject{}, fmt.Errorf("linkedproject: get: %w", err)
+	}
+
+	linkProjectID, err := s.ProjectID(ctx, linkID)
+	if err != nil {
+		return LinkedProject{}, fmt.Errorf("linkedproject: get: %w", err)
+	}
+	if linkProjectID != projectID {
+		return LinkedProject{}, ErrNotFound
+	}
+	return fromRow(row), nil
+}
+
 // List returns every GitLab project linked to projectID's connection,
 // oldest first. It returns ErrNotFound if projectID does not exist or
 // belongs to another user.

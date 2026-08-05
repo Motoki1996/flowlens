@@ -193,6 +193,34 @@ func (s *Server) handleListLinkedGitlabProjects(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, links)
 }
 
+// handleGetLinkedGitlabProject returns one of the project's linked GitLab
+// projects, scoped to the authenticated user. The web app's single view for a
+// link reads this rather than picking its record out of the project's
+// collection. The route carries {projectID} — unlike the flat PATCH/DELETE —
+// because a link, having no project of its own in the response, would
+// otherwise leave the caller unable to tell that it reached the right
+// project's link.
+func (s *Server) handleGetLinkedGitlabProject(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	projectID, ok := projectIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+	linkID, ok := linkIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "linked gitlab project not found")
+		return
+	}
+
+	link, err := s.linkedProjects.Get(r.Context(), u.ID, projectID, linkID)
+	if err != nil {
+		writeLinkedProjectError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, link)
+}
+
 // handleCreateLinkedGitlabProject links a GitLab project to the project's
 // GitLab connection, scoped to the authenticated user.
 func (s *Server) handleCreateLinkedGitlabProject(w http.ResponseWriter, r *http.Request) {

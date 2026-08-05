@@ -71,6 +71,12 @@ vi.mock("@/lib/api", () => ({
   getBacklogs: (id: string) => getBacklogs(id),
   getTasks: () => Promise.resolve([]),
   getTaskDependencies: () => Promise.resolve([]),
+  // The single view loads the project's default linked GitLab project to fill
+  // the assignee/label pickers (issue #80); with none linked it falls back to
+  // free-text entry, which is what these cases exercise.
+  getLinkedGitlabProjects: () => Promise.resolve([]),
+  getLinkedGitlabProjectMembers: () => Promise.resolve([]),
+  getLinkedGitlabProjectLabels: () => Promise.resolve([]),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),

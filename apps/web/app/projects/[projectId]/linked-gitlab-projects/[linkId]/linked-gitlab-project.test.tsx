@@ -53,14 +53,14 @@ const run: SyncRun = {
 
 const getCurrentUser = vi.fn();
 const getProject = vi.fn();
-const getLinkedGitlabProjects = vi.fn();
+const getLinkedGitlabProject = vi.fn();
 const getSyncRuns = vi.fn();
 const getWebhookEvents = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
   getProject: (id: string) => getProject(id),
-  getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
+  getLinkedGitlabProject: (projectId: string, linkId: string) => getLinkedGitlabProject(projectId, linkId),
   getSyncRuns: (id: string) => getSyncRuns(id),
   getWebhookEvents: (id: string) => getWebhookEvents(id),
 }));
@@ -82,9 +82,9 @@ describe("LinkedGitlabProjectPage", () => {
   beforeEach(() => {
     getCurrentUser.mockResolvedValue(user);
     getProject.mockResolvedValue(project);
-    getLinkedGitlabProjects.mockResolvedValue([link]);
+    getLinkedGitlabProject.mockResolvedValue(link);
     getSyncRuns.mockResolvedValue([run]);
-    getWebhookEvents.mockResolvedValue([]);
+    getWebhookEvents.mockResolvedValue({ events: [], nextPage: 0 });
   });
 
   it("redirects to /login when not authenticated", async () => {
@@ -96,6 +96,7 @@ describe("LinkedGitlabProjectPage", () => {
     render(await LinkedGitlabProjectPage({ params }));
     expect(screen.getByRole("heading", { name: "team/demo" })).toBeInTheDocument();
     expect(screen.getByText("5 seen, 3 created, 2 updated")).toBeInTheDocument();
+    expect(getLinkedGitlabProject).toHaveBeenCalledWith("p1", "l1");
     const breadcrumb = within(screen.getByRole("navigation", { name: "Breadcrumb" }));
     expect(breadcrumb.getByRole("link", { name: "GitLab connection" })).toHaveAttribute(
       "href",
@@ -103,8 +104,10 @@ describe("LinkedGitlabProjectPage", () => {
     );
   });
 
-  it("renders not-found when the link doesn't belong to the project", async () => {
-    getLinkedGitlabProjects.mockResolvedValue([]);
+  // The API scopes the read to the project, so "another project's link" and
+  // "no such link" both arrive as null here.
+  it("renders not-found when the link isn't this project's", async () => {
+    getLinkedGitlabProject.mockResolvedValue(null);
     await expect(LinkedGitlabProjectPage({ params })).rejects.toThrow("NOT_FOUND");
   });
 

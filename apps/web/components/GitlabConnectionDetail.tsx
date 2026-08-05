@@ -124,6 +124,60 @@ function ConnectionForm({
   );
 }
 
+/**
+ * DisconnectButton removes the project's GitLab connection behind an inline
+ * confirmation. The connection owns its linked projects, so deleting it takes
+ * them — and the sync they drive — with it; the confirmation says so. The
+ * screen stays put afterwards and falls back to the connect form.
+ */
+function DisconnectButton({ projectId }: { projectId: string }) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleDisconnect() {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/gitlab-connection`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok && res.status !== 204) {
+        setError(await parseError(res, "Failed to disconnect GitLab."));
+        return;
+      }
+      router.refresh();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (confirming) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {error ? <span className="text-destructive text-sm">{error}</span> : null}
+        <span className="text-foreground text-sm">
+          Disconnect GitLab? This unlinks every linked project and stops syncing.
+        </span>
+        <Button variant="destructive" size="sm" onClick={handleDisconnect} disabled={pending}>
+          {pending ? "Disconnecting…" : "Confirm disconnect"}
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setConfirming(false)} disabled={pending}>
+          Cancel
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Button variant="destructive" size="sm" onClick={() => setConfirming(true)}>
+      Disconnect
+    </Button>
+  );
+}
+
 function verifiedBadge(connection: GitlabConnection) {
   if (connection.lastVerifyError) {
     return (
@@ -138,7 +192,7 @@ function verifiedBadge(connection: GitlabConnection) {
   return <Badge variant="outline">Not verified</Badge>;
 }
 
-/** ConnectionStatus shows the saved connection's details and its actions: test and reconnect. */
+/** ConnectionStatus shows the saved connection's details and its actions: test, reconnect and disconnect. */
 function ConnectionStatus({
   projectId,
   connection,
@@ -222,6 +276,7 @@ function ConnectionStatus({
         <Button variant="outline" size="sm" onClick={() => setReconnecting(true)}>
           Change connection
         </Button>
+        <DisconnectButton projectId={projectId} />
       </div>
     </div>
   );
@@ -231,7 +286,7 @@ function ConnectionStatus({
  * GitlabConnectionDetail is the single view of a project's GitLab connection.
  * There is at most one connection per project (ADR-0008), so this object has
  * no collection view — the project single view links straight here. Connect,
- * test and change all act on the connection itself (docs/ui-design.md rule 4);
+ * test, change and disconnect all act on the connection itself (docs/ui-design.md rule 4);
  * the linked GitLab projects are a collection of their own, rendered below
  * this by the same screen.
  */

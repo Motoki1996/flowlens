@@ -142,6 +142,11 @@ func (s *Server) Router() chi.Router {
 
 				projects.Get("/{projectID}/linked-gitlab-projects", s.handleListLinkedGitlabProjects)
 				projects.Post("/{projectID}/linked-gitlab-projects", s.handleCreateLinkedGitlabProject)
+				// The single-link read is project-nested, mirroring the web
+				// route, while the mutations below stay flat: see
+				// handleGetLinkedGitlabProject for why this one needs the
+				// project in its URL.
+				projects.Get("/{projectID}/linked-gitlab-projects/{linkID}", s.handleGetLinkedGitlabProject)
 
 				projects.Get("/{projectID}/api-tokens", s.handleListAPITokens)
 				projects.Post("/{projectID}/api-tokens", s.handleCreateAPIToken)

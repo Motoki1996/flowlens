@@ -24,7 +24,7 @@ import type {
   TaskStatus,
   TaskWithProject,
   User,
-  WebhookEvent,
+  WebhookEventPage,
 } from "@/types";
 
 // Base URL the Next.js server uses to reach the API.
@@ -278,6 +278,29 @@ export const getLinkedGitlabProjects = cache(async (projectId: string): Promise<
 });
 
 /**
+ * getLinkedGitlabProject returns one of the project's linked GitLab projects,
+ * or null when it doesn't exist, isn't owned by the current user, or belongs
+ * to a different project (the API reports all three as 404 — a link carries
+ * no project of its own in the response, which is why the project is part of
+ * the route rather than something the caller checks afterwards).
+ */
+export async function getLinkedGitlabProject(
+  projectId: string,
+  linkId: string,
+): Promise<LinkedGitlabProject | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/linked-gitlab-projects/${linkId}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load linked gitlab project: ${res.status}`);
+  }
+  return (await res.json()) as LinkedGitlabProject;
+}
+
+/**
  * getLinkedGitlabProjectMembers returns a linked GitLab project's members,
  * for a task's assignee picker. Callers must already know the request is
  * authenticated.
@@ -330,12 +353,14 @@ export async function getSyncRuns(linkId: string): Promise<SyncRun[]> {
 }
 
 /**
- * getWebhookEvents returns a linked GitLab project's most recently received
+ * getWebhookEvents returns the first page of a linked GitLab project's
  * webhook events, newest first, without their payload (GET
- * .../webhook-events only includes it in the single-event fetch). Callers
- * must already know the request is authenticated.
+ * .../webhook-events only includes it in the single-event fetch). The page's
+ * nextPage is carried through so the screen can offer the page after it;
+ * later pages are fetched by the client component itself. Callers must
+ * already know the request is authenticated.
  */
-export async function getWebhookEvents(linkId: string, perPage = 10): Promise<WebhookEvent[]> {
+export async function getWebhookEvents(linkId: string, perPage = 10): Promise<WebhookEventPage> {
   const cookieStore = await cookies();
   const res = await fetch(
     `${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook-events?per_page=${perPage}`,
@@ -347,8 +372,7 @@ export async function getWebhookEvents(linkId: string, perPage = 10): Promise<We
   if (!res.ok) {
     throw new Error(`Failed to load webhook events: ${res.status}`);
   }
-  const body = (await res.json()) as { events: WebhookEvent[]; nextPage: number };
-  return body.events;
+  return (await res.json()) as WebhookEventPage;
 }
 
 /**

@@ -180,6 +180,19 @@ export interface WebhookEvent {
   processedAt: string | null;
 }
 
+/** WebhookEventDetail is one delivery *with* the raw GitLab payload, which
+ *  only the single-event fetch returns (GET .../webhook-events/{eventId}). */
+export interface WebhookEventDetail extends WebhookEvent {
+  payload: unknown;
+}
+
+/** WebhookEventPage is one page of a link's deliveries. nextPage is 0 when
+ *  there is nothing after this page. */
+export interface WebhookEventPage {
+  events: WebhookEvent[];
+  nextPage: number;
+}
+
 export type SyncRunKind = "initial_import" | "manual_resync";
 
 export type SyncRunStatus = "running" | "succeeded" | "failed";

@@ -1,7 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { tasksPath } from "@/lib/routes";
 import type {
   ApiError,
   Backlog,
@@ -65,6 +67,64 @@ function CloseReopenButton({
             : "Reopen"}
       </Button>
     </div>
+  );
+}
+
+/**
+ * DeleteTaskButton removes the task behind an inline confirmation, then
+ * returns to the Task collection — the task this screen is about no longer
+ * exists, so staying here would leave a dead page. Deletion also removes the
+ * task's GitLab issue link; closing a task is the reversible option and stays
+ * the prominent one.
+ */
+function DeleteTaskButton({ task }: { task: Task }) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleDelete() {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok && res.status !== 204) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setError(body?.error.message ?? "Failed to delete task.");
+        setPending(false);
+        return;
+      }
+      router.push(tasksPath(task.projectId));
+      router.refresh();
+    } catch {
+      setPending(false);
+    }
+  }
+
+  if (confirming) {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        {error ? <span className="text-destructive text-xs">{error}</span> : null}
+        <span className="text-foreground text-xs">Delete this task?</span>
+        <div className="flex gap-2">
+          <Button variant="destructive" size="sm" onClick={handleDelete} disabled={pending}>
+            {pending ? "Deleting…" : "Confirm delete"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setConfirming(false)} disabled={pending}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Button variant="outline" size="sm" onClick={() => setConfirming(true)}>
+      Delete
+    </Button>
   );
 }
 
@@ -198,9 +258,9 @@ function GitlabSyncSection({
 /**
  * TaskDetail is the single view for one task, per docs/ui-design.md and the
  * order fixed in the issue: identity -> attributes -> AI-facing information.
- * Close/Reopen, backlog assignment and editing live here, on the object they
- * act on — there is no separate edit screen (rule 4); the link back to the
- * Task collection is the page's breadcrumb.
+ * Close/Reopen, backlog assignment, editing and deletion live here, on the
+ * object they act on — there is no separate edit screen (rule 4); the link
+ * back to the Task collection is the page's breadcrumb.
  *
  * Editing swaps the identity and attribute blocks for a form. The AI context
  * card below keeps its own edit toggle, since those fields are a separate
@@ -274,6 +334,7 @@ export function TaskDetail({
                     Edit task
                   </Button>
                   <CloseReopenButton task={task} onChanged={setTask} />
+                  <DeleteTaskButton task={task} />
                 </div>
               </div>
             </CardHeader>

@@ -85,6 +85,72 @@ func TestHandleListLinkedGitlabProjects_ForeignProjectGets404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+func TestHandleGetLinkedGitlabProject_ReturnsTheLink(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},
+		Project:           &gitlab.Project{ID: 42, Name: "demo", PathWithNamespace: "group/demo"},
+	}
+	s, q := newTestServerWithGitlabClient(t, fake)
+	ownerID, token := loginSession(t, s, q)
+	projectID := q.SeedProject(ownerID, "Alpha").ID.String()
+	setUpConnectedProject(t, s, token, projectID)
+
+	createRec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+projectID+"/linked-gitlab-projects",
+		createLinkedGitlabProjectRequest{GitlabProjectID: 42, SyncScope: "all"}, token)
+	require.Equal(t, http.StatusCreated, createRec.Code)
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	linkID := created["id"].(string)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+projectID+"/linked-gitlab-projects/"+linkID, nil, token)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, linkID, body["id"])
+	assert.Equal(t, "group/demo", body["pathWithNamespace"])
+}
+
+// A link is reached through a project's URL, so the project boundary is part
+// of the contract: another user's link, another of the caller's own projects,
+// and an unknown ID are all indistinguishable 404s.
+func TestHandleGetLinkedGitlabProject_ForeignLinkGets404(t *testing.T) {
+	fake := &gitlab.FakeClient{
+		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},
+		Project:           &gitlab.Project{ID: 42, Name: "demo"},
+	}
+	s, q := newTestServerWithGitlabClient(t, fake)
+	ownerID, token := loginSession(t, s, q)
+	projectID := q.SeedProject(ownerID, "Alpha").ID.String()
+	setUpConnectedProject(t, s, token, projectID)
+	createRec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+projectID+"/linked-gitlab-projects",
+		createLinkedGitlabProjectRequest{GitlabProjectID: 42, SyncScope: "all"}, token)
+	require.Equal(t, http.StatusCreated, createRec.Code)
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	linkID := created["id"].(string)
+
+	otherOwnerID, otherToken := loginSessionAs(t, s, q, "intruder", "intruder@example.com")
+	otherProjectID := q.SeedProject(otherOwnerID, "Theirs").ID.String()
+	// Another of the caller's own projects, for the cross-project case.
+	siblingProjectID := q.SeedProject(ownerID, "Beta").ID.String()
+
+	tests := []struct {
+		name    string
+		path    string
+		session string
+	}{
+		{"another user's link", "/api/v1/projects/" + otherProjectID + "/linked-gitlab-projects/" + linkID, otherToken},
+		{"the caller's other project", "/api/v1/projects/" + siblingProjectID + "/linked-gitlab-projects/" + linkID, token},
+		{"unknown link", "/api/v1/projects/" + projectID + "/linked-gitlab-projects/" + uuid.NewString(), token},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, http.StatusNotFound, doRequest(t, s, http.MethodGet, tt.path, nil, tt.session).Code)
+		})
+	}
+}
+
 func TestHandleUpdateLinkedGitlabProject_ChangesSyncScope(t *testing.T) {
 	fake := &gitlab.FakeClient{
 		AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"},

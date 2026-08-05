@@ -92,7 +92,15 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 // user's ID and the raw session token.
 func loginSession(t *testing.T, s *Server, q *dbtest.FakeQuerier) (uuid.UUID, string) {
 	t.Helper()
-	u := q.SeedUser("tester", "tester@example.com")
+	return loginSessionAs(t, s, q, "tester", "tester@example.com")
+}
+
+// loginSessionAs is loginSession for a named user, so a test that needs a
+// second, unrelated session (an authz boundary, typically) can seed one
+// without repeating the seed-then-create dance.
+func loginSessionAs(t *testing.T, s *Server, q *dbtest.FakeQuerier, username, email string) (uuid.UUID, string) {
+	t.Helper()
+	u := q.SeedUser(username, email)
 	token, err := s.sessions.Create(context.Background(), u.ID)
 	require.NoError(t, err)
 	return u.ID, token

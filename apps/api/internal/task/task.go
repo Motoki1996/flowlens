@@ -596,8 +596,12 @@ type ListFilter struct {
 	Unassigned bool       // true: only unfiled tasks (backlog_id IS NULL); mutually exclusive with BacklogID
 	Status     string     // "open" | "closed" | "" (no filter)
 	Priority   string     // one of the Priority* constants, or "" (no filter)
-	// Sort is "" (position ASC, created_at ASC, the manual/DnD order) or
-	// SortPriority (priority rank DESC, then the same tiebreak).
+	// Sort is "" (position ASC, created_at ASC, the manual/DnD order),
+	// SortPriority (priority rank DESC), SortDueOn (due date ASC, tasks
+	// with no due date last) or SortUpdatedAt (most recently updated
+	// first) — the same three the cross-project collection accepts, so the
+	// two lists don't disagree on what a sort value means. Each keeps the
+	// manual order as its tiebreak.
 	Sort string
 }
 
@@ -633,7 +637,37 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		t.Gitlab = info
 		out[i] = t
 	}
+	sortTasks(out, filter.Sort)
 	return out, nil
+}
+
+// sortTasks applies the date-based orders ListFilter.Sort allows on top of
+// the order the query already returned. Priority ranking stays in SQL (see
+// ListTasksByProject); these two are ordered here instead because the
+// project-scoped list is fetched whole — there is no LIMIT for a different
+// ORDER BY to change the *contents* of, only the sequence — and adding them
+// to the query would mean reshaping its parameters. A stable sort is what
+// keeps the manual position order as the tiebreak in both cases.
+func sortTasks(tasks []Task, by string) {
+	switch by {
+	case SortDueOn:
+		// A task with no due date sorts last, matching the cross-project
+		// list's due_on ASC NULLS LAST.
+		slices.SortStableFunc(tasks, func(a, b Task) int {
+			switch {
+			case a.DueOn == nil && b.DueOn == nil:
+				return 0
+			case a.DueOn == nil:
+				return 1
+			case b.DueOn == nil:
+				return -1
+			default:
+				return a.DueOn.Compare(*b.DueOn)
+			}
+		})
+	case SortUpdatedAt:
+		slices.SortStableFunc(tasks, func(a, b Task) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
+	}
 }
 
 // CrossProjectFilter narrows ListForOwner to a subset of every task the

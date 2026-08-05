@@ -25,7 +25,10 @@ Rules:
 
 ## Current
 
-None right now. The issue-sync MVP plan shipped (all 7 phases) and was
+- [`project-screen-api-gaps.md`](project-screen-api-gaps.md) — closing the
+  API/UI gaps under `/projects/[projectId]` (agreed, not started).
+
+The issue-sync MVP plan shipped (all 7 phases) and was
 deleted per phase 7's own instruction; what survives it lives in
 [`README.md`](../../README.md#gitlab-ce-connection--sync),
 [`docs/ui-design.md`](../ui-design.md), [ADR-0007](../decisions/0007-why-outbox-worker.md),

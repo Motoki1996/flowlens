@@ -28,8 +28,28 @@ export const Empty: Story = {
   args: { projectId: "p1", backlogs: [], tasks: [] },
 };
 
+/** The default view mode: one column per priority, cards stacked inside it. */
 export const Default: Story = {
+  args: {
+    projectId: "p1",
+    backlogs: [
+      backlog,
+      { ...backlog, id: "b2", name: "Hotfixes", priority: "urgent", position: 1 },
+      { ...backlog, id: "b3", name: "Icebox", priority: "low", position: 2 },
+    ],
+    tasks: [],
+  },
+};
+
+/** The List view mode, where a backlog is created, edited, deleted and
+ *  manually reordered. */
+export const List: Story = {
   args: { projectId: "p1", backlogs: [backlog], tasks: [] },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "List" }));
+    await expect(canvas.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+  },
 };
 
 /** The Timeline view mode of the same collection, reached from the List/
@@ -52,6 +72,7 @@ export const DeleteConfirm: Story = {
   args: { projectId: "p1", backlogs: [backlog], tasks: [] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "List" }));
     await userEvent.click(canvas.getByRole("button", { name: "Delete" }));
     await expect(
       canvas.getByText("Its tasks will move to Unclassified. Delete this backlog?"),

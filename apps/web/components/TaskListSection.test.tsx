@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { Backlog, Task } from "@/types";
 import { TaskListSection } from "./TaskListSection";
 
@@ -249,6 +249,23 @@ describe("TaskListSection", () => {
     const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: null })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("switches to the board view mode, showing the same filtered tasks by priority", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Fix login", priority: "urgent" }),
+      makeTask({ id: "t2", title: "Old bug", priority: "low", status: "closed" }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
+
+    const urgent = screen.getByRole("region", { name: "Urgent tasks" });
+    expect(within(urgent).getByRole("link", { name: "Fix login" })).toBeInTheDocument();
+    // The status filter defaults to Open, and the board is a presentation of
+    // the same filtered set — not a way around the filters.
+    expect(screen.queryByRole("link", { name: "Old bug" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
   });
 
   it("switches to the timeline view mode and back, keeping the filters in place", async () => {

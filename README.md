@@ -298,6 +298,14 @@ GitLab) is idempotent: FlowLens lists the project's existing hooks first and
 updates the one at its own URL rather than creating a duplicate
 (`POST /api/v1/linked-gitlab-projects/{linkID}/webhook`).
 
+Every delivery is recorded, and the link's own view lists them newest first
+for troubleshooting (`GET .../webhook-events`, paged with `?page=`/`?per_page=`
+— the response's `nextPage` is `0` on the last page — and narrowed with
+`?status=`). The listing omits each delivery's raw payload, which is fetched
+on demand from `GET .../webhook-events/{eventID}` when a row's payload is
+opened; a failed delivery can be re-applied with
+`POST .../webhook-events/{eventID}/retry`.
+
 ### Editing a task's assignee and labels
 
 A task's assignee and labels are edited from the task's single view and
@@ -671,7 +679,11 @@ no GitLab-side counterpart to push to or pull from.
   sorting by priority is a display order for this request only and never
   rewrites `position`; see [Task & backlog reordering](#task--backlog-reordering)
   below for how the web app disables drag-to-reorder while a non-manual sort
-  is active.
+  is active. The project-scoped task list also accepts `?sort=dueOn` (due date
+  ascending, tasks with no due date last) and `?sort=updatedAt` (most recently
+  updated first) — the same three values as the cross-project collection, so
+  a screen's sort menu means one thing whichever list backs it. Backlogs take
+  `?sort=priority` only.
 
 In the web app, priority is selectable wherever a task or backlog is created
 or edited: the task single view's edit form, the task collection's inline

@@ -72,6 +72,63 @@ describe("WebhookEventSection", () => {
     );
   });
 
+  it("offers Show more only while the API reports a next page", () => {
+    const { rerender } = render(
+      <WebhookEventSection linkId="link-1" events={[makeEvent({})]} nextPage={0} />,
+    );
+    expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+
+    rerender(<WebhookEventSection linkId="link-1" events={[makeEvent({})]} nextPage={2} />);
+    expect(screen.getByRole("button", { name: "Show more" })).toBeInTheDocument();
+  });
+
+  it("appends the next page of events and stops offering more at the end", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          events: [makeEvent({ id: "event-2", gitlabIssueIid: 8 })],
+          nextPage: 0,
+        }),
+        { status: 200 },
+      ),
+    );
+    render(<WebhookEventSection linkId="link-1" events={[makeEvent({})]} nextPage={2} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    expect(await screen.findByText("Issue Hook #8")).toBeInTheDocument();
+    // The first page is still there — a page is appended, not swapped in.
+    expect(screen.getByText("Issue Hook #7")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/linked-gitlab-projects/link-1/webhook-events?page=2"),
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
+
+  it("fetches a delivery's payload only when it is opened", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ ...makeEvent({}), payload: { object_kind: "issue" } }), {
+        status: 200,
+      }),
+    );
+    render(<WebhookEventSection linkId="link-1" events={[makeEvent({})]} />);
+    expect(fetch).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "View payload" }));
+
+    expect(await screen.findByText(/"object_kind": "issue"/)).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/linked-gitlab-projects/link-1/webhook-events/event-1"),
+      expect.objectContaining({ credentials: "include" }),
+    );
+
+    // Closing and reopening reuses what was already fetched.
+    fireEvent.click(screen.getByRole("button", { name: "Hide payload" }));
+    fireEvent.click(screen.getByRole("button", { name: "View payload" }));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("shows an inline error when retry fails", async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ error: { code: "event_not_failed", message: "not failed" } }), {

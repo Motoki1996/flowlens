@@ -24,7 +24,7 @@ import type {
   TaskStatus,
   TaskWithProject,
   User,
-  WebhookEvent,
+  WebhookEventPage,
 } from "@/types";
 
 // Base URL the Next.js server uses to reach the API.
@@ -353,12 +353,14 @@ export async function getSyncRuns(linkId: string): Promise<SyncRun[]> {
 }
 
 /**
- * getWebhookEvents returns a linked GitLab project's most recently received
+ * getWebhookEvents returns the first page of a linked GitLab project's
  * webhook events, newest first, without their payload (GET
- * .../webhook-events only includes it in the single-event fetch). Callers
- * must already know the request is authenticated.
+ * .../webhook-events only includes it in the single-event fetch). The page's
+ * nextPage is carried through so the screen can offer the page after it;
+ * later pages are fetched by the client component itself. Callers must
+ * already know the request is authenticated.
  */
-export async function getWebhookEvents(linkId: string, perPage = 10): Promise<WebhookEvent[]> {
+export async function getWebhookEvents(linkId: string, perPage = 10): Promise<WebhookEventPage> {
   const cookieStore = await cookies();
   const res = await fetch(
     `${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook-events?per_page=${perPage}`,
@@ -370,8 +372,7 @@ export async function getWebhookEvents(linkId: string, perPage = 10): Promise<We
   if (!res.ok) {
     throw new Error(`Failed to load webhook events: ${res.status}`);
   }
-  const body = (await res.json()) as { events: WebhookEvent[]; nextPage: number };
-  return body.events;
+  return (await res.json()) as WebhookEventPage;
 }
 
 /**

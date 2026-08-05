@@ -45,29 +45,40 @@ function LinkProjectForm({
   const [options, setOptions] = useState<GitlabProjectOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  // The API's own paging cursor for the search above: 0 once there is nothing
+  // left to fetch. A token with access to many GitLab projects would
+  // otherwise only ever be offered the first page.
+  const [nextPage, setNextPage] = useState(0);
   const [selected, setSelected] = useState<GitlabProjectOption | null>(null);
   const [scope, setScope] = useState<SyncScope>("all");
   const [labelsInput, setLabelsInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
-  async function runSearch(term: string) {
+  // page 0 means "the first page" and replaces the current results; anything
+  // else appends, so "Show more" extends the list the user is looking at.
+  async function runSearch(term: string, page = 0) {
     setLoading(true);
     setSearchError(null);
     try {
       const params = new URLSearchParams();
       if (term.trim()) params.set("search", term.trim());
+      if (page > 0) params.set("page", String(page));
       const res = await fetch(
         `${API_PUBLIC_URL}/api/v1/projects/${projectId}/gitlab-connection/available-projects?${params}`,
         { credentials: "include" },
       );
       if (!res.ok) {
         setSearchError(await parseError(res, "Failed to list GitLab projects."));
-        setOptions([]);
+        if (page === 0) {
+          setOptions([]);
+          setNextPage(0);
+        }
         return;
       }
-      const body = (await res.json()) as { projects: GitlabProjectOption[] };
-      setOptions(body.projects);
+      const body = (await res.json()) as { projects: GitlabProjectOption[]; nextPage: number };
+      setOptions((current) => (page === 0 ? body.projects : [...current, ...body.projects]));
+      setNextPage(body.nextPage);
     } finally {
       setLoading(false);
     }
@@ -209,6 +220,17 @@ function LinkProjectForm({
             </li>
           ))}
         </ul>
+      ) : null}
+      {nextPage > 0 ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => void runSearch(search, nextPage)}
+          disabled={loading}
+        >
+          {loading ? "Loading…" : "Show more"}
+        </Button>
       ) : null}
     </div>
   );

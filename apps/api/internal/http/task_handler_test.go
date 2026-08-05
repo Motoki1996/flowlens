@@ -133,6 +133,33 @@ func TestHandleListTasks_FiltersAndSortsByPriorityQuery(t *testing.T) {
 	assert.Equal(t, "Low", sorted[1]["title"])
 }
 
+// The wire contract for ?sort=: the project-scoped list takes the same three
+// values as GET /api/v1/tasks, and rejects anything else. Which order each
+// value produces is the domain layer's case (TestService_List_*).
+func TestHandleListTasks_SortQueryAcceptsTheCrossProjectValues(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Only", DueOn: nil}, token)
+
+	tests := []struct {
+		sort     string
+		wantCode int
+	}{
+		{"priority", http.StatusOK},
+		{"dueOn", http.StatusOK},
+		{"updatedAt", http.StatusOK},
+		{"title", http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sort, func(t *testing.T) {
+			rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort="+tt.sort, nil, token)
+			assert.Equal(t, tt.wantCode, rec.Code, rec.Body.String())
+		})
+	}
+}
+
 func TestHandleListAllTasks_NoCookie(t *testing.T) {
 	s, _ := newTestServer(t)
 

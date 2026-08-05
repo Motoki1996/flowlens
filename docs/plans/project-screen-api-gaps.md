@@ -1,6 +1,8 @@
 # Plan: closing the API/UI gaps under `/projects/[projectId]`
 
-**Status: in progress — Phases 1 and 2 shipped (2026-08-05); Phase 3 not started.**
+**Status: all three phases shipped (2026-08-05) — delete this plan once the
+branch merges, per [`docs/plans/README.md`](README.md). What survives it is
+already in [`README.md`](../../README.md).**
 
 This plan is time-limited (see [`docs/plans/README.md`](README.md)). Delete it
 once every phase below has shipped, folding what survives into
@@ -92,18 +94,40 @@ Tests: `TestHandleGetLinkedGitlabProject_ReturnsTheLink` plus a table-driven
 projects, and an unknown ID. `loginSessionAs` was extracted from
 `loginSession` so a second session is one line.
 
-### Phase 3 — list and pagination polish (gaps 5–7)
+### Phase 3 — list and pagination polish (gaps 5–7) — **done**
 
-6. `parseTaskListFilter` (`apps/api/internal/http/task_handler.go`): accept
-   `sort=dueOn` and `sort=updatedAt` alongside `priority`, so the project-scoped
-   list agrees with `GET /api/v1/tasks`. Reuse the ordering already implemented
-   for the cross-project collection rather than writing new SQL branches.
-7. Webhook events: a "Show more" that pages through `?page=`, and an
-   event row that opens its payload via `GET .../webhook-events/{eventID}`.
-8. `LinkedGitlabProjectListSection`: follow `nextPage` in the
-   available-projects search.
+6. `parseTaskListFilter` now accepts `sort=dueOn` and `sort=updatedAt`
+   alongside `priority`, so the project-scoped list takes exactly the values
+   `GET /api/v1/tasks` does and rejects the rest with 400.
+
+   **Deviation:** the two new orders are applied in `task.Service.List`
+   (a stable sort keeping the manual position order as tiebreak), not in
+   `ListTasksByProject`'s `ORDER BY`. Adding them to the query means changing
+   its parameters, and `make generate` with the currently installed sqlc
+   (v1.31.1) rewrites *every* generated file — most importantly it emits
+   per-query row types (`ListTasksByProjectRow`) where the committed code
+   returns the shared `Task` model, which would cascade through
+   `internal/task`, `internal/webhookapply` and `dbtest.FakeQuerier`. The
+   checked-in generated code was produced by an older sqlc; **upgrading it is
+   its own change and its own PR**, and this feature was not the place to
+   force it. Ordering in the service is exact here because the project-scoped
+   list has no `LIMIT` — no ordering can change which tasks come back, only
+   their sequence. If the sqlc upgrade lands, moving these two into SQL is a
+   contained follow-up.
+7. Webhook events: **Show more** pages through `?page=`, and each row's
+   **View payload** fetches `GET .../webhook-events/{eventID}` on first open.
+   Paged rows are held next to the server-rendered first page so a
+   `router.refresh()` (after a retry) still replaces the list cleanly.
+8. `LinkedGitlabProjectListSection` now follows `nextPage` in the
+   available-projects search, appending pages rather than replacing them.
 9. **Deliberately deferred:** moving the Task/Backlog list filtering and
    sorting server-side. The current client-side implementation is URL-synced
    and functionally equivalent at today's volumes; revisit when a project's
    task count makes the full-collection fetch the bottleneck. A `q` search
    parameter on either list endpoint is out of scope here too.
+
+Tests: `TestService_List_SortsByDueDateAndRecency` (domain, both new orders)
+and a table-driven `TestHandleListTasks_SortQueryAcceptsTheCrossProjectValues`
+(HTTP, the wire contract only); `WebhookEventSection.test.tsx` gains paging
+and payload cases; `LinkedGitlabProjectListSection.test.tsx` is new and covers
+search paging.

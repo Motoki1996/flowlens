@@ -1,5 +1,5 @@
 import { redirect, notFound } from "next/navigation";
-import type { SyncRun, WebhookEvent } from "@/types";
+import type { SyncRun, WebhookEventPage } from "@/types";
 import {
   getCurrentUser,
   getLinkedGitlabProject,
@@ -37,7 +37,7 @@ export default async function LinkedGitlabProjectPage({
     // works.
   }
 
-  let webhookEvents: WebhookEvent[] = [];
+  let webhookEvents: WebhookEventPage = { events: [], nextPage: 0 };
   try {
     webhookEvents = await getWebhookEvents(link.id);
   } catch {
@@ -56,7 +56,8 @@ export default async function LinkedGitlabProjectPage({
         projectId={project.id}
         link={link}
         syncRuns={syncRuns}
-        webhookEvents={webhookEvents}
+        webhookEvents={webhookEvents.events}
+        webhookEventsNextPage={webhookEvents.nextPage}
       />
     </>
   );

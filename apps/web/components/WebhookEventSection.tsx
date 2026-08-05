@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ApiError, WebhookEvent } from "@/types";
+import type { ApiError, WebhookEvent, WebhookEventDetail, WebhookEventPage } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -90,6 +90,64 @@ function RetryEventButton({ linkId, eventId }: { linkId: string; eventId: string
   );
 }
 
+/**
+ * PayloadToggle shows one delivery's raw GitLab payload on demand. The list
+ * response deliberately omits it (it is the biggest field by far and most
+ * events are never inspected), so the payload is fetched from the
+ * single-event endpoint the first time it is opened and kept afterwards.
+ */
+function PayloadToggle({ linkId, eventId }: { linkId: string; eventId: string }) {
+  const [open, setOpen] = useState(false);
+  const [payload, setPayload] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClick() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    if (payload !== null || pending) return;
+
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook-events/${eventId}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) {
+        setError(await parseError(res, "Failed to load the payload."));
+        return;
+      }
+      const body = (await res.json()) as WebhookEventDetail;
+      setPayload(JSON.stringify(body.payload, null, 2));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="mt-1">
+      <Button variant="ghost" size="sm" onClick={handleClick} aria-expanded={open}>
+        {open ? "Hide payload" : "View payload"}
+      </Button>
+      {open ? (
+        <div className="mt-1">
+          {pending ? <p className="text-muted-foreground text-xs">Loading payload…</p> : null}
+          {error ? <p className="text-destructive text-xs">{error}</p> : null}
+          {payload !== null ? (
+            <pre className="bg-muted text-foreground max-h-64 overflow-auto rounded-md p-2 text-xs">
+              {payload}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** WebhookEventList shows one linked project's most recently received events, newest first. */
 function WebhookEventList({ linkId, events }: { linkId: string; events: WebhookEvent[] }) {
   if (events.length === 0) {
@@ -117,6 +175,7 @@ function WebhookEventList({ linkId, events }: { linkId: string; events: WebhookE
               <RetryEventButton linkId={linkId} eventId={event.id} />
             </div>
           ) : null}
+          <PayloadToggle linkId={linkId} eventId={event.id} />
         </li>
       ))}
     </ul>
@@ -128,15 +187,59 @@ function WebhookEventList({ linkId, events }: { linkId: string; events: WebhookE
  * project, rendered inside that link's single view — for troubleshooting
  * inbound sync (issue #26). It warns whenever any of the shown events failed
  * to apply.
+ *
+ * The screen renders the first page server-side and pages further back
+ * through history from here, so a link with a long tail of deliveries is
+ * still reachable without making every visit pay for it. `nextPage` is the
+ * API's own "0 means there is nothing after this" (see webhookevent.Page).
  */
 export function WebhookEventSection({
   linkId,
   events,
+  nextPage = 0,
 }: {
   linkId: string;
   events: WebhookEvent[];
+  nextPage?: number;
 }) {
-  const failedCount = events.filter((e) => e.status === "failed").length;
+  // Older pages are held next to the server-rendered first page rather than
+  // replacing it, so a router.refresh() (after a retry, say) still flows
+  // through: a new first page discards what was paged on top of the old one
+  // instead of stacking a stale tail underneath fresh rows.
+  const [paged, setPaged] = useState({ events: [] as WebhookEvent[], next: nextPage, from: events });
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (paged.from !== events) {
+    setPaged({ events: [], next: nextPage, from: events });
+  }
+
+  const loaded = [...events, ...paged.events];
+  const page = paged.next;
+  const failedCount = loaded.filter((e) => e.status === "failed").length;
+
+  async function loadMore() {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook-events?page=${page}&per_page=${events.length || 10}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) {
+        setError(await parseError(res, "Failed to load more events."));
+        return;
+      }
+      const body = (await res.json()) as WebhookEventPage;
+      setPaged((current) => ({
+        events: [...current.events, ...body.events],
+        next: body.nextPage,
+        from: current.from,
+      }));
+    } finally {
+      setPending(false);
+    }
+  }
 
   return (
     <Card>
@@ -152,7 +255,13 @@ export function WebhookEventSection({
             </AlertDescription>
           </Alert>
         ) : null}
-        <WebhookEventList linkId={linkId} events={events} />
+        <WebhookEventList linkId={linkId} events={loaded} />
+        {error ? <p className="text-destructive text-xs">{error}</p> : null}
+        {page > 0 ? (
+          <Button variant="outline" size="sm" onClick={loadMore} disabled={pending}>
+            {pending ? "Loading…" : "Show more"}
+          </Button>
+        ) : null}
       </CardContent>
     </Card>
   );

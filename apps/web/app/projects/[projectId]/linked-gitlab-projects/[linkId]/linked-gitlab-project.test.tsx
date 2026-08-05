@@ -84,7 +84,7 @@ describe("LinkedGitlabProjectPage", () => {
     getProject.mockResolvedValue(project);
     getLinkedGitlabProject.mockResolvedValue(link);
     getSyncRuns.mockResolvedValue([run]);
-    getWebhookEvents.mockResolvedValue([]);
+    getWebhookEvents.mockResolvedValue({ events: [], nextPage: 0 });
   });
 
   it("redirects to /login when not authenticated", async () => {

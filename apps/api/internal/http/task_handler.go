@@ -117,8 +117,12 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 	}
 
 	if v := r.URL.Query().Get("sort"); v != "" {
-		if v != task.SortPriority {
-			return task.ListFilter{}, errors.New("sort must be \"priority\"")
+		// The same three values the cross-project collection accepts (see
+		// parseCrossProjectFilter), so a screen's sort menu means the same
+		// thing whichever list backs it. Omitting sort is this list's manual
+		// position order, which the cross-project one has no equivalent for.
+		if v != task.SortPriority && v != task.SortDueOn && v != task.SortUpdatedAt {
+			return task.ListFilter{}, errors.New("sort must be one of priority, dueOn, updatedAt")
 		}
 		filter.Sort = v
 	}

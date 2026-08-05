@@ -293,6 +293,44 @@ func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
 	})
 }
 
+// The project-scoped list accepts the same sort values as the cross-project
+// one; dueOn and updatedAt are ordered in the service rather than in SQL, so
+// they get their own cases here.
+func TestService_List_SortsByDueDateAndRecency(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	early := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	undated, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Undated"})
+	require.NoError(t, err)
+	dueLate, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Late", DueOn: &late})
+	require.NoError(t, err)
+	dueEarly, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Early", DueOn: &early})
+	require.NoError(t, err)
+
+	byDueOn, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortDueOn})
+	require.NoError(t, err)
+	require.Len(t, byDueOn, 3)
+	assert.Equal(t, []uuid.UUID{dueEarly.ID, dueLate.ID, undated.ID}, []uuid.UUID{
+		byDueOn[0].ID, byDueOn[1].ID, byDueOn[2].ID,
+	}, "a task with no due date sorts last")
+
+	// Touching a task in the middle of the manual order makes it the most
+	// recently updated one, so this can't pass on position order by accident.
+	touched, err := svc.Update(ctx, owner, dueLate.ID, task.UpdateParams{Title: task.Present("Late, edited")})
+	require.NoError(t, err)
+
+	byUpdatedAt, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortUpdatedAt})
+	require.NoError(t, err)
+	require.Len(t, byUpdatedAt, 3)
+	assert.Equal(t, touched.ID, byUpdatedAt[0].ID, "the most recently updated task comes first")
+}
+
 func TestService_List_ReturnsNotFoundForForeignProject(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

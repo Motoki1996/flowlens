@@ -357,11 +357,15 @@ export function LinkedGitlabProjectDetail({
   link,
   syncRuns = [],
   webhookEvents = [],
+  webhookEventsNextPage = 0,
 }: {
   projectId: string;
   link: LinkedGitlabProject;
   syncRuns?: SyncRun[];
   webhookEvents?: WebhookEvent[];
+  // The API's paging cursor for the events above: 0 when there are no older
+  // deliveries left to fetch.
+  webhookEventsNextPage?: number;
 }) {
   return (
     <>
@@ -423,7 +427,7 @@ export function LinkedGitlabProjectDetail({
       </div>
 
       <div className="mt-8">
-        <WebhookEventSection linkId={link.id} events={webhookEvents} />
+        <WebhookEventSection linkId={link.id} events={webhookEvents} nextPage={webhookEventsNextPage} />
       </div>
     </>
   );

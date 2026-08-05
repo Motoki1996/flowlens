@@ -90,6 +90,67 @@ describe("LinkedGitlabProjectDetail", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  it("changes the sync scope, sending the scope and its labels together", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(makeLink({})), { status: 200 }));
+    render(<LinkedGitlabProjectDetail projectId="p1" link={makeLink({})} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByLabelText("Only issues with specific labels"));
+    fireEvent.change(screen.getByLabelText("Labels to sync"), {
+      target: { value: "bug, needs-triage" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:8080/api/v1/linked-gitlab-projects/link-1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({
+      syncScope: "labels",
+      syncLabels: ["bug", "needs-triage"],
+      isDefault: true,
+    });
+  });
+
+  it("rejects label scope with no labels without calling the API", () => {
+    render(<LinkedGitlabProjectDetail projectId="p1" link={makeLink({})} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.click(screen.getByLabelText("Only issues with specific labels"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(screen.getByText("Enter at least one label to sync by label.")).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("promotes a non-default link to be its connection's default", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify(makeLink({ isDefault: true })), { status: 200 }),
+    );
+    render(
+      <LinkedGitlabProjectDetail
+        projectId="p1"
+        link={makeLink({ isDefault: false, syncScope: "labels", syncLabels: ["bug"] })}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Set as default" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    const [, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      syncScope: "labels",
+      syncLabels: ["bug"],
+      isDefault: true,
+    });
+  });
+
+  it("shows a Default badge instead of the action when the link already is the default", () => {
+    render(<LinkedGitlabProjectDetail projectId="p1" link={makeLink({ isDefault: true })} />);
+    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set as default" })).not.toBeInTheDocument();
+  });
+
   it("confirms before unlinking, then returns to the connection", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
     render(<LinkedGitlabProjectDetail projectId="p1" link={makeLink({})} />);

@@ -3,6 +3,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Backlog, Task } from "@/types";
 import { TaskDetail } from "./TaskDetail";
 
+const push = vi.fn();
+const refresh = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push, refresh }),
+}));
+
 const backlog: Backlog = {
   id: "b1",
   projectId: "p1",
@@ -49,6 +55,8 @@ function makeTask(overrides: Partial<Task>): Task {
 
 describe("TaskDetail", () => {
   beforeEach(() => {
+    push.mockClear();
+    refresh.mockClear();
     vi.stubGlobal("fetch", vi.fn());
   });
 
@@ -87,6 +95,47 @@ describe("TaskDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument());
+  });
+
+  it("confirms before deleting, then returns to the task collection", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
+
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(screen.getByText("Delete this task?")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/projects/p1/tasks"));
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8080/api/v1/tasks/t1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("keeps the task when the delete is cancelled", () => {
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("shows an inline error when the delete fails", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "not_found", message: "task not found" } }), {
+        status: 404,
+      }),
+    );
+
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    expect(await screen.findByText("task not found")).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("assigns the task to a different backlog", async () => {

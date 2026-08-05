@@ -71,8 +71,24 @@ describe("TasksPage", () => {
       { id: "b1", projectId: "p1", name: "Sprint 1", description: "", position: 0 },
     ]);
     getTasks.mockResolvedValue([
-      { id: "t1", projectId: "p1", backlogId: "b1", title: "In sprint 1", status: "open" },
-      { id: "t2", projectId: "p1", backlogId: null, title: "Loose end", status: "open" },
+      {
+        id: "t1",
+        projectId: "p1",
+        backlogId: "b1",
+        title: "In sprint 1",
+        status: "open",
+        labels: [],
+        priority: "medium",
+      },
+      {
+        id: "t2",
+        projectId: "p1",
+        backlogId: null,
+        title: "Loose end",
+        status: "open",
+        labels: [],
+        priority: "medium",
+      },
     ]);
     render(
       await TasksPage({

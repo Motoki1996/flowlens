@@ -1,13 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { gitlabConnectionPath } from "@/lib/routes";
-import type { ApiError, LinkedGitlabProject, SyncRun, WebhookEvent } from "@/types";
+import type { ApiError, LinkedGitlabProject, SyncRun, SyncScope, WebhookEvent } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { WebhookBadge } from "@/components/WebhookBadge";
 import { SyncRunSection } from "@/components/SyncRunSection";
 import { WebhookEventSection } from "@/components/WebhookEventSection";
@@ -108,6 +110,183 @@ function RegisterWebhookButton({ linkId }: { linkId: string }) {
         {pending ? "Registering…" : "Register webhook"}
       </Button>
     </div>
+  );
+}
+
+/** parseLabels turns the comma-separated input into the API's syncLabels array. */
+function parseLabels(input: string) {
+  return input
+    .split(",")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/**
+ * SyncScopeSection shows the link's sync scope and swaps in a form to change
+ * it. PATCH /linked-gitlab-projects/{linkId} rewrites the scope wholesale
+ * rather than patching single fields, so every request here carries the scope
+ * and the labels that go with it — and `isDefault`, which the API only ever
+ * reads to *promote* a link (linkedproject.Service.Update), never to demote
+ * one. Passing the link's current value therefore leaves the default alone.
+ */
+function SyncScopeSection({ link }: { link: LinkedGitlabProject }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [scope, setScope] = useState<SyncScope>(link.syncScope);
+  const [labelsInput, setLabelsInput] = useState(link.syncLabels.join(", "));
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function cancel() {
+    setScope(link.syncScope);
+    setLabelsInput(link.syncLabels.join(", "));
+    setError(null);
+    setEditing(false);
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const labels = parseLabels(labelsInput);
+    if (scope === "labels" && labels.length === 0) {
+      setError("Enter at least one label to sync by label.");
+      return;
+    }
+
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${link.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          syncScope: scope,
+          syncLabels: labels,
+          isDefault: link.isDefault,
+        }),
+      });
+      if (!res.ok) {
+        setError(await parseError(res, "Failed to change the sync scope."));
+        return;
+      }
+      router.refresh();
+      setEditing(false);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <dd className="text-foreground flex flex-wrap items-center gap-2">
+        {link.syncScope === "all" ? "All issues" : `Labels: ${link.syncLabels.join(", ")}`}
+        <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+          Edit
+        </Button>
+      </dd>
+    );
+  }
+
+  return (
+    <dd>
+      <form onSubmit={handleSubmit} className="space-y-2" aria-label="Edit sync scope">
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+        <fieldset className="space-y-2 text-sm">
+          <legend className="sr-only">Sync scope</legend>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="edit-sync-scope"
+              checked={scope === "all"}
+              onChange={() => setScope("all")}
+            />
+            All issues
+          </label>
+          <label className="flex items-center gap-2">
+            <input
+              type="radio"
+              name="edit-sync-scope"
+              checked={scope === "labels"}
+              onChange={() => setScope("labels")}
+            />
+            Only issues with specific labels
+          </label>
+          {scope === "labels" ? (
+            <Input
+              aria-label="Labels to sync"
+              placeholder="bug, needs-triage"
+              value={labelsInput}
+              onChange={(e) => setLabelsInput(e.target.value)}
+            />
+          ) : null}
+        </fieldset>
+        <div className="flex gap-2">
+          <Button type="submit" size="sm" disabled={pending}>
+            {pending ? "Saving…" : "Save"}
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={cancel} disabled={pending}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </dd>
+  );
+}
+
+/**
+ * DefaultSection reports whether this is its connection's default link and
+ * offers to promote it when it isn't. The default is what a task's
+ * assignee/label pickers read their candidates from (issue #80), so with more
+ * than one link this is the only way to point them at the right project.
+ */
+function DefaultSection({ link }: { link: LinkedGitlabProject }) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleClick() {
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${link.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          syncScope: link.syncScope,
+          syncLabels: link.syncLabels,
+          isDefault: true,
+        }),
+      });
+      if (!res.ok) {
+        setError(await parseError(res, "Failed to set this project as the default."));
+        return;
+      }
+      router.refresh();
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (link.isDefault) {
+    return (
+      <dd>
+        <Badge variant="secondary">Default</Badge>
+      </dd>
+    );
+  }
+
+  return (
+    <dd className="flex flex-wrap items-center gap-2">
+      {error ? <span className="text-destructive text-xs">{error}</span> : null}
+      <Button variant="outline" size="sm" onClick={handleClick} disabled={pending}>
+        {pending ? "Setting…" : "Set as default"}
+      </Button>
+    </dd>
   );
 }
 
@@ -214,9 +393,11 @@ export function LinkedGitlabProjectDetail({
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
             <div>
               <dt className="text-muted-foreground">Sync scope</dt>
-              <dd className="text-foreground">
-                {link.syncScope === "all" ? "All issues" : `Labels: ${link.syncLabels.join(", ")}`}
-              </dd>
+              <SyncScopeSection link={link} />
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Default for this connection</dt>
+              <DefaultSection link={link} />
             </div>
             <div>
               <dt className="text-muted-foreground">Last synced</dt>

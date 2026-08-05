@@ -26,6 +26,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
+import { TaskBoardSection } from "@/components/TaskBoardSection";
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
@@ -37,7 +38,7 @@ const TaskTimelineSection = dynamic(
   { loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p> },
 );
 
-type ViewMode = "list" | "timeline";
+type ViewMode = "board" | "list" | "timeline";
 
 // "manual" keeps the API's own order (the drag-reorderable `position` field);
 // the rest mirror the sort values the cross-project Task collection accepts
@@ -626,9 +627,18 @@ export function TaskListSection({
                 <div className="flex" role="group" aria-label="View">
                   <Button
                     type="button"
-                    variant={view === "list" ? "default" : "outline"}
+                    variant={view === "board" ? "default" : "outline"}
                     size="sm"
                     className="rounded-r-none"
+                    onClick={() => setView("board")}
+                  >
+                    Board
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={view === "list" ? "default" : "outline"}
+                    size="sm"
+                    className="rounded-none"
                     onClick={() => setView("list")}
                   >
                     List
@@ -722,6 +732,8 @@ export function TaskListSection({
           // Checked before the view branch so the timeline doesn't answer an
           // empty filter result with its own "set a start or due date" hint.
           <p className="text-muted-foreground text-sm">{emptyFilterMessage()}</p>
+        ) : view === "board" ? (
+          <TaskBoardSection projectId={projectId} tasks={sorted} backlogs={backlogs} />
         ) : view === "timeline" ? (
           <TaskTimelineSection
             projectId={projectId}

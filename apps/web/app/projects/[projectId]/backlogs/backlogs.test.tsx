@@ -114,6 +114,8 @@ describe("BacklogsPage", () => {
   it("falls back to zero task counts when tasks fail to load", async () => {
     getTasks.mockRejectedValue(new Error("boom"));
     render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
+    // The per-backlog count lives in the List view mode; Board is the default.
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(screen.getByRole("link", { name: /Sprint 1/ })).toHaveTextContent("(0)");
   });
 });

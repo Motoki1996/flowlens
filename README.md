@@ -617,8 +617,8 @@ until someone switches to the Timeline:
   dropped.
 
 The Backlog collection (`/projects/{projectId}/backlogs`) has the same
-List / Timeline pair, drawing one bar per scheduled backlog with the same axis,
-colours and today marker. What it adds is **completion**: each bar is filled by
+Timeline mode alongside its Board and List modes, drawing one bar per
+scheduled backlog with the same axis, colours and today marker. What it adds is **completion**: each bar is filled by
 the share of that backlog's tasks that are closed, with the remainder drawn in
 the same hue at low opacity, so plan and progress are read in one place. The
 ratio is also stated as text (`3/8 closed (38%)`) beside the bar, in the
@@ -694,6 +694,34 @@ on the Backlog collection view, not its single view, per
 component for both tasks and backlogs, in list rows, timeline name columns
 and the task single view. A backlog's priority is independent of its tasks':
 creating or editing one never reads or writes the other.
+
+Both collections also **present** priority as a "Board" view mode (alongside
+List and Timeline, per the OOUI rule that a collection is one dataset
+presented several ways): one column per priority — Low, Medium, High, Urgent,
+left to right, so the axis reads as rising urgency — with a card per object
+stacked inside its column. The columns and their accents come from
+`apps/web/lib/priority.ts`, so the two boards can never disagree on which way
+the axis points.
+
+- **Backlog board** (`/projects/{projectId}/backlogs`, the collection's
+  *default* mode): each card shows the backlog's planned period and its
+  closed/total task ratio, with the ratio drawn as a fill and stated as text.
+- **Task board** (`/projects/{projectId}/tasks`, alongside the default List
+  mode): each card names the task's backlog (or Unclassified), its due date
+  and assignee, its labels, and its status and sync badges — the board's axis
+  is priority, so a closed task must not read as open just because of the
+  column it sits in. It renders the same filtered and sorted set the List and
+  Timeline modes do, so `?q=`/`?status=`/`?backlog=`/`?sort=` narrow every
+  mode together.
+
+Dragging a card to another column changes that object's priority through the
+same `PATCH /api/v1/backlogs/{backlogID}` / `PATCH /api/v1/tasks/{taskID}`,
+applied optimistically and rolled back with an error if the request fails.
+Each card also carries a priority select doing the same thing for keyboard and
+touch users, the way the List modes pair their drag handles with
+move-up/move-down buttons. Everything else stays in the List mode — creating,
+editing, deleting, manual reordering, and (for tasks) moving between backlogs
+— since a priority board's one axis is priority.
 
 ### Task & backlog reordering
 

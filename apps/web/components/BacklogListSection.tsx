@@ -7,7 +7,8 @@ import Link from "next/link";
 import { ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogPath, tasksPath } from "@/lib/routes";
-import { formatDate, fromApiDate, toApiDate } from "@/lib/dates";
+import { fromApiDate, toApiDate } from "@/lib/dates";
+import { backlogScheduleLabel } from "@/lib/backlogs";
 import type { ApiError, Backlog, Priority, Task } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -23,6 +24,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { BacklogBoardSection } from "@/components/BacklogBoardSection";
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
@@ -35,7 +37,7 @@ const BacklogTimelineSection = dynamic(
   { loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p> },
 );
 
-type ViewMode = "list" | "timeline";
+type ViewMode = "board" | "list" | "timeline";
 
 function taskCount(tasks: Task[], backlogId: string) {
   return tasks.filter((t) => t.backlogId === backlogId).length;
@@ -49,16 +51,6 @@ function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
   const [moved] = next.splice(fromIndex, 1);
   next.splice(toIndex, 0, moved);
   return next;
-}
-
-/** scheduleLabel renders a backlog's planned period for the list row. */
-function scheduleLabel(backlog: Backlog): string | null {
-  if (backlog.startDate && backlog.dueOn) {
-    return `${formatDate(backlog.startDate)} – ${formatDate(backlog.dueOn)}`;
-  }
-  if (backlog.startDate) return `From ${formatDate(backlog.startDate)}`;
-  if (backlog.dueOn) return `Due ${formatDate(backlog.dueOn)}`;
-  return null;
 }
 
 /** NewBacklogForm is the inline creation form shown in the backlog list. */
@@ -388,7 +380,9 @@ export function BacklogListSection({
 }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [view, setView] = useState<ViewMode>("list");
+  // Board is the default: priority is the first question asked of a backlog
+  // collection, and the board answers it without reading every row.
+  const [view, setView] = useState<ViewMode>("board");
 
   // `order` mirrors `backlogs` but is reordered optimistically on drag/move,
   // ahead of the PATCH .../backlogs/order round trip — router.refresh()
@@ -448,9 +442,18 @@ export function BacklogListSection({
               <div className="flex" role="group" aria-label="View">
                 <Button
                   type="button"
-                  variant={view === "list" ? "default" : "outline"}
+                  variant={view === "board" ? "default" : "outline"}
                   size="sm"
                   className="rounded-r-none"
+                  onClick={() => setView("board")}
+                >
+                  Board
+                </Button>
+                <Button
+                  type="button"
+                  variant={view === "list" ? "default" : "outline"}
+                  size="sm"
+                  className="rounded-none"
                   onClick={() => setView("list")}
                 >
                   List
@@ -482,6 +485,13 @@ export function BacklogListSection({
         ) : null}
         {backlogs.length === 0 ? (
           <p className="text-muted-foreground text-sm">No backlogs yet.</p>
+        ) : view === "board" ? (
+          <BacklogBoardSection
+            projectId={projectId}
+            backlogs={order}
+            tasks={tasks}
+            tasksError={tasksError}
+          />
         ) : view === "timeline" ? (
           <BacklogTimelineSection
             projectId={projectId}
@@ -557,9 +567,9 @@ export function BacklogListSection({
                         </Link>
                         <PriorityBadge priority={backlog.priority} />
                       </div>
-                      {scheduleLabel(backlog) ? (
+                      {backlogScheduleLabel(backlog) ? (
                         <p className="text-muted-foreground truncate text-xs">
-                          {scheduleLabel(backlog)}
+                          {backlogScheduleLabel(backlog)}
                         </p>
                       ) : null}
                     </div>

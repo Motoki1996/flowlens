@@ -1,6 +1,6 @@
 # Plan: closing the API/UI gaps under `/projects/[projectId]`
 
-**Status: in progress — Phase 1 shipped (2026-08-05); Phases 2 and 3 not started.**
+**Status: in progress — Phases 1 and 2 shipped (2026-08-05); Phase 3 not started.**
 
 This plan is time-limited (see [`docs/plans/README.md`](README.md)). Delete it
 once every phase below has shipped, folding what survives into
@@ -65,20 +65,32 @@ before this work — `tasks.test.tsx`'s partial task objects (no `labels`) and
 `getLinkedGitlabProjects`/`Members`/`Labels` — were repaired in the same pass,
 so `make test` is green again (271 tests).
 
-### Phase 2 — single-link endpoint (gap 4)
+### Phase 2 — single-link endpoint (gap 4) — **done**
 
-4. Add `GET /api/v1/linked-gitlab-projects/{linkID}` to the session-only
-   `protected` linked group in `server.go`, with a `handleGetLinkedGitlabProject`
-   reusing the owner-scoped lookup the other link handlers already share.
-   A link belonging to another user is a 404, matching `linkIDFromURL`'s
-   convention. Cover it in `linkedproject_handler_test.go` (found / not owned).
-5. Add `getLinkedGitlabProject(linkId)` to `apps/web/lib/api.ts` and replace the
-   list-and-`find()` in
-   `app/projects/[projectId]/linked-gitlab-projects/[linkId]/page.tsx`. Keep
-   the project-scoping check: 404 the page when the link's project isn't the
-   one in the URL, the same shape as the task and backlog single views.
+4. Added `GET /api/v1/projects/{projectID}/linked-gitlab-projects/{linkID}`
+   with `handleGetLinkedGitlabProject` and `linkedproject.Service.Get`, which
+   reuses the existing owner-scoped `GetLinkedGitlabProjectForOwner` query and
+   the `GetLinkedGitlabProjectProjectID` lookup — no new SQL, no migration, no
+   `sqlc` regeneration.
+5. Added `getLinkedGitlabProject(projectId, linkId)` to `apps/web/lib/api.ts`
+   and replaced the list-and-`find()` in
+   `app/projects/[projectId]/linked-gitlab-projects/[linkId]/page.tsx`.
 
-No migration; roughly three files plus tests.
+**Deviation from the plan as written:** the route is project-nested rather
+than the flat `/linked-gitlab-projects/{linkID}` the plan proposed. A link's
+response carries no project of its own — unlike a task or a backlog, a linked
+GitLab project has no `project_id` column, only a path through
+`gitlab_connections` — so a flat read gives the page nothing to check the URL's
+project against, and the plan's "keep the project-scoping check" is
+unimplementable without widening the DTO (which would touch every read path
+and the `FakeQuerier`). Nesting moves the check server-side instead: another
+project's link is a 404, which is also what the task and backlog single views
+end up showing. The mutations stay flat, as they were.
+
+Tests: `TestHandleGetLinkedGitlabProject_ReturnsTheLink` plus a table-driven
+`_ForeignLinkGets404` covering another user's link, another of the caller's own
+projects, and an unknown ID. `loginSessionAs` was extracted from
+`loginSession` so a second session is one line.
 
 ### Phase 3 — list and pagination polish (gaps 5–7)
 

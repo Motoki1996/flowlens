@@ -253,7 +253,10 @@ Paste the base URL of your GitLab CE instance (e.g.
 connection form (`PUT /api/v1/projects/{projectID}/gitlab-connection`), then
 use **Test connection** (`POST .../gitlab-connection/test`) to confirm
 FlowLens can reach the instance and the token is both valid and sufficiently
-scoped before linking any project.
+scoped before linking any project. **Disconnect**
+(`DELETE .../gitlab-connection`) removes the stored token and, with it, every
+project linked through the connection; the tasks themselves stay, as local
+tasks.
 
 ### Linking a GitLab project and the initial import
 
@@ -271,8 +274,13 @@ see (`GET .../gitlab-connection/available-projects`) and link one
 
 The first project you link becomes that FlowLens project's **default**
 linked GitLab project — new tasks with no explicit link are pushed there.
-Trigger a re-sync at any time from the linked project's view
-(`POST .../sync-runs`, `kind = 'manual_resync'`).
+Any other link can be promoted to default afterwards from its own view
+(`PATCH /api/v1/linked-gitlab-projects/{linkID}` with `isDefault: true`);
+there is no way to leave a connection with no default at all. A single link
+reads back at `GET /api/v1/projects/{projectID}/linked-gitlab-projects/{linkID}`
+— project-nested, unlike the flat `PATCH`/`DELETE`, because the link itself
+carries no project in its response. Trigger a re-sync at any time from the
+linked project's view (`POST .../sync-runs`, `kind = 'manual_resync'`).
 
 ### What FlowLens registers as a webhook
 
@@ -313,8 +321,10 @@ carries no GitLab user ID until the project is connected.
 
 ### Sync scope
 
-Each linked GitLab project has its own sync scope, set when linking or
-changed later (`PATCH /api/v1/linked-gitlab-projects/{linkID}`):
+Each linked GitLab project has its own sync scope, set when linking and
+changed later from the link's own view
+(`PATCH /api/v1/linked-gitlab-projects/{linkID}`, which rewrites the scope
+wholesale rather than patching single fields):
 
 - **`all`** — every issue in the GitLab project is synced.
 - **`labels`** — only issues carrying at least one of an explicit label

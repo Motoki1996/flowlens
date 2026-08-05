@@ -2,7 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import type { SyncRun, WebhookEvent } from "@/types";
 import {
   getCurrentUser,
-  getLinkedGitlabProjects,
+  getLinkedGitlabProject,
   getProject,
   getSyncRuns,
   getWebhookEvents,
@@ -23,11 +23,10 @@ export default async function LinkedGitlabProjectPage({
   const project = await getProject(projectId);
   if (!project) notFound();
 
-  // The API lists a project's links but has no single-link endpoint, so the
-  // link is picked out of the project's own list — which also scopes it to
-  // this project for free.
-  const links = await getLinkedGitlabProjects(projectId);
-  const link = links.find((l) => l.id === linkId);
+  // The read is project-scoped by the API itself, so a link belonging to
+  // another project (or another user) arrives here as a plain 404, the same
+  // as the task and backlog single views.
+  const link = await getLinkedGitlabProject(projectId, linkId);
   if (!link) notFound();
 
   let syncRuns: SyncRun[] = [];

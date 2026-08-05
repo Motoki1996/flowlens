@@ -278,6 +278,29 @@ export const getLinkedGitlabProjects = cache(async (projectId: string): Promise<
 });
 
 /**
+ * getLinkedGitlabProject returns one of the project's linked GitLab projects,
+ * or null when it doesn't exist, isn't owned by the current user, or belongs
+ * to a different project (the API reports all three as 404 — a link carries
+ * no project of its own in the response, which is why the project is part of
+ * the route rather than something the caller checks afterwards).
+ */
+export async function getLinkedGitlabProject(
+  projectId: string,
+  linkId: string,
+): Promise<LinkedGitlabProject | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/linked-gitlab-projects/${linkId}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load linked gitlab project: ${res.status}`);
+  }
+  return (await res.json()) as LinkedGitlabProject;
+}
+
+/**
  * getLinkedGitlabProjectMembers returns a linked GitLab project's members,
  * for a task's assignee picker. Callers must already know the request is
  * authenticated.

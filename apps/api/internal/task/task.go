@@ -35,6 +35,7 @@ import (
 var (
 	ErrInvalidTitle          = errors.New("task: title must be 1-255 characters")
 	ErrInvalidPriority       = errors.New("task: priority must be one of low, medium, high, urgent")
+	ErrInvalidProgress       = errors.New("task: progress must be one of not_started, in_progress, on_hold, done")
 	ErrNotFound              = errors.New("task: not found")
 	ErrBacklogNotInProject   = errors.New("task: backlog belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
@@ -61,6 +62,22 @@ const (
 	PriorityUrgent = "urgent"
 
 	SortPriority = "priority"
+)
+
+// Progress values, the task's own four-stage work state, app-only and never
+// synced to GitLab per the 000011 migration. It is deliberately separate from
+// Status: that is the GitLab issue state (open/closed) and syncs both ways,
+// while progress is FlowLens's own and neither value ever writes the other —
+// a task closed on GitLab keeps whatever progress it had. SortProgress is the
+// Sort value that orders by progress rank, running not_started first through
+// done, so the order reads as the work advancing.
+const (
+	ProgressNotStarted = "not_started"
+	ProgressInProgress = "in_progress"
+	ProgressOnHold     = "on_hold"
+	ProgressDone       = "done"
+
+	SortProgress = "progress"
 )
 
 // Sort values accepted by ListForOwner's CrossProjectFilter.Sort, alongside
@@ -164,6 +181,7 @@ type Task struct {
 	DueOn                  *time.Time  `json:"dueOn"`
 	StartDate              *time.Time  `json:"startDate"`
 	Priority               string      `json:"priority"`
+	Progress               string      `json:"progress"`
 	Position               int32       `json:"position"`
 	CreatedByUserID        uuid.UUID   `json:"createdByUserId"`
 	CreatedAt              time.Time   `json:"createdAt"`
@@ -188,6 +206,7 @@ func fromRow(row db.Task) Task {
 		DueOn:                  datePtr(row.DueOn),
 		StartDate:              datePtr(row.StartDate),
 		Priority:               row.Priority,
+		Progress:               row.Progress,
 		Position:               row.Position,
 		CreatedByUserID:        row.CreatedByUserID,
 		CreatedAt:              row.CreatedAt.Time,
@@ -285,6 +304,8 @@ type CreateParams struct {
 	StartDate              *time.Time
 	// Priority defaults to PriorityMedium when empty.
 	Priority string
+	// Progress defaults to ProgressNotStarted when empty.
+	Progress string
 }
 
 // UpdateParams holds the fields accepted when updating a task. A nil
@@ -309,6 +330,9 @@ type UpdateParams struct {
 	// empty string resets it to PriorityMedium, the same as an absent
 	// Priority on CreateParams.
 	Priority Optional[string]
+	// Progress follows the same absent/explicit-empty rule as Priority,
+	// resetting to ProgressNotStarted when explicitly empty.
+	Progress Optional[string]
 	Position Optional[int32]
 }
 
@@ -326,6 +350,7 @@ type resolvedUpdate struct {
 	DueOn                  *time.Time
 	StartDate              *time.Time
 	Priority               string
+	Progress               string
 	Position               int32
 }
 
@@ -340,6 +365,7 @@ func (p UpdateParams) resolve(current Task) resolvedUpdate {
 		DueOn:                  p.DueOn.Or(current.DueOn),
 		StartDate:              p.StartDate.Or(current.StartDate),
 		Priority:               p.Priority.Or(current.Priority),
+		Progress:               p.Progress.Or(current.Progress),
 		Position:               p.Position.Or(current.Position),
 	}
 }
@@ -428,6 +454,20 @@ func normalizePriority(raw string) (string, error) {
 	}
 }
 
+// normalizeProgress defaults an empty raw to ProgressNotStarted, following
+// normalizePriority's absent/explicit-empty rule, and otherwise rejects
+// anything outside the fixed set.
+func normalizeProgress(raw string) (string, error) {
+	switch raw {
+	case "":
+		return ProgressNotStarted, nil
+	case ProgressNotStarted, ProgressInProgress, ProgressOnHold, ProgressDone:
+		return raw, nil
+	default:
+		return "", ErrInvalidProgress
+	}
+}
+
 // validateBacklog checks that backlogID, if set, both belongs to ownerID and
 // is inside projectID. A backlog that exists but belongs to a different
 // project of the same owner is rejected the same as a missing one: it is
@@ -484,6 +524,10 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 	if err != nil {
 		return Task{}, err
 	}
+	progress, err := normalizeProgress(params.Progress)
+	if err != nil {
+		return Task{}, err
+	}
 	if err := s.validateBacklog(ctx, ownerID, projectID, params.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -515,6 +559,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 			DueOn:                  toDate(params.DueOn),
 			StartDate:              toDate(params.StartDate),
 			Priority:               priority,
+			Progress:               progress,
 			CreatedByUserID:        ownerID,
 		})
 		if err != nil {
@@ -596,8 +641,10 @@ type ListFilter struct {
 	Unassigned bool       // true: only unfiled tasks (backlog_id IS NULL); mutually exclusive with BacklogID
 	Status     string     // "open" | "closed" | "" (no filter)
 	Priority   string     // one of the Priority* constants, or "" (no filter)
+	Progress   string     // one of the Progress* constants, or "" (no filter)
 	// Sort is "" (position ASC, created_at ASC, the manual/DnD order),
-	// SortPriority (priority rank DESC), SortDueOn (due date ASC, tasks
+	// SortPriority (priority rank DESC), SortProgress (progress rank ASC,
+	// not_started first), SortDueOn (due date ASC, tasks
 	// with no due date last) or SortUpdatedAt (most recently updated
 	// first) — the same three the cross-project collection accepts, so the
 	// two lists don't disagree on what a sort value means. Each keeps the
@@ -622,7 +669,9 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		BacklogID:      toUUID(filter.BacklogID),
 		Status:         filter.Status,
 		Priority:       filter.Priority,
+		Progress:       filter.Progress,
 		SortByPriority: filter.Sort == SortPriority,
+		SortByProgress: filter.Sort == SortProgress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("task: list: %w", err)
@@ -678,11 +727,13 @@ func sortTasks(tasks []Task, by string) {
 type CrossProjectFilter struct {
 	Status        string      // "open" | "closed" | "" (no filter)
 	Priority      string      // one of the Priority* constants, or "" (no filter)
+	Progress      string      // one of the Progress* constants, or "" (no filter)
 	DueBefore     *time.Time  // non-nil: only tasks due on or before this date
 	DueAfter      *time.Time  // non-nil: only tasks due on or after this date
 	StartedBefore *time.Time  // non-nil: only tasks whose start date has arrived (start_date <= this date)
 	ProjectIDs    []uuid.UUID // non-empty: only these projects, still scoped to the caller's own
-	// Sort is one of SortDueOn (default), SortPriority or SortUpdatedAt.
+	// Sort is one of SortDueOn (default), SortPriority, SortProgress or
+	// SortUpdatedAt.
 	Sort string
 	// Limit caps the number of tasks returned; non-positive defaults to
 	// DefaultCrossProjectLimit, and anything above MaxCrossProjectLimit is
@@ -717,6 +768,7 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 		OwnerUserID:   ownerID,
 		Status:        filter.Status,
 		Priority:      filter.Priority,
+		Progress:      filter.Progress,
 		DueBefore:     toDate(filter.DueBefore),
 		DueAfter:      toDate(filter.DueAfter),
 		StartedBefore: toDate(filter.StartedBefore),
@@ -754,6 +806,7 @@ func fromCrossProjectRow(row db.ListTasksForOwnerRow) TaskWithProject {
 			DueOn:                  row.DueOn,
 			StartDate:              row.StartDate,
 			Priority:               row.Priority,
+			Progress:               row.Progress,
 			Position:               row.Position,
 			CreatedByUserID:        row.CreatedByUserID,
 			CreatedAt:              row.CreatedAt,
@@ -952,6 +1005,11 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 		return Task{}, err
 	}
 	resolved.Priority = priority
+	progress, err := normalizeProgress(resolved.Progress)
+	if err != nil {
+		return Task{}, err
+	}
+	resolved.Progress = progress
 	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, resolved.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -972,6 +1030,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			DueOn:                  toDate(resolved.DueOn),
 			StartDate:              toDate(resolved.StartDate),
 			Priority:               resolved.Priority,
+			Progress:               resolved.Progress,
 			Position:               resolved.Position,
 		})
 		if err != nil {

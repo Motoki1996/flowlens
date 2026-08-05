@@ -19,13 +19,15 @@ type createBacklogRequest struct {
 	StartDate   *time.Time `json:"startDate"`
 	DueOn       *time.Time `json:"dueOn"`
 	Priority    string     `json:"priority"`
+	Progress    string     `json:"progress"`
 }
 
-// The dates and priority are Optional so PATCH stays a partial update for
-// them: a body without "startDate"/"priority" keeps the stored value, and an
-// explicit null clears a date (priority has no null case — see
-// backlog.normalizePriority). Name/description/position predate that and are
-// still overwritten wholesale.
+// The dates, priority and progress are Optional so PATCH stays a partial
+// update for them: a body without "startDate"/"priority"/"progress" keeps the
+// stored value, and an explicit null clears a date (priority and progress
+// have no null case — see backlog.normalizePriority/normalizeProgress).
+// Name/description/position predate that and are still overwritten
+// wholesale.
 type updateBacklogRequest struct {
 	Name        string                        `json:"name"`
 	Description string                        `json:"description"`
@@ -33,6 +35,7 @@ type updateBacklogRequest struct {
 	StartDate   optional.Optional[*time.Time] `json:"startDate"`
 	DueOn       optional.Optional[*time.Time] `json:"dueOn"`
 	Priority    optional.Optional[string]     `json:"priority"`
+	Progress    optional.Optional[string]     `json:"progress"`
 }
 
 // reorderBacklogsRequest carries a project's full, newly-ordered backlog ID
@@ -113,9 +116,20 @@ func isValidBacklogPriority(v string) bool {
 	}
 }
 
-// parseBacklogListFilter reads the ?priority= and ?sort= query parameters,
-// the same way parseTaskListFilter does for tasks. Either may be omitted to
-// mean "no filter"/"default order".
+// isValidBacklogProgress reports whether v is one of the fixed progress
+// values.
+func isValidBacklogProgress(v string) bool {
+	switch v {
+	case backlog.ProgressNotStarted, backlog.ProgressInProgress, backlog.ProgressOnHold, backlog.ProgressDone:
+		return true
+	default:
+		return false
+	}
+}
+
+// parseBacklogListFilter reads the ?priority=, ?progress= and ?sort= query
+// parameters, the same way parseTaskListFilter does for tasks. Any may be
+// omitted to mean "no filter"/"default order".
 func parseBacklogListFilter(r *http.Request) (backlog.ListFilter, error) {
 	var filter backlog.ListFilter
 
@@ -126,9 +140,16 @@ func parseBacklogListFilter(r *http.Request) (backlog.ListFilter, error) {
 		filter.Priority = v
 	}
 
+	if v := r.URL.Query().Get("progress"); v != "" {
+		if !isValidBacklogProgress(v) {
+			return backlog.ListFilter{}, errors.New("progress must be one of not_started, in_progress, on_hold, done")
+		}
+		filter.Progress = v
+	}
+
 	if v := r.URL.Query().Get("sort"); v != "" {
-		if v != backlog.SortPriority {
-			return backlog.ListFilter{}, errors.New("sort must be \"priority\"")
+		if v != backlog.SortPriority && v != backlog.SortProgress {
+			return backlog.ListFilter{}, errors.New("sort must be one of priority, progress")
 		}
 		filter.Sort = v
 	}
@@ -158,6 +179,7 @@ func (s *Server) handleCreateBacklog(w http.ResponseWriter, r *http.Request) {
 		StartDate:   req.StartDate,
 		DueOn:       req.DueOn,
 		Priority:    req.Priority,
+		Progress:    req.Progress,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -207,6 +229,7 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		StartDate:   req.StartDate,
 		DueOn:       req.DueOn,
 		Priority:    req.Priority,
+		Progress:    req.Progress,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -242,6 +265,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_schedule", "start date must not be after due date")
 	case errors.Is(err, backlog.ErrInvalidPriority):
 		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
+	case errors.Is(err, backlog.ErrInvalidProgress):
+		writeError(w, http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done")
 	case errors.Is(err, backlog.ErrBacklogIDsMismatch):
 		writeError(w, http.StatusBadRequest, "backlog_ids_mismatch", "backlogIds must exactly match the project's current backlogs")
 	case errors.Is(err, backlog.ErrNotFound):

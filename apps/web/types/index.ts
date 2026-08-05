@@ -30,6 +30,12 @@ export interface Project {
 // backlog's priority is independent of its tasks'.
 export type Priority = "low" | "medium" | "high" | "urgent";
 
+// Progress is shared by Task and Backlog: the four-stage work state FlowLens
+// tracks itself. App-only like Priority, and deliberately separate from a
+// task's `status` — that one is the GitLab issue state (open/closed) and syncs
+// both ways, while progress never does and neither value writes the other.
+export type Progress = "not_started" | "in_progress" | "on_hold" | "done";
+
 export interface Backlog {
   id: string;
   projectId: string;
@@ -41,6 +47,7 @@ export interface Backlog {
   startDate: string | null;
   dueOn: string | null;
   priority: Priority;
+  progress: Progress;
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +86,7 @@ export interface Task {
   dueOn: string | null;
   startDate: string | null;
   priority: Priority;
+  progress: Progress;
   position: number;
   createdByUserId: string;
   createdAt: string;

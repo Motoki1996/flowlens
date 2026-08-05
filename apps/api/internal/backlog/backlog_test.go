@@ -109,6 +109,68 @@ func TestService_Update_ChangesPriority(t *testing.T) {
 	assert.ErrorIs(t, err, backlog.ErrInvalidPriority)
 }
 
+// Progress is the backlog's own four-stage work state, independent of the
+// closed/total task ratio the UI derives separately.
+func TestService_Update_ChangesProgress(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1"})
+	require.NoError(t, err)
+	require.Equal(t, backlog.ProgressNotStarted, created.Progress, "an absent progress defaults to not_started")
+
+	untouched, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"})
+	require.NoError(t, err)
+	assert.Equal(t, backlog.ProgressNotStarted, untouched.Progress)
+
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name:     "Sprint 1",
+		Progress: optional.Present(backlog.ProgressInProgress),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, backlog.ProgressInProgress, updated.Progress)
+
+	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name:     "Sprint 1",
+		Progress: optional.Present("nearly-done"),
+	})
+	assert.ErrorIs(t, err, backlog.ErrInvalidProgress)
+}
+
+func TestService_List_FiltersAndSortsByProgress(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	// Created in the reverse of the progress order, so the sort proves it
+	// overrides the manual position order.
+	done, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Done", Progress: backlog.ProgressDone})
+	require.NoError(t, err)
+	onHold, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "On hold", Progress: backlog.ProgressOnHold})
+	require.NoError(t, err)
+	inProgress, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "In progress", Progress: backlog.ProgressInProgress})
+	require.NoError(t, err)
+	notStarted, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Not started"})
+	require.NoError(t, err)
+
+	filtered, err := svc.List(ctx, owner, p.ID, backlog.ListFilter{Progress: backlog.ProgressOnHold})
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, onHold.ID, filtered[0].ID)
+
+	sorted, err := svc.List(ctx, owner, p.ID, backlog.ListFilter{Sort: backlog.SortProgress})
+	require.NoError(t, err)
+	require.Len(t, sorted, 4)
+	assert.Equal(t, []uuid.UUID{notStarted.ID, inProgress.ID, onHold.ID, done.ID}, []uuid.UUID{
+		sorted[0].ID, sorted[1].ID, sorted[2].ID, sorted[3].ID,
+	})
+}
+
 func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

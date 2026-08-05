@@ -17,11 +17,12 @@ const backlog: Backlog = {
   startDate: null,
   dueOn: null,
   priority: "medium",
+  progress: "not_started",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
 
-const urgentBacklog: Backlog = { ...backlog, id: "b2", name: "Hotfixes", priority: "urgent" };
+const heldBacklog: Backlog = { ...backlog, id: "b2", name: "Hotfixes", progress: "on_hold" };
 
 /** card returns the board card of one backlog, found through its title link. */
 function card(name: string) {
@@ -34,24 +35,24 @@ describe("BacklogBoardSection", () => {
     vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("puts each backlog in its priority's column", () => {
-    render(<BacklogBoardSection projectId="p1" backlogs={[backlog, urgentBacklog]} tasks={[]} />);
+  it("puts each backlog in its progress's column", () => {
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog, heldBacklog]} tasks={[]} />);
 
-    const urgent = screen.getByRole("region", { name: "Urgent backlogs" });
-    expect(within(urgent).getByRole("link", { name: "Hotfixes" })).toHaveAttribute(
+    const onHold = screen.getByRole("region", { name: "On hold backlogs" });
+    expect(within(onHold).getByRole("link", { name: "Hotfixes" })).toHaveAttribute(
       "href",
       "/projects/p1/backlogs/b2",
     );
 
-    const medium = screen.getByRole("region", { name: "Medium backlogs" });
-    expect(within(medium).getByRole("link", { name: "Sprint 1" })).toBeInTheDocument();
+    const notStarted = screen.getByRole("region", { name: "Not started backlogs" });
+    expect(within(notStarted).getByRole("link", { name: "Sprint 1" })).toBeInTheDocument();
 
     expect(
-      within(screen.getByRole("region", { name: "High backlogs" })).getByText("No backlogs."),
+      within(screen.getByRole("region", { name: "Done backlogs" })).getByText("No backlogs."),
     ).toBeInTheDocument();
   });
 
-  it("shows a card's task progress and planned period", () => {
+  it("shows a card's closed-task ratio and planned period", () => {
     const tasks = [
       { id: "t1", backlogId: "b1", status: "closed" },
       { id: "t2", backlogId: "b1", status: "open" },
@@ -63,18 +64,18 @@ describe("BacklogBoardSection", () => {
     expect(within(card("Sprint 1")).getByText(/Aug 1, 2026\s*–\s*Aug 31, 2026/)).toBeInTheDocument();
   });
 
-  it("changes a backlog's priority when its card is dropped on another column", async () => {
+  it("changes a backlog's progress when its card is dropped on another column", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ ...backlog, priority: "urgent" }), { status: 200 }),
+      new Response(JSON.stringify({ ...backlog, progress: "in_progress" }), { status: 200 }),
     );
     render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
 
     fireEvent.dragStart(card("Sprint 1"));
-    fireEvent.drop(screen.getByRole("region", { name: "Urgent backlogs" }));
+    fireEvent.drop(screen.getByRole("region", { name: "In progress backlogs" }));
 
     // The card moves ahead of the response, so the drag reads as a drag.
     expect(
-      within(screen.getByRole("region", { name: "Urgent backlogs" })).getByRole("link", {
+      within(screen.getByRole("region", { name: "In progress backlogs" })).getByRole("link", {
         name: "Sprint 1",
       }),
     ).toBeInTheDocument();
@@ -84,24 +85,26 @@ describe("BacklogBoardSection", () => {
       "http://localhost:8080/api/v1/backlogs/b1",
       expect.objectContaining({ method: "PATCH" }),
     );
+    // The backlog PATCH overwrites every editable column, so the body has to
+    // echo the priority back unchanged rather than dropping it.
     const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1]?.body as string);
-    expect(body).toMatchObject({ name: "Sprint 1", priority: "urgent" });
+    expect(body).toMatchObject({ name: "Sprint 1", priority: "medium", progress: "in_progress" });
   });
 
   it("puts the card back and reports the error when the change fails", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ error: { code: "invalid_priority", message: "Nope" } }), {
+      new Response(JSON.stringify({ error: { code: "invalid_progress", message: "Nope" } }), {
         status: 400,
       }),
     );
     render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
 
     fireEvent.dragStart(card("Sprint 1"));
-    fireEvent.drop(screen.getByRole("region", { name: "Urgent backlogs" }));
+    fireEvent.drop(screen.getByRole("region", { name: "Done backlogs" }));
 
     expect(await screen.findByText("Nope")).toBeInTheDocument();
     expect(
-      within(screen.getByRole("region", { name: "Medium backlogs" })).getByRole("link", {
+      within(screen.getByRole("region", { name: "Not started backlogs" })).getByRole("link", {
         name: "Sprint 1",
       }),
     ).toBeInTheDocument();
@@ -111,7 +114,7 @@ describe("BacklogBoardSection", () => {
     render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
 
     fireEvent.dragStart(card("Sprint 1"));
-    fireEvent.drop(screen.getByRole("region", { name: "Medium backlogs" }));
+    fireEvent.drop(screen.getByRole("region", { name: "Not started backlogs" }));
 
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -119,7 +122,9 @@ describe("BacklogBoardSection", () => {
   it("says so instead of showing every backlog as taskless when tasks failed to load", () => {
     render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} tasksError />);
 
-    expect(screen.getByText("Failed to load tasks — progress is unavailable.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Failed to load tasks — the closed-task ratio is unavailable."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("No tasks")).not.toBeInTheDocument();
   });
 });

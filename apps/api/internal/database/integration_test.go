@@ -162,7 +162,7 @@ func TestBacklogQueriesEnforceOwnership(t *testing.T) {
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
 	require.NoError(t, err)
 
-	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium"})
+	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium", Progress: "not_started"})
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), b.Position)
 
@@ -217,7 +217,7 @@ func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
 	owner := createUser(t, q, "owner")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
 	require.NoError(t, err)
-	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium"})
+	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium", Progress: "not_started"})
 	require.NoError(t, err)
 
 	var taskID uuid.UUID
@@ -439,6 +439,7 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 		Title:           "Task synced with GitLab",
 		Labels:          []string{},
 		Priority:        "medium",
+		Progress:        "not_started",
 		CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
@@ -488,17 +489,17 @@ func TestListTasksForOwner(t *testing.T) {
 	later := time.Now().AddDate(0, 0, 10)
 
 	inAlpha, err := q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: alpha.ID, Title: "In alpha, due soon", Labels: []string{}, Priority: "urgent",
+		ProjectID: alpha.ID, Title: "In alpha, due soon", Labels: []string{}, Priority: "urgent", Progress: "not_started",
 		DueOn: pgtype.Date{Time: soon, Valid: true}, CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 	inBeta, err := q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: beta.ID, Title: "In beta, due later", Labels: []string{}, Priority: "low",
+		ProjectID: beta.ID, Title: "In beta, due later", Labels: []string{}, Priority: "low", Progress: "in_progress",
 		DueOn: pgtype.Date{Time: later, Valid: true}, CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 	_, err = q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: theirs.ID, Title: "Not the owner's", Labels: []string{}, Priority: "urgent", CreatedByUserID: intruder.ID,
+		ProjectID: theirs.ID, Title: "Not the owner's", Labels: []string{}, Priority: "urgent", Progress: "not_started", CreatedByUserID: intruder.ID,
 	})
 	require.NoError(t, err)
 
@@ -529,6 +530,26 @@ func TestListTasksForOwner(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		assert.Equal(t, inBeta.ID, rows[0].ID)
+	})
+
+	t.Run("progress filter narrows to one task", func(t *testing.T) {
+		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+			OwnerUserID: owner.ID, Progress: "in_progress", ProjectIds: []uuid.UUID{}, Sort: "dueOn", LimitCount: 50,
+		})
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, "In beta, due later", rows[0].Title)
+	})
+
+	// Progress ranks the other way from priority: not_started first.
+	t.Run("sort=progress ranks not_started first regardless of due date", func(t *testing.T) {
+		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{}, Sort: "progress", LimitCount: 50,
+		})
+		require.NoError(t, err)
+		require.Len(t, rows, 2)
+		assert.Equal(t, "In alpha, due soon", rows[0].Title)
+		assert.Equal(t, "In beta, due later", rows[1].Title)
 	})
 
 	t.Run("sort=priority ranks urgent first regardless of due date", func(t *testing.T) {

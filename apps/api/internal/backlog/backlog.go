@@ -32,6 +32,7 @@ var (
 	ErrInvalidName        = errors.New("backlog: name must be 1-100 characters")
 	ErrInvalidSchedule    = errors.New("backlog: start date must not be after due date")
 	ErrInvalidPriority    = errors.New("backlog: priority must be one of low, medium, high, urgent")
+	ErrInvalidProgress    = errors.New("backlog: progress must be one of not_started, in_progress, on_hold, done")
 	ErrNotFound           = errors.New("backlog: not found")
 	ErrBacklogIDsMismatch = errors.New("backlog: backlogIds must exactly match the project's current backlogs")
 )
@@ -49,6 +50,21 @@ const (
 	SortPriority = "priority"
 )
 
+// Progress values, the backlog's own four-stage work state. App-only and
+// never synced to GitLab, mirroring internal/task's — and, like a task's,
+// independent of anything GitLab reports (see the 000011 migration). A
+// backlog's progress is its own, not derived from its tasks'. SortProgress is
+// the ListFilter.Sort value that switches List's ORDER BY from position to
+// progress rank, running not_started first through done.
+const (
+	ProgressNotStarted = "not_started"
+	ProgressInProgress = "in_progress"
+	ProgressOnHold     = "on_hold"
+	ProgressDone       = "done"
+
+	SortProgress = "progress"
+)
+
 // Backlog is the API-facing representation of a project backlog. StartDate and
 // DueOn are the backlog's planned period, drawn as one bar on the Backlog
 // timeline. Both are app-only and never synced to GitLab — a backlog is not a
@@ -62,6 +78,7 @@ type Backlog struct {
 	StartDate   *time.Time `json:"startDate"`
 	DueOn       *time.Time `json:"dueOn"`
 	Priority    string     `json:"priority"`
+	Progress    string     `json:"progress"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	UpdatedAt   time.Time  `json:"updatedAt"`
 }
@@ -77,6 +94,7 @@ func fromRow(row db.Backlog) Backlog {
 		StartDate:   datePtr(row.StartDate),
 		DueOn:       datePtr(row.DueOn),
 		Priority:    row.Priority,
+		Progress:    row.Progress,
 		CreatedAt:   row.CreatedAt.Time,
 		UpdatedAt:   row.UpdatedAt.Time,
 	}
@@ -122,6 +140,20 @@ func normalizePriority(raw string) (string, error) {
 	}
 }
 
+// normalizeProgress defaults an empty raw to ProgressNotStarted, the same
+// absent/explicit-empty rule normalizePriority follows, and otherwise rejects
+// anything outside the fixed set.
+func normalizeProgress(raw string) (string, error) {
+	switch raw {
+	case "":
+		return ProgressNotStarted, nil
+	case ProgressNotStarted, ProgressInProgress, ProgressOnHold, ProgressDone:
+		return raw, nil
+	default:
+		return "", ErrInvalidProgress
+	}
+}
+
 // Service manages backlogs inside projects owned by a single user.
 type Service struct {
 	q        db.Querier
@@ -153,6 +185,8 @@ type CreateParams struct {
 	DueOn       *time.Time
 	// Priority defaults to PriorityMedium when empty.
 	Priority string
+	// Progress defaults to ProgressNotStarted when empty.
+	Progress string
 }
 
 // Create validates name and creates a backlog at the end of projectID's
@@ -177,6 +211,10 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	if err != nil {
 		return Backlog{}, err
 	}
+	progress, err := normalizeProgress(p.Progress)
+	if err != nil {
+		return Backlog{}, err
+	}
 	row, err := s.q.CreateBacklog(ctx, db.CreateBacklogParams{
 		ProjectID:   projectID,
 		Name:        normalized,
@@ -184,6 +222,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 		StartDate:   toDate(p.StartDate),
 		DueOn:       toDate(p.DueOn),
 		Priority:    priority,
+		Progress:    progress,
 	})
 	if err != nil {
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
@@ -195,8 +234,10 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 // value means "no filter, default (position) order".
 type ListFilter struct {
 	Priority string // one of the Priority* constants, or "" (no filter)
-	// Sort is "" (position ASC, created_at ASC, the manual order) or
-	// SortPriority (priority rank DESC, then the same tiebreak).
+	Progress string // one of the Progress* constants, or "" (no filter)
+	// Sort is "" (position ASC, created_at ASC, the manual order),
+	// SortPriority (priority rank DESC, then the same tiebreak) or
+	// SortProgress (progress rank ASC, then the same tiebreak).
 	Sort string
 }
 
@@ -214,7 +255,9 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	rows, err := s.q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{
 		ProjectID:      projectID,
 		Priority:       filter.Priority,
+		Progress:       filter.Progress,
 		SortByPriority: filter.Sort == SortPriority,
+		SortByProgress: filter.Sort == SortProgress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("backlog: list: %w", err)
@@ -274,6 +317,9 @@ type UpdateParams struct {
 	// explicit empty string resets it to PriorityMedium, the same as an
 	// absent Priority on CreateParams.
 	Priority optional.Optional[string]
+	// Progress follows the same absent/explicit-empty rule as Priority,
+	// resetting to ProgressNotStarted when explicitly empty.
+	Progress optional.Optional[string]
 }
 
 // Update overwrites name, description and position, and applies whichever of
@@ -301,6 +347,10 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 	if err != nil {
 		return Backlog{}, err
 	}
+	progress, err := normalizeProgress(p.Progress.Or(current.Progress))
+	if err != nil {
+		return Backlog{}, err
+	}
 
 	row, err := s.q.UpdateBacklogForOwner(ctx, db.UpdateBacklogForOwnerParams{
 		ID:          backlogID,
@@ -311,6 +361,7 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		StartDate:   toDate(startDate),
 		DueOn:       toDate(dueOn),
 		Priority:    priority,
+		Progress:    progress,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

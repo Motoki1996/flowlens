@@ -17,6 +17,7 @@ const backlog: Backlog = {
   startDate: null,
   dueOn: null,
   priority: "medium",
+  progress: "not_started",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -54,10 +55,10 @@ describe("BacklogListSection", () => {
     expect(link).toHaveTextContent("(0)");
   });
 
-  it("shows the Board view mode by default, grouped by priority", () => {
+  it("shows the Board view mode by default, grouped by progress", () => {
     render(<BacklogListSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
-    const medium = screen.getByRole("region", { name: "Medium backlogs" });
-    expect(within(medium).getByRole("link", { name: "Sprint 1" })).toBeInTheDocument();
+    const notStarted = screen.getByRole("region", { name: "Not started backlogs" });
+    expect(within(notStarted).getByRole("link", { name: "Sprint 1" })).toBeInTheDocument();
   });
 
   it("creates a new backlog", async () => {

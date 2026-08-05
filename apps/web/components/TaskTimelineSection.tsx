@@ -7,6 +7,7 @@ import { taskPath } from "@/lib/routes";
 import { computeTimelineBounds, hasSchedule, spanDays, toTaskGanttRows } from "@/lib/timeline";
 import { AXIS_HEIGHT, GanttChart, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { ProgressBadge } from "@/components/ProgressBadge";
 
 /** The name column is a fixed width so every row's bar starts at the same x,
  *  and the plot gets a minimum width per day so a long project scrolls
@@ -124,6 +125,7 @@ export function TaskTimelineSection({
                       {row.title}
                     </Link>
                     <PriorityBadge priority={row.priority} />
+                    <ProgressBadge progress={row.progress} />
                   </div>
                   {predecessors ? (
                     <span className="text-muted-foreground truncate text-xs">

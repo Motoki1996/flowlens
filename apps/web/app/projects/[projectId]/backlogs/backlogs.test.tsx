@@ -27,6 +27,7 @@ const backlog: Backlog = {
   startDate: null,
   dueOn: null,
   priority: "medium",
+  progress: "not_started",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -90,9 +91,11 @@ describe("BacklogsPage", () => {
     // The timeline is loaded on demand, so its message only appears once that
     // chunk resolves.
     expect(
-      await screen.findByText("Failed to load tasks — progress is unavailable.", undefined, {
-        timeout: 15000,
-      }),
+      await screen.findByText(
+        "Failed to load tasks — the closed-task ratio is unavailable.",
+        undefined,
+        { timeout: 15000 },
+      ),
     ).toBeInTheDocument();
   });
 

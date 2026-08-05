@@ -12,35 +12,43 @@ import (
 )
 
 type Querier interface {
+	// CountFailedSyncTasksByProjectForOwner backs the project single view's sync
+	// warning (docs/plans/issue-sync.md's "gitlab" fields, surfaced per-task by
+	// internal/task). A task counts as failed the same way internal/task derives
+	// a single task's sync_status: from task_gitlab_links when a link exists, or
+	// from its most recent sync_jobs row (necessarily an issue.create, see
+	// GetLatestSyncJobForTask) when it doesn't.
 	// ApplyWebhookTaskFields is the inbound apply pipeline's write to tasks
-	// (internal/webhookapply): unscoped, like GetLinkedGitlabProjectByID,
-	// because the task_gitlab_links row that names this task ID was already
-	// authorized when the link was first created (or, for a brand-new
-	// unclassified task, in the same transaction that just created it). It
-	// never touches backlog_id or position, which are app-only.
+	// (internal/webhookapply, docs/plans/issue-sync.md "Inbound"): unscoped, like
+	// GetLinkedGitlabProjectByID, because the task_gitlab_links row that names
+	// this task ID was already authorized when the link was first created (or,
+	// for a brand-new unclassified task, in the same transaction that just
+	// created it). It never touches backlog_id, position, priority or progress,
+	// which are app-only — in particular an issue being closed on GitLab moves
+	// status, never progress (see the 000011 migration).
+	// closed_at only advances when status transitions into 'closed' — the CASE
+	// reads the pre-update closed_at (every SET expression in one UPDATE sees
+	// the same original row), so re-applying while already closed never moves
+	// the timestamp, mirroring internal/task.Service.Close's own no-op rule.
 	ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTaskFieldsParams) (Task, error)
 	AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskBacklogForOwnerParams) (Task, error)
-	// ClaimNextPendingWebhookEvent must be called through a transaction-scoped
-	// Querier: FOR UPDATE SKIP LOCKED only holds its lock for the life of the
-	// transaction, so the claim and the resulting task write and status
-	// update need to commit together (internal/webhookapply,
-	// docs/plans/issue-sync.md "Inbound"). SKIP LOCKED means two workers
-	// polling concurrently never claim the same row; ORDER BY received_at ASC
-	// processes deliveries oldest-first.
+	// The inbound apply pipeline (internal/webhookapply, docs/plans/issue-sync.md
+	// "Inbound"). ClaimNextPendingWebhookEvent must be called through a
+	// transaction-scoped Querier (database.TxRunner): FOR UPDATE SKIP LOCKED only
+	// holds its lock for the life of the transaction, so the claim and the
+	// resulting task write and status update need to commit together — that is
+	// what lets a crash mid-apply leave the event 'pending' for a clean retry
+	// instead of stuck half-applied. SKIP LOCKED also means two workers polling
+	// concurrently never claim the same row. ORDER BY received_at ASC processes
+	// deliveries oldest-first, which combined with the stale-event guard means
+	// out-of-order redelivery can never apply a newer event before an older one.
 	ClaimNextPendingWebhookEvent(ctx context.Context) (WebhookEvent, error)
-	// The outbox worker's SKIP LOCKED claim (internal/sync): atomically
-	// selects and flips due pending jobs to 'running' in one statement, so
-	// two workers polling concurrently never claim the same row.
 	ClaimPendingSyncJobs(ctx context.Context, limit int32) ([]SyncJob, error)
 	// Unsets is_default on every other link in the same connection as linkID,
 	// so SetDefaultLinkedGitlabProjectForOwner can set exactly one.
 	ClearDefaultLinkedGitlabProjectsForOwner(ctx context.Context, arg ClearDefaultLinkedGitlabProjectsForOwnerParams) error
 	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
-	// Backs the project single view's sync warning: a task counts as failed the
-	// same way internal/task derives a single task's sync_status, from
-	// task_gitlab_links when a link exists or from its most recent sync_jobs
-	// row otherwise.
 	CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
@@ -50,13 +58,12 @@ type Querier interface {
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
 	// gitlab_sync_runs records one project.import / project.resync execution
 	// against a linked GitLab project (docs/plans/issue-sync.md's SyncRun
-	// object, issue #25). Concurrency is enforced at the database level, not
-	// by a check-then-insert race in Go: a partial UNIQUE index on
-	// (linked_gitlab_project_id) WHERE completed_at IS NULL (migration
-	// 000006) means CreateGitlabSyncRun itself fails with a
-	// unique-constraint violation when a run is already in progress for the
-	// same link, which internal/projectsync maps to ErrRunInProgress (HTTP
-	// 409).
+	// object, issue #25). Concurrency is enforced at the database level, not by
+	// a check-then-insert race in Go: a partial UNIQUE index on
+	// (linked_gitlab_project_id) WHERE completed_at IS NULL (migration 000006)
+	// means CreateGitlabSyncRun itself fails with a unique-constraint violation
+	// when a run is already in progress for the same link, which
+	// internal/projectsync maps to ErrRunInProgress (HTTP 409).
 	CreateGitlabSyncRun(ctx context.Context, arg CreateGitlabSyncRunParams) (GitlabSyncRun, error)
 	// linked_gitlab_projects has no owner column of its own; ownership is always
 	// checked by joining through gitlab_connections to projects, the same way
@@ -76,6 +83,14 @@ type Querier interface {
 	// trust the caller to have already verified project ownership (e.g. via
 	// project.Service.Get), while DeleteProjectAPITokenForOwner joins to projects
 	// so a foreign token is indistinguishable from a missing one.
+	//
+	// GetProjectAPITokenByTokenHash is unscoped and used only by bearer
+	// authentication (internal/apitoken.Service.Authenticate), which has no
+	// acting user to scope through and resolves the project from the token
+	// itself. Like GetUserBySessionToken, it filters out expired rows in SQL. It
+	// joins projects to also resolve owner_user_id: a bearer request has no
+	// session, so the project's owner is the only user it can act as (see
+	// internal/apitoken's Auth type).
 	CreateProjectAPIToken(ctx context.Context, arg CreateProjectAPITokenParams) (ProjectApiToken, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	// Tasks are scoped through their parent project the same way backlogs are:
@@ -88,12 +103,12 @@ type Querier interface {
 	// serves the unfiltered, single-backlog, unassigned-only and status-scoped
 	// list views: passing false/NULL/'' for a filter disables it.
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
-	// task_dependencies has no project_id/owner column of its own; ownership
-	// is always checked through its tasks, the same way task_gitlab_links is
-	// never queried through a project/owner join directly.
-	// CreateTaskDependency and ListTaskDependenciesByProject trust the caller
-	// (internal/taskdependency) to have already verified project ownership
-	// and that both tasks belong to the same project.
+	// task_dependencies has no project_id/owner column of its own; ownership is
+	// always checked through its tasks, the same way task_gitlab_links is never
+	// queried through a project/owner join directly. CreateTaskDependency and
+	// ListTaskDependenciesByProject trust the caller (internal/taskdependency) to
+	// have already verified project ownership and that both tasks belong to the
+	// same project, the same way CreateTask trusts an already-verified project.
 	// DeleteTaskDependencyForOwner joins through the predecessor task to
 	// projects, so a dependency belonging to another user's project is
 	// indistinguishable from a missing one.
@@ -106,11 +121,16 @@ type Querier interface {
 	CreateTaskGitlabLink(ctx context.Context, arg CreateTaskGitlabLinkParams) (TaskGitlabLink, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	// webhook_events has no owner column and is never queried through a
-	// project/owner join: the linkID in the URL path is itself the
-	// authorization boundary (internal/webhookevent, ADR-0008).
-	// ON CONFLICT DO NOTHING makes a duplicate GitLab delivery a no-op instead
-	// of an error: the caller sees pgx.ErrNoRows and treats it the same as a
-	// fresh insert, so retried/duplicated deliveries are idempotent.
+	// project/owner join: the linkID in the URL path (POST
+	// /webhooks/gitlab/{linkID}) is itself the authorization boundary, verified
+	// by comparing X-Gitlab-Token against the link's decrypted webhook secret in
+	// constant time before any of these run (see internal/webhookevent,
+	// ADR-0008).
+	// ON CONFLICT DO NOTHING makes a duplicate GitLab delivery (same
+	// linked_gitlab_project_id + delivery_uuid) a no-op instead of an error: the
+	// caller sees pgx.ErrNoRows and treats it the same as a fresh insert, so
+	// retried/duplicated deliveries are idempotent (docs/plans/issue-sync.md,
+	// "Inbound").
 	CreateWebhookEvent(ctx context.Context, arg CreateWebhookEventParams) (WebhookEvent, error)
 	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
@@ -120,31 +140,37 @@ type Querier interface {
 	// promote another one.
 	DeleteLinkedGitlabProjectForOwner(ctx context.Context, arg DeleteLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// The retention policy decided for issue #26: only 'processed' rows are
-	// pruned. 'failed' and 'skipped' rows are kept indefinitely (their error
-	// and skip_reason are the whole point of troubleshooting) and 'pending'
-	// rows are never touched by cleanup.
+	// pruned. 'failed' and 'skipped' rows are kept indefinitely (their error and
+	// skip_reason are the whole point of troubleshooting) and 'pending' rows are
+	// never touched by cleanup — the apply worker is the only thing that moves a
+	// pending row out of that state.
 	DeleteProcessedWebhookEventsOlderThan(ctx context.Context, processedAt pgtype.Timestamptz) (int64, error)
-	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteProjectAPITokenForOwner(ctx context.Context, arg DeleteProjectAPITokenForOwnerParams) (int64, error)
+	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
-	// DeleteTaskDependencyForOwner joins through the predecessor task to
-	// projects, so a dependency belonging to another user's project is
-	// indistinguishable from a missing one.
 	DeleteTaskDependencyForOwner(ctx context.Context, arg DeleteTaskDependencyForOwnerParams) (int64, error)
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
-	// Upserts on dedupe_key: a colliding insert only overwrites the existing
-	// row while it is still 'pending' (collapsing rapid repeated edits into
-	// one job); a collision with a running/succeeded/failed row leaves that
-	// row untouched and returns no rows, so internal/sync.Enqueue falls back
-	// to GetSyncJobByDedupeKey and reuses it as-is.
+	// The outbox worker (internal/sync, docs/plans/issue-sync.md "Sync engine").
+	//
+	// EnqueueSyncJob upserts on dedupe_key: a colliding insert only overwrites the
+	// existing row while it is still 'pending' (collapsing rapid repeated edits
+	// into one job); a collision with a running/succeeded/failed row leaves that
+	// row untouched and returns no rows, so the caller falls back to
+	// GetSyncJobByDedupeKey and reuses it as-is. MarkSyncJobSucceeded and
+	// MarkSyncJobFailed clear dedupe_key so a later edit is never permanently
+	// blocked by a job that already reached a terminal state.
+	//
+	// ClaimPendingSyncJobs is the SKIP LOCKED claim: it atomically selects and
+	// flips due pending jobs to 'running' in one statement, so two workers
+	// polling concurrently never claim the same row.
 	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
 	FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunParams) (GitlabSyncRun, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	// GetBacklogProjectID is the lightweight project lookup
-	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
-	// a bearer token's project boundary on a single-backlog URL, without
-	// GetBacklogForOwner's owner join — a token has no session owner to
-	// join against.
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+	// bearer token's project boundary on a single-backlog URL, without
+	// GetBacklogForOwner's owner join — a token has no session owner to join
+	// against.
 	GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	// internal/task uses this at task-create time to decide whether the
 	// project has anywhere to push a new issue, and if so, where
@@ -162,15 +188,17 @@ type Querier interface {
 	GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGitlabConnectionByIDForOwnerParams) (GitlabConnection, error)
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
 	// Unscoped, like GetLinkedGitlabProjectByID: the background worker
-	// (internal/projectsync) reads this with no acting user of its own —
-	// the job row that names this run's ID was already authorized when it
-	// was created (either automatically at link creation, or by an
-	// owner-scoped HTTP request).
+	// (internal/projectsync) reads this with no acting user of its own — the
+	// job row that names this run's ID was already authorized when it was
+	// created (either automatically at link creation, or by an owner-scoped
+	// HTTP request).
 	GetGitlabSyncRunByID(ctx context.Context, id uuid.UUID) (GitlabSyncRun, error)
-	// Backs a task's sync status (internal/task) when it has no
-	// task_gitlab_links row yet — its issue.create job hasn't succeeded (or has
-	// permanently failed). Before a link exists, a task can only ever have
-	// enqueued issue.create jobs, so "latest" is unambiguous.
+	// GetLatestSyncJobForTask backs a task's sync status (internal/task) when it
+	// has no task_gitlab_links row yet — i.e. its issue.create job hasn't
+	// succeeded (or has permanently failed), so there is nothing in
+	// task_gitlab_links to read sync_status from. Before a link exists, a task
+	// can only ever have enqueued issue.create jobs (issue.update/close/reopen
+	// all require an existing link), so "latest" is unambiguous.
 	GetLatestSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error)
 	// Unscoped: the outbox worker (internal/issuesync) has no acting user. The
 	// sync_jobs row that names this linked project's ID was already authorized
@@ -178,134 +206,154 @@ type Querier interface {
 	// ownership check.
 	GetLinkedGitlabProjectByID(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
-	// GetLinkedGitlabProjectProjectID is the lightweight project lookup
-	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
-	// a bearer token's project boundary on GET
-	// /linked-gitlab-projects/{linkID}/sync-runs, resolved through
-	// gitlab_connections the same way linkedProjectOwner (dbtest) does,
-	// since a linked project has no project_id column of its own.
+	// The lightweight project lookup requireTokenResourceProject (internal/http,
+	// issue #66) uses to enforce a bearer token's project boundary on
+	// GET /linked-gitlab-projects/{linkID}/sync-runs, resolved through
+	// gitlab_connections the same way linkedProjectOwner (dbtest) does, since a
+	// linked project has no project_id column of its own.
 	GetLinkedGitlabProjectProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error)
 	// GetProjectByID is unscoped, for the inbound webhook apply pipeline
-	// (internal/webhookapply), which resolves a new unclassified task's
-	// created_by_user_id from the project's owner and has no acting user of
-	// its own to scope through — the same reasoning as
-	// GetLinkedGitlabProjectByID.
+	// (internal/webhookapply, docs/plans/issue-sync.md "Inbound"), which
+	// resolves a new unclassified task's created_by_user_id from the project's
+	// owner and has no acting user of its own to scope through — the same
+	// reasoning as GetLinkedGitlabProjectByID.
 	GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
-	// GetProjectAPITokenByTokenHash is unscoped and used only by bearer
-	// authentication (internal/apitoken.Service.Authenticate), which has no
-	// acting user to scope through and resolves the project from the token
-	// itself. Like GetUserBySessionToken, it filters out expired rows in SQL. It
-	// joins projects to also resolve owner_user_id: a bearer request has no
-	// session, so the project's owner is the only user it can act as (see
-	// internal/apitoken's Auth type).
-	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	// GetTaskDependencyProjectID is the lightweight project lookup
-	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
-	// a bearer token's project boundary on a single-dependency URL:
-	// resolved through the predecessor task, the same way
-	// DeleteTaskDependencyForOwner resolves ownership.
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+	// bearer token's project boundary on a single-dependency URL: resolved
+	// through the predecessor task, the same way DeleteTaskDependencyForOwner
+	// resolves ownership.
 	GetTaskDependencyProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams) (Task, error)
-	// GetTaskForProject scopes a task by its project directly, not by owner:
-	// the AI-facing bearer-token path (docs/plans/issue-sync.md "AI-facing")
-	// has no session user, only the project a project.Service-verified token
-	// was issued for (internal/apitoken), so there is no owner to join
-	// against.
+	// GetTaskForProject scopes a task by its project directly, not by owner: the
+	// AI-facing bearer-token path (docs/plans/issue-sync.md "AI-facing") has no
+	// session user, only the project a project.Service-verified token was issued
+	// for (internal/apitoken), so there is no owner to join against.
 	GetTaskForProject(ctx context.Context, arg GetTaskForProjectParams) (Task, error)
-	// GetTaskGitlabLinkByLinkedProjectAndIID looks up a task already linked to
-	// a specific GitLab issue, keyed by the same columns as the 1:1 UNIQUE
-	// constraint. The inbound apply pipeline (internal/webhookapply) uses this
-	// to tell a known issue (update an existing task) from an unknown one
-	// (create a new unclassified task).
+	// GetTaskGitlabLinkByLinkedProjectAndIID looks up a task already linked to a
+	// specific GitLab issue, keyed by the same columns as the 1:1 UNIQUE
+	// constraint. The inbound apply pipeline (internal/webhookapply,
+	// docs/plans/issue-sync.md "Inbound") uses this to tell a known issue
+	// (update an existing task) from an unknown one (create a new unclassified
+	// task).
 	GetTaskGitlabLinkByLinkedProjectAndIID(ctx context.Context, arg GetTaskGitlabLinkByLinkedProjectAndIIDParams) (TaskGitlabLink, error)
-	// task_gitlab_links has no owner column and is never queried through a
-	// project/owner join: only the outbox worker (internal/issuesync) reads and
-	// writes it, and the job row that drives it was already authorized when
-	// internal/task enqueued it.
 	GetTaskGitlabLinkByTaskID(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error)
-	// GetTaskGitlabLinkWithProjectPathByTaskID is GetTaskGitlabLinkByTaskID
-	// plus the linked GitLab project's path_with_namespace, joined in for the
-	// AI-facing /context endpoints: an AI agent needs the project path
-	// alongside the issue IID/URL to identify the issue without a second
-	// call.
+	// GetTaskGitlabLinkWithProjectPathByTaskID is GetTaskGitlabLinkByTaskID plus
+	// the linked GitLab project's path_with_namespace, joined in for the
+	// AI-facing /context endpoints (docs/plans/issue-sync.md "AI-facing"): an AI
+	// agent needs the project path alongside the issue IID/URL to identify the
+	// issue without a second call.
 	GetTaskGitlabLinkWithProjectPathByTaskID(ctx context.Context, taskID uuid.UUID) (GetTaskGitlabLinkWithProjectPathByTaskIDRow, error)
 	// GetTaskProjectID is the lightweight project lookup
-	// requireTokenResourceProject (internal/http, issue #66) uses to enforce
-	// a bearer token's project boundary on a single-task URL. It has no
-	// owner join, unlike GetTaskForOwner: a token has no session owner to
-	// join against (apitoken.Auth), only its own project to compare the
-	// result against.
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+	// bearer token's project boundary on a single-task URL. It has no owner
+	// join, unlike GetTaskForOwner: a token has no session owner to join
+	// against (apitoken.Auth), only its own project to compare the result
+	// against.
 	GetTaskProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
 	GetUserBySessionToken(ctx context.Context, tokenHash string) (GetUserBySessionTokenRow, error)
 	GetUserByUsernameOrEmail(ctx context.Context, username string) (User, error)
-	// The detail view: unlike the list row, its payload is actually read by
-	// the caller (internal/http keeps the list DTO payload-free to avoid
-	// exposing raw GitLab payloads by default). Ownership of linkID must
-	// already be verified by the caller via GetLinkedGitlabProjectForOwner
-	// before this runs.
+	// The detail view: unlike the list row, its payload is actually read by the
+	// caller (internal/http keeps the list DTO payload-free to avoid exposing
+	// raw GitLab payloads by default).
 	GetWebhookEventByLinkedGitlabProjectIDAndID(ctx context.Context, arg GetWebhookEventByLinkedGitlabProjectIDAndIDParams) (WebhookEvent, error)
+	// ListBacklogsByProject's priority and progress filters and sorts follow the
+	// same "empty/false disables it" convention as internal/task's
+	// ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
+	// sorting by progress runs the other way, not_started first through done, so
+	// the order reads as the work advancing (and matches the Board view's
+	// left-to-right axis). Both fall back to the usual position/created_at order
+	// as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
+	// in practice — internal/backlog sets at most one from a single ?sort=.
 	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error)
+	// ListFailedSyncProjectsByOwner backs the dashboard's "sync failures"
+	// section (issue #77): every project ownerID owns that has at least one
+	// task with a failed GitLab sync, counted the same way
+	// CountFailedSyncTasksByProjectForOwner counts a single project — from
+	// task_gitlab_links when a link exists, or from the task's most recent
+	// sync_jobs row otherwise — but joined across every project in one round
+	// trip instead of one query per project.
+	ListFailedSyncProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]ListFailedSyncProjectsByOwnerRow, error)
 	// Ownership of linkID must already be verified by the caller via
 	// GetLinkedGitlabProjectForOwner before this runs.
-	// Backs the dashboard's "sync failures" section (issue #77): every project
-	// ownerID owns that has at least one task with a failed GitLab sync,
-	// counted the same way CountFailedSyncTasksByProjectForOwner counts a
-	// single project, joined across every project in one round trip.
-	ListFailedSyncProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]ListFailedSyncProjectsByOwnerRow, error)
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
-	// ListTaskDependenciesByProject trusts the caller to have already
-	// verified project ownership, the same way ListTasksByProject does.
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
+	// ListTasksByProject's priority and progress filters and sorts follow the same
+	// "empty/false disables it" convention as the other three filters. Sorting by
+	// priority ranks urgent > high > medium > low; sorting by progress runs the
+	// other way, not_started first through done, so the order reads as the work
+	// advancing (and matches the Board view's left-to-right axis). Both fall back
+	// to the usual position/created_at order as a tiebreak, so equal-ranked tasks
+	// keep their manual order instead of shuffling; when a sort_by_* flag is false
+	// its CASE always evaluates to 0, leaving the original position/created_at
+	// order untouched. The two flags are mutually exclusive in practice —
+	// internal/task sets at most one from a single ?sort=.
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
 	// ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
-	// /api/v1/projects/{projectID}/tasks/context): the same
-	// backlog_id/status filters as ListTasksByProject plus updated_since and
-	// LIMIT/OFFSET paging, following the "fetch one extra row to detect a
-	// next page" convention ListWebhookEventsByLinkedGitlabProjectID
-	// established. It has no "unassigned" filter, unlike the board view
-	// ListTasksByProject serves.
+	// /api/v1/projects/{projectID}/tasks/context, docs/plans/issue-sync.md
+	// "AI-facing"): the same backlog_id/status filters as ListTasksByProject
+	// plus updated_since (tasks.updated_at >= the given time) and LIMIT/OFFSET
+	// paging, following the "fetch one extra row to detect a next page"
+	// convention ListWebhookEventsByLinkedGitlabProjectID/internal/webhookevent
+	// established. It has no "unassigned" filter — the bulk context view has no
+	// use for it yet, unlike the board view ListTasksByProject serves.
 	ListTasksByProjectPaged(ctx context.Context, arg ListTasksByProjectPagedParams) ([]Task, error)
 	// ListTasksForOwner backs the cross-project task collection (GET
-	// /api/v1/tasks, issue #76): every task across every project ownerID
-	// owns, narrowed by status/priority/due/start-date filters and an
-	// optional project_id allowlist, joined with project_name since a
-	// cross-project row is unreadable without knowing which project it
-	// belongs to.
+	// /api/v1/tasks, issue #76): every task across every project ownerID owns,
+	// narrowed by the same status/priority/progress filters as ListTasksByProject plus
+	// due/start date ranges and an optional project_id allowlist — each
+	// following the same "empty/NULL disables it" convention. project_name is
+	// joined in for the same reason GetTaskGitlabLinkWithProjectPathByTaskID
+	// joins in path_with_namespace: a cross-project row is unreadable without
+	// knowing which project it belongs to, and a second per-row fetch would
+	// cost the same round trip anyway.
+	//
+	// The ORDER BY leans on two properties: sqlc.arg(sort) is a single bound
+	// value for the whole query, not a per-row one, so a CASE guarded by it is
+	// either non-NULL for every row or NULL for every row — never a mix: sort
+	// values not being ranked stay a true tie and fall through instead of
+	// corrupting the row order. And due_on ASC's default NULLS LAST (Postgres
+	// sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
+	// sink to the bottom", so it works unguarded both as sort=dueOn's primary
+	// key and as every other sort's final tiebreak.
 	ListTasksForOwner(ctx context.Context, arg ListTasksForOwnerParams) ([]ListTasksForOwnerRow, error)
-	// status = '' disables the filter, matching ListTasksByProject's
-	// convention. Ownership of linkID must already be verified by the caller
-	// via GetLinkedGitlabProjectForOwner before this runs.
+	// The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID
+	// and GetWebhookEventByLinkedGitlabProjectIDAndID are scoped by
+	// linked_gitlab_project_id only, not owner — internal/webhookevent.Service
+	// verifies the caller owns linkID via GetLinkedGitlabProjectForOwner first, the
+	// same two-step internal/projectsync's ListRuns uses, so a foreign or unknown
+	// eventID under an owned link and an owned eventID under a foreign link both
+	// come back empty.
+	// status = '' disables the filter, matching ListTasksByProject's convention.
 	ListWebhookEventsByLinkedGitlabProjectID(ctx context.Context, arg ListWebhookEventsByLinkedGitlabProjectIDParams) ([]WebhookEvent, error)
 	MarkSyncJobFailed(ctx context.Context, arg MarkSyncJobFailedParams) error
 	MarkSyncJobRetry(ctx context.Context, arg MarkSyncJobRetryParams) error
-	// Also clears dedupe_key so a later edit is never permanently blocked by a
-	// job that already reached a terminal state.
 	MarkSyncJobSucceeded(ctx context.Context, id uuid.UUID) error
 	// MarkTaskGitlabLinkAppliedForTask records a successful inbound apply
 	// (internal/webhookapply): only gitlab_updated_at advances and
-	// sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask
-	// (the outbound counterpart), it never touches last_pushed_fingerprint —
-	// that field records what FlowLens itself last pushed, and an inbound
-	// apply is by definition not that.
+	// sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask (the
+	// outbound counterpart), it never touches last_pushed_fingerprint — that
+	// field records what FlowLens itself last pushed, and an inbound apply is by
+	// definition not that.
 	MarkTaskGitlabLinkAppliedForTask(ctx context.Context, arg MarkTaskGitlabLinkAppliedForTaskParams) (TaskGitlabLink, error)
-	// Records why an outbound push failed, so a subsequent successful push can
-	// clear it (internal/sync's generic retry/backoff drives the retry itself;
-	// this only records the task_gitlab_links-side outcome).
 	MarkTaskGitlabLinkFailedForTask(ctx context.Context, arg MarkTaskGitlabLinkFailedForTaskParams) (TaskGitlabLink, error)
-	// The other half of a sync retry, alongside RetryFailedSyncJobForTask: puts
-	// an already-linked task's sync status back to 'pending' so the UI reflects
-	// the retry immediately. No matching row (task never linked) is not an
-	// error.
+	// MarkTaskGitlabLinkPendingForTask is the other half of a sync retry
+	// (internal/task.Service.RetrySync, alongside RetryFailedSyncJobForTask in
+	// sync_jobs.sql): it puts an already-linked task's sync status back to
+	// 'pending' so the UI reflects the retry immediately, without waiting for
+	// the worker to pick the job back up. A task whose issue.create never
+	// succeeded has no row here yet, so a no-match (no rows returned) is
+	// expected and not an error — the caller falls back to sync_jobs alone for
+	// that case.
 	MarkTaskGitlabLinkPendingForTask(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error)
-	// Records a successful outbound push: sync_status='synced', last_error
-	// cleared, gitlab_updated_at and last_synced_at refreshed.
 	MarkTaskGitlabLinkSyncedForTask(ctx context.Context, arg MarkTaskGitlabLinkSyncedForTaskParams) (TaskGitlabLink, error)
 	MarkWebhookEventFailed(ctx context.Context, arg MarkWebhookEventFailedParams) error
 	MarkWebhookEventProcessed(ctx context.Context, id uuid.UUID) error
@@ -313,33 +361,39 @@ type Querier interface {
 	// Used after deleting the default link: makes the oldest remaining link in
 	// the same connection the new default. A no-op if none remain.
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error
-	// Startup stale-reclaim (internal/sync): a 'running' job whose updated_at
-	// predates the caller's cutoff was left behind by a process that died
-	// mid-execution, so it is returned to 'pending' for another worker to pick up.
 	ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgtype.Timestamptz) (int64, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
 	// ReorderBacklogs resequences a project's backlogs to backlog_ids' given
-	// order in a single statement, the same all-or-nothing shape as
-	// ReorderTasks (issue #79). internal/backlog.Service.Reorder checks
-	// backlog_ids is exactly the project's current backlog set before
-	// calling this.
+	// order (position 0 for the first id, 1 for the second, ...) in a single
+	// statement, the same all-or-nothing shape as internal/task's ReorderTasks
+	// (issue #79). internal/backlog.Service.Reorder checks backlog_ids is
+	// exactly the project's current backlog set before calling this.
 	ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams) error
 	// ReorderTasks resequences one backlog bucket's tasks to task_ids' given
-	// order in a single statement, so a drag across many tasks either lands
-	// as one committed order or fails outright, never a partially-applied
-	// one (issue #79). internal/task.Service.Reorder checks task_ids is
-	// exactly that bucket's current task set before calling this.
+	// order (position 0 for the first id, 1 for the second, ...) in a single
+	// statement, so a drag across many tasks either lands as one committed order
+	// or fails outright, never a partially-applied one (issue #79). backlog_id
+	// follows CreateTask's own "IS NOT DISTINCT FROM" convention: NULL scopes to
+	// the Unclassified bucket, a UUID to one specific backlog.
+	// internal/task.Service.Reorder checks task_ids is exactly that bucket's
+	// current task set before calling this, so the WHERE clause can never miss a
+	// row or touch one outside the intended bucket.
 	ReorderTasks(ctx context.Context, arg ReorderTasksParams) error
-	// Forces the task's most recent pending-or-failed job to run again
-	// immediately with a fresh attempt budget, for POST
-	// /tasks/{taskID}/sync-retry. No matching row (nothing to retry) is not an
-	// error; internal/task maps it to ErrSyncNotFailed.
+	// RetryFailedSyncJobForTask powers POST /tasks/{taskID}/sync-retry: it
+	// forces the task's most recent pending-or-failed job to run again
+	// immediately with a fresh attempt budget. 'pending' is included alongside
+	// 'failed' because task_gitlab_links.sync_status can already read 'failed'
+	// (set on the first failed push attempt) while the job itself is still
+	// mid-backoff, not yet exhausted — internal/task.Service.RetrySync checks
+	// that sync_status first, so by the time this query runs the caller already
+	// knows a retry is warranted. Returns no rows if the task has no
+	// pending/failed job (e.g. it never had one, or it already succeeded),
+	// which internal/task maps to ErrSyncNotFailed.
 	RetryFailedSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error)
-	// Only a 'failed' event can be retried. internal/webhookevent.Service
-	// checks the event exists and is 'failed' via
-	// GetWebhookEventByLinkedGitlabProjectIDAndID first, so a zero-row
-	// result here is only the rare race where another request already
-	// retried it.
+	// Only a 'failed' event can be retried. internal/webhookevent.Service checks
+	// the event exists and is 'failed' via GetWebhookEventByLinkedGitlabProjectIDAndID
+	// first, so a zero-row result here is only the rare race where another
+	// request already retried it; that maps to the same ErrNotFailed.
 	RetryWebhookEvent(ctx context.Context, id uuid.UUID) (WebhookEvent, error)
 	SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg SetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// Records why registering or repairing a webhook failed (most commonly
@@ -349,6 +403,9 @@ type Querier interface {
 	// Records a successful webhook registration or rotation (issue #18) and
 	// clears any earlier registration error.
 	SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error)
+	// UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
+	// must arrive already resolved: backlog.Service reads the current row first and
+	// fills in whatever the PATCH body left out (see its Update).
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
 	// Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.
@@ -356,12 +413,12 @@ type Querier interface {
 	// (internal/projectsync).
 	UpdateLinkedGitlabProjectInitialImportStatus(ctx context.Context, arg UpdateLinkedGitlabProjectInitialImportStatusParams) (LinkedGitlabProject, error)
 	// Unscoped, like GetLinkedGitlabProjectByID: called by the background
-	// worker (internal/projectsync) after a project.import/project.resync
-	// run finishes, which has no acting user to scope through.
+	// worker (internal/projectsync) after a project.import/project.resync run
+	// finishes, which has no acting user to scope through.
 	UpdateLinkedGitlabProjectLastSyncedAt(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)
-	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateProjectAPITokenLastUsedAt(ctx context.Context, arg UpdateProjectAPITokenLastUsedAtParams) error
+	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
 	// gitlab_connections has no owner column of its own; ownership is always
 	// checked through the parent project, the same way backlogs and tasks are.

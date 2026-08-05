@@ -8,7 +8,16 @@ import { ChevronDown, ChevronUp, GripVertical } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { formatDate, toApiDate } from "@/lib/dates";
-import type { ApiError, Backlog, Priority, Task, TaskDependency, TaskStatus } from "@/types";
+import type {
+  ApiError,
+  Backlog,
+  Priority,
+  Progress,
+  Task,
+  TaskDependency,
+  TaskStatus,
+} from "@/types";
+import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -25,6 +34,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskBoardSection } from "@/components/TaskBoardSection";
 
@@ -45,12 +55,28 @@ type ViewMode = "board" | "list" | "timeline";
 // (issue #76's `?sort=dueOn|priority|updatedAt` on `GET /api/v1/tasks`, see
 // AllTasksSection) so the two screens don't disagree on what "sort by
 // priority" means.
-type TaskSort = "manual" | "dueOn" | "priority" | "updatedAt";
+type TaskSort = "manual" | "dueOn" | "priority" | "progress" | "updatedAt";
 
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
 
 const PRIORITY_RANK: Record<Priority, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
+
+// Progress ranks the other way from priority — not_started first through done,
+// matching `?sort=progress` on the API and the Board view's left-to-right axis,
+// so the work reads as advancing.
+const PROGRESS_RANK: Record<Progress, number> = {
+  not_started: 1,
+  in_progress: 2,
+  on_hold: 3,
+  done: 4,
+};
+
+/** isProgress narrows a raw `?progress=` value; anything else falls back to
+ *  "all" rather than erroring, the same way an unknown `?sort=` does. */
+function isProgress(value: string | undefined): value is Progress {
+  return value !== undefined && value in PROGRESS_RANK;
+}
 
 // dueOn/updatedAt are RFC3339 strings, so a plain string compare already
 // sorts chronologically. A missing dueOn always sorts last, matching the
@@ -136,6 +162,7 @@ function NewTaskForm({
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [priority, setPriority] = useState<Priority>("medium");
+  const [progress, setProgress] = useState<Progress>("not_started");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -170,6 +197,7 @@ function NewTaskForm({
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
+          progress,
         }),
       });
       if (!res.ok) {
@@ -254,6 +282,23 @@ function NewTaskForm({
           </SelectContent>
         </Select>
       </div>
+      <div>
+        <label htmlFor="new-task-progress" className="text-foreground block text-sm font-medium">
+          Progress
+        </label>
+        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
+          <SelectTrigger id="new-task-progress" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROGRESS_COLUMNS.map((option) => (
+              <SelectItem key={option.progress} value={option.progress}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Creating…" : "Create task"}
@@ -281,6 +326,7 @@ export function TaskListSection({
   initialSearch,
   initialStatusFilter,
   initialSort,
+  initialProgressFilter,
   error = false,
 }: {
   projectId: string;
@@ -299,6 +345,9 @@ export function TaskListSection({
   /** The `?sort=` the screen was opened with. Falls back to "manual" (the
    *  API's own position order) for anything not one of the known values. */
   initialSort?: string;
+  /** The `?progress=` the screen was opened with. Defaults to "all": unlike
+   *  status, no progress stage is noise worth hiding by default. */
+  initialProgressFilter?: string;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -312,9 +361,15 @@ export function TaskListSection({
   );
   const [search, setSearch] = useState(initialSearch ?? "");
   const [sort, setSort] = useState<TaskSort>(
-    initialSort === "dueOn" || initialSort === "priority" || initialSort === "updatedAt"
+    initialSort === "dueOn" ||
+      initialSort === "priority" ||
+      initialSort === "progress" ||
+      initialSort === "updatedAt"
       ? initialSort
       : "manual",
+  );
+  const [progressFilter, setProgressFilter] = useState<"all" | Progress>(
+    isProgress(initialProgressFilter) ? initialProgressFilter : "all",
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [targetBacklogId, setTargetBacklogId] = useState("");
@@ -357,6 +412,7 @@ export function TaskListSection({
     const query = search.trim().toLowerCase();
     return localTasks.filter((t) => {
       if (statusFilter !== "all" && t.status !== statusFilter) return false;
+      if (progressFilter !== "all" && t.progress !== progressFilter) return false;
       if (backlogFilter !== "all") {
         const key = t.backlogId ?? UNCLASSIFIED;
         if (key !== backlogFilter) return false;
@@ -367,7 +423,7 @@ export function TaskListSection({
       }
       return true;
     });
-  }, [localTasks, statusFilter, backlogFilter, search]);
+  }, [localTasks, statusFilter, progressFilter, backlogFilter, search]);
 
   // "manual" is the API's own order (filtered inherits it from `tasks`), so
   // there's nothing to re-sort. The rest re-sort a copy — sorting is a
@@ -381,6 +437,8 @@ export function TaskListSection({
       list.sort(compareByDueOn);
     } else if (sort === "priority") {
       list.sort((a, b) => PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]);
+    } else if (sort === "progress") {
+      list.sort((a, b) => PROGRESS_RANK[a.progress] - PROGRESS_RANK[b.progress]);
     } else {
       list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     }
@@ -434,6 +492,11 @@ export function TaskListSection({
     updateQueryParam("status", value === "open" ? undefined : value);
   }
 
+  function changeProgressFilter(value: "all" | Progress) {
+    setProgressFilter(value);
+    updateQueryParam("progress", value === "all" ? undefined : value);
+  }
+
   function changeSearch(value: string) {
     setSearch(value);
     updateQueryParam("q", value.trim() === "" ? undefined : value);
@@ -459,6 +522,9 @@ export function TaskListSection({
     }
     if (statusFilter !== "all") {
       return `No ${statusFilter} tasks.`;
+    }
+    if (progressFilter !== "all") {
+      return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} tasks.`;
     }
     return "No tasks match the current filters.";
   }
@@ -683,6 +749,22 @@ export function TaskListSection({
                     <SelectItem value="closed">Closed</SelectItem>
                   </SelectContent>
                 </Select>
+                <Select
+                  value={progressFilter}
+                  onValueChange={(value) => changeProgressFilter(value as "all" | Progress)}
+                >
+                  <SelectTrigger size="sm" aria-label="Progress" className="w-36">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All progress</SelectItem>
+                    {PROGRESS_COLUMNS.map((option) => (
+                      <SelectItem key={option.progress} value={option.progress}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Combobox
                   aria-label="Backlog"
                   options={filterOptions}
@@ -701,6 +783,7 @@ export function TaskListSection({
                     <SelectItem value="manual">Manual order</SelectItem>
                     <SelectItem value="dueOn">Due date</SelectItem>
                     <SelectItem value="priority">Priority</SelectItem>
+                    <SelectItem value="progress">Progress</SelectItem>
                     <SelectItem value="updatedAt">Recently updated</SelectItem>
                   </SelectContent>
                 </Select>
@@ -869,6 +952,7 @@ export function TaskListSection({
                               ) : null}
                               {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
                               <PriorityBadge priority={task.priority} />
+                              <ProgressBadge progress={task.progress} />
                               <StatusBadge status={task.status} />
                               <SyncBadge gitlab={task.gitlab} />
                             </span>

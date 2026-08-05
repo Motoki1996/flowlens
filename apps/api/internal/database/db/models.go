@@ -20,6 +20,7 @@ type Backlog struct {
 	StartDate   pgtype.Date        `json:"start_date"`
 	DueOn       pgtype.Date        `json:"due_on"`
 	Priority    string             `json:"priority"`
+	Progress    string             `json:"progress"`
 }
 
 type GitlabConnection struct {
@@ -204,6 +205,7 @@ type Task struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	StartDate              pgtype.Date        `json:"start_date"`
 	Priority               string             `json:"priority"`
+	Progress               string             `json:"progress"`
 }
 
 type TaskAiContext struct {

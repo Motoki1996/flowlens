@@ -45,6 +45,42 @@ func TestHandleListBacklogs_RejectsInvalidPriorityQuery(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestHandleListBacklogs_RejectsInvalidProgressQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs?progress=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListBacklogs_FiltersAndSortsByProgressQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Done", Progress: "done"}, token)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Not started"}, token)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs?progress=done", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var filtered []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "Done", filtered[0]["name"])
+
+	// Progress sorts not_started first, the reverse of priority's ranking.
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs?sort=progress", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var sorted []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sorted))
+	require.Len(t, sorted, 2)
+	assert.Equal(t, "Not started", sorted[0]["name"])
+	assert.Equal(t, "Done", sorted[1]["name"])
+}
+
 func TestHandleListBacklogs_RejectsInvalidSortQuery(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)
@@ -144,6 +180,7 @@ func TestHandleCreateBacklog_DefaultsPriorityToMedium(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "medium", body["priority"])
+	assert.Equal(t, "not_started", body["progress"])
 }
 
 func TestHandleCreateBacklog_RejectsInvalidPriority(t *testing.T) {
@@ -216,6 +253,19 @@ func TestHandleUpdateBacklog(t *testing.T) {
 		assert.Equal(t, "Renamed", body["name"])
 		assert.Equal(t, "new", body["description"])
 		assert.Equal(t, float64(3), body["position"])
+	})
+
+	t.Run("owner can change progress; invalid progress is rejected", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+			map[string]any{"name": "Sprint 1", "progress": "in_progress"}, ownerToken)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "in_progress", body["progress"])
+
+		rec = doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+			map[string]any{"name": "Sprint 1", "progress": "nearly-done"}, ownerToken)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
 	t.Run("owner can change priority; invalid priority is rejected", func(t *testing.T) {

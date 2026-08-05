@@ -23,6 +23,7 @@ function makeTask(overrides: Partial<Task>): Task {
     dueOn: null,
     startDate: null,
     priority: "medium",
+    progress: "not_started",
     position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
@@ -48,6 +49,7 @@ const backlog: Backlog = {
   startDate: null,
   dueOn: null,
   priority: "medium",
+  progress: "not_started",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -161,6 +163,49 @@ describe("TaskListSection", () => {
     expect(titlesInOrder()).toEqual(["Urgent, due later", "Medium, due sooner", "Low, no due date"]);
   });
 
+  it("filters and sorts by progress, independently of status", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Held but open", progress: "on_hold" }),
+      makeTask({ id: "t2", title: "Untouched", progress: "not_started" }),
+      makeTask({ id: "t3", title: "Underway", progress: "in_progress" }),
+    ];
+    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+
+    function titlesInOrder() {
+      return screen.getAllByRole("link").map((el) => el.querySelector("span")?.textContent);
+    }
+
+    // Progress sorts the way work advances, the reverse of priority's ranking.
+    fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
+    fireEvent.click(screen.getByRole("option", { name: "Progress" }));
+    expect(titlesInOrder()).toEqual(["Untouched", "Underway", "Held but open"]);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Progress" }));
+    fireEvent.click(screen.getByRole("option", { name: "On hold" }));
+    expect(titlesInOrder()).toEqual(["Held but open"]);
+    // The status filter still defaults to Open: progress narrows the same
+    // list rather than replacing what status means.
+    expect(screen.getByRole("combobox", { name: "Status" })).toBeInTheDocument();
+  });
+
+  it("reads the initial progress filter from the URL query it was opened with", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Held task", progress: "on_hold" }),
+      makeTask({ id: "t2", title: "Fresh task", progress: "not_started" }),
+    ];
+    render(
+      <TaskListSection
+        projectId="p1"
+        tasks={tasks}
+        backlogs={[]}
+        initialProgressFilter="on_hold"
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: /Held task/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Fresh task/ })).not.toBeInTheDocument();
+  });
+
   it("reads the initial search, status and sort from the URL query it was opened with", () => {
     const tasks = [
       makeTask({ id: "t1", title: "Closed matching task", status: "closed", description: "urgent fix" }),
@@ -251,17 +296,17 @@ describe("TaskListSection", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
-  it("switches to the board view mode, showing the same filtered tasks by priority", () => {
+  it("switches to the board view mode, showing the same filtered tasks by progress", () => {
     const tasks = [
-      makeTask({ id: "t1", title: "Fix login", priority: "urgent" }),
-      makeTask({ id: "t2", title: "Old bug", priority: "low", status: "closed" }),
+      makeTask({ id: "t1", title: "Fix login", progress: "in_progress" }),
+      makeTask({ id: "t2", title: "Old bug", progress: "done", status: "closed" }),
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Board" }));
 
-    const urgent = screen.getByRole("region", { name: "Urgent tasks" });
-    expect(within(urgent).getByRole("link", { name: "Fix login" })).toBeInTheDocument();
+    const inProgress = screen.getByRole("region", { name: "In progress tasks" });
+    expect(within(inProgress).getByRole("link", { name: "Fix login" })).toBeInTheDocument();
     // The status filter defaults to Open, and the board is a presentation of
     // the same filtered set — not a way around the filters.
     expect(screen.queryByRole("link", { name: "Old bug" })).not.toBeInTheDocument();
@@ -357,6 +402,7 @@ describe("TaskListSection", () => {
           startDate: "2026-08-15T00:00:00Z",
           dueOn: null,
           priority: "medium",
+          progress: "not_started",
         }),
       }),
     );

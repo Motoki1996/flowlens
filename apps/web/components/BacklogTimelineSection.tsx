@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { Backlog, Task } from "@/types";
 import { backlogPath } from "@/lib/routes";
 import {
-  backlogProgress,
+  backlogCompletion,
   computeTimelineBounds,
   hasSchedule,
   spanDays,
@@ -13,6 +13,7 @@ import {
 } from "@/lib/timeline";
 import { AXIS_HEIGHT, GanttChart, percent, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { ProgressBadge } from "@/components/ProgressBadge";
 
 /** The name column is a fixed width so every row's bar starts at the same x,
  *  and the plot gets a minimum width per day so a long project scrolls
@@ -75,7 +76,7 @@ export function BacklogTimelineSection({
     const scheduled = backlogs.filter(hasSchedule);
     return scheduled.reduce(
       (acc, b) => {
-        const p = backlogProgress(tasks, b.id);
+        const p = backlogCompletion(tasks, b.id);
         return { closed: acc.closed + p.closed, total: acc.total + p.total };
       },
       { closed: 0, total: 0 },
@@ -100,7 +101,9 @@ export function BacklogTimelineSection({
           {formatDate(bounds.start)} – {formatDate(bounds.end)}
         </span>
         {tasksError ? (
-          <span className="text-destructive">Failed to load tasks — progress is unavailable.</span>
+          <span className="text-destructive">
+            Failed to load tasks — the closed-task ratio is unavailable.
+          </span>
         ) : (
           <span>
             {overall.closed}/{overall.total} tasks closed
@@ -129,12 +132,13 @@ export function BacklogTimelineSection({
                     {row.title}
                   </Link>
                   <PriorityBadge priority={row.priority} />
+                  <ProgressBadge progress={row.progress} />
                 </div>
-                {!tasksError && row.progress ? (
+                {!tasksError && row.completion ? (
                   <span className="text-muted-foreground truncate text-xs tabular-nums">
-                    {row.progress.total === 0
+                    {row.completion.total === 0
                       ? "No tasks"
-                      : `${row.progress.closed}/${row.progress.total} closed (${percent(row.progress.ratio)})`}
+                      : `${row.completion.closed}/${row.completion.total} closed (${percent(row.completion.ratio)})`}
                   </span>
                 ) : null}
               </li>

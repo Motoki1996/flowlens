@@ -264,6 +264,7 @@ func (s *Service) applyAsNewTask(ctx context.Context, q db.Querier, event db.Web
 		Labels:                 fields.Labels,
 		DueOn:                  toDate(fields.DueDate),
 		Priority:               task.PriorityMedium,
+		Progress:               task.ProgressNotStarted,
 		CreatedByUserID:        ownerID,
 	})
 	if err != nil {

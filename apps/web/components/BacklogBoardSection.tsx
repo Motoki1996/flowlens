@@ -6,10 +6,11 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { backlogScheduleLabel } from "@/lib/backlogs";
-import { backlogProgress } from "@/lib/timeline";
-import { PRIORITY_ACCENT, PRIORITY_COLUMNS } from "@/lib/priority";
-import type { ApiError, Backlog, Priority, Task } from "@/types";
+import { backlogCompletion } from "@/lib/timeline";
+import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
+import type { ApiError, Backlog, Progress, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { PriorityBadge } from "@/components/PriorityBadge";
 import {
   Select,
   SelectContent,
@@ -20,13 +21,19 @@ import {
 
 /**
  * BacklogBoardSection is the Board view mode of the Backlog collection: one
- * column per priority, cards stacked top to bottom inside it (docs/ui-design.md
- * rule 5 — the same dataset the List and Timeline modes show).
+ * column per progress stage, cards stacked top to bottom inside it
+ * (docs/ui-design.md rule 5 — the same dataset the List and Timeline modes
+ * show).
  *
- * Dragging a card to another column changes that backlog's priority, which is
- * the action the layout implies; the per-card priority select does the same
+ * Dragging a card to another column changes that backlog's own progress, which
+ * is the action the layout implies; the per-card progress select does the same
  * thing for keyboard and touch users, the same way the List mode pairs its drag
- * handle with move-up/down buttons.
+ * handle with move-up/down buttons. Priority rides along as a badge, not as the
+ * axis.
+ *
+ * A backlog's progress is its own, set here by hand — distinct from the
+ * closed/total task ratio each card also shows, which is derived from its tasks
+ * and stays read-only.
  */
 export function BacklogBoardSection({
   projectId,
@@ -37,8 +44,8 @@ export function BacklogBoardSection({
   projectId: string;
   backlogs: Backlog[];
   tasks?: Task[];
-  /** Card progress comes from tasks, so a failed fetch has to be visible rather
-   *  than showing every backlog as having no tasks. */
+  /** The closed-task ratio comes from tasks, so a failed fetch has to be
+   *  visible rather than showing every backlog as having no tasks. */
   tasksError?: boolean;
 }) {
   const router = useRouter();
@@ -51,13 +58,13 @@ export function BacklogBoardSection({
   useEffect(() => setItems(backlogs), [backlogs]);
   const [error, setError] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [dragOverPriority, setDragOverPriority] = useState<Priority | null>(null);
+  const [dragOverProgress, setDragOverProgress] = useState<Progress | null>(null);
 
-  async function changePriority(backlog: Backlog, priority: Priority) {
-    if (backlog.priority === priority) return;
+  async function changeProgress(backlog: Backlog, progress: Progress) {
+    if (backlog.progress === progress) return;
 
     const previous = items;
-    setItems(items.map((b) => (b.id === backlog.id ? { ...b, priority } : b)));
+    setItems(items.map((b) => (b.id === backlog.id ? { ...b, progress } : b)));
     setError(null);
     try {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`, {
@@ -70,28 +77,29 @@ export function BacklogBoardSection({
           position: backlog.position,
           startDate: backlog.startDate,
           dueOn: backlog.dueOn,
-          priority,
+          priority: backlog.priority,
+          progress,
         }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
         setItems(previous);
-        setError(body?.error.message ?? "Failed to change priority.");
+        setError(body?.error.message ?? "Failed to change progress.");
         return;
       }
       router.refresh();
     } catch {
       setItems(previous);
-      setError("Failed to change priority.");
+      setError("Failed to change progress.");
     }
   }
 
-  function handleDrop(priority: Priority) {
+  function handleDrop(progress: Progress) {
     const dragged = items.find((b) => b.id === draggingId);
     setDraggingId(null);
-    setDragOverPriority(null);
+    setDragOverProgress(null);
     if (!dragged) return;
-    void changePriority(dragged, priority);
+    void changeProgress(dragged, progress);
   }
 
   return (
@@ -102,31 +110,36 @@ export function BacklogBoardSection({
         </Alert>
       ) : null}
       {tasksError ? (
-        <p className="text-destructive text-xs">Failed to load tasks — progress is unavailable.</p>
+        <p className="text-destructive text-xs">
+          Failed to load tasks — the closed-task ratio is unavailable.
+        </p>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {PRIORITY_COLUMNS.map((column) => {
-          const cards = items.filter((b) => b.priority === column.priority);
+        {PROGRESS_COLUMNS.map((column) => {
+          const cards = items.filter((b) => b.progress === column.progress);
           return (
             <section
-              key={column.priority}
+              key={column.progress}
               aria-label={`${column.label} backlogs`}
               onDragOver={(e) => {
                 e.preventDefault();
-                setDragOverPriority(column.priority);
+                setDragOverProgress(column.progress);
               }}
-              onDragLeave={() => setDragOverPriority((p) => (p === column.priority ? null : p))}
+              onDragLeave={() => setDragOverProgress((p) => (p === column.progress ? null : p))}
               onDrop={(e) => {
                 e.preventDefault();
-                handleDrop(column.priority);
+                handleDrop(column.progress);
               }}
               className={`bg-muted/40 rounded-md p-2 ${
-                dragOverPriority === column.priority ? "ring-primary/50 ring-2" : ""
+                dragOverProgress === column.progress ? "ring-primary/50 ring-2" : ""
               }`}
             >
               <div className="mb-2 flex items-center gap-2 px-1">
-                <span aria-hidden className={`size-2 rounded-full ${PRIORITY_ACCENT[column.priority]}`} />
+                <span
+                  aria-hidden
+                  className={`size-2 rounded-full ${PROGRESS_ACCENT[column.progress]}`}
+                />
                 <h3 className="text-foreground text-sm font-medium">{column.label}</h3>
                 <span className="text-muted-foreground text-xs tabular-nums">{cards.length}</span>
               </div>
@@ -136,7 +149,7 @@ export function BacklogBoardSection({
               ) : (
                 <ul className="space-y-2">
                   {cards.map((backlog) => {
-                    const progress = backlogProgress(tasks, backlog.id);
+                    const completion = backlogCompletion(tasks, backlog.id);
                     const schedule = backlogScheduleLabel(backlog);
                     return (
                       <li
@@ -145,7 +158,7 @@ export function BacklogBoardSection({
                         onDragStart={() => setDraggingId(backlog.id)}
                         onDragEnd={() => {
                           setDraggingId(null);
-                          setDragOverPriority(null);
+                          setDragOverProgress(null);
                         }}
                         className={`bg-card border-border cursor-grab space-y-2 rounded-md border p-3 shadow-xs active:cursor-grabbing ${
                           draggingId === backlog.id ? "opacity-50" : ""
@@ -171,40 +184,46 @@ export function BacklogBoardSection({
                               <div
                                 aria-hidden
                                 className="bg-primary h-full"
-                                style={{ width: `${Math.round(progress.ratio * 100)}%` }}
+                                style={{ width: `${Math.round(completion.ratio * 100)}%` }}
                               />
                             </div>
                             <p className="text-muted-foreground text-xs tabular-nums">
-                              {progress.total === 0
+                              {completion.total === 0
                                 ? "No tasks"
-                                : `${progress.closed}/${progress.total} closed`}
+                                : `${completion.closed}/${completion.total} closed`}
                             </p>
                           </div>
                         ) : null}
 
-                        <div className="flex items-center justify-between gap-2">
-                          <Link
-                            href={tasksPath(projectId, { backlogId: backlog.id })}
-                            className="text-muted-foreground hover:text-foreground text-xs hover:underline"
-                          >
-                            View tasks
-                          </Link>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="flex items-center gap-2">
+                            <Link
+                              href={tasksPath(projectId, { backlogId: backlog.id })}
+                              className="text-muted-foreground hover:text-foreground text-xs hover:underline"
+                            >
+                              View tasks
+                            </Link>
+                            {/* Priority stays on the card because the board's
+                                own axis is progress. */}
+                            <PriorityBadge priority={backlog.priority} />
+                          </span>
                           <Select
-                            value={backlog.priority}
-                            onValueChange={(value) => void changePriority(backlog, value as Priority)}
+                            value={backlog.progress}
+                            onValueChange={(value) => void changeProgress(backlog, value as Progress)}
                           >
                             <SelectTrigger
                               size="sm"
-                              aria-label={`Priority of ${backlog.name}`}
-                              className="h-7 w-28 text-xs"
+                              aria-label={`Progress of ${backlog.name}`}
+                              className="h-7 w-32 text-xs"
                             >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="low">Low</SelectItem>
-                              <SelectItem value="medium">Medium</SelectItem>
-                              <SelectItem value="high">High</SelectItem>
-                              <SelectItem value="urgent">Urgent</SelectItem>
+                              {PROGRESS_COLUMNS.map((option) => (
+                                <SelectItem key={option.progress} value={option.progress}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>

@@ -79,6 +79,7 @@ describe("TasksPage", () => {
         status: "open",
         labels: [],
         priority: "medium",
+        progress: "not_started",
       },
       {
         id: "t2",
@@ -88,6 +89,7 @@ describe("TasksPage", () => {
         status: "open",
         labels: [],
         priority: "medium",
+        progress: "not_started",
       },
     ]);
     render(

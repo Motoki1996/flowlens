@@ -88,11 +88,11 @@ function GanttTooltip({
       </div>
       {/* Naming the counts keeps the fill from being the only statement of
           progress: "50%" and "1/2 tasks closed" carry different confidence. */}
-      {row.progress ? (
+      {row.completion ? (
         <div className="text-muted-foreground tabular-nums">
-          {row.progress.total === 0
+          {row.completion.total === 0
             ? "No tasks"
-            : `${row.progress.closed}/${row.progress.total} tasks closed (${percent(row.progress.ratio)})`}
+            : `${row.completion.closed}/${row.completion.total} tasks closed (${percent(row.completion.ratio)})`}
         </div>
       ) : null}
     </div>
@@ -102,8 +102,10 @@ function GanttTooltip({
 /** doneWidth / remainingWidth split a bar at its completion ratio. A row with
  *  no progress (a task) is all "done" and draws as one solid bar, since a task
  *  is closed or it isn't — its colour already says which. */
-const doneWidth = (row: GanttRow) => (row.progress ? row.duration * row.progress.ratio : row.duration);
-const remainingWidth = (row: GanttRow) => (row.progress ? row.duration * (1 - row.progress.ratio) : 0);
+const doneWidth = (row: GanttRow) =>
+  row.completion ? row.duration * row.completion.ratio : row.duration;
+const remainingWidth = (row: GanttRow) =>
+  row.completion ? row.duration * (1 - row.completion.ratio) : 0;
 
 /**
  * GanttChart draws the bars of a Timeline view mode. It renders only the plot:
@@ -129,7 +131,7 @@ export function GanttChart({
   const axis = computeAxis(bounds);
   const total = bounds.end.getTime() - bounds.start.getTime();
   const today = todayOffset(bounds, now);
-  const hasProgress = rows.some((row) => row.progress);
+  const hasProgress = rows.some((row) => row.completion);
 
   const open = (data: unknown) => {
     const row = (data as { payload?: GanttRow })?.payload;

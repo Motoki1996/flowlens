@@ -17,6 +17,7 @@ const backlog: Backlog = {
   startDate: null,
   dueOn: null,
   priority: "medium",
+  progress: "not_started",
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -35,6 +36,7 @@ const task: Task = {
   dueOn: null,
   startDate: null,
   priority: "medium",
+  progress: "not_started",
   position: 0,
   createdByUserId: "u1",
   createdAt: "2026-01-01T00:00:00Z",
@@ -43,7 +45,7 @@ const task: Task = {
   aiContext: { acceptanceCriteria: "", aiContext: "", allowedScope: "", forbiddenScope: "", updatedAt: null },
 };
 
-const urgentTask: Task = { ...task, id: "t2", title: "Site down", priority: "urgent", backlogId: null };
+const heldTask: Task = { ...task, id: "t2", title: "Site down", progress: "on_hold", backlogId: null };
 
 /** card returns the board card of one task, found through its title link. */
 function card(name: string) {
@@ -56,67 +58,71 @@ describe("TaskBoardSection", () => {
     vi.stubGlobal("fetch", vi.fn());
   });
 
-  it("puts each task in its priority's column", () => {
-    render(<TaskBoardSection projectId="p1" tasks={[task, urgentTask]} backlogs={[backlog]} />);
+  it("puts each task in its progress's column", () => {
+    render(<TaskBoardSection projectId="p1" tasks={[task, heldTask]} backlogs={[backlog]} />);
 
-    const urgent = screen.getByRole("region", { name: "Urgent tasks" });
-    expect(within(urgent).getByRole("link", { name: "Site down" })).toHaveAttribute(
+    const onHold = screen.getByRole("region", { name: "On hold tasks" });
+    expect(within(onHold).getByRole("link", { name: "Site down" })).toHaveAttribute(
       "href",
       "/projects/p1/tasks/t2",
     );
 
-    const medium = screen.getByRole("region", { name: "Medium tasks" });
-    expect(within(medium).getByRole("link", { name: "Fix login" })).toBeInTheDocument();
+    const notStarted = screen.getByRole("region", { name: "Not started tasks" });
+    expect(within(notStarted).getByRole("link", { name: "Fix login" })).toBeInTheDocument();
 
     expect(
-      within(screen.getByRole("region", { name: "Low tasks" })).getByText("No tasks."),
+      within(screen.getByRole("region", { name: "Done tasks" })).getByText("No tasks."),
     ).toBeInTheDocument();
   });
 
   it("names each card's backlog, falling back to Unclassified", () => {
-    render(<TaskBoardSection projectId="p1" tasks={[task, urgentTask]} backlogs={[backlog]} />);
+    render(<TaskBoardSection projectId="p1" tasks={[task, heldTask]} backlogs={[backlog]} />);
 
     expect(within(card("Fix login")).getByText(/Sprint 1/)).toBeInTheDocument();
     expect(within(card("Site down")).getByText(/Unclassified/)).toBeInTheDocument();
   });
 
-  it("changes a task's priority when its card is dropped on another column", async () => {
+  it("changes a task's progress when its card is dropped on another column", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ ...task, priority: "high" }), { status: 200 }),
+      new Response(JSON.stringify({ ...task, progress: "in_progress" }), { status: 200 }),
     );
     render(<TaskBoardSection projectId="p1" tasks={[task]} backlogs={[backlog]} />);
 
     fireEvent.dragStart(card("Fix login"));
-    fireEvent.drop(screen.getByRole("region", { name: "High tasks" }));
+    fireEvent.drop(screen.getByRole("region", { name: "In progress tasks" }));
 
     // The card moves ahead of the response, so the drag reads as a drag.
     expect(
-      within(screen.getByRole("region", { name: "High tasks" })).getByRole("link", {
+      within(screen.getByRole("region", { name: "In progress tasks" })).getByRole("link", {
         name: "Fix login",
       }),
     ).toBeInTheDocument();
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // Only progress travels: the PATCH must not carry status or priority.
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8080/api/v1/tasks/t1",
-      expect.objectContaining({ method: "PATCH", body: JSON.stringify({ priority: "high" }) }),
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ progress: "in_progress" }),
+      }),
     );
   });
 
   it("puts the card back and reports the error when the change fails", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ error: { code: "invalid_priority", message: "Nope" } }), {
+      new Response(JSON.stringify({ error: { code: "invalid_progress", message: "Nope" } }), {
         status: 400,
       }),
     );
     render(<TaskBoardSection projectId="p1" tasks={[task]} backlogs={[backlog]} />);
 
     fireEvent.dragStart(card("Fix login"));
-    fireEvent.drop(screen.getByRole("region", { name: "Urgent tasks" }));
+    fireEvent.drop(screen.getByRole("region", { name: "Done tasks" }));
 
     expect(await screen.findByText("Nope")).toBeInTheDocument();
     expect(
-      within(screen.getByRole("region", { name: "Medium tasks" })).getByRole("link", {
+      within(screen.getByRole("region", { name: "Not started tasks" })).getByRole("link", {
         name: "Fix login",
       }),
     ).toBeInTheDocument();
@@ -126,19 +132,22 @@ describe("TaskBoardSection", () => {
     render(<TaskBoardSection projectId="p1" tasks={[task]} backlogs={[backlog]} />);
 
     fireEvent.dragStart(card("Fix login"));
-    fireEvent.drop(screen.getByRole("region", { name: "Medium tasks" }));
+    fireEvent.drop(screen.getByRole("region", { name: "Not started tasks" }));
 
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("keeps a closed task's status visible on its card", () => {
+  it("keeps a closed task's status and priority visible on its card", () => {
     render(
       <TaskBoardSection
         projectId="p1"
-        tasks={[{ ...task, status: "closed" }]}
+        tasks={[{ ...task, status: "closed", priority: "urgent" }]}
         backlogs={[backlog]}
       />,
     );
+    // The board's axis is progress, so neither of the other two may be read
+    // off the column a card sits in.
     expect(within(card("Fix login")).getByText("Closed")).toBeInTheDocument();
+    expect(within(card("Fix login")).getByText("Urgent")).toBeInTheDocument();
   });
 });

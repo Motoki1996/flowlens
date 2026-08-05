@@ -7,7 +7,7 @@
 // horizontal bar chart (a transparent `offset` segment followed by a visible
 // `duration` segment), and a stack has to accumulate from zero.
 
-import type { Backlog, Priority, Task } from "@/types";
+import type { Backlog, Priority, Progress, Task } from "@/types";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -136,8 +136,11 @@ export function formatAxisTick(
  */
 export type ScheduleState = "open" | "overdue" | "closed";
 
-/** Progress is the closed/total task ratio a backlog bar is filled by. */
-export interface Progress {
+/** TaskCompletion is the closed/total task ratio a backlog bar is filled by.
+ *  Deliberately not called "progress": that name belongs to the four-stage work
+ *  state a backlog carries itself (Progress in @/types), which this ratio is
+ *  independent of — a backlog can read In progress with nothing closed yet. */
+export interface TaskCompletion {
   closed: number;
   total: number;
   /** closed / total, 0 for a backlog with no tasks. */
@@ -148,6 +151,7 @@ export interface GanttRow {
   id: string;
   title: string;
   priority: Priority;
+  progress: Progress;
   state: ScheduleState;
   /** Transparent leading segment of the stacked bar, in ms from bounds.start. */
   offset: number;
@@ -156,8 +160,9 @@ export interface GanttRow {
   /** Inclusive display dates, for labels and the tooltip. */
   start: Date;
   end: Date;
-  /** Set on backlog rows only; task rows are closed or not, never partial. */
-  progress?: Progress;
+  /** Closed/total task ratio, set on backlog rows only; task rows are closed
+   *  or not, never partial. Separate from `progress` above. */
+  completion?: TaskCompletion;
 }
 
 /** isOverdue reports whether dueOn is a day already behind us. */
@@ -168,10 +173,10 @@ function isOverdue(dueOn: string | null, now: Date): boolean {
 /** buildRow lays one scheduled object out on the axis, or returns null when it
  *  has no dates to plot. Everything object-specific arrives already decided. */
 function buildRow(
-  item: { id: string; title: string; priority: Priority } & Scheduled,
+  item: { id: string; title: string; priority: Priority; progress: Progress } & Scheduled,
   bounds: DateRange,
   state: ScheduleState,
-  progress?: Progress,
+  completion?: TaskCompletion,
 ): GanttRow | null {
   const range = effectiveRange(item);
   if (!range) return null;
@@ -181,12 +186,13 @@ function buildRow(
     id: item.id,
     title: item.title,
     priority: item.priority,
+    progress: item.progress,
     state,
     offset: start.getTime() - bounds.start.getTime(),
     duration: endExclusive.getTime() - start.getTime(),
     start,
     end: startOfDay(range.end),
-    ...(progress ? { progress } : {}),
+    ...(completion ? { completion } : {}),
   };
 }
 
@@ -214,11 +220,11 @@ export function toTaskGanttRows(tasks: Task[], bounds: DateRange, now: Date): Ga
 }
 
 /**
- * backlogProgress counts how much of a backlog is done. A backlog with no tasks
+ * backlogCompletion counts how much of a backlog is done. A backlog with no tasks
  * reports 0/0 at ratio 0 rather than "complete": an empty backlog has not been
  * finished, and filling its bar would say it had.
  */
-export function backlogProgress(tasks: Task[], backlogId: string): Progress {
+export function backlogCompletion(tasks: Task[], backlogId: string): TaskCompletion {
   const owned = tasks.filter((t) => t.backlogId === backlogId);
   const closed = owned.filter((t) => t.status === "closed").length;
   return {
@@ -242,7 +248,7 @@ export function toBacklogGanttRows(
 ): GanttRow[] {
   return backlogs
     .map((backlog) => {
-      const progress = backlogProgress(tasks, backlog.id);
+      const progress = backlogCompletion(tasks, backlog.id);
       const complete = progress.total > 0 && progress.closed === progress.total;
       const state: ScheduleState = complete
         ? "closed"

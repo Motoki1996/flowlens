@@ -683,7 +683,7 @@ no GitLab-side counterpart to push to or pull from.
   ascending, tasks with no due date last) and `?sort=updatedAt` (most recently
   updated first) — the same three values as the cross-project collection, so
   a screen's sort menu means one thing whichever list backs it. Backlogs take
-  `?sort=priority` only.
+  `?sort=priority` and `?sort=progress` only.
 
 In the web app, priority is selectable wherever a task or backlog is created
 or edited: the task single view's edit form, the task collection's inline
@@ -693,35 +693,77 @@ on the Backlog collection view, not its single view, per
 "New backlog" and per-row "Edit" forms. It is shown as a badge, the same
 component for both tasks and backlogs, in list rows, timeline name columns
 and the task single view. A backlog's priority is independent of its tasks':
-creating or editing one never reads or writes the other.
+creating or editing one never reads or writes the other. Priority is no longer
+the board's axis — see [Task & backlog progress](#task--backlog-progress)
+below — but it stays a badge on every board card.
 
-Both collections also **present** priority as a "Board" view mode (alongside
-List and Timeline, per the OOUI rule that a collection is one dataset
-presented several ways): one column per priority — Low, Medium, High, Urgent,
-left to right, so the axis reads as rising urgency — with a card per object
+### Task & backlog progress
+
+A task and a backlog each also carry a `progress` — one of `not_started`,
+`in_progress`, `on_hold`, `done`, defaulting to `not_started` — FlowLens's own
+four-stage record of how far the work has got.
+
+It is deliberately **not** a task's `status`. That field is the GitLab issue
+state (`open`/`closed`) and is kept in sync both ways; `progress` is app-only
+and never synced to GitLab, like `priority`, `startDate` and task
+dependencies. The two never write each other: closing a task on either side
+leaves its progress alone, and moving a task to `done` never closes its
+GitLab issue. A task can legitimately read *Closed* and *On hold* at once, and
+both badges are shown wherever either is.
+
+- `POST`/`PATCH` on both `/api/v1/projects/{projectID}/tasks` /
+  `/api/v1/tasks/{taskID}` and `/api/v1/projects/{projectID}/backlogs` /
+  `/api/v1/backlogs/{backlogID}` accept `progress`, under the same
+  partial-update contract as `priority`: a task PATCH without `progress`
+  leaves the stored value alone, and an absent or explicitly empty value on
+  create resets it to `not_started` rather than erroring. Any other value is
+  rejected with 400 `invalid_progress`.
+- `GET .../tasks` and `GET .../backlogs` accept
+  `?progress=not_started|in_progress|on_hold|done` to narrow the list, and
+  `?sort=progress` to order by progress. Progress ranks the **opposite** way
+  from priority — `not_started` first through `done` — so the order reads as
+  the work advancing and matches the board's left-to-right axis. Like
+  `?sort=priority` it is a display order for the request only and never
+  rewrites `position`. The cross-project collection `GET /api/v1/tasks`
+  accepts both parameters too.
+
+In the web app, progress is selectable everywhere priority is (both create
+forms, both edit forms), and shown as its own badge beside the priority badge
+in list rows, timeline name columns and the single views. A backlog's progress
+is its own, set by hand — it is *not* derived from its tasks, and is separate
+from the closed/total task ratio the backlog board and timeline also show.
+
+#### The Board view mode
+
+Both collections **present** progress as a "Board" view mode (alongside List
+and Timeline, per the OOUI rule that a collection is one dataset presented
+several ways): one column per stage — Not started, In progress, On hold, Done,
+left to right, so the axis reads as the work advancing — with a card per object
 stacked inside its column. The columns and their accents come from
-`apps/web/lib/priority.ts`, so the two boards can never disagree on which way
+`apps/web/lib/progress.ts`, so the two boards can never disagree on which way
 the axis points.
 
 - **Backlog board** (`/projects/{projectId}/backlogs`, the collection's
-  *default* mode): each card shows the backlog's planned period and its
-  closed/total task ratio, with the ratio drawn as a fill and stated as text.
+  *default* mode): each card shows the backlog's planned period, its priority
+  badge, and its closed/total task ratio, with the ratio drawn as a fill and
+  stated as text.
 - **Task board** (`/projects/{projectId}/tasks`, alongside the default List
   mode): each card names the task's backlog (or Unclassified), its due date
-  and assignee, its labels, and its status and sync badges — the board's axis
-  is priority, so a closed task must not read as open just because of the
-  column it sits in. It renders the same filtered and sorted set the List and
-  Timeline modes do, so `?q=`/`?status=`/`?backlog=`/`?sort=` narrow every
-  mode together.
+  and assignee, its labels, and its priority, status and sync badges — the
+  board's axis is progress, so neither a closed task nor an urgent one may be
+  read off the column it sits in. It renders the same filtered and sorted set
+  the List and Timeline modes do, so
+  `?q=`/`?status=`/`?progress=`/`?backlog=`/`?sort=` narrow every mode
+  together.
 
-Dragging a card to another column changes that object's priority through the
+Dragging a card to another column changes that object's progress through the
 same `PATCH /api/v1/backlogs/{backlogID}` / `PATCH /api/v1/tasks/{taskID}`,
 applied optimistically and rolled back with an error if the request fails.
-Each card also carries a priority select doing the same thing for keyboard and
+Each card also carries a progress select doing the same thing for keyboard and
 touch users, the way the List modes pair their drag handles with
 move-up/move-down buttons. Everything else stays in the List mode — creating,
 editing, deleting, manual reordering, and (for tasks) moving between backlogs
-— since a priority board's one axis is priority.
+— since the board's one axis is progress.
 
 ### Task & backlog reordering
 

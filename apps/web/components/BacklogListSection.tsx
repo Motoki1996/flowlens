@@ -9,7 +9,8 @@ import { API_PUBLIC_URL } from "@/lib/config";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
-import type { ApiError, Backlog, Priority, Task } from "@/types";
+import type { ApiError, Backlog, Priority, Progress, Task } from "@/types";
+import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { ProgressBadge } from "@/components/ProgressBadge";
 import { BacklogBoardSection } from "@/components/BacklogBoardSection";
 
 /**
@@ -61,6 +63,7 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [priority, setPriority] = useState<Priority>("medium");
+  const [progress, setProgress] = useState<Progress>("not_started");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -84,6 +87,7 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
+          progress,
         }),
       });
       if (!res.ok) {
@@ -154,6 +158,23 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
           </SelectContent>
         </Select>
       </div>
+      <div>
+        <label htmlFor="new-backlog-progress" className="text-foreground block text-sm font-medium">
+          Progress
+        </label>
+        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
+          <SelectTrigger id="new-backlog-progress" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROGRESS_COLUMNS.map((option) => (
+              <SelectItem key={option.progress} value={option.progress}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Creating…" : "Create backlog"}
@@ -184,6 +205,7 @@ function EditBacklogForm({
   const [startDate, setStartDate] = useState(fromApiDate(backlog.startDate));
   const [dueOn, setDueOn] = useState(fromApiDate(backlog.dueOn));
   const [priority, setPriority] = useState<Priority>(backlog.priority);
+  const [progress, setProgress] = useState<Progress>(backlog.progress);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -208,6 +230,7 @@ function EditBacklogForm({
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
+          progress,
         }),
       });
       if (!res.ok) {
@@ -286,6 +309,26 @@ function EditBacklogForm({
             <SelectItem value="medium">Medium</SelectItem>
             <SelectItem value="high">High</SelectItem>
             <SelectItem value="urgent">Urgent</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <label
+          htmlFor={`edit-backlog-progress-${backlog.id}`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Progress
+        </label>
+        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
+          <SelectTrigger id={`edit-backlog-progress-${backlog.id}`} className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROGRESS_COLUMNS.map((option) => (
+              <SelectItem key={option.progress} value={option.progress}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -380,8 +423,9 @@ export function BacklogListSection({
 }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  // Board is the default: priority is the first question asked of a backlog
-  // collection, and the board answers it without reading every row.
+  // Board is the default: how far along each backlog is, is the first question
+  // asked of a backlog collection, and the board answers it without reading
+  // every row.
   const [view, setView] = useState<ViewMode>("board");
 
   // `order` mirrors `backlogs` but is reordered optimistically on drag/move,
@@ -566,6 +610,7 @@ export function BacklogListSection({
                           </span>
                         </Link>
                         <PriorityBadge priority={backlog.priority} />
+                        <ProgressBadge progress={backlog.progress} />
                       </div>
                       {backlogScheduleLabel(backlog) ? (
                         <p className="text-muted-foreground truncate text-xs">

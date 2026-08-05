@@ -4,7 +4,16 @@ import { useMemo, useState, type FormEvent } from "react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
-import type { GitlabLabelOption, GitlabMemberOption, ApiError, Backlog, Priority, Task } from "@/types";
+import type {
+  GitlabLabelOption,
+  GitlabMemberOption,
+  ApiError,
+  Backlog,
+  Priority,
+  Progress,
+  Task,
+} from "@/types";
+import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -76,6 +85,7 @@ export function TaskEditForm({
   const [startDate, setStartDate] = useState(fromApiDate(task.startDate));
   const [dueOn, setDueOn] = useState(fromApiDate(task.dueOn));
   const [priority, setPriority] = useState<Priority>(task.priority);
+  const [progress, setProgress] = useState<Progress>(task.progress);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -153,6 +163,7 @@ export function TaskEditForm({
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
+          progress,
         }),
       });
       if (!res.ok) {
@@ -288,6 +299,23 @@ export function TaskEditForm({
             <SelectItem value="medium">Medium</SelectItem>
             <SelectItem value="high">High</SelectItem>
             <SelectItem value="urgent">Urgent</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <label htmlFor="edit-task-progress" className="text-foreground block text-sm font-medium">
+          Progress
+        </label>
+        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
+          <SelectTrigger id="edit-task-progress" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROGRESS_COLUMNS.map((option) => (
+              <SelectItem key={option.progress} value={option.progress}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>

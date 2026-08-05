@@ -140,6 +140,74 @@ func TestService_Update_ChangesPriority(t *testing.T) {
 	assert.ErrorIs(t, err, task.ErrInvalidPriority)
 }
 
+// Progress follows the same absent/explicit-empty rules as priority, and is
+// deliberately independent of Status: closing a task must not move it.
+func TestService_Update_ChangesProgress(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug"})
+	require.NoError(t, err)
+	require.Equal(t, task.ProgressNotStarted, created.Progress, "an absent progress defaults to not_started")
+
+	untouched, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug")})
+	require.NoError(t, err)
+	assert.Equal(t, task.ProgressNotStarted, untouched.Progress)
+
+	updated, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{
+		Progress: task.Present(task.ProgressOnHold),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, task.ProgressOnHold, updated.Progress)
+
+	// Closing the task is the GitLab issue state changing; progress is the
+	// app's own and must survive it untouched.
+	closed, err := svc.Close(ctx, owner, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, task.StatusClosed, closed.Status)
+	assert.Equal(t, task.ProgressOnHold, closed.Progress)
+
+	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{
+		Progress: task.Present("nearly-done"),
+	})
+	assert.ErrorIs(t, err, task.ErrInvalidProgress)
+}
+
+func TestService_List_FiltersAndSortsByProgress(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	// Created in the reverse of the progress order, so the sort proves it
+	// overrides the manual position order rather than coinciding with it.
+	done, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Done", Progress: task.ProgressDone})
+	require.NoError(t, err)
+	onHold, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "On hold", Progress: task.ProgressOnHold})
+	require.NoError(t, err)
+	inProgress, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "In progress", Progress: task.ProgressInProgress})
+	require.NoError(t, err)
+	notStarted, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Not started"})
+	require.NoError(t, err)
+
+	filtered, err := svc.List(ctx, owner, p.ID, task.ListFilter{Progress: task.ProgressOnHold})
+	require.NoError(t, err)
+	require.Len(t, filtered, 1)
+	assert.Equal(t, onHold.ID, filtered[0].ID)
+
+	// Progress sorts the other way from priority: not_started first, done last.
+	sorted, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortProgress})
+	require.NoError(t, err)
+	require.Len(t, sorted, 4)
+	assert.Equal(t, []uuid.UUID{notStarted.ID, inProgress.ID, onHold.ID, done.ID}, []uuid.UUID{
+		sorted[0].ID, sorted[1].ID, sorted[2].ID, sorted[3].ID,
+	})
+}
+
 func TestService_Create_ReturnsNotFoundForForeignProject(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

@@ -98,6 +98,42 @@ func TestHandleListTasks_RejectsInvalidPriorityQuery(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestHandleListTasks_RejectsInvalidProgressQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?progress=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleListTasks_FiltersAndSortsByProgressQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Done", Progress: "done"}, token)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Not started"}, token)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?progress=done", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var filtered []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "Done", filtered[0]["title"])
+
+	// Progress sorts not_started first, the reverse of priority's ranking.
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort=progress", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var sorted []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sorted))
+	require.Len(t, sorted, 2)
+	assert.Equal(t, "Not started", sorted[0]["title"])
+	assert.Equal(t, "Done", sorted[1]["title"])
+}
+
 func TestHandleListTasks_RejectsInvalidSortQuery(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)
@@ -227,6 +263,7 @@ func TestHandleListAllTasks_RejectsInvalidQuery(t *testing.T) {
 	}{
 		{"invalid status", "?status=bogus"},
 		{"invalid priority", "?priority=bogus"},
+		{"invalid progress", "?progress=bogus"},
 		{"invalid sort", "?sort=bogus"},
 		{"invalid dueBefore", "?dueBefore=not-a-date"},
 		{"invalid dueAfter", "?dueAfter=not-a-date"},
@@ -334,6 +371,7 @@ func TestHandleCreateTask_DefaultsPriorityToMedium(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "medium", body["priority"])
+	assert.Equal(t, "not_started", body["progress"])
 }
 
 func TestHandleCreateTask_ForeignProjectGets404(t *testing.T) {
@@ -419,6 +457,22 @@ func TestHandleUpdateTask(t *testing.T) {
 		assert.Equal(t, "Renamed", body["title"])
 		assert.Equal(t, "new", body["description"])
 		assert.Equal(t, float64(3), body["position"])
+	})
+
+	t.Run("owner can change progress; invalid progress is rejected", func(t *testing.T) {
+		// Progress travels alone in the body and must not disturb status,
+		// which only /close and /reopen move.
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
+			map[string]any{"progress": "on_hold"}, ownerToken)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "on_hold", body["progress"])
+		assert.Equal(t, "open", body["status"])
+
+		rec = doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
+			map[string]any{"progress": "nearly-done"}, ownerToken)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
 	t.Run("owner can change priority; invalid priority is rejected", func(t *testing.T) {

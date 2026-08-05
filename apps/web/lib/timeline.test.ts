@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  backlogProgress,
+  backlogCompletion,
   computeAxis,
   computeTimelineBounds,
   effectiveRange,
@@ -40,6 +40,7 @@ function makeTask(overrides: Partial<Task>): Task {
     dueOn: null,
     startDate: null,
     priority: "medium",
+    progress: "not_started",
     position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
@@ -250,13 +251,14 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     startDate: null,
     dueOn: null,
     priority: "medium",
+    progress: "not_started",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }
 
-describe("backlogProgress", () => {
+describe("backlogCompletion", () => {
   const tasks = [
     makeTask({ id: "t1", backlogId: "b1", status: "closed" }),
     makeTask({ id: "t2", backlogId: "b1", status: "open" }),
@@ -265,16 +267,16 @@ describe("backlogProgress", () => {
   ];
 
   it("counts only the tasks filed in that backlog", () => {
-    expect(backlogProgress(tasks, "b1")).toEqual({ closed: 1, total: 2, ratio: 0.5 });
+    expect(backlogCompletion(tasks, "b1")).toEqual({ closed: 1, total: 2, ratio: 0.5 });
   });
 
   // An empty backlog has not been finished, so it must not read as complete.
   it("reports 0/0 at ratio 0 for a backlog with no tasks", () => {
-    expect(backlogProgress(tasks, "b9")).toEqual({ closed: 0, total: 0, ratio: 0 });
+    expect(backlogCompletion(tasks, "b9")).toEqual({ closed: 0, total: 0, ratio: 0 });
   });
 
   it("reports a fully closed backlog at ratio 1", () => {
-    expect(backlogProgress(tasks, "b2").ratio).toBe(1);
+    expect(backlogCompletion(tasks, "b2").ratio).toBe(1);
   });
 });
 
@@ -296,7 +298,7 @@ describe("toBacklogGanttRows", () => {
       bounds,
       now,
     );
-    expect(row.progress).toEqual({ closed: 1, total: 2, ratio: 0.5 });
+    expect(row.completion).toEqual({ closed: 1, total: 2, ratio: 0.5 });
     expect(row.offset).toBe(2 * ONE_DAY_MS);
     expect(row.duration).toBe(3 * ONE_DAY_MS);
   });

@@ -23,6 +23,7 @@ type createTaskRequest struct {
 	DueOn                  *time.Time `json:"dueOn"`
 	StartDate              *time.Time `json:"startDate"`
 	Priority               string     `json:"priority"`
+	Progress               string     `json:"progress"`
 }
 
 // updateTaskRequest is a true partial update: a key absent from the body
@@ -38,6 +39,7 @@ type updateTaskRequest struct {
 	DueOn                  task.Optional[*time.Time] `json:"dueOn"`
 	StartDate              task.Optional[*time.Time] `json:"startDate"`
 	Priority               task.Optional[string]     `json:"priority"`
+	Progress               task.Optional[string]     `json:"progress"`
 	Position               task.Optional[int32]      `json:"position"`
 }
 
@@ -81,12 +83,24 @@ func isValidPriority(v string) bool {
 	}
 }
 
-// parseTaskListFilter reads the ?backlog_id=, ?status=, ?priority= and
-// ?sort= query parameters. backlog_id accepts a UUID or the literal
-// "unassigned"; status accepts "open" or "closed"; priority accepts "low",
-// "medium", "high" or "urgent"; sort accepts "priority" to rank by priority
-// instead of the default manual/position order. Any may be omitted to mean
-// "no filter"/"default order".
+// isValidProgress reports whether v is one of the fixed progress values.
+func isValidProgress(v string) bool {
+	switch v {
+	case task.ProgressNotStarted, task.ProgressInProgress, task.ProgressOnHold, task.ProgressDone:
+		return true
+	default:
+		return false
+	}
+}
+
+// parseTaskListFilter reads the ?backlog_id=, ?status=, ?priority=,
+// ?progress= and ?sort= query parameters. backlog_id accepts a UUID or the
+// literal "unassigned"; status accepts "open" or "closed" (the GitLab issue
+// state); priority accepts "low", "medium", "high" or "urgent"; progress
+// accepts "not_started", "in_progress", "on_hold" or "done" (FlowLens's own
+// work state, independent of status); sort accepts "priority" or "progress"
+// to rank by either instead of the default manual/position order. Any may be
+// omitted to mean "no filter"/"default order".
 func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 	var filter task.ListFilter
 
@@ -116,13 +130,20 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 		filter.Priority = v
 	}
 
+	if v := r.URL.Query().Get("progress"); v != "" {
+		if !isValidProgress(v) {
+			return task.ListFilter{}, errors.New("progress must be one of not_started, in_progress, on_hold, done")
+		}
+		filter.Progress = v
+	}
+
 	if v := r.URL.Query().Get("sort"); v != "" {
-		// The same three values the cross-project collection accepts (see
+		// The same four values the cross-project collection accepts (see
 		// parseCrossProjectFilter), so a screen's sort menu means the same
 		// thing whichever list backs it. Omitting sort is this list's manual
 		// position order, which the cross-project one has no equivalent for.
-		if v != task.SortPriority && v != task.SortDueOn && v != task.SortUpdatedAt {
-			return task.ListFilter{}, errors.New("sort must be one of priority, dueOn, updatedAt")
+		if v != task.SortPriority && v != task.SortProgress && v != task.SortDueOn && v != task.SortUpdatedAt {
+			return task.ListFilter{}, errors.New("sort must be one of priority, progress, dueOn, updatedAt")
 		}
 		filter.Sort = v
 	}
@@ -201,7 +222,7 @@ func parseDateQueryParam(r *http.Request, name string) (*time.Time, error) {
 // /api/v1/tasks accepts.
 func isValidCrossProjectSort(v string) bool {
 	switch v {
-	case task.SortDueOn, task.SortPriority, task.SortUpdatedAt:
+	case task.SortDueOn, task.SortPriority, task.SortProgress, task.SortUpdatedAt:
 		return true
 	default:
 		return false
@@ -209,7 +230,7 @@ func isValidCrossProjectSort(v string) bool {
 }
 
 // parseCrossProjectTaskListFilter reads the query parameters GET
-// /api/v1/tasks accepts (issue #76): ?status=, ?priority=, ?dueBefore=,
+// /api/v1/tasks accepts (issue #76): ?status=, ?priority=, ?progress=, ?dueBefore=,
 // ?dueAfter=, ?startedBefore= (all YYYY-MM-DD), ?projectId= (repeatable —
 // still scoped to the caller's own projects, never a way to reach someone
 // else's), ?sort= and ?limit=. Every filter may be omitted; sort and limit
@@ -229,6 +250,13 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 			return task.CrossProjectFilter{}, errors.New("priority must be one of low, medium, high, urgent")
 		}
 		filter.Priority = v
+	}
+
+	if v := r.URL.Query().Get("progress"); v != "" {
+		if !isValidProgress(v) {
+			return task.CrossProjectFilter{}, errors.New("progress must be one of not_started, in_progress, on_hold, done")
+		}
+		filter.Progress = v
 	}
 
 	dueBefore, err := parseDateQueryParam(r, "dueBefore")
@@ -259,7 +287,7 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 
 	if v := r.URL.Query().Get("sort"); v != "" {
 		if !isValidCrossProjectSort(v) {
-			return task.CrossProjectFilter{}, errors.New("sort must be one of dueOn, priority, updatedAt")
+			return task.CrossProjectFilter{}, errors.New("sort must be one of dueOn, priority, progress, updatedAt")
 		}
 		filter.Sort = v
 	}
@@ -318,6 +346,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		DueOn:                  req.DueOn,
 		StartDate:              req.StartDate,
 		Priority:               req.Priority,
+		Progress:               req.Progress,
 	})
 	if err != nil {
 		writeTaskError(w, err)
@@ -377,6 +406,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		DueOn:                  req.DueOn,
 		StartDate:              req.StartDate,
 		Priority:               req.Priority,
+		Progress:               req.Progress,
 		Position:               req.Position,
 	})
 	if err != nil {
@@ -522,6 +552,8 @@ func writeTaskError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_title", "title must be 1-255 characters")
 	case errors.Is(err, task.ErrInvalidPriority):
 		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
+	case errors.Is(err, task.ErrInvalidProgress):
+		writeError(w, http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done")
 	case errors.Is(err, task.ErrBacklogNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_backlog", "backlog belongs to a different project")
 	case errors.Is(err, task.ErrAIContextFieldTooLong):

@@ -1,10 +1,11 @@
 import Link from "next/link";
 import type { Backlog, Task, TaskStatus } from "@/types";
 import { taskPath, tasksPath } from "@/lib/routes";
-import { backlogProgress } from "@/lib/timeline";
+import { backlogCompletion } from "@/lib/timeline";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { ProgressBadge } from "@/components/ProgressBadge";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -50,9 +51,9 @@ export function BacklogDetail({
   tasks?: Task[];
   tasksError?: boolean;
 }) {
-  // tasks is already filtered to this backlog by the page, but backlogProgress
+  // tasks is already filtered to this backlog by the page, but backlogCompletion
   // is the one place the ratio is defined, so it counts rather than the view.
-  const progress = backlogProgress(tasks, backlog.id);
+  const completion = backlogCompletion(tasks, backlog.id);
 
   return (
     <>
@@ -61,6 +62,7 @@ export function BacklogDetail({
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-foreground text-xl leading-none font-semibold">{backlog.name}</h1>
             <PriorityBadge priority={backlog.priority} />
+            <ProgressBadge progress={backlog.progress} />
           </div>
           <CardDescription className="mt-1.5">
             {backlog.description || "No description"}
@@ -87,9 +89,9 @@ export function BacklogDetail({
               <dd className="text-foreground">
                 {tasksError
                   ? "Unavailable"
-                  : progress.total === 0
+                  : completion.total === 0
                     ? "No tasks"
-                    : `${progress.closed}/${progress.total} closed (${Math.round(progress.ratio * 100)}%)`}
+                    : `${completion.closed}/${completion.total} closed (${Math.round(completion.ratio * 100)}%)`}
               </dd>
             </div>
             <div>

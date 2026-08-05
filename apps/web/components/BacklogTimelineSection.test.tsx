@@ -25,6 +25,7 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     startDate: null,
     dueOn: null,
     priority: "medium",
+    progress: "not_started",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -46,6 +47,7 @@ function makeTask(overrides: Partial<Task>): Task {
     dueOn: null,
     startDate: null,
     priority: "medium",
+    progress: "not_started",
     position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
@@ -168,14 +170,16 @@ describe("BacklogTimelineSection", () => {
 
   // Progress is unknowable when the task fetch failed, so it must not be
   // reported as zero.
-  it("reports unavailable progress instead of 0% when tasks failed to load", () => {
+  it("reports an unavailable closed-task ratio instead of 0% when tasks failed to load", () => {
     const backlogs = [
       makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-07" }),
     ];
     render(
       <BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} tasksError now={NOW} />,
     );
-    expect(screen.getByText("Failed to load tasks — progress is unavailable.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Failed to load tasks — the closed-task ratio is unavailable."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("No tasks")).not.toBeInTheDocument();
   });
 });

@@ -12,13 +12,6 @@ import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
 import type { ApiError, Backlog, Progress, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PriorityBadge } from "@/components/PriorityBadge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
 /**
  * BacklogBoardSection is the Board view mode of the Backlog collection: one
@@ -27,9 +20,7 @@ import {
  * show).
  *
  * Dragging a card to another column changes that backlog's own progress, which
- * is the action the layout implies; the per-card progress select does the same
- * thing for keyboard and touch users, the same way the List mode pairs its drag
- * handle with move-up/down buttons. Priority rides along as a badge, not as the
+ * is the action the layout implies. Priority rides along as a badge, not as the
  * axis.
  *
  * A backlog's progress is its own, set here by hand — distinct from the
@@ -163,10 +154,9 @@ export function BacklogBoardSection({
                         }}
                         // The whole card opens the backlog, not just its name —
                         // the card *is* the backlog here. Its own controls (the
-                        // name link, "View tasks", the progress select) keep
-                        // their behaviour; the name link is also what keeps this
-                        // reachable by keyboard, which a click handler alone
-                        // would not be.
+                        // name link, "View tasks") keep their behaviour; the
+                        // name link is also what keeps this reachable by
+                        // keyboard, which a click handler alone would not be.
                         onClick={(e) => {
                           if (isCardBackgroundClick(e)) {
                             router.push(backlogPath(projectId, backlog.id));
@@ -207,37 +197,16 @@ export function BacklogBoardSection({
                           </div>
                         ) : null}
 
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="flex items-center gap-2">
-                            <Link
-                              href={tasksPath(projectId, { backlogId: backlog.id })}
-                              className="text-muted-foreground hover:text-foreground text-xs hover:underline"
-                            >
-                              View tasks
-                            </Link>
-                            {/* Priority stays on the card because the board's
-                                own axis is progress. */}
-                            <PriorityBadge priority={backlog.priority} />
-                          </span>
-                          <Select
-                            value={backlog.progress}
-                            onValueChange={(value) => void changeProgress(backlog, value as Progress)}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            href={tasksPath(projectId, { backlogId: backlog.id })}
+                            className="text-muted-foreground hover:text-foreground text-xs hover:underline"
                           >
-                            <SelectTrigger
-                              size="sm"
-                              aria-label={`Progress of ${backlog.name}`}
-                              className="h-7 w-32 text-xs"
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {PROGRESS_COLUMNS.map((option) => (
-                                <SelectItem key={option.progress} value={option.progress}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            View tasks
+                          </Link>
+                          {/* Priority stays on the card because the board's own
+                              axis is progress. */}
+                          <PriorityBadge priority={backlog.priority} />
                         </div>
                       </li>
                     );

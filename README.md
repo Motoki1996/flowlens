@@ -759,9 +759,8 @@ the axis points.
 Dragging a card to another column changes that object's progress through the
 same `PATCH /api/v1/backlogs/{backlogID}` / `PATCH /api/v1/tasks/{taskID}`,
 applied optimistically and rolled back with an error if the request fails.
-Each card also carries a progress select doing the same thing for keyboard and
-touch users, the way the List modes pair their drag handles with
-move-up/move-down buttons. Everything else stays in the List mode — creating,
+Dragging is the only way the board changes progress; the object's own edit form
+remains the keyboard path. Everything else stays in the List mode — creating,
 editing, deleting, manual reordering, and (for tasks) moving between backlogs
 — since the board's one axis is progress.
 

@@ -11,13 +11,6 @@ import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
 import type { ApiError, Backlog, Progress, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 
@@ -31,8 +24,7 @@ const UNCLASSIFIED_LABEL = "Unclassified";
  * together).
  *
  * Dragging a card to another column changes that task's progress, which is the
- * action the layout implies; the per-card progress select does the same for
- * keyboard and touch users. Priority rides along as a badge, not as the axis: a
+ * action the layout implies. Priority rides along as a badge, not as the axis: a
  * task's priority doesn't change by moving the work forward. Reassigning a
  * task's *backlog* stays in the List mode, which groups by backlog — this
  * board's axis is progress only, so the card names its backlog rather than
@@ -151,10 +143,10 @@ export function TaskBoardSection({
                         setDragOverProgress(null);
                       }}
                       // The whole card opens the task, not just its title — the
-                      // card *is* the task here. Its own controls (the title
-                      // link, the progress select) keep their behaviour; the
-                      // title link is also what keeps this reachable by
-                      // keyboard, which a click handler alone would not be.
+                      // card *is* the task here. Its own controls keep their
+                      // behaviour; the title link is also what keeps this
+                      // reachable by keyboard, which a click handler alone
+                      // would not be.
                       onClick={(e) => {
                         if (isCardBackgroundClick(e)) router.push(taskPath(projectId, task.id));
                       }}
@@ -187,37 +179,16 @@ export function TaskBoardSection({
                         </div>
                       ) : null}
 
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="flex items-center gap-2">
-                          {/* Status and priority stay on the card because the
-                              board's own axis is progress — a closed or urgent
-                              task must not read as open or ordinary just
-                              because it sits in the In progress column. */}
-                          <Badge variant={task.status === "open" ? "default" : "secondary"}>
-                            {task.status === "open" ? "Open" : "Closed"}
-                          </Badge>
-                          <PriorityBadge priority={task.priority} />
-                          <SyncBadge gitlab={task.gitlab} />
-                        </span>
-                        <Select
-                          value={task.progress}
-                          onValueChange={(value) => void changeProgress(task, value as Progress)}
-                        >
-                          <SelectTrigger
-                            size="sm"
-                            aria-label={`Progress of ${task.title}`}
-                            className="h-7 w-32 text-xs"
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {PROGRESS_COLUMNS.map((option) => (
-                              <SelectItem key={option.progress} value={option.progress}>
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Status and priority stay on the card because the
+                            board's own axis is progress — a closed or urgent
+                            task must not read as open or ordinary just because
+                            it sits in the In progress column. */}
+                        <Badge variant={task.status === "open" ? "default" : "secondary"}>
+                          {task.status === "open" ? "Open" : "Closed"}
+                        </Badge>
+                        <PriorityBadge priority={task.priority} />
+                        <SyncBadge gitlab={task.gitlab} />
                       </div>
                     </li>
                   ))}

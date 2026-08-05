@@ -146,7 +146,7 @@ describe("TaskBoardSection", () => {
     expect(push).toHaveBeenCalledWith("/projects/p1/tasks/t1");
 
     push.mockClear();
-    fireEvent.click(screen.getByRole("combobox", { name: "Progress of Fix login" }));
+    fireEvent.click(screen.getByRole("link", { name: "Fix login" }));
     expect(push).not.toHaveBeenCalled();
   });
 

@@ -682,91 +682,99 @@ export function TaskListSection({
   return (
     <Card>
       <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle className="text-base font-medium">Tasks</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            {/* The view modes and filters only make sense once tasks exist, but
-                "New task" must stay reachable on an empty project. */}
-            {!error && tasks.length > 0 ? (
-              <>
+        {/* Two rows, same shape as the Backlog collection: the object's name and
+            its object-level controls (view mode, create) on the top row, and the
+            filter/sort controls left-aligned on their own row below — crowding
+            all of them into one right-aligned cluster made the view toggle and
+            "New task" hard to find among the filters. */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base font-medium">Tasks</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* The view modes only make sense once tasks exist, but "New task"
+                  must stay reachable on an empty project. */}
+              {!error && tasks.length > 0 ? (
                 <ViewModeToggle value={view} onChange={setView} />
-                {/* Filters belong to the collection, not to one presentation of
-                    it (docs/ui-design.md rule 5), so they stay put across view
-                    modes and narrow the timeline the same way they narrow the
-                    list. Keeping them mounted is also what holds this
-                    right-aligned cluster still: unmounting them on every view
-                    switch slid the buttons out from under the pointer that had
-                    just clicked them.
-
-                    Status is a short fixed list, so it stays a Select; backlogs
-                    grow with the project and get the searchable Combobox. */}
-                <Input
-                  aria-label="Search tasks"
-                  placeholder="Search tasks…"
-                  value={search}
-                  onChange={(e) => changeSearch(e.target.value)}
-                  className="h-8 w-40"
-                />
-                <Select
-                  value={statusFilter}
-                  onValueChange={(value) => changeStatusFilter(value as "all" | TaskStatus)}
-                >
-                  <SelectTrigger size="sm" aria-label="Status" className="w-36">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="closed">Closed</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={progressFilter}
-                  onValueChange={(value) => changeProgressFilter(value as "all" | Progress)}
-                >
-                  <SelectTrigger size="sm" aria-label="Progress" className="w-36">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All progress</SelectItem>
-                    {PROGRESS_COLUMNS.map((option) => (
-                      <SelectItem key={option.progress} value={option.progress}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Combobox
-                  aria-label="Backlog"
-                  options={filterOptions}
-                  value={backlogFilter}
-                  onChange={changeBacklogFilter}
-                  size="sm"
-                  className="w-44"
-                  searchPlaceholder="Search backlogs…"
-                  emptyText="No backlog found."
-                />
-                <Select value={sort} onValueChange={(value) => changeSort(value as TaskSort)}>
-                  <SelectTrigger size="sm" aria-label="Sort" className="w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="manual">Manual order</SelectItem>
-                    <SelectItem value="dueOn">Due date</SelectItem>
-                    <SelectItem value="priority">Priority</SelectItem>
-                    <SelectItem value="progress">Progress</SelectItem>
-                    <SelectItem value="updatedAt">Recently updated</SelectItem>
-                  </SelectContent>
-                </Select>
-              </>
-            ) : null}
-            {!creating ? (
-              <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
-                <Plus className="size-4" aria-hidden />
-                New task
-              </Button>
-            ) : null}
+              ) : null}
+              {!creating ? (
+                <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+                  <Plus className="size-4" aria-hidden />
+                  New task
+                </Button>
+              ) : null}
+            </div>
           </div>
+          {/* Filters belong to the collection, not to one presentation of it
+              (docs/ui-design.md rule 5), so they stay put across view modes and
+              narrow the timeline the same way they narrow the list. Keeping them
+              mounted is also what holds the row above still: unmounting them on
+              every view switch slid the buttons out from under the pointer that
+              had just clicked them.
+
+              Status is a short fixed list, so it stays a Select; backlogs grow
+              with the project and get the searchable Combobox. */}
+          {!error && tasks.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                aria-label="Search tasks"
+                placeholder="Search tasks…"
+                value={search}
+                onChange={(e) => changeSearch(e.target.value)}
+                className="h-8 w-40"
+              />
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => changeStatusFilter(value as "all" | TaskStatus)}
+              >
+                <SelectTrigger size="sm" aria-label="Status" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={progressFilter}
+                onValueChange={(value) => changeProgressFilter(value as "all" | Progress)}
+              >
+                <SelectTrigger size="sm" aria-label="Progress" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All progress</SelectItem>
+                  {PROGRESS_COLUMNS.map((option) => (
+                    <SelectItem key={option.progress} value={option.progress}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Combobox
+                aria-label="Backlog"
+                options={filterOptions}
+                value={backlogFilter}
+                onChange={changeBacklogFilter}
+                size="sm"
+                className="w-44"
+                searchPlaceholder="Search backlogs…"
+                emptyText="No backlog found."
+              />
+              <Select value={sort} onValueChange={(value) => changeSort(value as TaskSort)}>
+                <SelectTrigger size="sm" aria-label="Sort" className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">Manual order</SelectItem>
+                  <SelectItem value="dueOn">Due date</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                  <SelectItem value="progress">Progress</SelectItem>
+                  <SelectItem value="updatedAt">Recently updated</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent>

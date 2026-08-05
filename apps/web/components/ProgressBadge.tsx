@@ -16,8 +16,11 @@ export function ProgressBadge({ progress }: { progress: Progress }) {
     case "in_progress":
       return <Badge variant="default">In progress</Badge>;
     case "on_hold":
+      // Amber, not destructive: `destructive` is reserved for things that have
+      // actually gone wrong (a failed sync, an overdue bar), and held work is
+      // paused rather than broken.
       return (
-        <Badge variant="outline" className="border-destructive/50 text-destructive">
+        <Badge variant="outline" className="border-chart-4/50 text-chart-4">
           On hold
         </Badge>
       );

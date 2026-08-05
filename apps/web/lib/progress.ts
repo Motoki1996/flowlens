@@ -31,6 +31,8 @@ export const PROGRESS_LABELS: Record<Progress, string> = {
 export const PROGRESS_ACCENT: Record<Progress, string> = {
   not_started: "bg-muted-foreground/30",
   in_progress: "bg-primary",
-  on_hold: "bg-destructive",
+  // Amber rather than destructive — see ProgressBadge for why held work is
+  // not an error state.
+  on_hold: "bg-chart-4",
   done: "bg-secondary-foreground/40",
 };

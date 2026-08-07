@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { taskPath } from "@/lib/routes";
 import type { ApiError, Task, TaskDependency } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -62,7 +63,7 @@ export function TaskDependencySection({
         {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...csrfHeaders() },
           body: JSON.stringify(
             direction === "predecessors"
               ? { predecessorTaskId: otherTaskId, successorTaskId: task.id }
@@ -89,6 +90,7 @@ export function TaskDependencySection({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/task-dependencies/${dependencyId}`, {
         method: "DELETE",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;

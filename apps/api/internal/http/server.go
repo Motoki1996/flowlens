@@ -120,6 +120,7 @@ func (s *Server) Router() chi.Router {
 		// reason.
 		api.Group(func(protected chi.Router) {
 			protected.Use(s.requireAuth)
+			protected.Use(s.requireCSRF)
 			protected.Get("/me", s.handleMe)
 
 			// Cross-project task collection (issue #76): every task across
@@ -201,6 +202,7 @@ func (s *Server) Router() chi.Router {
 		// (GET /tasks/{taskID}/context next to protected's /tasks mount).
 		api.Group(func(shared chi.Router) {
 			shared.Use(s.requireAuthOrBearer)
+			shared.Use(s.requireCSRF)
 
 			shared.Get("/projects", s.handleListProjects)
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}", s.handleGetProject)
@@ -253,12 +255,19 @@ func (s *Server) Router() chi.Router {
 	return r
 }
 
-// startSession issues a session for userID and sets the session cookie.
+// startSession issues a session for userID and sets the session cookie,
+// alongside a fresh CSRF cookie (issue #92) with the same lifetime.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID uuid.UUID) error {
 	token, err := s.sessions.Create(r.Context(), userID)
 	if err != nil {
 		return err
 	}
 	s.cookies.setSession(w, token, int(s.sessionTTL.Seconds()))
+
+	csrfToken, err := auth.NewOpaqueToken()
+	if err != nil {
+		return err
+	}
+	s.cookies.setCSRF(w, csrfToken, int(s.sessionTTL.Seconds()))
 	return nil
 }

@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
@@ -79,7 +80,7 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           name,
           description,
@@ -221,7 +222,7 @@ function EditBacklogForm({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           name,
           description,
@@ -361,6 +362,7 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`, {
         method: "DELETE",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -446,7 +448,7 @@ export function BacklogListSection({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs/order`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ backlogIds: next.map((b) => b.id) }),
       });
       if (!res.ok) {

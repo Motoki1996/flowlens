@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { linkedGitlabProjectPath } from "@/lib/routes";
 import type { ApiError, GitlabProjectOption, LinkedGitlabProject, SyncScope } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -113,7 +114,7 @@ function LinkProjectForm({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/linked-gitlab-projects`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ gitlabProjectId: selected.id, syncScope: scope, syncLabels: labels }),
       });
       if (!res.ok) {

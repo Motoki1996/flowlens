@@ -84,7 +84,7 @@ The repo also has a GitHub Actions path (`.github/workflows/claude.yml`) trigger
 
 - **Sessions are opaque and server-side.** The cookie holds a random token; only its SHA-256 hash is stored. HttpOnly, `Secure` in production. Revocable on logout, expire server-side.
 - **Passwords are hashed with bcrypt** (`internal/auth/password.go`), never stored or logged in plaintext. Minimum length 8, enforced at signup.
-- API mutations currently rely on `SameSite=Lax` + locked CORS origin (double-submit token planned).
+- API mutations are protected by `SameSite=Lax` + locked CORS origin, plus a double-submit CSRF token: a non-HttpOnly `flowlens_csrf` cookie is set alongside the session cookie at login, and every session-authenticated POST/PATCH/PUT/DELETE must echo its value in an `X-CSRF-Token` header (`internal/http/middleware.go`'s `requireCSRF`) or is rejected with 403. It is a no-op for bearer-token requests, which carry no cookie at all.
 - Secrets come only from env / `.env` (git-ignored). Never commit real credentials.
 - The planned "connect GitLab" feature stores the access token **per app project, not per user** ([ADR-0008](docs/decisions/0008-why-per-project-gitlab-connection.md)), encrypted at rest with AES-256-GCM. No such storage exists yet.
 

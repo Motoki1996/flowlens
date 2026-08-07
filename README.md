@@ -888,8 +888,6 @@ the sections.
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault
   implementation is not written yet (the interface is in place).
-- CSRF protection for the API relies on `SameSite=Lax` cookies plus a
-  locked-down CORS origin; a double-submit token is planned.
 - Integration tests assume migrations are already applied.
 - The merge-request / CI delivery-flow visualization described in
   [Solution](#solution) is not built yet — see [Roadmap](#roadmap).

@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
 import type {
@@ -153,7 +154,7 @@ export function TaskEditForm({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           title,
           description,

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { backlogScheduleLabel } from "@/lib/backlogs";
 import { isCardBackgroundClick } from "@/lib/cards";
@@ -62,7 +63,7 @@ export function BacklogBoardSection({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           name: backlog.name,
           description: backlog.description,

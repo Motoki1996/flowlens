@@ -118,5 +118,6 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.cookies.clearSession(w)
+	s.cookies.clearCSRF(w)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import type { ApiError, TaskAIContext } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -56,7 +57,7 @@ function AIContextField({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/ai-context`, {
         method: "PUT",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           acceptanceCriteria: context.acceptanceCriteria,
           aiContext: context.aiContext,

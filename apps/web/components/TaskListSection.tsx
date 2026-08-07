@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { formatDate, toApiDate } from "@/lib/dates";
 import type {
@@ -188,7 +189,7 @@ function NewTaskForm({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/tasks`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           title,
           description,
@@ -552,7 +553,7 @@ export function TaskListSection({
           fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/assign-backlog`, {
             method: "POST",
             credentials: "include",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...csrfHeaders() },
             body: JSON.stringify({ backlogId }),
           }),
         ),
@@ -586,7 +587,7 @@ export function TaskListSection({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/tasks/order`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           backlogId: groupKey === UNCLASSIFIED ? null : groupKey,
           taskIds: newOrderIds,
@@ -613,7 +614,7 @@ export function TaskListSection({
       const assignRes = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/assign-backlog`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ backlogId: targetBacklogId }),
       });
       if (!assignRes.ok) {
@@ -626,7 +627,7 @@ export function TaskListSection({
       const orderRes = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/tasks/order`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ backlogId: targetBacklogId, taskIds: orderedIds }),
       });
       if (!orderRes.ok) {

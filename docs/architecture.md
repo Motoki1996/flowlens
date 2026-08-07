@@ -214,9 +214,10 @@ Design notes:
 - Token encryption is behind an interface so the crypto backend can change
   without touching callers.
 - CORS allows only the configured web origin and enables credentials.
-- CSRF: the OAuth flow uses the state parameter; API mutations currently
-  rely on `SameSite=Lax` cookies plus the locked CORS origin, with a
-  double-submit token planned.
+- CSRF: API mutations rely on `SameSite=Lax` cookies plus the locked CORS
+  origin, and a double-submit `flowlens_csrf` cookie/`X-CSRF-Token` header
+  pair, enforced on every session-authenticated mutation and skipped for
+  bearer-token requests.
 - The production Docker image runs the API as a non-root user from a static
   binary.
 

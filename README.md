@@ -602,9 +602,21 @@ until someone switches to the Timeline:
   positions each task at its start date, and the visible segment spans
   start → due inclusive. A task with only one of the two dates occupies that
   single day.
-- The date axis switches from daily to weekly to monthly ticks as the project's
-  span grows, and the plot scrolls horizontally rather than compressing bars
-  into slivers. "Today" is drawn as a reference line when it falls in range.
+- The plotted range always covers every scheduled task, so the chart never hides
+  data. How much detail that range is read at is the reader's choice: a **Zoom**
+  control (Month / Week / Day) sets both the width a day gets and the axis tick
+  interval, and the plot scrolls horizontally rather than compressing bars into
+  slivers. The initial level is derived from the span — daily ticks up to three
+  weeks, then weekly, then monthly — so a short sprint and a year-long plan are
+  each legible without touching the control.
+- "Today" is drawn as a reference line when it falls in range, a **Today** button
+  scrolls the plot back to it (disabled when today is outside the range), and a
+  long project opens scrolled to today rather than to its earliest date. Changing
+  the zoom magnifies around whatever was on screen instead of jumping to the
+  start.
+- Zoom and scroll position are local view state, exactly like the view-mode
+  toggle they sit beside: they are not persisted to the URL or sent to the API,
+  because the timeline redraws a collection that has already been fetched.
 - A bar's colour is a status, never an identity: open work is the brand hue,
   an open task past its due date is destructive-red, and closed work recedes to
   muted. A legend names all three, so colour is never the only cue.
@@ -618,7 +630,8 @@ until someone switches to the Timeline:
 
 The Backlog collection (`/projects/{projectId}/backlogs`) has the same
 Timeline mode alongside its Board and List modes, drawing one bar per
-scheduled backlog with the same axis, colours and today marker. What it adds is **completion**: each bar is filled by
+scheduled backlog with the same axis, zoom and Today controls, colours and
+today marker. What it adds is **completion**: each bar is filled by
 the share of that backlog's tasks that are closed, with the remainder drawn in
 the same hue at low opacity, so plan and progress are read in one place. The
 ratio is also stated as text (`3/8 closed (38%)`) beside the bar, in the
@@ -628,7 +641,9 @@ rather than appearing complete, and when the task fetch itself fails the chart
 says progress is unavailable instead of showing everything at 0%.
 
 The date math lives in `apps/web/lib/timeline.ts`, separate from the components
-so it is unit-testable without rendering a chart.
+so it is unit-testable without rendering a chart; the zoom level and scroll
+position are owned by the `useTimelineViewport` hook beside it, shared by both
+timelines.
 
 ### Task collection search, filters and sort
 

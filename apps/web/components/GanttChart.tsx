@@ -10,6 +10,7 @@ import {
   type DateRange,
   type GanttRow,
   type ScheduleState,
+  type TimelineZoom,
 } from "@/lib/timeline";
 
 /** ROW_HEIGHT must match the name column of the section wrapping this chart —
@@ -122,15 +123,19 @@ export function GanttChart({
   bounds,
   now,
   href,
+  zoom,
 }: {
   rows: GanttRow[];
   bounds: DateRange;
   now: Date;
   /** Where clicking a bar goes — the single view of whatever the row is. */
   href: (row: GanttRow) => string;
+  /** Tick interval for the date axis. Omitted, the axis derives one from the
+   *  span — the chart stays usable on its own, without a zoom control. */
+  zoom?: TimelineZoom;
 }) {
   const router = useRouter();
-  const axis = computeAxis(bounds);
+  const axis = computeAxis(bounds, zoom);
   const total = bounds.end.getTime() - bounds.start.getTime();
   const today = todayOffset(bounds, now);
   const hasProgress = rows.some((row) => row.completion);

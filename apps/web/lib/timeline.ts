@@ -84,15 +84,59 @@ export interface TimelineAxis {
 }
 
 /**
- * computeAxis picks a tick interval that keeps the date axis readable at any
- * span — every day for a couple of weeks, then weekly, then the first of each
- * month — and returns the tick positions as offsets from bounds.start. Week
- * and month ticks are snapped to real week/month starts rather than to
- * multiples of the range, so the labels are dates a reader recognises.
+ * TimelineZoom is how much horizontal room one day gets, named after the tick
+ * interval that room affords. It is the reader's control over detail, and is
+ * deliberately independent of `bounds`: the plotted range always covers every
+ * scheduled object (the chart never hides data), and zoom decides whether that
+ * range is skimmed at a glance or scrolled through day by day.
  */
-export function computeAxis(bounds: DateRange): TimelineAxis {
+export type TimelineZoom = "day" | "week" | "month";
+
+export const TIMELINE_ZOOMS: TimelineZoom[] = ["month", "week", "day"];
+
+/** dayWidth is in px; the axis granularity follows from it rather than from the
+ *  span, so zooming in on a year-long project really does yield daily ticks. */
+export const ZOOM_LEVELS: Record<TimelineZoom, { label: string; dayWidth: number }> = {
+  day: { label: "Day", dayWidth: 28 },
+  week: { label: "Week", dayWidth: 10 },
+  month: { label: "Month", dayWidth: 4 },
+};
+
+/** The plot never draws narrower than this, so a one-week project still gets a
+ *  readable axis instead of a stub. */
+export const MIN_PLOT_WIDTH = 480;
+
+/**
+ * defaultZoom is the level a timeline opens at: the one whose ticks the span
+ * calls for, so a two-week sprint lands on daily ticks and a year-long plan on
+ * monthly ones without anybody touching the control. Reading the *data* for the
+ * initial value and then letting the reader override it is the whole design —
+ * the thresholds match what the axis used to derive on its own.
+ */
+export function defaultZoom(bounds: DateRange): TimelineZoom {
   const days = spanDays(bounds);
-  const granularity: TickGranularity = days <= 21 ? "day" : days <= 120 ? "week" : "month";
+  return days <= 21 ? "day" : days <= 120 ? "week" : "month";
+}
+
+/** plotWidth is how wide the bars area is drawn at a zoom level. Anything past
+ *  the container scrolls horizontally rather than compressing the bars. */
+export function plotWidth(bounds: DateRange, zoom: TimelineZoom): number {
+  return Math.max(MIN_PLOT_WIDTH, spanDays(bounds) * ZOOM_LEVELS[zoom].dayWidth);
+}
+
+/**
+ * computeAxis returns the tick positions as offsets from bounds.start. Week and
+ * month ticks are snapped to real week/month starts rather than to multiples of
+ * the range, so the labels are dates a reader recognises.
+ *
+ * With no zoom given it picks the interval the span calls for — every day for a
+ * couple of weeks, then weekly, then the first of each month. Passing a zoom
+ * hands that choice to the reader instead.
+ */
+export function computeAxis(bounds: DateRange, zoom?: TimelineZoom): TimelineAxis {
+  // A zoom level is named after the tick interval it affords, so it *is* the
+  // granularity — no mapping table sits between the two.
+  const granularity: TickGranularity = zoom ?? defaultZoom(bounds);
   const offset = (d: Date) => d.getTime() - bounds.start.getTime();
   const ticks: number[] = [];
 

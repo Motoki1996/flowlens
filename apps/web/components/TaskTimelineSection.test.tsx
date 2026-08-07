@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Task, TaskDependency } from "@/types";
 import { TaskTimelineSection } from "./TaskTimelineSection";
 
@@ -110,6 +111,44 @@ describe("TaskTimelineSection", () => {
     for (const label of ["Open", "Overdue", "Closed"]) {
       expect(legend.getByText(label)).toBeInTheDocument();
     }
+  });
+
+  it("opens at the zoom the span calls for, and lets the reader change it", async () => {
+    const user = userEvent.setup();
+    // A three-day sprint is read day by day; the reader can still pull back.
+    const tasks = [makeTask({ id: "t1", title: "Design", startDate: "2026-08-01", dueOn: "2026-08-03" })];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+    const zoom = within(screen.getByRole("group", { name: "Zoom" }));
+    expect(zoom.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(zoom.getByRole("button", { name: "Month" }));
+    expect(zoom.getByRole("button", { name: "Month" })).toHaveAttribute("aria-pressed", "true");
+    expect(zoom.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("opens a long range zoomed out rather than at daily detail", () => {
+    const tasks = [makeTask({ id: "t1", title: "Rollout", startDate: "2026-01-01", dueOn: "2026-12-31" })];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+    const zoom = within(screen.getByRole("group", { name: "Zoom" }));
+    expect(zoom.getByRole("button", { name: "Month" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("disables the Today button when today is outside the plotted range", () => {
+    const tasks = [makeTask({ id: "t1", title: "Design", startDate: "2026-08-01", dueOn: "2026-08-10" })];
+    const { rerender } = render(
+      <TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />,
+    );
+    expect(screen.getByRole("button", { name: "Today" })).toBeEnabled();
+
+    rerender(
+      <TaskTimelineSection
+        projectId="p1"
+        tasks={tasks}
+        dependencies={[]}
+        now={new Date("2027-01-01T00:00:00Z")}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Today" })).toBeDisabled();
   });
 
   it("labels a task with its predecessor's title", () => {

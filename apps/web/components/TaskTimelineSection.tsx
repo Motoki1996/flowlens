@@ -4,17 +4,17 @@ import { useMemo } from "react";
 import Link from "next/link";
 import type { Task, TaskDependency } from "@/types";
 import { taskPath } from "@/lib/routes";
-import { computeTimelineBounds, hasSchedule, spanDays, toTaskGanttRows } from "@/lib/timeline";
+import { computeTimelineBounds, hasSchedule, toTaskGanttRows } from "@/lib/timeline";
+import { useTimelineViewport } from "@/lib/useTimelineViewport";
 import { AXIS_HEIGHT, GanttChart, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
+import { TimelineControls } from "@/components/TimelineControls";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 
-/** The name column is a fixed width so every row's bar starts at the same x,
- *  and the plot gets a minimum width per day so a long project scrolls
- *  horizontally instead of compressing every bar into a sliver. */
+/** The name column is a fixed width so every row's bar starts at the same x.
+ *  The plot's own width comes from the zoom level (see useTimelineViewport):
+ *  past the container it scrolls horizontally rather than compressing the bars. */
 const NAME_COLUMN_WIDTH = 200;
-const MIN_DAY_WIDTH = 16;
-const MIN_PLOT_WIDTH = 480;
 
 function formatDate(date: Date) {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -65,6 +65,7 @@ export function TaskTimelineSection({
     [tasks, bounds, today],
   );
   const unscheduled = tasks.filter((t) => !hasSchedule(t));
+  const viewport = useTimelineViewport(bounds, today);
 
   const predecessorsByTask = useMemo(() => {
     const titleById = new Map((allTasks ?? tasks).map((t) => [t.id, t.title]));
@@ -90,17 +91,23 @@ export function TaskTimelineSection({
     );
   }
 
-  const plotWidth = Math.max(MIN_PLOT_WIDTH, spanDays(bounds) * MIN_DAY_WIDTH);
-
   return (
     <div>
-      <div className="text-muted-foreground mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <span>
-          {formatDate(bounds.start)} – {formatDate(bounds.end)}
-        </span>
-        <span>
-          {closedCount}/{tasks.length} closed ({progressPercent}%)
-        </span>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <span>
+            {formatDate(bounds.start)} – {formatDate(bounds.end)}
+          </span>
+          <span>
+            {closedCount}/{tasks.length} closed ({progressPercent}%)
+          </span>
+        </div>
+        <TimelineControls
+          zoom={viewport.zoom}
+          onZoomChange={viewport.setZoom}
+          onToday={viewport.scrollToToday}
+          hasToday={viewport.hasToday}
+        />
       </div>
 
       <div className="flex">
@@ -138,12 +145,17 @@ export function TaskTimelineSection({
           </ul>
         </div>
 
-        <div className="min-w-0 flex-1 overflow-x-auto">
-          <div style={{ minWidth: plotWidth }}>
+        <div
+          ref={viewport.scrollRef}
+          onScroll={viewport.onScroll}
+          className="min-w-0 flex-1 overflow-x-auto"
+        >
+          <div style={{ minWidth: viewport.plotWidth }}>
             <GanttChart
               rows={rows}
               bounds={bounds}
               now={today}
+              zoom={viewport.zoom}
               href={(row) => taskPath(projectId, row.id)}
             />
           </div>

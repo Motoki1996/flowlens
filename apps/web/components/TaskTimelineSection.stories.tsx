@@ -104,8 +104,9 @@ export const Overdue: Story = {
   },
 };
 
-/** Past three weeks the axis switches from daily to weekly ticks, and the plot
- *  scrolls horizontally rather than compressing the bars. */
+/** Past three weeks the timeline opens at weekly ticks, and the plot scrolls
+ *  horizontally rather than compressing the bars. The Zoom control overrides
+ *  that default in either direction; Today scrolls the plot back to the marker. */
 export const LongRange: Story = {
   args: {
     tasks: [
@@ -114,6 +115,28 @@ export const LongRange: Story = {
       makeTask({ id: "t3", title: "Rollout", startDate: "2026-09-01", dueOn: "2026-09-30" }),
     ],
     dependencies: [],
+  },
+};
+
+/** A year-long plan opens at monthly ticks — the whole range is legible at a
+ *  glance, and zooming to Day expands it into a scrollable day-by-day view
+ *  without ever hiding a task. */
+export const YearLongPlan: Story = {
+  args: {
+    tasks: [
+      makeTask({ id: "t1", title: "Discovery", startDate: "2026-01-05", dueOn: "2026-03-31", status: "closed" }),
+      makeTask({ id: "t2", title: "Issue sync MVP", startDate: "2026-03-01", dueOn: "2026-07-15" }),
+      makeTask({ id: "t3", title: "Delivery-flow visualisation", startDate: "2026-07-01", dueOn: "2026-11-30" }),
+      makeTask({ id: "t4", title: "GA", startDate: "2026-11-15", dueOn: "2026-12-20" }),
+    ],
+    dependencies: [],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("button", { name: "Month" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   },
 };
 

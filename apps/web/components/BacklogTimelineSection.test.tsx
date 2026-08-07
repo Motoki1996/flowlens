@@ -158,6 +158,19 @@ describe("BacklogTimelineSection", () => {
     }
   });
 
+  // The zoom control itself is exercised in TaskTimelineSection.test.tsx; this
+  // only asserts the Backlog timeline offers the same one, rather than
+  // silently dropping it.
+  it("offers the zoom and Today controls", () => {
+    const backlogs = [
+      makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-10" }),
+    ];
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} now={NOW} />);
+    const zoom = within(screen.getByRole("group", { name: "Zoom" }));
+    expect(zoom.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Today" })).toBeEnabled();
+  });
+
   it("lists unscheduled backlogs separately, outside the chart", () => {
     const backlogs = [
       makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01" }),

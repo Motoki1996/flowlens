@@ -3,9 +3,12 @@ import {
   backlogCompletion,
   computeAxis,
   computeTimelineBounds,
+  defaultZoom,
   effectiveRange,
   formatAxisTick,
   hasSchedule,
+  MIN_PLOT_WIDTH,
+  plotWidth,
   spanDays,
   startOfDay,
   toBacklogGanttRows,
@@ -15,6 +18,13 @@ import {
 import type { Backlog, Task } from "@/types";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/** boundsOf builds a plotted range of a known length, which is what the axis,
+ *  the zoom default and the plot width are all decided from. */
+const boundsOf = (startDay: string, days: number) => ({
+  start: startOfDay(new Date(startDay)),
+  end: new Date(startOfDay(new Date(startDay)).getTime() + days * ONE_DAY_MS),
+});
 
 /** day formats a Date the way the local-midnight helpers produce it, so the
  *  assertions read as dates rather than as timestamps. */
@@ -127,11 +137,6 @@ describe("computeTimelineBounds", () => {
 });
 
 describe("computeAxis", () => {
-  const boundsOf = (startDay: string, days: number) => ({
-    start: startOfDay(new Date(startDay)),
-    end: new Date(startOfDay(new Date(startDay)).getTime() + days * ONE_DAY_MS),
-  });
-
   it.each([
     { days: 10, granularity: "day" },
     { days: 60, granularity: "week" },
@@ -166,6 +171,13 @@ describe("computeAxis", () => {
     expect(days.every((d) => d === 1)).toBe(true);
   });
 
+  it("uses the given zoom instead of the span's own granularity", () => {
+    // A 200-day span would derive month ticks; a reader who zoomed in gets days.
+    expect(computeAxis(boundsOf("2026-08-03", 200), "day").granularity).toBe("day");
+    // …and one who zoomed out of a short span gets months.
+    expect(computeAxis(boundsOf("2026-08-03", 10), "month").granularity).toBe("month");
+  });
+
   it("keeps every tick inside the plotted range", () => {
     const bounds = boundsOf("2026-08-03", 40);
     const total = bounds.end.getTime() - bounds.start.getTime();
@@ -173,6 +185,28 @@ describe("computeAxis", () => {
       expect(tick).toBeGreaterThanOrEqual(0);
       expect(tick).toBeLessThan(total);
     }
+  });
+});
+
+describe("defaultZoom", () => {
+  it.each([
+    { days: 10, zoom: "day" },
+    { days: 60, zoom: "week" },
+    { days: 200, zoom: "month" },
+  ])("opens a $days-day span at $zoom zoom", ({ days, zoom }) => {
+    expect(defaultZoom(boundsOf("2026-08-03", days))).toBe(zoom);
+  });
+});
+
+describe("plotWidth", () => {
+  it("widens as the zoom gets finer, so the same range is scrolled not squeezed", () => {
+    const bounds = boundsOf("2026-08-03", 200);
+    expect(plotWidth(bounds, "day")).toBeGreaterThan(plotWidth(bounds, "week"));
+    expect(plotWidth(bounds, "week")).toBeGreaterThan(plotWidth(bounds, "month"));
+  });
+
+  it("never draws narrower than the minimum, however short the range", () => {
+    expect(plotWidth(boundsOf("2026-08-03", 3), "month")).toBe(MIN_PLOT_WIDTH);
   });
 });
 

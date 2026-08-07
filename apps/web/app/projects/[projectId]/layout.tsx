@@ -18,10 +18,11 @@ import { ProjectSidebar, type ProjectSidebarCounts } from "@/components/ProjectS
  * of a detour through the project's single view; the pages below only render
  * the object they are about.
  *
- * Auth and the project lookup happen here as well as in each page. The page
- * needs them for its own data anyway, and the reads are memoised per request
- * (see lib/api), so the duplication costs one function call, not one round
- * trip.
+ * Auth is checked here only, not repeated in the nested pages below — this
+ * layout renders the AppHeader they don't (issue #94). The project lookup
+ * does still happen here as well as in each page: the page needs it for its
+ * own data anyway, and the reads are memoised per request (see lib/api), so
+ * the duplication costs one function call, not one round trip.
  */
 export default async function ProjectLayout({
   children,

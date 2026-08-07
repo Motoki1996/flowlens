@@ -1,18 +1,17 @@
-import { redirect, notFound } from "next/navigation";
-import { getBacklog, getCurrentUser, getProject, getTasks } from "@/lib/api";
+import { notFound } from "next/navigation";
+import { getBacklog, getProject, getTasks } from "@/lib/api";
 import { backlogsPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BacklogDetail } from "@/components/BacklogDetail";
 import type { Task } from "@/types";
 
+// Auth is guarded by the parent layout.tsx (it also owns the AppHeader this
+// page doesn't need its own user object for).
 export default async function BacklogPage({
   params,
 }: {
   params: Promise<{ projectId: string; backlogId: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { projectId, backlogId } = await params;
   const [backlog, project] = await Promise.all([getBacklog(backlogId), getProject(projectId)]);
   if (!backlog || !project) notFound();

@@ -100,13 +100,6 @@ describe("TaskPage", () => {
     getBacklogs.mockResolvedValue([backlog]);
   });
 
-  it("redirects to /login when not authenticated", async () => {
-    getCurrentUser.mockResolvedValue(null);
-    await expect(TaskPage({ params: Promise.resolve({ projectId: "p1", taskId: "t1" }) })).rejects.toThrow(
-      "REDIRECT:/login",
-    );
-  });
-
   it("renders the task's single view with its backlog resolved by name", async () => {
     render(await TaskPage({ params: Promise.resolve({ projectId: "p1", taskId: "t1" }) }));
     expect(screen.getByRole("heading", { name: "Fix the bug" })).toBeInTheDocument();

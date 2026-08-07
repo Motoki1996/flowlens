@@ -5,6 +5,9 @@ import { ProjectsView } from "@/components/ProjectsView";
 import type { Project } from "@/types";
 
 export default async function ProjectsPage() {
+  // middleware.ts only checks that the session cookie exists; this page
+  // needs the actual user object below (for AppHeader), and this is also the
+  // fallback that redirects when the cookie is present but expired/invalid.
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 

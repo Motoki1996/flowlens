@@ -1,7 +1,6 @@
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import {
   getBacklogs,
-  getCurrentUser,
   getLinkedGitlabProjectLabels,
   getLinkedGitlabProjectMembers,
   getLinkedGitlabProjects,
@@ -15,14 +14,13 @@ import type { GitlabLabelOption, GitlabMemberOption } from "@/types";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { TaskDetail } from "@/components/TaskDetail";
 
+// Auth is guarded by the parent layout.tsx (it also owns the AppHeader this
+// page doesn't need its own user object for).
 export default async function TaskPage({
   params,
 }: {
   params: Promise<{ projectId: string; taskId: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { projectId, taskId } = await params;
   const [task, project] = await Promise.all([getTask(taskId), getProject(projectId)]);
   if (!task || !project) notFound();

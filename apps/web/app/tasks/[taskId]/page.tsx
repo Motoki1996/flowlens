@@ -12,6 +12,11 @@ export default async function LegacyTaskPage({
 }: {
   params: Promise<{ taskId: string }>;
 }) {
+  // This route isn't nested under any layout that already checks auth, and
+  // middleware.ts only checks that the session cookie exists (not that it's
+  // still valid) — without this, an expired cookie would reach getTask()
+  // below and surface as an unhandled fetch error instead of a clean
+  // redirect to /login.
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 

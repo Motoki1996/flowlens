@@ -4,6 +4,10 @@ import { AppHeader } from "@/components/AppHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function SettingsPage() {
+  // middleware.ts only checks that the session cookie exists; this page
+  // needs the actual user object below (for AppHeader and the account
+  // fields), and this is also the fallback that redirects when the cookie
+  // is present but expired/invalid.
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 

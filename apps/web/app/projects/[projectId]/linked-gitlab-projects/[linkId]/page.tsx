@@ -1,24 +1,17 @@
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import type { SyncRun, WebhookEventPage } from "@/types";
-import {
-  getCurrentUser,
-  getLinkedGitlabProject,
-  getProject,
-  getSyncRuns,
-  getWebhookEvents,
-} from "@/lib/api";
+import { getLinkedGitlabProject, getProject, getSyncRuns, getWebhookEvents } from "@/lib/api";
 import { gitlabConnectionPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { LinkedGitlabProjectDetail } from "@/components/LinkedGitlabProjectDetail";
 
+// Auth is guarded by the parent layout.tsx (it also owns the AppHeader this
+// page doesn't need its own user object for).
 export default async function LinkedGitlabProjectPage({
   params,
 }: {
   params: Promise<{ projectId: string; linkId: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { projectId, linkId } = await params;
   const project = await getProject(projectId);
   if (!project) notFound();

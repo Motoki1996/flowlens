@@ -63,13 +63,6 @@ describe("BacklogsPage", () => {
     getTasks.mockResolvedValue([]);
   });
 
-  it("redirects to /login when not authenticated", async () => {
-    getCurrentUser.mockResolvedValue(null);
-    await expect(BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) })).rejects.toThrow(
-      "REDIRECT:/login",
-    );
-  });
-
   it("renders the backlog collection", async () => {
     render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
     expect(screen.getByRole("link", { name: /Sprint 1/ })).toHaveAttribute(

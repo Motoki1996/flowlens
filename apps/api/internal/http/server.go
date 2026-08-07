@@ -47,6 +47,7 @@ type Server struct {
 	webhookEvents    *webhookevent.Service
 	webhookLimiter   *simpleRateLimiter
 	tokenLimiter     *simpleRateLimiter
+	authLimiter      *simpleRateLimiter
 	sessions         *auth.SessionService
 	cookies          cookieManager
 	webBaseURL       string
@@ -80,6 +81,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		webhookEvents:    webhookevent.NewService(queries, cipher),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
+		authLimiter:      newSimpleRateLimiter(authRateLimit, authRateLimitWindow),
 		sessions:         auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:          cookieManager{secure: cfg.IsProduction()},
 		webBaseURL:       cfg.WebBaseURL,

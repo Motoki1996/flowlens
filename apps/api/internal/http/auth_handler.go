@@ -5,8 +5,19 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/flowlens/api/internal/user"
+)
+
+// authRateLimit and authRateLimitWindow bound how many login/signup
+// attempts a single client IP can make in a window (issue #91: unlimited
+// attempts let password brute-forcing and account enumeration through).
+// Keyed by clientIP like webhookLimiter, since a would-be attacker isn't
+// authenticated yet and has no other stable identity to key on.
+const (
+	authRateLimit       = 10
+	authRateLimitWindow = 15 * time.Minute
 )
 
 type signupRequest struct {
@@ -22,6 +33,11 @@ type loginRequest struct {
 
 // handleSignup creates a local account and starts a session for it.
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
+	if !s.authLimiter.Allow(clientIP(r)) {
+		writeTooManyRequests(w, authRateLimitWindow)
+		return
+	}
+
 	var req signupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
@@ -63,6 +79,11 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 // handleLogin verifies credentials and starts a session.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.authLimiter.Allow(clientIP(r)) {
+		writeTooManyRequests(w, authRateLimitWindow)
+		return
+	}
+
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")

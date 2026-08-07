@@ -80,6 +80,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		webhookEvents:    webhookevent.NewService(q, cipher),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
+		authLimiter:      newSimpleRateLimiter(authRateLimit, authRateLimitWindow),
 		sessions:         auth.NewSessionService(q, time.Hour),
 		cookies:          cookieManager{secure: false},
 		webBaseURL:       "http://localhost:3000",
@@ -249,4 +250,59 @@ func TestHandleLogin(t *testing.T) {
 			assert.Equal(t, tt.wantCookie, sessionCookie(rec) != nil)
 		})
 	}
+}
+
+// postJSONFrom is postJSON, but with the request's RemoteAddr set to ip, so
+// rate-limit tests can simulate distinct callers.
+func postJSONFrom(t *testing.T, s *Server, path, ip string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	buf, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = ip
+	rec := httptest.NewRecorder()
+	s.Router().ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHandleLogin_RateLimitsExceedingAuthLimit(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.authLimiter = newSimpleRateLimiter(2, time.Minute)
+
+	login := func() *httptest.ResponseRecorder {
+		return postJSONFrom(t, s, "/auth/login", "203.0.113.1:1", loginRequest{Identifier: "octocat", Password: "wrong-password"})
+	}
+
+	require.Equal(t, http.StatusUnauthorized, login().Code)
+	require.Equal(t, http.StatusUnauthorized, login().Code)
+
+	rec := login()
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("Retry-After"))
+}
+
+func TestHandleLogin_RateLimitBucketsAreIndependentPerIP(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.authLimiter = newSimpleRateLimiter(1, time.Minute)
+
+	loginFrom := func(ip string) *httptest.ResponseRecorder {
+		return postJSONFrom(t, s, "/auth/login", ip, loginRequest{Identifier: "octocat", Password: "wrong-password"})
+	}
+
+	require.Equal(t, http.StatusUnauthorized, loginFrom("203.0.113.1:1").Code)
+	assert.Equal(t, http.StatusUnauthorized, loginFrom("203.0.113.2:1").Code, "a different IP must have its own rate-limit bucket")
+	assert.Equal(t, http.StatusTooManyRequests, loginFrom("203.0.113.1:1").Code, "the first IP's own second request must still be blocked")
+}
+
+func TestHandleSignup_RateLimitsExceedingAuthLimit(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.authLimiter = newSimpleRateLimiter(1, time.Minute)
+
+	require.Equal(t, http.StatusCreated,
+		postJSONFrom(t, s, "/auth/signup", "203.0.113.1:1", signupRequest{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"}).Code)
+
+	rec := postJSONFrom(t, s, "/auth/signup", "203.0.113.1:1", signupRequest{Username: "other", Email: "other@example.com", Password: "hunter22"})
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("Retry-After"))
 }

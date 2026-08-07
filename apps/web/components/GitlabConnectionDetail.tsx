@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import type { ApiError, GitlabConnection } from "@/types";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -61,7 +62,7 @@ function ConnectionForm({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/gitlab-connection`, {
         method: "PUT",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ baseUrl, token }),
       });
       if (!res.ok) {
@@ -143,6 +144,7 @@ function DisconnectButton({ projectId }: { projectId: string }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/gitlab-connection`, {
         method: "DELETE",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         setError(await parseError(res, "Failed to disconnect GitLab."));
@@ -212,6 +214,7 @@ function ConnectionStatus({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/gitlab-connection/test`, {
         method: "POST",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok) {
         setTestError(await parseError(res, "Connection test failed."));

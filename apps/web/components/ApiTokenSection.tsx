@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import type { ApiError, ApiToken, ApiTokenScope, ApiTokenWithSecret } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -79,7 +80,7 @@ function IssueTokenForm({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/api-tokens`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           name,
           scopes: scope === "write" ? ["read", "write"] : ["read"],
@@ -214,6 +215,7 @@ function RevokeTokenButton({ tokenId }: { tokenId: string }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/api-tokens/${tokenId}`, {
         method: "DELETE",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         setError(await parseError(res, "Failed to revoke the token."));

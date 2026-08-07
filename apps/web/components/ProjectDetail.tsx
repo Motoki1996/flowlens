@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
 import type { ApiError, ApiToken, GitlabConnection, Project } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
@@ -51,7 +52,7 @@ function EditProjectForm({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${project.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ name, description }),
       });
       if (!res.ok) {
@@ -125,6 +126,7 @@ function DeleteProjectButton({ project }: { project: Project }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${project.id}`, {
         method: "DELETE",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         const body = (await res.json().catch(() => null)) as ApiError | null;

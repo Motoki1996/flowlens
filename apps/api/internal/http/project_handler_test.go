@@ -15,8 +15,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testCSRFToken is the CSRF value doRequest pairs with a session cookie on
+// every non-safe-method request, mirroring the double-submit cookie+header
+// pair the browser sends via apps/web/lib/csrf.ts — so the many existing
+// session-authenticated handler tests don't each need to know about CSRF.
+const testCSRFToken = "test-csrf-token"
+
 // doRequest sends a request through the router, optionally with a JSON body
-// and a session cookie.
+// and a session cookie. Requests with a non-safe method also get a matching
+// CSRF cookie and header, so requireCSRF (issue #92) doesn't reject them.
 func doRequest(t *testing.T, s *Server, method, path string, body any, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	var r io.Reader
@@ -31,6 +38,10 @@ func doRequest(t *testing.T, s *Server, method, path string, body any, token str
 	}
 	if token != "" {
 		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+		if !isSafeMethod(method) {
+			req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: testCSRFToken})
+			req.Header.Set(csrfHeaderName, testCSRFToken)
+		}
 	}
 	rec := httptest.NewRecorder()
 	s.Router().ServeHTTP(rec, req)

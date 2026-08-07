@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -34,7 +35,7 @@ func corsMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
 			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -98,4 +99,48 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func userFromContext(ctx context.Context) (user.User, bool) {
 	u, ok := ctx.Value(userContextKey).(user.User)
 	return u, ok
+}
+
+// csrfHeaderName is the header a session-authenticated mutation must echo
+// the csrfCookieName cookie's value in (issue #92's double-submit check).
+const csrfHeaderName = "X-CSRF-Token"
+
+// isSafeMethod reports whether method never mutates state and so is exempt
+// from the CSRF check.
+func isSafeMethod(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+}
+
+// requireCSRF enforces the double-submit CSRF check (issue #92) on
+// session-authenticated mutations: the X-CSRF-Token header must match the
+// csrfCookieName cookie set at login. A cross-site request can make the
+// browser attach the cookie automatically, but has no way to read its value
+// (no HttpOnly, so only same-origin script can see it) to also set the
+// matching header.
+//
+// It is a no-op for safe methods and for bearer-authenticated requests
+// (detected via tokenScopeFromContext, set only by requireBearerAuth): a
+// bearer token is sent explicitly by the caller in an Authorization header,
+// never attached automatically by a browser, so it carries no CSRF risk —
+// per the issue, this must hold even when requireAuthOrBearer resolved the
+// same request that requireAuth would have.
+func (s *Server) requireCSRF(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isSafeMethod(r.Method) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if _, ok := tokenScopeFromContext(r.Context()); ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		cookie, err := r.Cookie(csrfCookieName)
+		header := r.Header.Get(csrfHeaderName)
+		if err != nil || header == "" || cookie.Value == "" ||
+			subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
+			writeError(w, http.StatusForbidden, "csrf_token_mismatch", "missing or invalid CSRF token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

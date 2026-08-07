@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { gitlabConnectionPath } from "@/lib/routes";
 import type { ApiError, LinkedGitlabProject, SyncRun, SyncScope, WebhookEvent } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
@@ -47,7 +48,7 @@ function SyncNowButton({ linkId }: { linkId: string }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${linkId}/sync-runs`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ full }),
       });
       if (!res.ok) {
@@ -92,6 +93,7 @@ function RegisterWebhookButton({ linkId }: { linkId: string }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook`, {
         method: "POST",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok) {
         setError(await parseError(res, "Failed to register the webhook."));
@@ -158,7 +160,7 @@ function SyncScopeSection({ link }: { link: LinkedGitlabProject }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${link.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           syncScope: scope,
           syncLabels: labels,
@@ -255,7 +257,7 @@ function DefaultSection({ link }: { link: LinkedGitlabProject }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${link.id}`, {
         method: "PATCH",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
           syncScope: link.syncScope,
           syncLabels: link.syncLabels,
@@ -308,6 +310,7 @@ function UnlinkButton({ projectId, linkId }: { projectId: string; linkId: string
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${linkId}`, {
         method: "DELETE",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         setError(await parseError(res, "Failed to unlink the project."));

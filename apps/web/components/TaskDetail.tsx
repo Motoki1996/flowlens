@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import { tasksPath } from "@/lib/routes";
 import type {
   ApiError,
@@ -43,6 +44,7 @@ function CloseReopenButton({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}/${action}`, {
         method: "POST",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -91,6 +93,7 @@ function DeleteTaskButton({ task }: { task: Task }) {
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}`, {
         method: "DELETE",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok && res.status !== 204) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -161,7 +164,7 @@ function BacklogSelect({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}/assign-backlog`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({ backlogId }),
       });
       if (!res.ok) {
@@ -216,6 +219,7 @@ function GitlabSyncSection({
       const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}/sync-retry`, {
         method: "POST",
         credentials: "include",
+        headers: csrfHeaders(),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;

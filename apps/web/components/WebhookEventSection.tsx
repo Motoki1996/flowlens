@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 import type { ApiError, WebhookEvent, WebhookEventDetail, WebhookEventPage } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -68,7 +69,7 @@ function RetryEventButton({ linkId, eventId }: { linkId: string; eventId: string
     try {
       const res = await fetch(
         `${API_PUBLIC_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook-events/${eventId}/retry`,
-        { method: "POST", credentials: "include" },
+        { method: "POST", credentials: "include", headers: csrfHeaders() },
       );
       if (!res.ok) {
         setError(await parseError(res, "Failed to retry the event."));

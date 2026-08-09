@@ -60,29 +60,6 @@ func (q *Queries) DeleteProjectForOwner(ctx context.Context, arg DeleteProjectFo
 	return result.RowsAffected(), nil
 }
 
-const getProjectForOwner = `-- name: GetProjectForOwner :one
-SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE id = $1 AND owner_user_id = $2
-`
-
-type GetProjectForOwnerParams struct {
-	ID          uuid.UUID `json:"id"`
-	OwnerUserID uuid.UUID `json:"owner_user_id"`
-}
-
-func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error) {
-	row := q.db.QueryRow(ctx, getProjectForOwner, arg.ID, arg.OwnerUserID)
-	var i Project
-	err := row.Scan(
-		&i.ID,
-		&i.OwnerUserID,
-		&i.Name,
-		&i.Description,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getProjectByID = `-- name: GetProjectByID :one
 
 SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE id = $1
@@ -95,6 +72,29 @@ SELECT id, owner_user_id, name, description, created_at, updated_at FROM project
 // reasoning as GetLinkedGitlabProjectByID.
 func (q *Queries) GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error) {
 	row := q.db.QueryRow(ctx, getProjectByID, id)
+	var i Project
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerUserID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getProjectForOwner = `-- name: GetProjectForOwner :one
+SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE id = $1 AND owner_user_id = $2
+`
+
+type GetProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error) {
+	row := q.db.QueryRow(ctx, getProjectForOwner, arg.ID, arg.OwnerUserID)
 	var i Project
 	err := row.Scan(
 		&i.ID,

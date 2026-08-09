@@ -58,6 +58,13 @@ type FakeQuerier struct {
 
 	gitlabSyncRuns     []db.GitlabSyncRun // insertion order, newest last
 	gitlabSyncRunsByID map[uuid.UUID]db.GitlabSyncRun
+
+	projectMembers map[projectMemberKey]db.ProjectMember // key: project_id + user_id
+}
+
+type projectMemberKey struct {
+	projectID uuid.UUID
+	userID    uuid.UUID
 }
 
 // New returns an empty FakeQuerier.
@@ -94,6 +101,8 @@ func New() *FakeQuerier {
 		webhookEventsByID:  map[uuid.UUID]db.WebhookEvent{},
 
 		gitlabSyncRunsByID: map[uuid.UUID]db.GitlabSyncRun{},
+
+		projectMembers: map[projectMemberKey]db.ProjectMember{},
 	}
 }
 
@@ -2530,4 +2539,56 @@ func (f *FakeQuerier) ListGitlabSyncRunsByLinkedGitlabProjectID(_ context.Contex
 		return items[i].CreatedAt.Time.After(items[j].CreatedAt.Time)
 	})
 	return items, nil
+}
+
+// AddProjectMember mirrors the SQL.
+func (f *FakeQuerier) AddProjectMember(_ context.Context, arg db.AddProjectMemberParams) (db.ProjectMember, error) {
+	m := db.ProjectMember{ProjectID: arg.ProjectID, UserID: arg.UserID, Role: arg.Role, CreatedAt: now()}
+	f.projectMembers[projectMemberKey{arg.ProjectID, arg.UserID}] = m
+	return m, nil
+}
+
+// ListProjectMembers mirrors the SQL's ORDER BY created_at ASC.
+func (f *FakeQuerier) ListProjectMembers(_ context.Context, projectID uuid.UUID) ([]db.ProjectMember, error) {
+	items := []db.ProjectMember{}
+	for _, m := range f.projectMembers {
+		if m.ProjectID == projectID {
+			items = append(items, m)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
+	})
+	return items, nil
+}
+
+// GetProjectMemberRole mirrors the SQL.
+func (f *FakeQuerier) GetProjectMemberRole(_ context.Context, arg db.GetProjectMemberRoleParams) (string, error) {
+	m, ok := f.projectMembers[projectMemberKey{arg.ProjectID, arg.UserID}]
+	if !ok {
+		return "", pgx.ErrNoRows
+	}
+	return m.Role, nil
+}
+
+// UpdateProjectMemberRole mirrors the SQL.
+func (f *FakeQuerier) UpdateProjectMemberRole(_ context.Context, arg db.UpdateProjectMemberRoleParams) (db.ProjectMember, error) {
+	key := projectMemberKey{arg.ProjectID, arg.UserID}
+	m, ok := f.projectMembers[key]
+	if !ok {
+		return db.ProjectMember{}, pgx.ErrNoRows
+	}
+	m.Role = arg.Role
+	f.projectMembers[key] = m
+	return m, nil
+}
+
+// RemoveProjectMember mirrors the SQL.
+func (f *FakeQuerier) RemoveProjectMember(_ context.Context, arg db.RemoveProjectMemberParams) (int64, error) {
+	key := projectMemberKey{arg.ProjectID, arg.UserID}
+	if _, ok := f.projectMembers[key]; !ok {
+		return 0, nil
+	}
+	delete(f.projectMembers, key)
+	return 1, nil
 }

@@ -34,6 +34,14 @@ type CreateProjectAPITokenParams struct {
 // trust the caller to have already verified project ownership (e.g. via
 // project.Service.Get), while DeleteProjectAPITokenForOwner joins to projects
 // so a foreign token is indistinguishable from a missing one.
+//
+// GetProjectAPITokenByTokenHash is unscoped and used only by bearer
+// authentication (internal/apitoken.Service.Authenticate), which has no
+// acting user to scope through and resolves the project from the token
+// itself. Like GetUserBySessionToken, it filters out expired rows in SQL. It
+// joins projects to also resolve owner_user_id: a bearer request has no
+// session, so the project's owner is the only user it can act as (see
+// internal/apitoken's Auth type).
 func (q *Queries) CreateProjectAPIToken(ctx context.Context, arg CreateProjectAPITokenParams) (ProjectApiToken, error) {
 	row := q.db.QueryRow(ctx, createProjectAPIToken,
 		arg.ProjectID,
@@ -78,7 +86,6 @@ func (q *Queries) DeleteProjectAPITokenForOwner(ctx context.Context, arg DeleteP
 }
 
 const getProjectAPITokenByTokenHash = `-- name: GetProjectAPITokenByTokenHash :one
-
 SELECT t.id, t.project_id, t.name, t.token_hash, t.last_used_at, t.expires_at, t.created_at, t.scopes, t.token_prefix, p.owner_user_id
 FROM project_api_tokens t
 JOIN projects p ON p.id = t.project_id
@@ -99,13 +106,6 @@ type GetProjectAPITokenByTokenHashRow struct {
 	OwnerUserID uuid.UUID          `json:"owner_user_id"`
 }
 
-// GetProjectAPITokenByTokenHash is unscoped and used only by bearer
-// authentication (internal/apitoken.Service.Authenticate), which has no
-// acting user to scope through and resolves the project from the token
-// itself. Like GetUserBySessionToken, it filters out expired rows in SQL. It
-// joins projects to also resolve owner_user_id: a bearer request has no
-// session, so the project's owner is the only user it can act as (see
-// internal/apitoken's Auth type).
 func (q *Queries) GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error) {
 	row := q.db.QueryRow(ctx, getProjectAPITokenByTokenHash, tokenHash)
 	var i GetProjectAPITokenByTokenHashRow

@@ -12,73 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createWebhookEvent = `-- name: CreateWebhookEvent :one
-
-INSERT INTO webhook_events (
-    linked_gitlab_project_id, delivery_uuid, event_name, object_kind,
-    gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
-)
-ON CONFLICT (linked_gitlab_project_id, delivery_uuid) DO NOTHING
-RETURNING id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at
-`
-
-type CreateWebhookEventParams struct {
-	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`
-	DeliveryUuid          string             `json:"delivery_uuid"`
-	EventName             string             `json:"event_name"`
-	ObjectKind            string             `json:"object_kind"`
-	GitlabIssueIid        pgtype.Int8        `json:"gitlab_issue_iid"`
-	Payload               []byte             `json:"payload"`
-	GitlabUpdatedAt       pgtype.Timestamptz `json:"gitlab_updated_at"`
-	Status                string             `json:"status"`
-	SkipReason            string             `json:"skip_reason"`
-}
-
-// webhook_events has no owner column and is never queried through a
-// project/owner join: the linkID in the URL path (POST
-// /webhooks/gitlab/{linkID}) is itself the authorization boundary, verified
-// by comparing X-Gitlab-Token against the link's decrypted webhook secret in
-// constant time before any of these run (see internal/webhookevent,
-// ADR-0008).
-//
-// ON CONFLICT DO NOTHING makes a duplicate GitLab delivery (same
-// linked_gitlab_project_id + delivery_uuid) a no-op instead of an error: the
-// caller sees pgx.ErrNoRows and treats it the same as a fresh insert, so
-// retried/duplicated deliveries are idempotent (docs/plans/issue-sync.md,
-// "Inbound").
-func (q *Queries) CreateWebhookEvent(ctx context.Context, arg CreateWebhookEventParams) (WebhookEvent, error) {
-	row := q.db.QueryRow(ctx, createWebhookEvent,
-		arg.LinkedGitlabProjectID,
-		arg.DeliveryUuid,
-		arg.EventName,
-		arg.ObjectKind,
-		arg.GitlabIssueIid,
-		arg.Payload,
-		arg.GitlabUpdatedAt,
-		arg.Status,
-		arg.SkipReason,
-	)
-	var i WebhookEvent
-	err := row.Scan(
-		&i.ID,
-		&i.LinkedGitlabProjectID,
-		&i.DeliveryUuid,
-		&i.EventName,
-		&i.ObjectKind,
-		&i.GitlabIssueIid,
-		&i.Payload,
-		&i.GitlabUpdatedAt,
-		&i.Status,
-		&i.SkipReason,
-		&i.ErrorMessage,
-		&i.ReceivedAt,
-		&i.ProcessedAt,
-	)
-	return i, err
-}
-
 const claimNextPendingWebhookEvent = `-- name: ClaimNextPendingWebhookEvent :one
 
 SELECT id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at FROM webhook_events
@@ -117,6 +50,186 @@ func (q *Queries) ClaimNextPendingWebhookEvent(ctx context.Context) (WebhookEven
 		&i.ProcessedAt,
 	)
 	return i, err
+}
+
+const createWebhookEvent = `-- name: CreateWebhookEvent :one
+
+INSERT INTO webhook_events (
+    linked_gitlab_project_id, delivery_uuid, event_name, object_kind,
+    gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9
+)
+ON CONFLICT (linked_gitlab_project_id, delivery_uuid) DO NOTHING
+RETURNING id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at
+`
+
+type CreateWebhookEventParams struct {
+	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`
+	DeliveryUuid          string             `json:"delivery_uuid"`
+	EventName             string             `json:"event_name"`
+	ObjectKind            string             `json:"object_kind"`
+	GitlabIssueIid        pgtype.Int8        `json:"gitlab_issue_iid"`
+	Payload               []byte             `json:"payload"`
+	GitlabUpdatedAt       pgtype.Timestamptz `json:"gitlab_updated_at"`
+	Status                string             `json:"status"`
+	SkipReason            string             `json:"skip_reason"`
+}
+
+// webhook_events has no owner column and is never queried through a
+// project/owner join: the linkID in the URL path (POST
+// /webhooks/gitlab/{linkID}) is itself the authorization boundary, verified
+// by comparing X-Gitlab-Token against the link's decrypted webhook secret in
+// constant time before any of these run (see internal/webhookevent,
+// ADR-0008).
+// ON CONFLICT DO NOTHING makes a duplicate GitLab delivery (same
+// linked_gitlab_project_id + delivery_uuid) a no-op instead of an error: the
+// caller sees pgx.ErrNoRows and treats it the same as a fresh insert, so
+// retried/duplicated deliveries are idempotent (docs/plans/issue-sync.md,
+// "Inbound").
+func (q *Queries) CreateWebhookEvent(ctx context.Context, arg CreateWebhookEventParams) (WebhookEvent, error) {
+	row := q.db.QueryRow(ctx, createWebhookEvent,
+		arg.LinkedGitlabProjectID,
+		arg.DeliveryUuid,
+		arg.EventName,
+		arg.ObjectKind,
+		arg.GitlabIssueIid,
+		arg.Payload,
+		arg.GitlabUpdatedAt,
+		arg.Status,
+		arg.SkipReason,
+	)
+	var i WebhookEvent
+	err := row.Scan(
+		&i.ID,
+		&i.LinkedGitlabProjectID,
+		&i.DeliveryUuid,
+		&i.EventName,
+		&i.ObjectKind,
+		&i.GitlabIssueIid,
+		&i.Payload,
+		&i.GitlabUpdatedAt,
+		&i.Status,
+		&i.SkipReason,
+		&i.ErrorMessage,
+		&i.ReceivedAt,
+		&i.ProcessedAt,
+	)
+	return i, err
+}
+
+const deleteProcessedWebhookEventsOlderThan = `-- name: DeleteProcessedWebhookEventsOlderThan :execrows
+DELETE FROM webhook_events WHERE status = 'processed' AND processed_at < $1
+`
+
+// The retention policy decided for issue #26: only 'processed' rows are
+// pruned. 'failed' and 'skipped' rows are kept indefinitely (their error and
+// skip_reason are the whole point of troubleshooting) and 'pending' rows are
+// never touched by cleanup — the apply worker is the only thing that moves a
+// pending row out of that state.
+func (q *Queries) DeleteProcessedWebhookEventsOlderThan(ctx context.Context, processedAt pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteProcessedWebhookEventsOlderThan, processedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getWebhookEventByLinkedGitlabProjectIDAndID = `-- name: GetWebhookEventByLinkedGitlabProjectIDAndID :one
+SELECT id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at FROM webhook_events
+WHERE id = $1 AND linked_gitlab_project_id = $2
+`
+
+type GetWebhookEventByLinkedGitlabProjectIDAndIDParams struct {
+	ID                    uuid.UUID `json:"id"`
+	LinkedGitlabProjectID uuid.UUID `json:"linked_gitlab_project_id"`
+}
+
+// The detail view: unlike the list row, its payload is actually read by the
+// caller (internal/http keeps the list DTO payload-free to avoid exposing
+// raw GitLab payloads by default).
+func (q *Queries) GetWebhookEventByLinkedGitlabProjectIDAndID(ctx context.Context, arg GetWebhookEventByLinkedGitlabProjectIDAndIDParams) (WebhookEvent, error) {
+	row := q.db.QueryRow(ctx, getWebhookEventByLinkedGitlabProjectIDAndID, arg.ID, arg.LinkedGitlabProjectID)
+	var i WebhookEvent
+	err := row.Scan(
+		&i.ID,
+		&i.LinkedGitlabProjectID,
+		&i.DeliveryUuid,
+		&i.EventName,
+		&i.ObjectKind,
+		&i.GitlabIssueIid,
+		&i.Payload,
+		&i.GitlabUpdatedAt,
+		&i.Status,
+		&i.SkipReason,
+		&i.ErrorMessage,
+		&i.ReceivedAt,
+		&i.ProcessedAt,
+	)
+	return i, err
+}
+
+const listWebhookEventsByLinkedGitlabProjectID = `-- name: ListWebhookEventsByLinkedGitlabProjectID :many
+
+SELECT id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at FROM webhook_events
+WHERE linked_gitlab_project_id = $1
+  AND ($2::text = '' OR status = $2)
+ORDER BY received_at DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListWebhookEventsByLinkedGitlabProjectIDParams struct {
+	LinkedGitlabProjectID uuid.UUID `json:"linked_gitlab_project_id"`
+	Status                string    `json:"status"`
+	OffsetCount           int32     `json:"offset_count"`
+	LimitCount            int32     `json:"limit_count"`
+}
+
+// The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID
+// and GetWebhookEventByLinkedGitlabProjectIDAndID are scoped by
+// linked_gitlab_project_id only, not owner — internal/webhookevent.Service
+// verifies the caller owns linkID via GetLinkedGitlabProjectForOwner first, the
+// same two-step internal/projectsync's ListRuns uses, so a foreign or unknown
+// eventID under an owned link and an owned eventID under a foreign link both
+// come back empty.
+// status = ” disables the filter, matching ListTasksByProject's convention.
+func (q *Queries) ListWebhookEventsByLinkedGitlabProjectID(ctx context.Context, arg ListWebhookEventsByLinkedGitlabProjectIDParams) ([]WebhookEvent, error) {
+	rows, err := q.db.Query(ctx, listWebhookEventsByLinkedGitlabProjectID,
+		arg.LinkedGitlabProjectID,
+		arg.Status,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []WebhookEvent{}
+	for rows.Next() {
+		var i WebhookEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.LinkedGitlabProjectID,
+			&i.DeliveryUuid,
+			&i.EventName,
+			&i.ObjectKind,
+			&i.GitlabIssueIid,
+			&i.Payload,
+			&i.GitlabUpdatedAt,
+			&i.Status,
+			&i.SkipReason,
+			&i.ErrorMessage,
+			&i.ReceivedAt,
+			&i.ProcessedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markWebhookEventFailed = `-- name: MarkWebhookEventFailed :exec
@@ -162,107 +275,7 @@ func (q *Queries) MarkWebhookEventSkipped(ctx context.Context, arg MarkWebhookEv
 	return err
 }
 
-const listWebhookEventsByLinkedGitlabProjectID = `-- name: ListWebhookEventsByLinkedGitlabProjectID :many
-
-SELECT id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at FROM webhook_events
-WHERE linked_gitlab_project_id = $1
-  AND ($2::text = '' OR status = $2)
-ORDER BY received_at DESC
-LIMIT $3 OFFSET $4
-`
-
-type ListWebhookEventsByLinkedGitlabProjectIDParams struct {
-	LinkedGitlabProjectID uuid.UUID `json:"linked_gitlab_project_id"`
-	Status                string    `json:"status"`
-	LimitCount            int32     `json:"limit_count"`
-	OffsetCount           int32     `json:"offset_count"`
-}
-
-// The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID
-// and GetWebhookEventByLinkedGitlabProjectIDAndID are scoped by
-// linked_gitlab_project_id only, not owner — internal/webhookevent.Service
-// verifies the caller owns linkID via GetLinkedGitlabProjectForOwner first, the
-// same two-step internal/projectsync's ListRuns uses, so a foreign or unknown
-// eventID under an owned link and an owned eventID under a foreign link both
-// come back empty.
-//
-// status = '' disables the filter, matching ListTasksByProject's convention.
-func (q *Queries) ListWebhookEventsByLinkedGitlabProjectID(ctx context.Context, arg ListWebhookEventsByLinkedGitlabProjectIDParams) ([]WebhookEvent, error) {
-	rows, err := q.db.Query(ctx, listWebhookEventsByLinkedGitlabProjectID,
-		arg.LinkedGitlabProjectID,
-		arg.Status,
-		arg.LimitCount,
-		arg.OffsetCount,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []WebhookEvent{}
-	for rows.Next() {
-		var i WebhookEvent
-		if err := rows.Scan(
-			&i.ID,
-			&i.LinkedGitlabProjectID,
-			&i.DeliveryUuid,
-			&i.EventName,
-			&i.ObjectKind,
-			&i.GitlabIssueIid,
-			&i.Payload,
-			&i.GitlabUpdatedAt,
-			&i.Status,
-			&i.SkipReason,
-			&i.ErrorMessage,
-			&i.ReceivedAt,
-			&i.ProcessedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const getWebhookEventByLinkedGitlabProjectIDAndID = `-- name: GetWebhookEventByLinkedGitlabProjectIDAndID :one
-
-SELECT id, linked_gitlab_project_id, delivery_uuid, event_name, object_kind, gitlab_issue_iid, payload, gitlab_updated_at, status, skip_reason, error_message, received_at, processed_at FROM webhook_events
-WHERE id = $1 AND linked_gitlab_project_id = $2
-`
-
-type GetWebhookEventByLinkedGitlabProjectIDAndIDParams struct {
-	ID                    uuid.UUID `json:"id"`
-	LinkedGitlabProjectID uuid.UUID `json:"linked_gitlab_project_id"`
-}
-
-// The detail view: unlike the list row, its payload is actually read by the
-// caller (internal/http keeps the list DTO payload-free to avoid exposing
-// raw GitLab payloads by default).
-func (q *Queries) GetWebhookEventByLinkedGitlabProjectIDAndID(ctx context.Context, arg GetWebhookEventByLinkedGitlabProjectIDAndIDParams) (WebhookEvent, error) {
-	row := q.db.QueryRow(ctx, getWebhookEventByLinkedGitlabProjectIDAndID, arg.ID, arg.LinkedGitlabProjectID)
-	var i WebhookEvent
-	err := row.Scan(
-		&i.ID,
-		&i.LinkedGitlabProjectID,
-		&i.DeliveryUuid,
-		&i.EventName,
-		&i.ObjectKind,
-		&i.GitlabIssueIid,
-		&i.Payload,
-		&i.GitlabUpdatedAt,
-		&i.Status,
-		&i.SkipReason,
-		&i.ErrorMessage,
-		&i.ReceivedAt,
-		&i.ProcessedAt,
-	)
-	return i, err
-}
-
 const retryWebhookEvent = `-- name: RetryWebhookEvent :one
-
 UPDATE webhook_events
 SET status = 'pending', error_message = '', processed_at = NULL
 WHERE id = $1 AND status = 'failed'
@@ -292,22 +305,4 @@ func (q *Queries) RetryWebhookEvent(ctx context.Context, id uuid.UUID) (WebhookE
 		&i.ProcessedAt,
 	)
 	return i, err
-}
-
-const deleteProcessedWebhookEventsOlderThan = `-- name: DeleteProcessedWebhookEventsOlderThan :execrows
-
-DELETE FROM webhook_events WHERE status = 'processed' AND processed_at < $1
-`
-
-// The retention policy decided for issue #26: only 'processed' rows are
-// pruned. 'failed' and 'skipped' rows are kept indefinitely (their error and
-// skip_reason are the whole point of troubleshooting) and 'pending' rows are
-// never touched by cleanup — the apply worker is the only thing that moves a
-// pending row out of that state.
-func (q *Queries) DeleteProcessedWebhookEventsOlderThan(ctx context.Context, processedAt pgtype.Timestamptz) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteProcessedWebhookEventsOlderThan, processedAt)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

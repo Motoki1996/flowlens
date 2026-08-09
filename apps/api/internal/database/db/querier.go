@@ -12,6 +12,11 @@ import (
 )
 
 type Querier interface {
+	// project_members has no queries wired into any handler yet (see
+	// docs/decisions/0010-why-project-membership.md); these exist so the schema
+	// and the backfill are exercised by a real query, ahead of the
+	// ownership-check replacement in a follow-up issue.
+	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) (ProjectMember, error)
 	// CountFailedSyncTasksByProjectForOwner backs the project single view's sync
 	// warning (docs/plans/issue-sync.md's "gitlab" fields, surfaced per-task by
 	// internal/task). A task counts as failed the same way internal/task derives
@@ -227,6 +232,7 @@ type Querier interface {
 	// reasoning as GetLinkedGitlabProjectByID.
 	GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
+	GetProjectMemberRole(ctx context.Context, arg GetProjectMemberRoleParams) (string, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	// GetSyncJobForOwner backs POST /sync-jobs/{jobID}/retry: resolves a job by
 	// ID scoped to its project's owner in one round trip, since the URL carries
@@ -301,6 +307,7 @@ type Querier interface {
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
+	ListProjectMembers(ctx context.Context, projectID uuid.UUID) ([]ProjectMember, error)
 	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
 	// ListTasksByProject's priority and progress filters and sorts follow the same
@@ -379,6 +386,7 @@ type Querier interface {
 	// the same connection the new default. A no-op if none remain.
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error
 	ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgtype.Timestamptz) (int64, error)
+	RemoveProjectMember(ctx context.Context, arg RemoveProjectMemberParams) (int64, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
 	// ReorderBacklogs resequences a project's backlogs to backlog_ids' given
 	// order (position 0 for the first id, 1 for the second, ...) in a single
@@ -442,6 +450,7 @@ type Querier interface {
 	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)
 	UpdateProjectAPITokenLastUsedAt(ctx context.Context, arg UpdateProjectAPITokenLastUsedAtParams) error
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
+	UpdateProjectMemberRole(ctx context.Context, arg UpdateProjectMemberRoleParams) (ProjectMember, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
 	// gitlab_connections has no owner column of its own; ownership is always
 	// checked through the parent project, the same way backlogs and tasks are.

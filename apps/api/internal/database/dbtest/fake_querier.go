@@ -2013,6 +2013,55 @@ func (f *FakeQuerier) SyncJobsForTask(taskID uuid.UUID) []db.SyncJob {
 	return jobs
 }
 
+// ListFailedSyncJobsByProjectForOwner mirrors the SQL's join through
+// projects: a projectID that doesn't exist or belongs to another owner
+// simply matches no rows, newest first.
+func (f *FakeQuerier) ListFailedSyncJobsByProjectForOwner(_ context.Context, arg db.ListFailedSyncJobsByProjectForOwnerParams) ([]db.SyncJob, error) {
+	p, ok := f.projectsByID[arg.ProjectID]
+	if !ok || p.OwnerUserID != arg.OwnerUserID {
+		return []db.SyncJob{}, nil
+	}
+	out := []db.SyncJob{}
+	for i := len(f.syncJobs) - 1; i >= 0; i-- {
+		j := f.syncJobs[i]
+		if j.ProjectID == arg.ProjectID && j.Status == "failed" {
+			out = append(out, j)
+		}
+	}
+	return out, nil
+}
+
+// GetSyncJobForOwner mirrors the SQL's join through projects: a job whose
+// project doesn't exist or belongs to another owner is reported as
+// pgx.ErrNoRows, the same as an unknown job ID.
+func (f *FakeQuerier) GetSyncJobForOwner(_ context.Context, arg db.GetSyncJobForOwnerParams) (db.SyncJob, error) {
+	j, ok := f.syncJobsByID[arg.ID]
+	if !ok {
+		return db.SyncJob{}, pgx.ErrNoRows
+	}
+	p, ok := f.projectsByID[j.ProjectID]
+	if !ok || p.OwnerUserID != arg.OwnerUserID {
+		return db.SyncJob{}, pgx.ErrNoRows
+	}
+	return j, nil
+}
+
+// RetrySyncJob mirrors the SQL: only a job currently 'failed' is reset, a
+// concurrent double-retry (or a retry racing the worker) reported as
+// pgx.ErrNoRows.
+func (f *FakeQuerier) RetrySyncJob(_ context.Context, id uuid.UUID) (db.SyncJob, error) {
+	j, ok := f.syncJobsByID[id]
+	if !ok || j.Status != "failed" {
+		return db.SyncJob{}, pgx.ErrNoRows
+	}
+	j.Status = "pending"
+	j.Attempts = 0
+	j.RunAfter = now()
+	j.LastError = ""
+	f.storeSyncJob(j)
+	return j, nil
+}
+
 // CreateTaskGitlabLink mirrors the SQL: task_id is the primary key, so a
 // second insert for the same task is a unique-constraint violation, the
 // same as it would be against real Postgres.

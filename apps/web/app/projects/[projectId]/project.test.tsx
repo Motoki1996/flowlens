@@ -15,6 +15,7 @@ const getTasks = vi.fn();
 const getBacklogs = vi.fn();
 const getGitlabConnection = vi.fn();
 const getLinkedGitlabProjects = vi.fn();
+const getFailedSyncJobs = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", () => ({
   getBacklogs: (id: string) => getBacklogs(id),
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
+  getFailedSyncJobs: (id: string) => getFailedSyncJobs(id),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -51,6 +53,7 @@ describe("ProjectPage", () => {
     getBacklogs.mockResolvedValue([]);
     getGitlabConnection.mockResolvedValue(null);
     getLinkedGitlabProjects.mockResolvedValue([]);
+    getFailedSyncJobs.mockResolvedValue([]);
   });
 
   it("renders the project's single view", async () => {
@@ -61,6 +64,29 @@ describe("ProjectPage", () => {
     expect(getProject).toHaveBeenCalledWith("1");
     expect(getTasks).toHaveBeenCalledWith("1");
     expect(getBacklogs).toHaveBeenCalledWith("1");
+    expect(getFailedSyncJobs).toHaveBeenCalledWith("1");
+  });
+
+  it("shows the failed sync jobs section with a retry affordance", async () => {
+    getCurrentUser.mockResolvedValue(user);
+    getProject.mockResolvedValue(project);
+    getFailedSyncJobs.mockResolvedValue([
+      {
+        id: "j1",
+        projectId: "1",
+        kind: "issue.update",
+        status: "failed",
+        attempts: 5,
+        lastError: "GitLab returned 500",
+        runAfter: "2026-01-01T00:00:00Z",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+    render(await ProjectPage({ params: Promise.resolve({ projectId: "1" }) }));
+    expect(screen.getByText("Failed sync jobs")).toBeInTheDocument();
+    expect(screen.getByText("GitLab returned 500")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
   it("summarises the task and backlog collections rather than listing them", async () => {

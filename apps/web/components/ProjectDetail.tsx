@@ -6,13 +6,14 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
-import type { ApiError, ApiToken, GitlabConnection, Project } from "@/types";
+import type { ApiError, ApiToken, GitlabConnection, Project, SyncJob } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiTokenSection } from "@/components/ApiTokenSection";
+import { FailedSyncJobSection } from "@/components/FailedSyncJobSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -209,6 +210,7 @@ export function ProjectDetail({
   gitlabConnection = null,
   linkedProjectCount = 0,
   apiTokens = [],
+  failedSyncJobs = [],
 }: {
   project: Project;
   backlogCount?: number;
@@ -219,6 +221,7 @@ export function ProjectDetail({
   gitlabConnection?: GitlabConnection | null;
   linkedProjectCount?: number;
   apiTokens?: ApiToken[];
+  failedSyncJobs?: SyncJob[];
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -295,6 +298,10 @@ export function ProjectDetail({
           name="GitLab connection"
           summary={gitlabSummary(gitlabConnection, linkedProjectCount)}
         />
+      </div>
+
+      <div className="mt-8">
+        <FailedSyncJobSection jobs={failedSyncJobs} />
       </div>
 
       <div className="mt-8">

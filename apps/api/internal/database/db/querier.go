@@ -228,6 +228,10 @@ type Querier interface {
 	GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
+	// GetSyncJobForOwner backs POST /sync-jobs/{jobID}/retry: resolves a job by
+	// ID scoped to its project's owner in one round trip, since the URL carries
+	// no projectID for this route.
+	GetSyncJobForOwner(ctx context.Context, arg GetSyncJobForOwnerParams) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	// GetTaskDependencyProjectID is the lightweight project lookup
 	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
@@ -278,6 +282,12 @@ type Querier interface {
 	// as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 	// in practice — internal/backlog sets at most one from a single ?sort=.
 	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error)
+	// ListFailedSyncJobsByProjectForOwner backs GET
+	// /projects/{projectID}/sync-jobs?status=failed (issue #97): every
+	// permanently-failed sync_jobs row for a project, scoped to ownerID through
+	// a join on projects, so an unknown or foreign projectID simply returns no
+	// rows rather than needing a separate ownership check first.
+	ListFailedSyncJobsByProjectForOwner(ctx context.Context, arg ListFailedSyncJobsByProjectForOwnerParams) ([]SyncJob, error)
 	// ListFailedSyncProjectsByOwner backs the dashboard's "sync failures"
 	// section (issue #77): every project ownerID owns that has at least one
 	// task with a failed GitLab sync, counted the same way
@@ -397,6 +407,12 @@ type Querier interface {
 	// pending/failed job (e.g. it never had one, or it already succeeded),
 	// which internal/task maps to ErrSyncNotFailed.
 	RetryFailedSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error)
+	// RetrySyncJob mirrors RetryFailedSyncJobForTask's reset (attempts back to
+	// 0, a fresh pending attempt) but is keyed by job ID directly rather than by
+	// task, and only ever touches a job already 'failed' — the WHERE clause
+	// makes a concurrent double-retry (or a retry racing the worker) a no-op
+	// reported as no rows, the same convention webhookevent.Retry relies on.
+	RetrySyncJob(ctx context.Context, id uuid.UUID) (SyncJob, error)
 	// Only a 'failed' event can be retried. internal/webhookevent.Service checks
 	// the event exists and is 'failed' via GetWebhookEventByLinkedGitlabProjectIDAndID
 	// first, so a zero-row result here is only the rare race where another

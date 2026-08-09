@@ -18,6 +18,7 @@ import type {
   LinkedGitlabProject,
   Priority,
   Project,
+  SyncJob,
   SyncRun,
   Task,
   TaskDependency,
@@ -373,6 +374,23 @@ export async function getWebhookEvents(linkId: string, perPage = 10): Promise<We
     throw new Error(`Failed to load webhook events: ${res.status}`);
   }
   return (await res.json()) as WebhookEventPage;
+}
+
+/**
+ * getFailedSyncJobs returns a project's permanently-failed sync jobs (issue
+ * #97), newest first. Callers must already know the request is
+ * authenticated.
+ */
+export async function getFailedSyncJobs(projectId: string): Promise<SyncJob[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/sync-jobs?status=failed`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load failed sync jobs: ${res.status}`);
+  }
+  return (await res.json()) as SyncJob[];
 }
 
 /**

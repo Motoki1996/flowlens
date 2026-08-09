@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import {
   getBacklogs,
+  getFailedSyncJobs,
   getGitlabConnection,
   getLinkedGitlabProjects,
   getProject,
@@ -53,6 +54,13 @@ export default async function ProjectPage({
     // Left empty; the section still renders and issuing a token still works.
   }
 
+  let failedSyncJobs: Awaited<ReturnType<typeof getFailedSyncJobs>> = [];
+  try {
+    failedSyncJobs = await getFailedSyncJobs(projectId);
+  } catch {
+    // Left empty; the section still renders as "no failed sync jobs".
+  }
+
   return (
     <ProjectDetail
       project={project}
@@ -63,6 +71,7 @@ export default async function ProjectPage({
       gitlabConnection={gitlabConnection}
       linkedProjectCount={linkedGitlabProjects.length}
       apiTokens={apiTokens}
+      failedSyncJobs={failedSyncJobs}
     />
   );
 }

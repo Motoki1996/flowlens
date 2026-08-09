@@ -220,6 +220,21 @@ export interface SyncRun {
   createdAt: string;
 }
 
+/** SyncJob is one permanently-failed outbox job (sync_jobs, issue #97) —
+ *  a task's GitLab push that exhausted its retry budget. */
+export interface SyncJob {
+  id: string;
+  projectId: string;
+  taskId?: string;
+  kind: string;
+  status: string;
+  attempts: number;
+  lastError: string;
+  runAfter: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type ApiTokenScope = "read" | "write";
 
 /** ApiToken is a project-scoped bearer credential for the AI-facing task

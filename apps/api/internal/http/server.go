@@ -94,10 +94,14 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 func (s *Server) Router() chi.Router {
 	r := chi.NewRouter()
 	r.Use(requestLogger)
+	r.Use(metricsMiddleware)
 	r.Use(corsMiddleware(s.webBaseURL))
 
-	// Health check (unauthenticated).
+	// Health check and Prometheus metrics (both unauthenticated, both
+	// operational endpoints scraped by infrastructure rather than used by
+	// callers — issue #96).
 	r.Get("/healthz", s.handleHealth)
+	r.Handle("/metrics", metricsHandler)
 
 	// Local auth endpoints (JSON, unauthenticated).
 	r.Post("/auth/signup", s.handleSignup)

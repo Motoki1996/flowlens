@@ -46,16 +46,19 @@ type gitlabIssueHookPayload struct {
 func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 	linkID, ok := linkIDFromURL(r)
 	if !ok {
+		webhookEventsReceivedTotal.WithLabelValues(webhookMetricFailed).Inc()
 		writeError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 		return
 	}
 
 	if !s.webhookLimiter.Allow(clientIP(r) + ":" + linkID.String()) {
+		webhookEventsReceivedTotal.WithLabelValues(webhookMetricFailed).Inc()
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 		return
 	}
 
 	if err := s.webhookEvents.VerifyToken(r.Context(), linkID, r.Header.Get("X-Gitlab-Token")); err != nil {
+		webhookEventsReceivedTotal.WithLabelValues(webhookMetricFailed).Inc()
 		if errors.Is(err, webhookevent.ErrUnauthorized) {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "unauthorized")
 			return
@@ -66,11 +69,13 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.ContentLength > webhookMaxBodyBytes {
+		webhookEventsReceivedTotal.WithLabelValues(webhookMetricFailed).Inc()
 		writeError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body too large")
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, webhookMaxBodyBytes))
 	if err != nil {
+		webhookEventsReceivedTotal.WithLabelValues(webhookMetricFailed).Inc()
 		writeError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body too large")
 		return
 	}
@@ -96,10 +101,17 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 		SkipReason:            skipReason,
 	})
 	if err != nil {
+		webhookEventsReceivedTotal.WithLabelValues(webhookMetricFailed).Inc()
 		slog.Error("record webhook event", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
+
+	metricStatus := webhookMetricProcessed
+	if status == webhookevent.StatusSkipped {
+		metricStatus = webhookMetricSkipped
+	}
+	webhookEventsReceivedTotal.WithLabelValues(metricStatus).Inc()
 
 	w.WriteHeader(respStatus)
 }

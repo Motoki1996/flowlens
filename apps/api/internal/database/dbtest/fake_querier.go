@@ -1927,8 +1927,11 @@ func (f *FakeQuerier) RetryFailedSyncJobForTask(_ context.Context, taskID uuid.U
 
 // SeedSyncJob inserts a ready-made sync job directly in the given status,
 // bypassing Enqueue/Claim. Use it in tests that need a pre-existing job in a
-// specific state (e.g. a stale 'running' job for reclaim tests) without
-// exercising the transition that would normally produce it.
+// specific state (e.g. a stale 'running' job for reclaim tests, or an aged
+// 'pending' one for queue-depth gauge tests) without exercising the
+// transition that would normally produce it. created_at is also backdated
+// to updatedAt, since every caller passing a past timestamp means "this job
+// has sat here since then," not just "was last touched then."
 func (f *FakeQuerier) SeedSyncJob(projectID uuid.UUID, kind, status string, updatedAt time.Time) db.SyncJob {
 	j := db.SyncJob{
 		ID:        uuid.New(),
@@ -1937,7 +1940,7 @@ func (f *FakeQuerier) SeedSyncJob(projectID uuid.UUID, kind, status string, upda
 		Payload:   []byte("{}"),
 		Status:    status,
 		RunAfter:  now(),
-		CreatedAt: now(),
+		CreatedAt: pgtype.Timestamptz{Time: updatedAt, Valid: true},
 		UpdatedAt: pgtype.Timestamptz{Time: updatedAt, Valid: true},
 	}
 	f.storeSyncJob(j)
@@ -1970,6 +1973,23 @@ func (f *FakeQuerier) SeedSyncJobForTask(taskID, projectID uuid.UUID, kind, stat
 // duplicate.
 func (f *FakeQuerier) SyncJobCount() int {
 	return len(f.syncJobs)
+}
+
+// GetPendingSyncJobQueueStats mirrors the SQL's count(*)/min(created_at) over
+// status = 'pending': oldest_pending_at comes back invalid (NULL) when no
+// job is pending, matching what min() over zero rows returns in Postgres.
+func (f *FakeQuerier) GetPendingSyncJobQueueStats(_ context.Context) (db.GetPendingSyncJobQueueStatsRow, error) {
+	stats := db.GetPendingSyncJobQueueStatsRow{}
+	for _, j := range f.syncJobs {
+		if j.Status != "pending" {
+			continue
+		}
+		stats.PendingCount++
+		if !stats.OldestPendingAt.Valid || j.CreatedAt.Time.Before(stats.OldestPendingAt.Time) {
+			stats.OldestPendingAt = j.CreatedAt
+		}
+	}
+	return stats, nil
 }
 
 // GetSyncJob returns the sync job stored under id, so tests can assert on

@@ -13,7 +13,6 @@ import (
 )
 
 const claimPendingSyncJobs = `-- name: ClaimPendingSyncJobs :many
-
 WITH claimed AS (
     SELECT id FROM sync_jobs
     WHERE status = 'pending' AND run_after <= now()
@@ -27,19 +26,6 @@ WHERE id IN (SELECT id FROM claimed)
 RETURNING id, project_id, task_id, kind, payload, dedupe_key, status, attempts, run_after, last_error, created_at, updated_at
 `
 
-// The outbox worker (internal/sync, docs/plans/issue-sync.md "Sync engine").
-//
-// EnqueueSyncJob upserts on dedupe_key: a colliding insert only overwrites the
-// existing row while it is still 'pending' (collapsing rapid repeated edits
-// into one job); a collision with a running/succeeded/failed row leaves that
-// row untouched and returns no rows, so the caller falls back to
-// GetSyncJobByDedupeKey and reuses it as-is. MarkSyncJobSucceeded and
-// MarkSyncJobFailed clear dedupe_key so a later edit is never permanently
-// blocked by a job that already reached a terminal state.
-//
-// ClaimPendingSyncJobs is the SKIP LOCKED claim: it atomically selects and
-// flips due pending jobs to 'running' in one statement, so two workers
-// polling concurrently never claim the same row.
 func (q *Queries) ClaimPendingSyncJobs(ctx context.Context, limit int32) ([]SyncJob, error) {
 	rows, err := q.db.Query(ctx, claimPendingSyncJobs, limit)
 	if err != nil {
@@ -74,6 +60,7 @@ func (q *Queries) ClaimPendingSyncJobs(ctx context.Context, limit int32) ([]Sync
 }
 
 const enqueueSyncJob = `-- name: EnqueueSyncJob :one
+
 INSERT INTO sync_jobs (project_id, task_id, kind, payload, dedupe_key)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (dedupe_key) DO UPDATE
@@ -90,6 +77,19 @@ type EnqueueSyncJobParams struct {
 	DedupeKey pgtype.Text `json:"dedupe_key"`
 }
 
+// The outbox worker (internal/sync, docs/plans/issue-sync.md "Sync engine").
+//
+// EnqueueSyncJob upserts on dedupe_key: a colliding insert only overwrites the
+// existing row while it is still 'pending' (collapsing rapid repeated edits
+// into one job); a collision with a running/succeeded/failed row leaves that
+// row untouched and returns no rows, so the caller falls back to
+// GetSyncJobByDedupeKey and reuses it as-is. MarkSyncJobSucceeded and
+// MarkSyncJobFailed clear dedupe_key so a later edit is never permanently
+// blocked by a job that already reached a terminal state.
+//
+// ClaimPendingSyncJobs is the SKIP LOCKED claim: it atomically selects and
+// flips due pending jobs to 'running' in one statement, so two workers
+// polling concurrently never claim the same row.
 func (q *Queries) EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error) {
 	row := q.db.QueryRow(ctx, enqueueSyncJob,
 		arg.ProjectID,
@@ -148,6 +148,33 @@ func (q *Queries) GetLatestSyncJobForTask(ctx context.Context, taskID uuid.UUID)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
+	return i, err
+}
+
+const getPendingSyncJobQueueStats = `-- name: GetPendingSyncJobQueueStats :one
+
+SELECT
+    count(*)::bigint AS pending_count,
+    min(created_at)::timestamptz AS oldest_pending_at
+FROM sync_jobs
+WHERE status = 'pending'
+`
+
+type GetPendingSyncJobQueueStatsRow struct {
+	PendingCount    int64              `json:"pending_count"`
+	OldestPendingAt pgtype.Timestamptz `json:"oldest_pending_at"`
+}
+
+// GetPendingSyncJobQueueStats backs the worker's queue-depth gauges (issue
+// #96): how many jobs are waiting, and how long the oldest of them has been
+// waiting, are what turn "the worker looks busy" into "the worker is stuck".
+// oldest_pending_at is NULL (via min() on zero rows) when the queue is
+// empty, which internal/sync reads as "no gauge to report" rather than a
+// bogus zero-age job.
+func (q *Queries) GetPendingSyncJobQueueStats(ctx context.Context) (GetPendingSyncJobQueueStatsRow, error) {
+	row := q.db.QueryRow(ctx, getPendingSyncJobQueueStats)
+	var i GetPendingSyncJobQueueStatsRow
+	err := row.Scan(&i.PendingCount, &i.OldestPendingAt)
 	return i, err
 }
 

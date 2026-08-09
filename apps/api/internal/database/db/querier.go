@@ -212,6 +212,13 @@ type Querier interface {
 	// gitlab_connections the same way linkedProjectOwner (dbtest) does, since a
 	// linked project has no project_id column of its own.
 	GetLinkedGitlabProjectProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	// GetPendingSyncJobQueueStats backs the worker's queue-depth gauges (issue
+	// #96): how many jobs are waiting, and how long the oldest of them has been
+	// waiting, are what turn "the worker looks busy" into "the worker is stuck".
+	// oldest_pending_at is NULL (via min() on zero rows) when the queue is
+	// empty, which internal/sync reads as "no gauge to report" rather than a
+	// bogus zero-age job.
+	GetPendingSyncJobQueueStats(ctx context.Context) (GetPendingSyncJobQueueStatsRow, error)
 	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error)
 	// GetProjectByID is unscoped, for the inbound webhook apply pipeline
 	// (internal/webhookapply, docs/plans/issue-sync.md "Inbound"), which

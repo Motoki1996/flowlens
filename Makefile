@@ -77,6 +77,13 @@ build: ## Build the api binary and the web app.
 	cd $(API_DIR) && go build -o bin/api ./cmd/api
 	cd $(WEB_DIR) && npm run build
 
+.PHONY: build-images
+build-images: ## Build the production Docker images for api and web.
+	docker build -t flowlens-api:latest --target runtime $(API_DIR)
+	docker build -t flowlens-web:latest --target runner \
+		--build-arg NEXT_PUBLIC_API_BASE_URL=$(NEXT_PUBLIC_API_BASE_URL) \
+		$(WEB_DIR)
+
 .PHONY: storybook
 storybook: ## Start Storybook for the web app (http://localhost:6006).
 	cd $(WEB_DIR) && npm run storybook

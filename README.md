@@ -192,6 +192,7 @@ later, Azure Key Vault.
 | `make test-integration` | Run Go integration tests (needs running Postgres) |
 | `make lint`         | Lint Go and web                                      |
 | `make build`        | Build the API binary and the web app                |
+| `make build-images` | Build the production Docker images (API + web)      |
 | `make down`         | Stop the stack                                       |
 
 ## Testing
@@ -204,6 +205,52 @@ later, Azure Key Vault.
 
 ```bash
 make test
+```
+
+## Deploy
+
+Both apps have a multi-stage production Dockerfile (`apps/api/Dockerfile`,
+`apps/web/Dockerfile`) with a minimal, non-root runtime stage —
+`apps/api/Dockerfile`'s `runtime` target and `apps/web/Dockerfile`'s `runner`
+target, built on `output: "standalone"` in `next.config.ts` so only the
+files the Next.js server actually needs (no `devDependencies`, no
+unbundled `node_modules`) end up in the image.
+
+`docker-compose.prod.yml` runs the full stack from those images:
+
+```bash
+cp .env.example .env   # fill in real values, see below
+docker compose -f docker-compose.prod.yml up --build
+```
+
+Or build the images without starting them:
+
+```bash
+make build-images
+```
+
+### Build-time vs. runtime environment variables
+
+This is the one thing to get right when deploying the web app: Next.js
+inlines `NEXT_PUBLIC_*` variables into the client JavaScript bundle at
+`next build` time — they cannot be changed by setting a different value on
+the running container afterwards. Everything else is read at runtime.
+
+| Variable                   | When it's needed              | Why |
+| --------------------------- | ------------------------------ | --- |
+| `NEXT_PUBLIC_API_BASE_URL`  | **Build time** (Docker build arg) | Baked into the browser bundle — the URL the *browser* uses to call the API. Rebuild the web image to change it. |
+| `API_INTERNAL_URL`          | Runtime (container env)        | Server-only (never sent to the browser) — the URL the Next.js *server* uses to call the API, e.g. `http://api:8080` inside Compose. See `apps/web/lib/config.ts` for the client/server split. |
+| `WEB_BASE_URL`, `ENCRYPTION_KEY`, `DATABASE_URL`, ... | Runtime (container env) | Read by the API process on startup, same as local dev — see [Environment variables](#environment-variables). |
+
+`docker-compose.prod.yml` passes `NEXT_PUBLIC_API_BASE_URL` as a `build.args`
+entry for exactly this reason, and `make build-images` forwards it the same
+way from `.env`.
+
+### Verifying an image locally
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
+curl -i http://localhost:3000/login   # expect 200
 ```
 
 ## GitLab CE connection & sync

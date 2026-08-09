@@ -1,0 +1,7 @@
+node_modules
+.next
+storybook-static
+.git
+.env
+.env.*
+npm-debug.log*

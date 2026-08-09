@@ -227,6 +227,36 @@ Tests follow a layered strategy — real-DB integration tests at the bottom,
 fake-backed domain and HTTP unit tests above — kept deliberately small and
 maintainable. See [`testing.md`](testing.md) for the full guide and rules.
 
+## Operations: metrics
+
+`GET /metrics` (unauthenticated, like `/healthz`) exposes Prometheus
+text-format metrics via `prometheus/client_golang`, so a stuck sync worker
+or webhook receiver shows up in numbers instead of only in logs:
+
+- **HTTP** — `flowlens_http_requests_total` and
+  `flowlens_http_request_duration_seconds`, labeled by `method`, `route` and
+  `status`. `route` is chi's matched *pattern* (e.g.
+  `/api/v1/projects/{projectID}`), read back out of the request context via
+  `chi.RouteContext(ctx).RoutePattern()` — never the raw URL — so a
+  resource's UUID never becomes a label value and cardinality stays bounded
+  to the size of the route table.
+- **Sync worker** (`internal/sync`) — `flowlens_sync_jobs_processed_total`
+  (labeled by `kind` and `outcome`: `succeeded`/`retry`/`failed`) and
+  `flowlens_sync_job_duration_seconds` (labeled by `kind`), both updated in
+  `Worker.execute`. Two gauges, `flowlens_sync_pending_jobs` and
+  `flowlens_sync_oldest_pending_job_age_seconds`, are refreshed once per
+  `Worker.Poll` call from a dedicated query
+  (`GetPendingSyncJobQueueStats`) — a growing pending count or a rising
+  oldest-pending age is the most direct signal that the worker is stuck
+  rather than just idle.
+- **Webhook receiver** — `flowlens_webhook_events_received_total`, labeled
+  by `status` (`processed`/`skipped`/`failed`), incremented at every return
+  path in `handleGitlabWebhook`.
+
+None of these labels ever carry a project/task/link ID, by construction —
+that is what keeps the label sets finite regardless of how much data a
+FlowLens instance accumulates.
+
 ## Main trade-offs
 
 - **Server-side sessions vs JWT:** sessions add a database lookup per

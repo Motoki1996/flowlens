@@ -10,6 +10,7 @@ import (
 	"github.com/flowlens/api/internal/database/dbtest"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -195,6 +196,81 @@ func TestWorker_NoHandlerRegistered_TreatedAsFailedAttempt(t *testing.T) {
 	assert.Equal(t, "pending", got.Status)
 	assert.Equal(t, int32(1), got.Attempts)
 	assert.Contains(t, got.LastError, "unregistered.kind")
+}
+
+func TestWorker_Poll_UpdatesProcessedCounterByKindAndOutcome(t *testing.T) {
+	q := dbtest.New()
+	project := q.SeedProject(uuid.New(), "acme")
+	ctx := context.Background()
+
+	registry := syncpkg.NewRegistry()
+	registry.Register("issue.create", func(context.Context, db.SyncJob) error { return nil })
+	registry.Register("issue.update", func(context.Context, db.SyncJob) error { return errors.New("boom") })
+	worker := syncpkg.NewWorker(q, registry, syncpkg.WithMaxAttempts(1))
+
+	succeededBefore := testutil.ToFloat64(syncpkg.JobsProcessedTotalForTest().WithLabelValues("issue.create", "succeeded"))
+	failedBefore := testutil.ToFloat64(syncpkg.JobsProcessedTotalForTest().WithLabelValues("issue.update", "failed"))
+
+	_, err := syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{ProjectID: project.ID, Kind: "issue.create"})
+	require.NoError(t, err)
+	// MaxAttempts(1) means this job's single attempt already exhausts its
+	// budget, landing straight on the "failed" outcome rather than "retry".
+	_, err = syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{ProjectID: project.ID, Kind: "issue.update"})
+	require.NoError(t, err)
+
+	n, err := worker.Poll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+
+	assert.Equal(t, succeededBefore+1, testutil.ToFloat64(syncpkg.JobsProcessedTotalForTest().WithLabelValues("issue.create", "succeeded")))
+	assert.Equal(t, failedBefore+1, testutil.ToFloat64(syncpkg.JobsProcessedTotalForTest().WithLabelValues("issue.update", "failed")))
+}
+
+func TestWorker_Poll_UpdatesProcessedCounterOnRetry(t *testing.T) {
+	q := dbtest.New()
+	project := q.SeedProject(uuid.New(), "acme")
+	ctx := context.Background()
+
+	registry := syncpkg.NewRegistry()
+	registry.Register("issue.create", func(context.Context, db.SyncJob) error { return errors.New("boom") })
+	worker := syncpkg.NewWorker(q, registry, syncpkg.WithMaxAttempts(5))
+
+	retryBefore := testutil.ToFloat64(syncpkg.JobsProcessedTotalForTest().WithLabelValues("issue.create", "retry"))
+
+	_, err := syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{ProjectID: project.ID, Kind: "issue.create"})
+	require.NoError(t, err)
+
+	n, err := worker.Poll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+
+	assert.Equal(t, retryBefore+1, testutil.ToFloat64(syncpkg.JobsProcessedTotalForTest().WithLabelValues("issue.create", "retry")))
+}
+
+func TestWorker_Poll_UpdatesQueueDepthGauges(t *testing.T) {
+	q := dbtest.New()
+	project := q.SeedProject(uuid.New(), "acme")
+	ctx := context.Background()
+
+	worker := syncpkg.NewWorker(q, syncpkg.NewRegistry())
+
+	// No pending jobs yet: the gauges must read zero, not stay at whatever a
+	// prior test in this binary left them at.
+	_, err := worker.Poll(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, float64(0), testutil.ToFloat64(syncpkg.PendingJobsGaugeForTest()))
+	assert.Equal(t, float64(0), testutil.ToFloat64(syncpkg.OldestPendingJobAgeSecondsForTest()))
+
+	// A job with no registered handler stays pending forever (it is never
+	// claimed), so it is a stable way to keep the queue non-empty across the
+	// second Poll below.
+	q.SeedSyncJob(project.ID, "no.handler.registered", "pending", time.Now().Add(-time.Minute))
+	worker = syncpkg.NewWorker(q, syncpkg.NewRegistry(), syncpkg.WithBatchSize(0))
+
+	_, err = worker.Poll(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, float64(1), testutil.ToFloat64(syncpkg.PendingJobsGaugeForTest()))
+	assert.GreaterOrEqual(t, testutil.ToFloat64(syncpkg.OldestPendingJobAgeSecondsForTest()), 55.0, "the seeded job is ~1 minute old")
 }
 
 func TestWorker_ReclaimStale_RequeuesJobsOlderThanStaleAfter(t *testing.T) {

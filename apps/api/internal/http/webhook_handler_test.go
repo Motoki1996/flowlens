@@ -9,6 +9,7 @@ import (
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,4 +114,31 @@ func TestHandleGitlabWebhook_BodyTooLargeIsRejected(t *testing.T) {
 
 	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
 	assert.Empty(t, q.WebhookEventsForLink(linkID), "an oversized delivery must never be recorded")
+}
+
+func TestHandleGitlabWebhook_ReceivedMetric_CountsByOutcome(t *testing.T) {
+	tests := []struct {
+		name       string
+		token      string
+		eventName  string
+		wantCode   int
+		wantMetric string
+	}{
+		{"accepted issue event", testWebhookSecret, webhookevent.SupportedEventHeader, http.StatusOK, webhookMetricProcessed},
+		{"unsupported event", testWebhookSecret, "Push Hook", http.StatusAccepted, webhookMetricSkipped},
+		{"bad token", "wrong-secret", webhookevent.SupportedEventHeader, http.StatusUnauthorized, webhookMetricFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, q := newTestServer(t)
+			linkID := seedWebhookLink(t, s, q, testWebhookSecret)
+			before := testutil.ToFloat64(webhookEventsReceivedTotal.WithLabelValues(tt.wantMetric))
+
+			rec := webhookRequest(t, s, linkID, tt.token, tt.eventName, "delivery-1", []byte(issueHookPayload))
+
+			assert.Equal(t, tt.wantCode, rec.Code)
+			after := testutil.ToFloat64(webhookEventsReceivedTotal.WithLabelValues(tt.wantMetric))
+			assert.Equal(t, before+1, after, "expected the %q outcome counter to increment by one", tt.wantMetric)
+		})
+	}
 }

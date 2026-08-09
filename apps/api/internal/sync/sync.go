@@ -196,6 +196,8 @@ func (w *Worker) ReclaimStale(ctx context.Context) (int64, error) {
 // worker deterministically instead of waiting on the poll-interval ticker;
 // Run calls it in a loop.
 func (w *Worker) Poll(ctx context.Context) (int, error) {
+	w.reportQueueDepth(ctx)
+
 	jobs, err := w.q.ClaimPendingSyncJobs(ctx, w.batchSize)
 	if err != nil {
 		return 0, fmt.Errorf("sync: claim jobs: %w", err)
@@ -204,6 +206,24 @@ func (w *Worker) Poll(ctx context.Context) (int, error) {
 		w.execute(ctx, job)
 	}
 	return len(jobs), nil
+}
+
+// reportQueueDepth refreshes the pending-jobs and oldest-pending-age gauges
+// (issue #96). It runs once per poll rather than on its own ticker, so the
+// gauges are only ever as stale as the poll interval — the same cadence
+// that already governs how quickly the worker notices new work.
+func (w *Worker) reportQueueDepth(ctx context.Context) {
+	stats, err := w.q.GetPendingSyncJobQueueStats(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "sync worker: queue stats failed", "error", err)
+		return
+	}
+	pendingJobsGauge.Set(float64(stats.PendingCount))
+	age := 0.0
+	if stats.OldestPendingAt.Valid {
+		age = time.Since(stats.OldestPendingAt.Time).Seconds()
+	}
+	oldestPendingJobAgeSeconds.Set(age)
 }
 
 // Run reclaims stale jobs, then polls for pending jobs — looping immediately
@@ -271,6 +291,7 @@ func (w *Worker) Stop(ctx context.Context) error {
 // they must never abort the poll loop, or one bad row would wedge the whole
 // worker.
 func (w *Worker) execute(ctx context.Context, job db.SyncJob) {
+	start := time.Now()
 	handler, ok := w.registry.lookup(job.Kind)
 	var err error
 	if !ok {
@@ -278,8 +299,10 @@ func (w *Worker) execute(ctx context.Context, job db.SyncJob) {
 	} else {
 		err = handler(ctx, job)
 	}
+	jobDurationSeconds.WithLabelValues(job.Kind).Observe(time.Since(start).Seconds())
 
 	if err == nil {
+		jobsProcessedTotal.WithLabelValues(job.Kind, outcomeSucceeded).Inc()
 		if markErr := w.q.MarkSyncJobSucceeded(ctx, job.ID); markErr != nil {
 			slog.ErrorContext(ctx, "sync worker: mark succeeded failed", "job_id", job.ID, "error", markErr)
 		}
@@ -288,6 +311,7 @@ func (w *Worker) execute(ctx context.Context, job db.SyncJob) {
 
 	attempts := job.Attempts + 1
 	if attempts >= w.maxAttempts {
+		jobsProcessedTotal.WithLabelValues(job.Kind, outcomeFailed).Inc()
 		if markErr := w.q.MarkSyncJobFailed(ctx, db.MarkSyncJobFailedParams{
 			ID:        job.ID,
 			LastError: err.Error(),
@@ -297,6 +321,7 @@ func (w *Worker) execute(ctx context.Context, job db.SyncJob) {
 		return
 	}
 
+	jobsProcessedTotal.WithLabelValues(job.Kind, outcomeRetry).Inc()
 	runAfter := time.Now().Add(backoff(attempts, w.baseBackoff))
 	if markErr := w.q.MarkSyncJobRetry(ctx, db.MarkSyncJobRetryParams{
 		ID:        job.ID,

@@ -93,3 +93,17 @@ WHERE id = (
     LIMIT 1
 )
 RETURNING id, project_id, task_id, kind, payload, dedupe_key, status, attempts, run_after, last_error, created_at, updated_at;
+
+-- GetPendingSyncJobQueueStats backs the worker's queue-depth gauges (issue
+-- #96): how many jobs are waiting, and how long the oldest of them has been
+-- waiting, are what turn "the worker looks busy" into "the worker is stuck".
+-- oldest_pending_at is NULL (via min() on zero rows) when the queue is
+-- empty, which internal/sync reads as "no gauge to report" rather than a
+-- bogus zero-age job.
+
+-- name: GetPendingSyncJobQueueStats :one
+SELECT
+    count(*)::bigint AS pending_count,
+    min(created_at)::timestamptz AS oldest_pending_at
+FROM sync_jobs
+WHERE status = 'pending';

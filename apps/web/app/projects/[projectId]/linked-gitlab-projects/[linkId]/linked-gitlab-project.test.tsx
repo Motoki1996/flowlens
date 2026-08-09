@@ -87,11 +87,6 @@ describe("LinkedGitlabProjectPage", () => {
     getWebhookEvents.mockResolvedValue({ events: [], nextPage: 0 });
   });
 
-  it("redirects to /login when not authenticated", async () => {
-    getCurrentUser.mockResolvedValue(null);
-    await expect(LinkedGitlabProjectPage({ params })).rejects.toThrow("REDIRECT:/login");
-  });
-
   it("renders the link with its sync history, under a breadcrumb to the connection", async () => {
     render(await LinkedGitlabProjectPage({ params }));
     expect(screen.getByRole("heading", { name: "team/demo" })).toBeInTheDocument();

@@ -21,6 +21,9 @@ const HIGH_PRIORITIES = new Set(["urgent", "high"]);
  * presentational DashboardView, same split as AllTasksPage/AllTasksSection.
  */
 export default async function DashboardPage() {
+  // middleware.ts only checks that the session cookie exists; this page
+  // needs the actual user object below (for AppHeader), and this is also the
+  // fallback that redirects when the cookie is present but expired/invalid.
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 

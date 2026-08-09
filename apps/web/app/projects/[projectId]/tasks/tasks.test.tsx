@@ -52,13 +52,6 @@ describe("TasksPage", () => {
     getTaskDependencies.mockResolvedValue([]);
   });
 
-  it("redirects to /login when not authenticated", async () => {
-    getCurrentUser.mockResolvedValue(null);
-    await expect(TasksPage({ params: Promise.resolve({ projectId: "p1" }) })).rejects.toThrow(
-      "REDIRECT:/login",
-    );
-  });
-
   it("renders the task collection", async () => {
     render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
     expect(screen.getByText("Tasks")).toBeInTheDocument();

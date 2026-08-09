@@ -1,7 +1,6 @@
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import {
   getBacklogs,
-  getCurrentUser,
   getGitlabConnection,
   getLinkedGitlabProjects,
   getProject,
@@ -10,14 +9,13 @@ import {
 } from "@/lib/api";
 import { ProjectDetail } from "@/components/ProjectDetail";
 
+// Auth is guarded by the parent layout.tsx (it also owns the AppHeader this
+// page doesn't need its own user object for).
 export default async function ProjectPage({
   params,
 }: {
   params: Promise<{ projectId: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { projectId } = await params;
   const project = await getProject(projectId);
   if (!project) notFound();

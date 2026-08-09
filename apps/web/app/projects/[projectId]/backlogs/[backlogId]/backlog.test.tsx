@@ -95,13 +95,6 @@ describe("BacklogPage", () => {
     getTasks.mockResolvedValue([]);
   });
 
-  it("redirects to /login when not authenticated", async () => {
-    getCurrentUser.mockResolvedValue(null);
-    await expect(BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) })).rejects.toThrow(
-      "REDIRECT:/login",
-    );
-  });
-
   it("renders the backlog's single view, scoped to its own tasks", async () => {
     getTasks.mockResolvedValue([
       makeTask({ id: "t1", title: "In this backlog", backlogId: "b1" }),

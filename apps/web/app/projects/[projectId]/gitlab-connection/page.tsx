@@ -1,18 +1,17 @@
-import { redirect, notFound } from "next/navigation";
-import { getCurrentUser, getGitlabConnection, getLinkedGitlabProjects, getProject } from "@/lib/api";
+import { notFound } from "next/navigation";
+import { getGitlabConnection, getLinkedGitlabProjects, getProject } from "@/lib/api";
 import { GitlabConnectionDetail } from "@/components/GitlabConnectionDetail";
 import { LinkedGitlabProjectListSection } from "@/components/LinkedGitlabProjectListSection";
 
-/** The GitLab connection single view, with the LinkedGitlabProject collection
- *  it owns below it. */
+/**
+ * The GitLab connection single view, with the LinkedGitlabProject collection
+ * it owns below it. Auth is guarded by the parent layout.tsx.
+ */
 export default async function GitlabConnectionPage({
   params,
 }: {
   params: Promise<{ projectId: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { projectId } = await params;
   const project = await getProject(projectId);
   if (!project) notFound();

@@ -1,5 +1,5 @@
-import { redirect, notFound } from "next/navigation";
-import { getBacklogs, getCurrentUser, getProject, getTaskDependencies, getTasks } from "@/lib/api";
+import { notFound } from "next/navigation";
+import { getBacklogs, getProject, getTaskDependencies, getTasks } from "@/lib/api";
 import { TaskListSection } from "@/components/TaskListSection";
 
 /**
@@ -7,6 +7,9 @@ import { TaskListSection } from "@/components/TaskListSection";
  * of this one screen, per docs/ui-design.md rule 5, and `?backlog=` is the
  * backlog filter of that same collection. The backlog screens link here rather
  * than keeping a task list of their own.
+ *
+ * Auth is guarded by the parent layout.tsx; this page doesn't render the
+ * AppHeader so it has no need of its own user object.
  */
 export default async function TasksPage({
   params,
@@ -21,9 +24,6 @@ export default async function TasksPage({
     sort?: string;
   }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { projectId } = await params;
   const resolvedSearchParams = await searchParams;
   const backlogFilter = resolvedSearchParams?.backlog;

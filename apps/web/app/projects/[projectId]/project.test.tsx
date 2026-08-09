@@ -53,13 +53,6 @@ describe("ProjectPage", () => {
     getLinkedGitlabProjects.mockResolvedValue([]);
   });
 
-  it("redirects to /login when not authenticated", async () => {
-    getCurrentUser.mockResolvedValue(null);
-    await expect(ProjectPage({ params: Promise.resolve({ projectId: "1" }) })).rejects.toThrow(
-      "REDIRECT:/login",
-    );
-  });
-
   it("renders the project's single view", async () => {
     getCurrentUser.mockResolvedValue(user);
     getProject.mockResolvedValue(project);

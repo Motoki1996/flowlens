@@ -1,16 +1,14 @@
-import { redirect, notFound } from "next/navigation";
-import { getBacklogs, getCurrentUser, getProject, getTasks } from "@/lib/api";
+import { notFound } from "next/navigation";
+import { getBacklogs, getProject, getTasks } from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
 
-/** The Backlog collection view of one project. */
+/** The Backlog collection view of one project. Auth is guarded by the parent
+ *  layout.tsx. */
 export default async function BacklogsPage({
   params,
 }: {
   params: Promise<{ projectId: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
   const { projectId } = await params;
   const project = await getProject(projectId);
   if (!project) notFound();

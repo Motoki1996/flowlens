@@ -81,13 +81,6 @@ describe("GitlabConnectionPage", () => {
     getLinkedGitlabProjects.mockResolvedValue([link]);
   });
 
-  it("redirects to /login when not authenticated", async () => {
-    getCurrentUser.mockResolvedValue(null);
-    await expect(
-      GitlabConnectionPage({ params: Promise.resolve({ projectId: "p1" }) }),
-    ).rejects.toThrow("REDIRECT:/login");
-  });
-
   it("shows the connection and links every linked project to its single view", async () => {
     render(await GitlabConnectionPage({ params: Promise.resolve({ projectId: "p1" }) }));
     expect(screen.getByText("https://gitlab.example.com")).toBeInTheDocument();

@@ -108,6 +108,13 @@ type ProjectApiToken struct {
 	TokenPrefix pgtype.Text        `json:"token_prefix"`
 }
 
+type ProjectMember struct {
+	ProjectID uuid.UUID          `json:"project_id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	Role      string             `json:"role"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type PullRequest struct {
 	ID                   uuid.UUID          `json:"id"`
 	RepositoryID         uuid.UUID          `json:"repository_id"`

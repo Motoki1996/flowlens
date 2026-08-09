@@ -138,7 +138,6 @@ func (q *Queries) FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunPa
 }
 
 const getGitlabSyncRunByID = `-- name: GetGitlabSyncRunByID :one
-
 SELECT id, linked_gitlab_project_id, kind, status, issues_seen, issues_created, issues_updated, started_at, completed_at, error_message, created_at FROM gitlab_sync_runs WHERE id = $1
 `
 
@@ -167,7 +166,6 @@ func (q *Queries) GetGitlabSyncRunByID(ctx context.Context, id uuid.UUID) (Gitla
 }
 
 const listGitlabSyncRunsByLinkedGitlabProjectID = `-- name: ListGitlabSyncRunsByLinkedGitlabProjectID :many
-
 SELECT id, linked_gitlab_project_id, kind, status, issues_seen, issues_created, issues_updated, started_at, completed_at, error_message, created_at FROM gitlab_sync_runs
 WHERE linked_gitlab_project_id = $1
 ORDER BY created_at DESC

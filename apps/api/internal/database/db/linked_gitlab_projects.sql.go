@@ -141,7 +141,6 @@ func (q *Queries) DeleteLinkedGitlabProjectForOwner(ctx context.Context, arg Del
 }
 
 const getDefaultLinkedGitlabProjectForOwner = `-- name: GetDefaultLinkedGitlabProjectForOwner :one
-
 SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
@@ -254,17 +253,15 @@ func (q *Queries) GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLin
 }
 
 const getLinkedGitlabProjectProjectID = `-- name: GetLinkedGitlabProjectProjectID :one
-
 SELECT gc.project_id
 FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
 WHERE lgp.id = $1
 `
 
-// GetLinkedGitlabProjectProjectID is the lightweight project lookup
-// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
-// bearer token's project boundary on GET
-// /linked-gitlab-projects/{linkID}/sync-runs, resolved through
+// The lightweight project lookup requireTokenResourceProject (internal/http,
+// issue #66) uses to enforce a bearer token's project boundary on
+// GET /linked-gitlab-projects/{linkID}/sync-runs, resolved through
 // gitlab_connections the same way linkedProjectOwner (dbtest) does, since a
 // linked project has no project_id column of its own.
 func (q *Queries) GetLinkedGitlabProjectProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
@@ -481,7 +478,6 @@ func (q *Queries) SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg
 }
 
 const updateLinkedGitlabProjectInitialImportStatus = `-- name: UpdateLinkedGitlabProjectInitialImportStatus :one
-
 UPDATE linked_gitlab_projects
 SET initial_import_status = $2, updated_at = now()
 WHERE id = $1
@@ -522,7 +518,6 @@ func (q *Queries) UpdateLinkedGitlabProjectInitialImportStatus(ctx context.Conte
 }
 
 const updateLinkedGitlabProjectLastSyncedAt = `-- name: UpdateLinkedGitlabProjectLastSyncedAt :one
-
 UPDATE linked_gitlab_projects
 SET last_synced_at = now(), updated_at = now()
 WHERE id = $1

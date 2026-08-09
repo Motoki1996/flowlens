@@ -570,6 +570,83 @@ func TestListTasksForOwner(t *testing.T) {
 	})
 }
 
+// The 000012_project_members migration backfills an 'owner' membership row
+// for every existing project's owner_user_id (docs/decisions/0010-why-project-membership.md).
+// This proves that invariant against the real migration output, not just a
+// freshly-created project — it also exercises project_members.sql's own
+// queries end to end since nothing else calls them yet.
+func TestProjectMembers_BackfilledOwnerRow(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("Alpha-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	t.Run("a project created after the migration still gets no automatic row (backfill is a one-time INSERT, not a trigger)", func(t *testing.T) {
+		_, err := q.GetProjectMemberRole(ctx, db.GetProjectMemberRoleParams{ProjectID: p.ID, UserID: owner.ID})
+		assert.ErrorIs(t, err, pgx.ErrNoRows)
+	})
+
+	// The 000012 migration's own backfill INSERT ran once, at migrate-up
+	// time, against whatever projects existed then; other integration tests
+	// sharing this database create projects afterwards without a membership
+	// row (nothing wires that until a follow-up issue), so asserting the
+	// invariant against live table state would be asserting something the
+	// schema was never meant to guarantee going forward. Re-running the
+	// migration's exact statement in a rolled-back transaction instead
+	// proves the backfill logic itself is correct, independent of what
+	// other tests have left lying around.
+	t.Run("the migration's backfill statement gives every project an owner membership row", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		_, err = tx.Exec(ctx, `DELETE FROM project_members`)
+		require.NoError(t, err)
+
+		_, err = tx.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role) SELECT id, owner_user_id, 'owner' FROM projects`)
+		require.NoError(t, err)
+
+		var missing int
+		require.NoError(t, tx.QueryRow(ctx, `
+			SELECT count(*) FROM projects p
+			WHERE NOT EXISTS (
+				SELECT 1 FROM project_members pm
+				WHERE pm.project_id = p.id AND pm.user_id = p.owner_user_id AND pm.role = 'owner'
+			)`).Scan(&missing))
+		assert.Equal(t, 0, missing, "the backfill statement must give every project an owner membership row")
+	})
+
+	t.Run("AddProjectMember, GetProjectMemberRole, UpdateProjectMemberRole and RemoveProjectMember round-trip", func(t *testing.T) {
+		member := createUser(t, q, "member")
+
+		added, err := q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: member.ID, Role: "member"})
+		require.NoError(t, err)
+		assert.Equal(t, "member", added.Role)
+
+		role, err := q.GetProjectMemberRole(ctx, db.GetProjectMemberRoleParams{ProjectID: p.ID, UserID: member.ID})
+		require.NoError(t, err)
+		assert.Equal(t, "member", role)
+
+		rows, err := q.ListProjectMembers(ctx, p.ID)
+		require.NoError(t, err)
+		assert.Len(t, rows, 1)
+
+		updated, err := q.UpdateProjectMemberRole(ctx, db.UpdateProjectMemberRoleParams{ProjectID: p.ID, UserID: member.ID, Role: "viewer"})
+		require.NoError(t, err)
+		assert.Equal(t, "viewer", updated.Role)
+
+		affected, err := q.RemoveProjectMember(ctx, db.RemoveProjectMemberParams{ProjectID: p.ID, UserID: member.ID})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), affected)
+	})
+}
+
 // A duplicate GitLab webhook delivery — the same linked_gitlab_project_id +
 // delivery_uuid — must be a no-op, not an error, so the receiver
 // (internal/webhookevent) can always respond 200 whether or not this is a

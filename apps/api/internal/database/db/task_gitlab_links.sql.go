@@ -66,8 +66,7 @@ func (q *Queries) CreateTaskGitlabLink(ctx context.Context, arg CreateTaskGitlab
 
 const getTaskGitlabLinkByLinkedProjectAndIID = `-- name: GetTaskGitlabLinkByLinkedProjectAndIID :one
 
-SELECT task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at
-FROM task_gitlab_links
+SELECT task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at FROM task_gitlab_links
 WHERE linked_gitlab_project_id = $1 AND gitlab_issue_iid = $2
 `
 
@@ -101,9 +100,7 @@ func (q *Queries) GetTaskGitlabLinkByLinkedProjectAndIID(ctx context.Context, ar
 }
 
 const getTaskGitlabLinkByTaskID = `-- name: GetTaskGitlabLinkByTaskID :one
-SELECT task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at
-FROM task_gitlab_links
-WHERE task_id = $1
+SELECT task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid, gitlab_web_url, gitlab_updated_at, last_pushed_fingerprint, sync_status, last_error, last_synced_at FROM task_gitlab_links WHERE task_id = $1
 `
 
 func (q *Queries) GetTaskGitlabLinkByTaskID(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error) {

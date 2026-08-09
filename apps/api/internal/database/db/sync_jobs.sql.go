@@ -204,6 +204,94 @@ func (q *Queries) GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Te
 	return i, err
 }
 
+const getSyncJobForOwner = `-- name: GetSyncJobForOwner :one
+
+SELECT sj.id, sj.project_id, sj.task_id, sj.kind, sj.payload, sj.dedupe_key, sj.status, sj.attempts, sj.run_after, sj.last_error, sj.created_at, sj.updated_at
+FROM sync_jobs sj
+JOIN projects p ON p.id = sj.project_id
+WHERE sj.id = $1 AND p.owner_user_id = $2
+`
+
+type GetSyncJobForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// GetSyncJobForOwner backs POST /sync-jobs/{jobID}/retry: resolves a job by
+// ID scoped to its project's owner in one round trip, since the URL carries
+// no projectID for this route.
+func (q *Queries) GetSyncJobForOwner(ctx context.Context, arg GetSyncJobForOwnerParams) (SyncJob, error) {
+	row := q.db.QueryRow(ctx, getSyncJobForOwner, arg.ID, arg.OwnerUserID)
+	var i SyncJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.Kind,
+		&i.Payload,
+		&i.DedupeKey,
+		&i.Status,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const listFailedSyncJobsByProjectForOwner = `-- name: ListFailedSyncJobsByProjectForOwner :many
+
+SELECT sj.id, sj.project_id, sj.task_id, sj.kind, sj.payload, sj.dedupe_key, sj.status, sj.attempts, sj.run_after, sj.last_error, sj.created_at, sj.updated_at
+FROM sync_jobs sj
+JOIN projects p ON p.id = sj.project_id
+WHERE sj.project_id = $1 AND p.owner_user_id = $2 AND sj.status = 'failed'
+ORDER BY sj.created_at DESC
+`
+
+type ListFailedSyncJobsByProjectForOwnerParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// ListFailedSyncJobsByProjectForOwner backs GET
+// /projects/{projectID}/sync-jobs?status=failed (issue #97): every
+// permanently-failed sync_jobs row for a project, scoped to ownerID through
+// a join on projects, so an unknown or foreign projectID simply returns no
+// rows rather than needing a separate ownership check first.
+func (q *Queries) ListFailedSyncJobsByProjectForOwner(ctx context.Context, arg ListFailedSyncJobsByProjectForOwnerParams) ([]SyncJob, error) {
+	rows, err := q.db.Query(ctx, listFailedSyncJobsByProjectForOwner, arg.ProjectID, arg.OwnerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyncJob{}
+	for rows.Next() {
+		var i SyncJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.TaskID,
+			&i.Kind,
+			&i.Payload,
+			&i.DedupeKey,
+			&i.Status,
+			&i.Attempts,
+			&i.RunAfter,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markSyncJobFailed = `-- name: MarkSyncJobFailed :exec
 UPDATE sync_jobs
 SET status = 'failed', attempts = attempts + 1, dedupe_key = NULL, last_error = $2, updated_at = now()
@@ -287,6 +375,39 @@ RETURNING id, project_id, task_id, kind, payload, dedupe_key, status, attempts, 
 // which internal/task maps to ErrSyncNotFailed.
 func (q *Queries) RetryFailedSyncJobForTask(ctx context.Context, taskID uuid.UUID) (SyncJob, error) {
 	row := q.db.QueryRow(ctx, retryFailedSyncJobForTask, taskID)
+	var i SyncJob
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.TaskID,
+		&i.Kind,
+		&i.Payload,
+		&i.DedupeKey,
+		&i.Status,
+		&i.Attempts,
+		&i.RunAfter,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const retrySyncJob = `-- name: RetrySyncJob :one
+
+UPDATE sync_jobs
+SET status = 'pending', attempts = 0, run_after = now(), last_error = ''
+WHERE id = $1 AND status = 'failed'
+RETURNING id, project_id, task_id, kind, payload, dedupe_key, status, attempts, run_after, last_error, created_at, updated_at
+`
+
+// RetrySyncJob mirrors RetryFailedSyncJobForTask's reset (attempts back to
+// 0, a fresh pending attempt) but is keyed by job ID directly rather than by
+// task, and only ever touches a job already 'failed' — the WHERE clause
+// makes a concurrent double-retry (or a retry racing the worker) a no-op
+// reported as no rows, the same convention webhookevent.Retry relies on.
+func (q *Queries) RetrySyncJob(ctx context.Context, id uuid.UUID) (SyncJob, error) {
+	row := q.db.QueryRow(ctx, retrySyncJob, id)
 	var i SyncJob
 	err := row.Scan(
 		&i.ID,

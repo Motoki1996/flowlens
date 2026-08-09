@@ -17,6 +17,7 @@ import (
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
+	"github.com/flowlens/api/internal/syncjob"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/taskdependency"
 	"github.com/flowlens/api/internal/user"
@@ -45,6 +46,7 @@ type Server struct {
 	linkedProjects   *linkedproject.Service
 	projectSync      *projectsync.Service
 	webhookEvents    *webhookevent.Service
+	syncJobs         *syncjob.Service
 	webhookLimiter   *simpleRateLimiter
 	tokenLimiter     *simpleRateLimiter
 	authLimiter      *simpleRateLimiter
@@ -79,6 +81,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
 		projectSync:      projectsync.NewService(queries, txRunner, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(queries, cipher),
+		syncJobs:         syncjob.NewService(queries, projects),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
 		authLimiter:      newSimpleRateLimiter(authRateLimit, authRateLimitWindow),
@@ -157,10 +160,20 @@ func (s *Server) Router() chi.Router {
 
 				projects.Get("/{projectID}/api-tokens", s.handleListAPITokens)
 				projects.Post("/{projectID}/api-tokens", s.handleCreateAPIToken)
+
+				// Failed sync jobs (issue #97): a permanently-failed
+				// sync_jobs row is otherwise invisible outside the
+				// database. Session-only, like the rest of this group —
+				// not on the bearer-token route allowlist.
+				projects.Get("/{projectID}/sync-jobs", s.handleListFailedSyncJobs)
 			})
 
 			protected.Route("/api-tokens", func(tokens chi.Router) {
 				tokens.Delete("/{tokenID}", s.handleDeleteAPIToken)
+			})
+
+			protected.Route("/sync-jobs", func(jobs chi.Router) {
+				jobs.Post("/{jobID}/retry", s.handleRetrySyncJob)
 			})
 
 			protected.Route("/linked-gitlab-projects", func(linked chi.Router) {

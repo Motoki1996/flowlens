@@ -19,6 +19,7 @@ import (
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
+	"github.com/flowlens/api/internal/syncjob"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/taskdependency"
 	"github.com/flowlens/api/internal/user"
@@ -78,6 +79,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),
 		projectSync:      projectsync.NewService(q, txRunner, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(q, cipher),
+		syncJobs:         syncjob.NewService(q, projects),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
 		authLimiter:      newSimpleRateLimiter(authRateLimit, authRateLimitWindow),

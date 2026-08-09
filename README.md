@@ -407,6 +407,11 @@ wholesale rather than patching single fields):
   `SYNC_WORKER_POLL_INTERVAL`). If every retry is exhausted, the task is
   marked `sync_status: "failed"` with the error visible in the UI and API,
   and can be retried manually (`POST /api/v1/tasks/{taskID}/sync-retry`).
+  The same dead-letter jobs are also visible project-wide, in one place,
+  from the project's own view (`GET
+  /api/v1/projects/{projectID}/sync-jobs?status=failed`, session-only) and
+  can be retried directly by job ID (`POST /api/v1/sync-jobs/{jobID}/retry`)
+  without opening each affected task in turn.
 
 The design behind these guarantees is recorded in
 [ADR-0007](docs/decisions/0007-why-outbox-worker.md) (the outbox + worker)

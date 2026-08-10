@@ -18,6 +18,8 @@ node_modules/
 /apps/web/out/
 /apps/web/coverage/
 /apps/web/storybook-static/
+/apps/web/playwright-report/
+/apps/web/test-results/
 npm-debug.log*
 yarn-error.log*
 

@@ -104,6 +104,36 @@ boundaries, security invariants, idempotency, and error paths. A green suite
 that exercises every important behaviour beats a high percentage that pins down
 trivia and resists change.
 
+## E2E (browser)
+
+The three layers above never actually load a page in a browser, so a bug in
+how the pieces are wired together — a button that doesn't call the endpoint
+its own unit tests assume, a redirect that doesn't fire, cookies that don't
+survive a real navigation — can pass all of them and still break the product.
+`apps/web/e2e/` (Playwright) exists for exactly that seam, and only that seam.
+
+- **What belongs here:** one smoke test per critical, first-party path — the
+  kind of flow that, if broken, means the product doesn't work at all. Today
+  that's signup → create project → create task → task shows in the list →
+  log out. Add a new e2e case only for another path of that severity, not for
+  every screen or every branch.
+- **What must NOT be here:** business-rule permutations (domain layer),
+  HTTP status/JSON contract checks (HTTP layer), or component
+  appearance/interaction states (Storybook, see
+  [`docs/storybook.md`](./storybook.md)). If a case can be expressed without a
+  real browser, it belongs in a faster layer instead.
+- GitLab CE integration (connecting a project, syncing) is out of scope for
+  e2e for now — there's no fake GitLab server to run against in this layer,
+  only `gitlab.FakeClient` at the domain layer. Revisit if/when that need
+  becomes concrete.
+
+Unlike the layers above, e2e tests are **not** part of `make test` — they
+need a real, migrated Postgres and start their own API and web servers, so
+they get the same treatment as `make test-integration`: a separate command,
+run locally against infrastructure you already have up, and in CI as its own
+job (`.github/workflows/web-e2e.yml`) with a Postgres service. On failure, CI
+uploads the Playwright HTML report (trace, screenshot, video) as an artifact.
+
 ## Keeping integration tests independent
 
 Integration tests hit a shared database, so make each run self-contained: derive
@@ -130,8 +160,10 @@ The same strategy scales to the not-yet-built features:
 | --- | --- |
 | `make test` | Go + web unit tests (fast, hermetic, no DB) |
 | `make test-integration` | Go integration tests; needs Postgres with migrations applied |
+| `make test-e2e` | Playwright browser e2e tests; needs Postgres with migrations applied, starts its own api+web |
 
 Single test:
 
 - Go: `cd apps/api && go test ./internal/auth/ -run TestName`
 - Web: `cd apps/web && npx vitest run path/to/file.test.ts -t "test name"`
+- Web e2e: `cd apps/web && npx playwright test -g "test name"`

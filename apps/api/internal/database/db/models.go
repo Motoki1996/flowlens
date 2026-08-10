@@ -70,6 +70,24 @@ type LinkedGitlabProject struct {
 	WebhookRegistrationError string             `json:"webhook_registration_error"`
 }
 
+type NotificationDigest struct {
+	ID         uuid.UUID          `json:"id"`
+	ProjectID  uuid.UUID          `json:"project_id"`
+	DigestDate pgtype.Date        `json:"digest_date"`
+	Status     string             `json:"status"`
+	Error      string             `json:"error"`
+	SentAt     pgtype.Timestamptz `json:"sent_at"`
+}
+
+type NotificationSetting struct {
+	ProjectID  uuid.UUID          `json:"project_id"`
+	WebhookUrl string             `json:"webhook_url"`
+	Enabled    bool               `json:"enabled"`
+	SendHour   int32              `json:"send_hour"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Organization struct {
 	ID            uuid.UUID          `json:"id"`
 	GitlabGroupID int64              `json:"gitlab_group_id"`

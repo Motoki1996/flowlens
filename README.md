@@ -1110,6 +1110,36 @@ sections explain what setting one would surface instead of implying nothing
 is due. A user with no projects yet sees a prompt to create one instead of
 the sections.
 
+### Notification digest (issue #109)
+
+Overdue tasks and sync failures used to require an actual `/dashboard`
+visit to notice. A background worker now sends a daily digest per project by
+**outgoing webhook** — chosen over email because it needs no SMTP setup and
+plugs straight into Slack via an Incoming Webhook URL (agreed on the issue
+before implementation).
+
+- `PUT`/`GET /api/v1/projects/{projectID}/notification-settings` (session,
+  owner-only — the webhook URL is an outbound destination a lesser role
+  should not be able to redirect, the same reasoning `gitlab-connection`
+  applies to its credential): `{ "webhookUrl": string, "enabled": boolean,
+  "sendHour": 0-23 }`. `GET` on a project that has never configured
+  notifications returns the unconfigured defaults (`enabled: false`,
+  `sendHour: 9`) rather than 404 — settings conceptually always exist.
+- A background worker (`internal/notification.Worker`, same process as the
+  sync workers, gated by `SYNC_WORKER_ENABLED`) sweeps every enabled project
+  roughly every 15 minutes. Once a project's `sendHour` (UTC) has been
+  reached, it builds that project's digest: open tasks overdue, open tasks
+  due today (the finest-grained "within 24h" `due_on`'s `DATE` type
+  supports), and failed `sync_jobs` / `webhook_events`. **A digest with
+  nothing to report is never sent.**
+- Sending is logged to `notification_digests` (`project_id`, `digest_date`)
+  *before* the webhook POST, and that table's `UNIQUE (project_id,
+  digest_date)` constraint is the whole dedupe guard: a second sweep the
+  same day (or a second process) hits the constraint and skips instead of
+  double-sending. A day with nothing to report never rows there at all, so
+  it doesn't block a later same-day sweep once something *does* need
+  reporting.
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault

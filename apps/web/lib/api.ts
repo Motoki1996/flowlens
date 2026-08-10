@@ -201,6 +201,9 @@ export type AllTasksFilter = {
   // "me": only tasks assigned to the caller's own registered GitLab identity
   // for that task's project (issue #102). Omitted means no filter.
   assignee?: "me";
+  // Free-text match against a task's title or description (issue #106's
+  // `?q=`, surfaced in the UI by issue #107).
+  q?: string;
 };
 
 /**
@@ -219,6 +222,7 @@ export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TaskWith
   if (filter.sort) params.set("sort", filter.sort);
   if (filter.limit) params.set("limit", String(filter.limit));
   if (filter.assignee) params.set("assignee", filter.assignee);
+  if (filter.q) params.set("q", filter.q);
   for (const id of filter.projectIds ?? []) params.append("projectId", id);
   const query = params.toString();
 

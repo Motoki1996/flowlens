@@ -819,7 +819,9 @@ The project-scoped Task collection (`/projects/{projectId}/tasks`) narrows and
 orders its List and Timeline view modes together, since both are presentations
 of the same filtered set (`docs/ui-design.md` rule 5):
 
-- A free-text box matches a task's title or description, case-insensitively.
+- A free-text box (`TaskSearchBox`, debounced 300ms and shared with the
+  cross-project collection's own box below) matches a task's title or
+  description, case-insensitively.
 - The status filter (All / Open / Closed) defaults to **Open**, so closed
   tasks don't fill the list; the backlog filter (unchanged) narrows further.
 - Sort offers **Manual** (the API's own `position` order — the default),
@@ -1064,7 +1066,12 @@ owner has.
 In the web app, `/tasks` is the cross-project Task collection (see
 [`docs/ui-design.md`](docs/ui-design.md)): the default view is open tasks
 with a due date, sorted soonest-first; each row links to that task's
-canonical single view under its own project.
+canonical single view under its own project. Its search box is debounced and
+held in `?q=`, the same as its other filters — unlike the project-scoped
+Task collection's own search box (see [Task collection search, filters and
+sort](#task-collection-search-filters-and-sort) above), typing here
+round-trips to `GET /api/v1/tasks?q=` rather than matching client-side, since
+this screen already re-fetches from the API on every other filter change.
 
 ### Dashboard
 

@@ -59,6 +59,7 @@ export default async function AllTasksPage({
   const dueAfter = firstParam(params.dueAfter);
   const startedBefore = firstParam(params.startedBefore);
   const assigneeMe = firstParam(params.assignee) === "me";
+  const search = firstParam(params.q);
 
   let tasks: Awaited<ReturnType<typeof getAllTasks>> = [];
   let projects: Awaited<ReturnType<typeof getProjects>> = [];
@@ -74,6 +75,7 @@ export default async function AllTasksPage({
         dueAfter,
         startedBefore,
         assignee: assigneeMe ? "me" : undefined,
+        q: search,
       }),
       getProjects(),
     ]);
@@ -97,6 +99,7 @@ export default async function AllTasksPage({
             priority={priority}
             sort={sort}
             assigneeMe={assigneeMe}
+            search={search}
             error={error}
           />
         </div>

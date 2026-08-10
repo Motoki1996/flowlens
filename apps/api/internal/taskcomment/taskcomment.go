@@ -15,13 +15,17 @@ package taskcomment
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
 
+	"github.com/flowlens/api/internal/commentsync"
+	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/project"
+	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -98,14 +102,18 @@ func toUUID(v *uuid.UUID) pgtype.UUID {
 // scoped to a single project via a bearer token.
 type Service struct {
 	q        db.Querier
+	txRunner database.TxRunner
 	projects *project.Service
 	tasks    *task.Service
 }
 
 // NewService constructs a taskcomment Service. projects and tasks are used
 // to verify project role and task membership before any read or write.
-func NewService(q db.Querier, projects *project.Service, tasks *task.Service) *Service {
-	return &Service{q: q, projects: projects, tasks: tasks}
+// txRunner scopes a comment insert together with its outbound comment.create
+// sync job enqueue (#104) into one commit, the same way internal/task does
+// for a task write.
+func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service, tasks *task.Service) *Service {
+	return &Service{q: q, txRunner: txRunner, projects: projects, tasks: tasks}
 }
 
 // authorize requires ownerID to hold at least min on projectID, mapping
@@ -147,7 +155,7 @@ func (s *Service) Create(ctx context.Context, ownerID, taskID uuid.UUID, body st
 	if err := s.authorize(ctx, ownerID, t.ProjectID, project.RoleMember); err != nil {
 		return TaskComment{}, err
 	}
-	return s.create(ctx, taskID, db.CreateTaskCommentParams{
+	return s.create(ctx, taskID, t.ProjectID, db.CreateTaskCommentParams{
 		AuthorUserID: toUUID(&ownerID),
 		AuthorKind:   AuthorKindUser,
 	}, body)
@@ -161,16 +169,18 @@ func (s *Service) CreateForProject(ctx context.Context, projectID, tokenID, task
 	if err := s.checkTaskInProject(ctx, projectID, taskID); err != nil {
 		return TaskComment{}, err
 	}
-	return s.create(ctx, taskID, db.CreateTaskCommentParams{
+	return s.create(ctx, taskID, projectID, db.CreateTaskCommentParams{
 		AuthorTokenID: toUUID(&tokenID),
 		AuthorKind:    AuthorKindAgent,
 	}, body)
 }
 
 // create validates body and inserts the comment, filling in params.TaskID
-// and params.Body. params must already carry exactly one of
-// AuthorUserID/AuthorTokenID and the matching AuthorKind.
-func (s *Service) create(ctx context.Context, taskID uuid.UUID, params db.CreateTaskCommentParams, body string) (TaskComment, error) {
+// and params.Body, then — inside the same transaction — enqueues a
+// comment.create sync job if taskID has a GitLab link (#104), mirroring
+// internal/task's enqueueIfLinked pattern. params must already carry exactly
+// one of AuthorUserID/AuthorTokenID and the matching AuthorKind.
+func (s *Service) create(ctx context.Context, taskID, projectID uuid.UUID, params db.CreateTaskCommentParams, body string) (TaskComment, error) {
 	normalized, err := normalizeBody(body)
 	if err != nil {
 		return TaskComment{}, err
@@ -178,11 +188,46 @@ func (s *Service) create(ctx context.Context, taskID uuid.UUID, params db.Create
 	params.TaskID = taskID
 	params.Body = normalized
 
-	row, err := s.q.CreateTaskComment(ctx, params)
+	var result TaskComment
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		row, err := q.CreateTaskComment(ctx, params)
+		if err != nil {
+			return fmt.Errorf("taskcomment: create: %w", err)
+		}
+		result = fromRow(row)
+		return enqueueIfLinked(ctx, q, taskID, projectID, result.ID)
+	})
 	if err != nil {
-		return TaskComment{}, fmt.Errorf("taskcomment: create: %w", err)
+		return TaskComment{}, err
 	}
-	return fromRow(row), nil
+	return result, nil
+}
+
+// enqueueIfLinked enqueues a comment.create sync job for commentID only if
+// taskID already has a GitLab link — a task with none is purely local, so
+// there is nothing to push. Unlike issue.update's job, this carries no
+// dedupe key: each comment is a distinct row, not an overwrite of a
+// previous pending payload.
+func enqueueIfLinked(ctx context.Context, q db.Querier, taskID, projectID, commentID uuid.UUID) error {
+	if _, err := q.GetTaskGitlabLinkByTaskID(ctx, taskID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("taskcomment: check gitlab link: %w", err)
+	}
+	payload, err := json.Marshal(commentsync.CreatePayload{CommentID: commentID})
+	if err != nil {
+		return fmt.Errorf("taskcomment: encode sync payload: %w", err)
+	}
+	if _, err := syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{
+		ProjectID: projectID,
+		TaskID:    &taskID,
+		Kind:      commentsync.KindCommentCreate,
+		Payload:   payload,
+	}); err != nil {
+		return fmt.Errorf("taskcomment: enqueue sync job: %w", err)
+	}
+	return nil
 }
 
 // List returns taskID's comments, oldest first, for a session-authenticated
@@ -234,8 +279,8 @@ func ListRecent(all []TaskComment) []TaskComment {
 
 // Delete removes commentID, scoped through its task's project like Create,
 // and only if it was authored by ownerID — deleting someone else's comment
-// (including a 'gitlab'-authored one, once #104 ships) reports
-// ErrForbidden.
+// reports ErrForbidden. A 'gitlab'-authored comment has no AuthorUserID to
+// match, so it can never be deleted this way (#104).
 func (s *Service) Delete(ctx context.Context, ownerID, commentID uuid.UUID) error {
 	comment, projectID, err := s.getForDelete(ctx, commentID)
 	if err != nil {

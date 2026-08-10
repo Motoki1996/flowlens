@@ -12,10 +12,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createGitlabTaskComment = `-- name: CreateGitlabTaskComment :one
+
+INSERT INTO task_comments (task_id, author_kind, body, gitlab_note_id)
+VALUES ($1, 'gitlab', $2, $3)
+RETURNING id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at, gitlab_note_id
+`
+
+type CreateGitlabTaskCommentParams struct {
+	TaskID       uuid.UUID   `json:"task_id"`
+	Body         string      `json:"body"`
+	GitlabNoteID pgtype.Int8 `json:"gitlab_note_id"`
+}
+
+// CreateGitlabTaskComment inserts a comment mirrored in from an inbound
+// GitLab "Note Hook" webhook (#104): author_kind is always 'gitlab' and
+// gitlab_note_id is always set, so a later delivery of the same note can be
+// recognised via GetTaskCommentByGitlabNoteID rather than re-inserted.
+func (q *Queries) CreateGitlabTaskComment(ctx context.Context, arg CreateGitlabTaskCommentParams) (TaskComment, error) {
+	row := q.db.QueryRow(ctx, createGitlabTaskComment, arg.TaskID, arg.Body, arg.GitlabNoteID)
+	var i TaskComment
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.AuthorUserID,
+		&i.AuthorTokenID,
+		&i.AuthorKind,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GitlabNoteID,
+	)
+	return i, err
+}
+
 const createTaskComment = `-- name: CreateTaskComment :one
 INSERT INTO task_comments (task_id, author_user_id, author_token_id, author_kind, body)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at
+RETURNING id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at, gitlab_note_id
 `
 
 type CreateTaskCommentParams struct {
@@ -44,6 +78,7 @@ func (q *Queries) CreateTaskComment(ctx context.Context, arg CreateTaskCommentPa
 		&i.Body,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.GitlabNoteID,
 	)
 	return i, err
 }
@@ -60,8 +95,29 @@ func (q *Queries) DeleteTaskCommentByID(ctx context.Context, id uuid.UUID) (int6
 	return result.RowsAffected(), nil
 }
 
+const getTaskCommentByGitlabNoteID = `-- name: GetTaskCommentByGitlabNoteID :one
+SELECT id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at, gitlab_note_id FROM task_comments WHERE gitlab_note_id = $1
+`
+
+func (q *Queries) GetTaskCommentByGitlabNoteID(ctx context.Context, gitlabNoteID pgtype.Int8) (TaskComment, error) {
+	row := q.db.QueryRow(ctx, getTaskCommentByGitlabNoteID, gitlabNoteID)
+	var i TaskComment
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.AuthorUserID,
+		&i.AuthorTokenID,
+		&i.AuthorKind,
+		&i.Body,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.GitlabNoteID,
+	)
+	return i, err
+}
+
 const getTaskCommentByID = `-- name: GetTaskCommentByID :one
-SELECT id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at FROM task_comments WHERE id = $1
+SELECT id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at, gitlab_note_id FROM task_comments WHERE id = $1
 `
 
 func (q *Queries) GetTaskCommentByID(ctx context.Context, id uuid.UUID) (TaskComment, error) {
@@ -76,6 +132,7 @@ func (q *Queries) GetTaskCommentByID(ctx context.Context, id uuid.UUID) (TaskCom
 		&i.Body,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.GitlabNoteID,
 	)
 	return i, err
 }
@@ -101,7 +158,7 @@ func (q *Queries) GetTaskCommentProjectID(ctx context.Context, id uuid.UUID) (uu
 }
 
 const listTaskCommentsByTask = `-- name: ListTaskCommentsByTask :many
-SELECT id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC
+SELECT id, task_id, author_user_id, author_token_id, author_kind, body, created_at, updated_at, gitlab_note_id FROM task_comments WHERE task_id = $1 ORDER BY created_at ASC
 `
 
 func (q *Queries) ListTaskCommentsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskComment, error) {
@@ -122,6 +179,7 @@ func (q *Queries) ListTaskCommentsByTask(ctx context.Context, taskID uuid.UUID) 
 			&i.Body,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.GitlabNoteID,
 		); err != nil {
 			return nil, err
 		}
@@ -131,4 +189,18 @@ func (q *Queries) ListTaskCommentsByTask(ctx context.Context, taskID uuid.UUID) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setTaskCommentGitlabNoteID = `-- name: SetTaskCommentGitlabNoteID :exec
+UPDATE task_comments SET gitlab_note_id = $2, updated_at = now() WHERE id = $1
+`
+
+type SetTaskCommentGitlabNoteIDParams struct {
+	ID           uuid.UUID   `json:"id"`
+	GitlabNoteID pgtype.Int8 `json:"gitlab_note_id"`
+}
+
+func (q *Queries) SetTaskCommentGitlabNoteID(ctx context.Context, arg SetTaskCommentGitlabNoteIDParams) error {
+	_, err := q.db.Exec(ctx, setTaskCommentGitlabNoteID, arg.ID, arg.GitlabNoteID)
+	return err
 }

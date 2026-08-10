@@ -67,6 +67,25 @@ type ProjectHook struct {
 	MergeRequestsEvents bool   `json:"merge_requests_events"`
 	IssuesEvents        bool   `json:"issues_events"`
 	PipelineEvents      bool   `json:"pipeline_events"`
+	NoteEvents          bool   `json:"note_events"`
+}
+
+// Note is the subset of a GitLab issue note (comment) FlowLens reads and
+// writes (#104). System is true for GitLab-generated notes ("changed the
+// description", "closed", ...) rather than a user's own comment, and is
+// never mirrored into task_comments.
+type Note struct {
+	ID        int64     `json:"id"`
+	Body      string    `json:"body"`
+	System    bool      `json:"system"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CreateNotePayload is the exact set of fields FlowLens pushes when posting
+// a task comment to a GitLab issue as a note.
+type CreateNotePayload struct {
+	Body string `json:"body"`
 }
 
 // ListOptions is the pagination input shared by every list endpoint. Search,
@@ -146,6 +165,8 @@ type Client interface {
 	CreateIssue(ctx context.Context, personalAccessToken string, projectID int64, payload IssuePayload) (*Issue, error)
 	// UpdateIssue applies a partial update to an existing issue.
 	UpdateIssue(ctx context.Context, personalAccessToken string, projectID, issueIID int64, payload UpdateIssuePayload) (*Issue, error)
+	// CreateNote posts a new note (comment) on an issue.
+	CreateNote(ctx context.Context, personalAccessToken string, projectID, issueIID int64, payload CreateNotePayload) (*Note, error)
 
 	// ListProjectHooks lists a project's webhooks.
 	ListProjectHooks(ctx context.Context, personalAccessToken string, projectID int64) ([]ProjectHook, error)
@@ -290,6 +311,15 @@ func (c *HTTPClient) UpdateIssue(ctx context.Context, personalAccessToken string
 		return nil, err
 	}
 	return &issue, nil
+}
+
+func (c *HTTPClient) CreateNote(ctx context.Context, personalAccessToken string, projectID, issueIID int64, payload CreateNotePayload) (*Note, error) {
+	var note Note
+	path := fmt.Sprintf("/api/v4/projects/%d/issues/%d/notes", projectID, issueIID)
+	if err := c.mutateOne(ctx, http.MethodPost, path, personalAccessToken, payload, http.StatusCreated, &note); err != nil {
+		return nil, err
+	}
+	return &note, nil
 }
 
 func (c *HTTPClient) ListProjectHooks(ctx context.Context, personalAccessToken string, projectID int64) ([]ProjectHook, error) {

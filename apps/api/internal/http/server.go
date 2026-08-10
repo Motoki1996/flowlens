@@ -86,7 +86,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		projectMembers:   projectMembers,
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(queries, projects, tasks),
-		taskComments:     taskcomment.NewService(queries, projects, tasks),
+		taskComments:     taskcomment.NewService(queries, txRunner, projects, tasks),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(queries),
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),

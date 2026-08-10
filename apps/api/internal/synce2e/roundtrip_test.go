@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/backlog"
+	"github.com/flowlens/api/internal/commentsync"
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
@@ -32,6 +33,7 @@ import (
 	"github.com/flowlens/api/internal/projectsync"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/task"
+	"github.com/flowlens/api/internal/taskcomment"
 	"github.com/flowlens/api/internal/webhookapply"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/google/uuid"
@@ -115,6 +117,7 @@ type env struct {
 	link      db.LinkedGitlabProject
 	fake      *gitlab.FakeClient
 	tasks     *task.Service
+	comments  *taskcomment.Service
 	webhooks  *webhookevent.Service
 	apply     *webhookapply.Service
 	projSync  *projectsync.Service
@@ -178,8 +181,10 @@ func newEnv(t *testing.T) *env {
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
 	tasks := task.NewService(q, txRunner, projects, backlogs)
+	comments := taskcomment.NewService(q, txRunner, projects, tasks)
 
 	issuesyncSvc := issuesync.NewService(q, cipher, factory)
+	commentSyncSvc := commentsync.NewService(q, cipher, factory)
 	projSyncSvc := projectsync.NewService(q, txRunner, projects, cipher, factory)
 
 	registry := syncpkg.NewRegistry()
@@ -187,6 +192,7 @@ func newEnv(t *testing.T) *env {
 	registry.Register(issuesync.KindIssueUpdate, issuesyncSvc.HandleIssueUpdate)
 	registry.Register(issuesync.KindIssueClose, issuesyncSvc.HandleIssueClose)
 	registry.Register(issuesync.KindIssueReopen, issuesyncSvc.HandleIssueReopen)
+	registry.Register(commentsync.KindCommentCreate, commentSyncSvc.HandleCommentCreate)
 	registry.Register(projectsync.KindProjectImport, projSyncSvc.HandleImport)
 	registry.Register(projectsync.KindProjectResync, projSyncSvc.HandleResync)
 
@@ -198,6 +204,7 @@ func newEnv(t *testing.T) *env {
 		link:      link,
 		fake:      fake,
 		tasks:     tasks,
+		comments:  comments,
 		webhooks:  webhookevent.NewService(q, cipher),
 		apply:     webhookapply.NewService(txRunner),
 		projSync:  projSyncSvc,
@@ -318,6 +325,75 @@ func (e *env) recordWebhookEvent(t *testing.T, deliveryUUID string, o issueEvent
 		Status:                webhookevent.StatusPending,
 	})
 	require.NoError(t, err)
+}
+
+// noteEvent describes one inbound GitLab "Note Hook" delivery (#104).
+type noteEvent struct {
+	ID           int64
+	IssueIID     int64
+	Body         string
+	NoteableType string // defaults to "Issue" when empty
+	System       bool
+	UpdatedAt    time.Time
+}
+
+func noteHookPayload(o noteEvent) []byte {
+	body := struct {
+		ObjectKind       string `json:"object_kind"`
+		ObjectAttributes struct {
+			ID           int64  `json:"id"`
+			Note         string `json:"note"`
+			NoteableType string `json:"noteable_type"`
+			System       bool   `json:"system"`
+			UpdatedAt    string `json:"updated_at"`
+		} `json:"object_attributes"`
+		Issue struct {
+			IID int64 `json:"iid"`
+		} `json:"issue"`
+	}{ObjectKind: "note"}
+
+	noteableType := o.NoteableType
+	if noteableType == "" {
+		noteableType = "Issue"
+	}
+	body.ObjectAttributes.ID = o.ID
+	body.ObjectAttributes.Note = o.Body
+	body.ObjectAttributes.NoteableType = noteableType
+	body.ObjectAttributes.System = o.System
+	body.ObjectAttributes.UpdatedAt = o.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	body.Issue.IID = o.IssueIID
+
+	b, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// recordNoteWebhookEvent is recordWebhookEvent's "Note Hook" counterpart.
+func (e *env) recordNoteWebhookEvent(t *testing.T, deliveryUUID string, o noteEvent) {
+	t.Helper()
+	err := e.webhooks.Record(context.Background(), webhookevent.RecordParams{
+		LinkedGitlabProjectID: e.link.ID,
+		DeliveryUUID:          deliveryUUID,
+		EventName:             webhookevent.NoteEventHeader,
+		ObjectKind:            "note",
+		GitlabIssueIID:        o.IssueIID,
+		Payload:               noteHookPayload(o),
+		GitlabUpdatedAt:       o.UpdatedAt,
+		Status:                webhookevent.StatusPending,
+	})
+	require.NoError(t, err)
+}
+
+// taskComments returns taskID's activity log, oldest first, read straight
+// from the DB rather than through internal/taskcomment.Service, so a test
+// can see fields (gitlab_note_id) the service's own API type doesn't expose.
+func (e *env) taskComments(t *testing.T, taskID uuid.UUID) []db.TaskComment {
+	t.Helper()
+	rows, err := e.q.ListTaskCommentsByTask(context.Background(), taskID)
+	require.NoError(t, err)
+	return rows
 }
 
 func (e *env) webhookEventStatus(t *testing.T, deliveryUUID string) (status, skipReason string) {
@@ -622,4 +698,108 @@ func TestRoundTrip_GitlabClose_ThenAppReopen_PushesReopenToGitlab_RealPostgres(t
 		}
 	}
 	assert.True(t, sawReopen, "reopening the task must push state_event=reopen to GitLab")
+}
+
+// Scenario 8 (#104): the app posts a comment on a linked task; the outbox
+// worker pushes it to GitLab as a note and records the returned note id.
+func TestRoundTrip_TaskComment_PushesNoteToGitlab_RealPostgres(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	e.fake.Issue = &gitlab.Issue{ID: 9600, IID: 71, WebURL: "https://gitlab.example.com/group/demo/-/issues/71", UpdatedAt: time.Now().UTC()}
+
+	tsk, err := e.tasks.Create(ctx, e.ownerID, e.projectID, task.CreateParams{Title: "Investigate flaky test"})
+	require.NoError(t, err)
+	e.drainOutbox(t)
+	callsBefore := len(e.fake.CallLog)
+
+	comment, err := e.comments.Create(ctx, e.ownerID, tsk.ID, "Pushed a fix; CI is green.")
+	require.NoError(t, err)
+
+	e.drainOutbox(t)
+
+	newCalls := e.fake.CallLog[callsBefore:]
+	require.Len(t, newCalls, 1, "posting a comment on a linked task must push exactly one CreateNote call")
+	assert.Equal(t, "CreateNote", newCalls[0].Method)
+	sent, ok := newCalls[0].Args[3].(gitlab.CreateNotePayload)
+	require.True(t, ok)
+	assert.Equal(t, "Pushed a fix; CI is green.", sent.Body)
+
+	rows := e.taskComments(t, tsk.ID)
+	require.Len(t, rows, 1)
+	assert.Equal(t, comment.ID, rows[0].ID)
+	assert.True(t, rows[0].GitlabNoteID.Valid, "a pushed comment must have its GitLab note id recorded")
+}
+
+// Scenario 9 (#104): GitLab reports a new note on a linked issue via
+// webhook; applying it creates a "gitlab"-authored task comment but must
+// never call back out to GitLab — the structural half of comment loop
+// prevention.
+func TestRoundTrip_InboundNote_CreatesTaskComment_AndPushesNothingBack_RealPostgres(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	e.fake.Issue = &gitlab.Issue{ID: 9700, IID: 81, WebURL: "https://gitlab.example.com/group/demo/-/issues/81", UpdatedAt: time.Now().UTC()}
+
+	tsk, err := e.tasks.Create(ctx, e.ownerID, e.projectID, task.CreateParams{Title: "Investigate outage"})
+	require.NoError(t, err)
+	e.drainOutbox(t)
+	callsBefore := len(e.fake.CallLog)
+
+	e.recordNoteWebhookEvent(t, "note-delivery-1", noteEvent{
+		ID: 5001, IssueIID: 81, Body: "Reproduced locally.", UpdatedAt: time.Now().UTC(),
+	})
+	e.drainInbox(t)
+
+	assert.Len(t, e.fake.CallLog, callsBefore, "applying an inbound note must never call back out to GitLab")
+
+	rows := e.taskComments(t, tsk.ID)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "gitlab", rows[0].AuthorKind)
+	assert.Equal(t, "Reproduced locally.", rows[0].Body)
+	require.True(t, rows[0].GitlabNoteID.Valid)
+	assert.Equal(t, int64(5001), rows[0].GitlabNoteID.Int64)
+
+	status, _ := e.webhookEventStatus(t, "note-delivery-1")
+	assert.Equal(t, "processed", status)
+}
+
+// Scenario 10 (#104): the app posts a comment, the outbox pushes it to
+// GitLab as a note, and GitLab's own webhook echoing that same note back
+// must be recognized and ignored — the per-row loop-prevention mechanism
+// comments use in place of issue's content fingerprint.
+func TestRoundTrip_CommentEcho_IsIgnored_RealPostgres(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+
+	e.fake.Issue = &gitlab.Issue{ID: 9800, IID: 91, WebURL: "https://gitlab.example.com/group/demo/-/issues/91", UpdatedAt: time.Now().UTC()}
+
+	tsk, err := e.tasks.Create(ctx, e.ownerID, e.projectID, task.CreateParams{Title: "Investigate outage"})
+	require.NoError(t, err)
+	e.drainOutbox(t)
+
+	_, err = e.comments.Create(ctx, e.ownerID, tsk.ID, "Working on it.")
+	require.NoError(t, err)
+	e.drainOutbox(t)
+
+	rows := e.taskComments(t, tsk.ID)
+	require.Len(t, rows, 1)
+	require.True(t, rows[0].GitlabNoteID.Valid)
+	pushedNoteID := rows[0].GitlabNoteID.Int64
+	callsBefore := len(e.fake.CallLog)
+
+	// GitLab echoes FlowLens's own pushed note back as a webhook.
+	e.recordNoteWebhookEvent(t, "echo-note", noteEvent{
+		ID: pushedNoteID, IssueIID: 91, Body: "Working on it.", UpdatedAt: time.Now().UTC(),
+	})
+	e.drainInbox(t)
+
+	assert.Len(t, e.fake.CallLog, callsBefore, "applying the echo must never call back out to GitLab")
+
+	rowsAfter := e.taskComments(t, tsk.ID)
+	assert.Len(t, rowsAfter, 1, "the echo must not create a duplicate comment")
+
+	status, skipReason := e.webhookEventStatus(t, "echo-note")
+	assert.Equal(t, "skipped", status)
+	assert.Equal(t, "echo", skipReason)
 }

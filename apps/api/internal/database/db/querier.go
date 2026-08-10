@@ -70,6 +70,11 @@ type Querier interface {
 	// when a run is already in progress for the same link, which
 	// internal/projectsync maps to ErrRunInProgress (HTTP 409).
 	CreateGitlabSyncRun(ctx context.Context, arg CreateGitlabSyncRunParams) (GitlabSyncRun, error)
+	// CreateGitlabTaskComment inserts a comment mirrored in from an inbound
+	// GitLab "Note Hook" webhook (#104): author_kind is always 'gitlab' and
+	// gitlab_note_id is always set, so a later delivery of the same note can be
+	// recognised via GetTaskCommentByGitlabNoteID rather than re-inserted.
+	CreateGitlabTaskComment(ctx context.Context, arg CreateGitlabTaskCommentParams) (TaskComment, error)
 	// linked_gitlab_projects has no owner column of its own; ownership is always
 	// checked by joining through gitlab_connections to projects, the same way
 	// gitlab_connections is checked through projects. A link belonging to
@@ -268,6 +273,7 @@ type Querier interface {
 	// so it can distinguish ErrForbidden from ErrNotFound.
 	GetSyncJobForOwner(ctx context.Context, arg GetSyncJobForOwnerParams) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
+	GetTaskCommentByGitlabNoteID(ctx context.Context, gitlabNoteID pgtype.Int8) (TaskComment, error)
 	GetTaskCommentByID(ctx context.Context, id uuid.UUID) (TaskComment, error)
 	// GetTaskCommentProjectID is the lightweight project lookup
 	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
@@ -486,6 +492,7 @@ type Querier interface {
 	// Records a successful webhook registration or rotation (issue #18) and
 	// clears any earlier registration error.
 	SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error)
+	SetTaskCommentGitlabNoteID(ctx context.Context, arg SetTaskCommentGitlabNoteIDParams) error
 	// UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
 	// must arrive already resolved: backlog.Service reads the current row first and
 	// fills in whatever the PATCH body left out (see its Update).

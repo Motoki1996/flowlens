@@ -1,7 +1,9 @@
 // Package webhookapply applies pending webhook_events rows to tasks
 // (docs/plans/issue-sync.md, "Inbound"): create, update, close and reopen,
 // guarded against an out-of-scope issue, a stale or duplicate delivery, and
-// FlowLens's own outbound push echoing back. It never enqueues an outbound
+// FlowLens's own outbound push echoing back. Since #104 it also applies
+// "Note Hook" events onto a task's activity log (task_comments) — see
+// applyNote. It never enqueues an outbound
 // sync_jobs row — apply's write path only ever touches tasks,
 // task_gitlab_links and webhook_events, and never imports internal/sync —
 // which is the structural half of the loop-prevention guard; the
@@ -117,6 +119,22 @@ func fieldsFromPayload(p issueWebhookPayload) taskFields {
 	}
 }
 
+// noteWebhookPayload is the subset of a GitLab "Note Hook" delivery this
+// package needs to apply a comment to a task (#104). Only notes on an issue
+// (NoteableType "Issue") that aren't GitLab-generated (System false, e.g.
+// "changed the description") are mirrored in.
+type noteWebhookPayload struct {
+	ObjectAttributes struct {
+		ID           int64  `json:"id"`
+		Note         string `json:"note"`
+		NoteableType string `json:"noteable_type"`
+		System       bool   `json:"system"`
+	} `json:"object_attributes"`
+	Issue struct {
+		IID int64 `json:"iid"`
+	} `json:"issue"`
+}
+
 // Service applies pending webhook_events rows. Like internal/issuesync's
 // Service, it runs as the background worker: the linked project a payload
 // names was already authorized when its webhook was registered, so its
@@ -160,6 +178,10 @@ func (s *Service) ProcessNext(ctx context.Context) (bool, error) {
 // outcome is instead recorded through the mark* helpers, which always
 // return nil so the transaction commits.
 func (s *Service) apply(ctx context.Context, q db.Querier, event db.WebhookEvent) error {
+	if event.ObjectKind == "note" {
+		return s.applyNote(ctx, q, event)
+	}
+
 	var payload issueWebhookPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("decode payload: %w", err))
@@ -188,6 +210,55 @@ func (s *Service) apply(ctx context.Context, q db.Querier, event db.WebhookEvent
 	default:
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("get task link: %w", err))
 	}
+}
+
+// applyNote is the comment-sync counterpart of apply (#104): unlike an issue
+// event, a comment has no single-column baseline to stale/echo-check against
+// (task_gitlab_links.last_pushed_fingerprint is per-task, not per-comment),
+// so its loop prevention is entirely per-row instead — a note whose GitLab id
+// already exists on some task_comments row is FlowLens's own push echoing
+// back (see internal/commentsync.HandleCommentCreate, which stores the id
+// there right after a successful push).
+func (s *Service) applyNote(ctx context.Context, q db.Querier, event db.WebhookEvent) error {
+	var payload noteWebhookPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("decode note payload: %w", err))
+	}
+
+	if payload.ObjectAttributes.NoteableType != "Issue" || payload.ObjectAttributes.System {
+		return s.markSkipped(ctx, q, event.ID, SkipReasonOutOfScope)
+	}
+
+	link, err := q.GetTaskGitlabLinkByLinkedProjectAndIID(ctx, db.GetTaskGitlabLinkByLinkedProjectAndIIDParams{
+		LinkedGitlabProjectID: event.LinkedGitlabProjectID,
+		GitlabIssueIid:        payload.Issue.IID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// The issue itself isn't tracked as a task (out of sync scope, or
+			// its own create event hasn't been applied yet) — nothing to
+			// attach the comment to.
+			return s.markSkipped(ctx, q, event.ID, SkipReasonOutOfScope)
+		}
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("get task link: %w", err))
+	}
+
+	noteID := pgtype.Int8{Int64: payload.ObjectAttributes.ID, Valid: true}
+	if _, err := q.GetTaskCommentByGitlabNoteID(ctx, noteID); err == nil {
+		return s.markSkipped(ctx, q, event.ID, SkipReasonEcho)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("check existing comment: %w", err))
+	}
+
+	if _, err := q.CreateGitlabTaskComment(ctx, db.CreateGitlabTaskCommentParams{
+		TaskID:       link.TaskID,
+		Body:         payload.ObjectAttributes.Note,
+		GitlabNoteID: noteID,
+	}); err != nil {
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("create comment: %w", err))
+	}
+
+	return s.markProcessed(ctx, q, event.ID)
 }
 
 // applyToExistingTask is the "known issue" path: guard 2 (stale) and guard 3

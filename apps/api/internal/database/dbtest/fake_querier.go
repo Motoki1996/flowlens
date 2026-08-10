@@ -1350,6 +1350,53 @@ func (f *FakeQuerier) GetTaskCommentByID(_ context.Context, id uuid.UUID) (db.Ta
 	return c, nil
 }
 
+// CreateGitlabTaskComment mirrors the SQL: always author_kind 'gitlab' with
+// gitlab_note_id set, for a comment mirrored in from a webhook (#104).
+func (f *FakeQuerier) CreateGitlabTaskComment(_ context.Context, arg db.CreateGitlabTaskCommentParams) (db.TaskComment, error) {
+	c := db.TaskComment{
+		ID:           uuid.New(),
+		TaskID:       arg.TaskID,
+		AuthorKind:   "gitlab",
+		Body:         arg.Body,
+		GitlabNoteID: arg.GitlabNoteID,
+		CreatedAt:    now(),
+		UpdatedAt:    now(),
+	}
+	f.taskCommentsByID[c.ID] = c
+	f.taskComments = append(f.taskComments, c)
+	return c, nil
+}
+
+// GetTaskCommentByGitlabNoteID mirrors the SQL: used to detect an echo of a
+// comment FlowLens itself pushed to GitLab (#104).
+func (f *FakeQuerier) GetTaskCommentByGitlabNoteID(_ context.Context, gitlabNoteID pgtype.Int8) (db.TaskComment, error) {
+	for _, c := range f.taskComments {
+		if c.GitlabNoteID.Valid && gitlabNoteID.Valid && c.GitlabNoteID.Int64 == gitlabNoteID.Int64 {
+			return c, nil
+		}
+	}
+	return db.TaskComment{}, pgx.ErrNoRows
+}
+
+// SetTaskCommentGitlabNoteID mirrors the SQL: records the GitLab note id
+// returned by a successful push (#104).
+func (f *FakeQuerier) SetTaskCommentGitlabNoteID(_ context.Context, arg db.SetTaskCommentGitlabNoteIDParams) error {
+	c, ok := f.taskCommentsByID[arg.ID]
+	if !ok {
+		return pgx.ErrNoRows
+	}
+	c.GitlabNoteID = arg.GitlabNoteID
+	c.UpdatedAt = now()
+	f.taskCommentsByID[arg.ID] = c
+	for i, x := range f.taskComments {
+		if x.ID == arg.ID {
+			f.taskComments[i] = c
+			break
+		}
+	}
+	return nil
+}
+
 // GetTaskCommentProjectID mirrors the SQL: resolved through the comment's
 // task, the same way GetTaskDependencyProjectID resolves through a
 // dependency's predecessor task.

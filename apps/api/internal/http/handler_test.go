@@ -81,7 +81,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		projectMembers:   projectMembers,
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(q, projects, tasks),
-		taskComments:     taskcomment.NewService(q, projects, tasks),
+		taskComments:     taskcomment.NewService(q, txRunner, projects, tasks),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(q),
 		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),

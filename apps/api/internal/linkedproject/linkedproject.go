@@ -602,7 +602,7 @@ func (s *Service) establishWebhook(ctx context.Context, ownerID uuid.UUID, clien
 		return db.LinkedGitlabProject{}, fmt.Errorf("linkedproject: generate webhook secret: %w", err)
 	}
 	hookURL := webhookURL(s.appPublicURL, link.ID)
-	payload := gitlab.ProjectHook{URL: hookURL, Token: secret, IssuesEvents: true}
+	payload := gitlab.ProjectHook{URL: hookURL, Token: secret, IssuesEvents: true, NoteEvents: true}
 
 	existingHooks, err := client.ListProjectHooks(ctx, token, link.GitlabProjectID)
 	if err != nil {

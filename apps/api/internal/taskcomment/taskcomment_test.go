@@ -19,7 +19,7 @@ func newService(q *dbtest.FakeQuerier) (*taskcomment.Service, *task.Service) {
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
 	tasks := task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs)
-	return taskcomment.NewService(q, projects, tasks), tasks
+	return taskcomment.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, tasks), tasks
 }
 
 func TestService_Create_SetsAuthorKindUser(t *testing.T) {

@@ -337,7 +337,7 @@ GitLab (GitLab project → **Settings → Webhooks**):
 | Field | Value |
 | --- | --- |
 | URL | `{APP_PUBLIC_URL}/webhooks/gitlab/{linkedGitlabProjectID}` |
-| Events | **Issues events** only — no push, merge request, pipeline, or other events are requested |
+| Events | **Issues events** and **Comments events** only — no push, merge request, pipeline, or other events are requested |
 | Secret token | A random 32-byte value FlowLens generates per link, encrypted at rest, and never re-displayed. GitLab sends it back as `X-Gitlab-Token` on every delivery, and the receiver compares it in constant time (`hmac`-style, not `==`). |
 
 Repairing or re-registering the webhook (e.g. after it was deleted on
@@ -352,6 +352,31 @@ for troubleshooting (`GET .../webhook-events`, paged with `?page=`/`?per_page=`
 on demand from `GET .../webhook-events/{eventID}` when a row's payload is
 opened; a failed delivery can be re-applied with
 `POST .../webhook-events/{eventID}/retry`.
+
+### Task comments sync with GitLab issue discussions
+
+A task's activity log (see "Activity log (comments)" below) rides the same
+outbox/webhook machinery as its title, description and status: posting a
+comment on a task linked to GitLab enqueues a `comment.create` job that posts
+it to the issue as a GitLab note (`POST .../issues/:iid/notes`), and GitLab's
+own `Note Hook` webhook deliveries are applied back onto the task as
+`authorKind: "gitlab"` comments. A task with no GitLab link behaves exactly
+as before — nothing is pushed, and no `"gitlab"`-authored comments ever
+appear.
+
+Loop prevention works differently here than for a task's own fields: because
+a task can have many independently-created comments, there is no single
+per-task content fingerprint to compare against (unlike
+`task_gitlab_links.last_pushed_fingerprint`). Instead each `task_comments`
+row stores the GitLab note id it was pushed as (or mirrored in from), and an
+inbound note whose id already exists on some comment is recognized and
+skipped as FlowLens's own echo rather than re-imported. GitLab-generated
+system notes (e.g. "changed the description") and notes on anything other
+than the linked issue are ignored.
+
+A push failure is retried with the same backoff and eventual dead-letter
+(`sync_jobs.status = 'failed'`) as every other outbound job — see "GitLab
+CE connection & sync" retry/troubleshooting above.
 
 ### Editing a task's assignee and labels
 
@@ -551,7 +576,7 @@ curl -X POST "$API_BASE_URL/api/v1/tasks/$TASK_ID/comments" \
   "taskId": "3fa2...",
   "authorUserId": null,       // set for a human's comment, null for a token's
   "authorTokenId": "b7e1...", // set for a token's comment, null for a human's
-  "authorKind": "agent",      // "user" | "agent" | "gitlab" (the last reserved for GitLab-discussion sync)
+  "authorKind": "agent",      // "user" | "agent" | "gitlab"
   "body": "Pushed a fix in MR !12; CI is green.",
   "createdAt": "2026-08-10T00:00:00Z",
   "updatedAt": "2026-08-10T00:00:00Z"
@@ -560,7 +585,14 @@ curl -X POST "$API_BASE_URL/api/v1/tasks/$TASK_ID/comments" \
 
 `GET /api/v1/tasks/{taskID}/comments` returns the full log, oldest first,
 with no page cap. `DELETE /api/v1/task-comments/{commentID}` removes one
-comment — a caller (session or token) can only delete its own.
+comment — a caller (session or token) can only delete its own; a
+`"gitlab"`-authored comment has no user or token to match, so it cannot be
+deleted through this endpoint at all.
+
+A `"user"` or `"agent"` comment on a task linked to GitLab is also pushed to
+the linked issue as a note, and a `"gitlab"`-authored comment is one GitLab
+itself posted, mirrored in by the inbound webhook — see "Task comments sync
+with GitLab issue discussions" above.
 
 #### Scopes
 

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/flowlens/api/internal/commentsync"
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
@@ -74,6 +75,12 @@ func run() error {
 	registry.Register(issuesync.KindIssueUpdate, issueSync.HandleIssueUpdate)
 	registry.Register(issuesync.KindIssueClose, issueSync.HandleIssueClose)
 	registry.Register(issuesync.KindIssueReopen, issueSync.HandleIssueReopen)
+
+	// Outbound comment sync job handler (#104): internal/taskcomment
+	// enqueues the job it executes, pushing a task comment to its linked
+	// GitLab issue as a note.
+	commentSync := commentsync.NewService(database.NewQuerier(pool), cipher, clientFactory)
+	registry.Register(commentsync.KindCommentCreate, commentSync.HandleCommentCreate)
 
 	// project.import / project.resync job handlers (issue #25): initial
 	// import (auto-enqueued by internal/linkedproject.Service.Create) and

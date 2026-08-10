@@ -272,6 +272,25 @@ export interface ProjectMember {
   createdAt: string;
 }
 
+/** TaskCommentAuthorKind distinguishes who posted a task's activity-log
+ *  entry: a logged-in human ("user"), a project API token ("agent"), or a
+ *  GitLab discussion mirrored in by the inbound webhook ("gitlab"). */
+export type TaskCommentAuthorKind = "user" | "agent" | "gitlab";
+
+/** TaskComment is one entry in a task's activity log (issue #103/#104).
+ *  Exactly one of authorUserId/authorTokenId is set, matching authorKind;
+ *  both are null for a "gitlab"-authored comment. */
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  authorUserId: string | null;
+  authorTokenId: string | null;
+  authorKind: TaskCommentAuthorKind;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** GitlabIdentity maps the caller to their GitLab user ID/username on one
  *  GitLab CE base URL (issue #102), so ?assignee=me on the task collections
  *  can match tasks assigned to them. No access token here — that is a

@@ -834,6 +834,25 @@ of the same filtered set (`docs/ui-design.md` rule 5):
   way the backlog filter already was, so a reload or the browser's back
   button restores it.
 
+### Task full-text search
+
+`GET /api/v1/projects/{projectID}/tasks` and the cross-project
+`GET /api/v1/tasks` both also accept `?q=`, matching a task's title or
+description, combinable with every other filter (`priority=`, `progress=`,
+`status=`, etc.) and with `sort=`. It is backed by `tasks.search_vector`, a
+`STORED` generated column (`to_tsvector('simple', title || ' ' ||
+description)`) with a GIN index, so filtering happens in the database rather
+than by fetching every task and matching client-side. The `'simple'` text
+search configuration does no stemming or dictionary-based word segmentation —
+deliberately, to avoid the extra dependency a real Japanese tokenizer
+(pg_bigm/pgroonga) would add — so a query matches as long as it lines up with
+a whole run of characters the parser tokenizes as one lexeme; there is no
+"contains this substring anywhere" guarantee for CJK text the way there is
+for space-separated words. `?q=` is unrelated to the project-scoped Task
+collection's own `?q=` free-text box described above, which stays a
+client-side, case-insensitive substring match — that screen already has every
+task in hand, so it never round-trips to the API per keystroke.
+
 ### Task & backlog priority
 
 A task and a backlog each carry a `priority` — one of `low`, `medium`, `high`,
@@ -1024,12 +1043,14 @@ owner has.
   (`YYYY-MM-DD`, inclusive), `projectId=` (repeatable — narrows within the
   caller's own projects, never a way to reach someone else's),
   `sort=dueOn|priority|updatedAt` (default `dueOn`, ascending, tasks with no
-  due date last), and `assignee=me` (only tasks assigned to the caller's own
+  due date last), `assignee=me` (only tasks assigned to the caller's own
   registered GitLab identity — see [GitLab user identity](#gitlab-user-identity)
   below; a caller with no registered identity gets an empty list, not an
-  error). `limit=` caps the result count (default 50, max 200); there is no
-  cursor/offset pagination yet. The same `assignee=me` filter is also
-  accepted on the per-project `GET .../tasks` list.
+  error), and `q=` (free-text over title/description — see
+  [Task full-text search](#task-full-text-search) above). `limit=` caps the
+  result count (default 50, max 200); there is no cursor/offset pagination
+  yet. The same `assignee=me` and `q=` filters are also accepted on the
+  per-project `GET .../tasks` list.
 - Each task in the response carries a `projectName` field alongside every
   field `GET .../tasks/{taskID}` returns, so a cross-project list is readable
   without a second look-up per row. It never resolves GitLab sync state,

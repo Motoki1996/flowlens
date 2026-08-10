@@ -373,6 +373,10 @@ type Querier interface {
 	// registered identity, or a project with no GitLab connection, joins to
 	// NULL, and NULL never equals assignee_gitlab_user_id, so the filter
 	// correctly yields zero rows instead of erroring.
+	// ListTasksByProject's q filter (issue #106) matches tasks.search_vector
+	// (the 'simple'-config tsvector generated column, see the 000016
+	// migration) against websearch_to_tsquery, GIN-indexed; an empty q disables
+	// it the same way every other filter here does.
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
 	// ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
 	// /api/v1/projects/{projectID}/tasks/context, docs/plans/issue-sync.md
@@ -405,6 +409,8 @@ type Querier interface {
 	// gitlab_connections/user_gitlab_identities join ListTasksByProject uses
 	// (issue #102), joined per-project since the cross-project list spans
 	// however many projects and GitLab connections the caller belongs to.
+	// ListTasksForMember's q filter is the same search_vector match
+	// ListTasksByProject's is (issue #106).
 	ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error)
 	ListUserGitlabIdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]UserGitlabIdentity, error)
 	// The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID

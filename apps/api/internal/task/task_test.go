@@ -320,6 +320,48 @@ func TestService_List_FiltersByBacklogAndStatus(t *testing.T) {
 	}
 }
 
+func TestService_List_FiltersByQuery(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	titleHit, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix login bug", Description: "unrelated"})
+	require.NoError(t, err)
+	descriptionHit, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Unrelated", Description: "investigate login timeout"})
+	require.NoError(t, err)
+	urgentHit, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Login page redesign", Priority: task.PriorityUrgent})
+	require.NoError(t, err)
+	_, err = svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Something else entirely"})
+	require.NoError(t, err)
+	japanese, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "ログイン画面の修正"})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		filter task.ListFilter
+		want   []uuid.UUID
+	}{
+		{"matches title", task.ListFilter{Query: "login"}, []uuid.UUID{titleHit.ID, descriptionHit.ID, urgentHit.ID}},
+		{"matches description", task.ListFilter{Query: "timeout"}, []uuid.UUID{descriptionHit.ID}},
+		{"combines with another filter", task.ListFilter{Query: "login", Priority: task.PriorityUrgent}, []uuid.UUID{urgentHit.ID}},
+		{"matches a Japanese title", task.ListFilter{Query: "ログイン"}, []uuid.UUID{japanese.ID}},
+		{"no match returns nothing", task.ListFilter{Query: "no-such-word"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.List(ctx, owner, p.ID, tt.filter)
+			require.NoError(t, err)
+			ids := make([]uuid.UUID, len(got))
+			for i, tk := range got {
+				ids[i] = tk.ID
+			}
+			assert.ElementsMatch(t, tt.want, ids)
+		})
+	}
+}
+
 func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
@@ -499,6 +541,8 @@ func TestService_ListForOwner_FiltersByStatusPriorityAndDates(t *testing.T) {
 		{"priority narrows to one task", task.CrossProjectFilter{Priority: task.PriorityUrgent}, []uuid.UUID{dueSoonUrgent.ID}},
 		{"dueBefore excludes the later task", task.CrossProjectFilter{DueBefore: timePtr(soon.AddDate(0, 0, 1))}, []uuid.UUID{dueSoonUrgent.ID, closed.ID}},
 		{"dueAfter excludes the soon tasks", task.CrossProjectFilter{DueAfter: timePtr(soon.AddDate(0, 0, 1))}, []uuid.UUID{dueLater.ID}},
+		{"query narrows by title", task.CrossProjectFilter{Query: "urgent"}, []uuid.UUID{dueSoonUrgent.ID}},
+		{"query combines with priority", task.CrossProjectFilter{Query: "due", Priority: task.PriorityLow}, []uuid.UUID{dueLater.ID}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

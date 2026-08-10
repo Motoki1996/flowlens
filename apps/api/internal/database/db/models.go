@@ -213,6 +213,7 @@ type Task struct {
 	StartDate              pgtype.Date        `json:"start_date"`
 	Priority               string             `json:"priority"`
 	Progress               string             `json:"progress"`
+	SearchVector           interface{}        `json:"search_vector"`
 }
 
 type TaskAiContext struct {

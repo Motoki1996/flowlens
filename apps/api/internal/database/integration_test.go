@@ -595,6 +595,112 @@ func TestListTasksForMember(t *testing.T) {
 	})
 }
 
+// TestTasksSearchVector (issue #106) drives tasks.search_vector — the
+// 'simple'-config generated column the 000016 migration adds — against a
+// real Postgres, since neither FakeQuerier's substring approximation nor a
+// domain test can prove the tsvector match or the GIN index actually work.
+func TestTasksSearchVector(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("Alpha-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	titleHit, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID: p.ID, Title: "Fix login bug", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+	descriptionHit, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID: p.ID, Title: "Unrelated", Description: "investigate login timeout", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+	japanese, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID: p.ID, Title: "ログイン画面の修正", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+	_, err = q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID: p.ID, Title: "Something else entirely", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+
+	baseParams := db.ListTasksByProjectParams{OwnerUserID: owner.ID, ProjectID: p.ID}
+
+	t.Run("hits on a title match", func(t *testing.T) {
+		params := baseParams
+		params.Q = "login"
+		rows, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		var ids []uuid.UUID
+		for _, r := range rows {
+			ids = append(ids, r.ID)
+		}
+		assert.ElementsMatch(t, []uuid.UUID{titleHit.ID, descriptionHit.ID}, ids)
+	})
+
+	t.Run("hits on a description-only match", func(t *testing.T) {
+		params := baseParams
+		params.Q = "timeout"
+		rows, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, descriptionHit.ID, rows[0].ID)
+	})
+
+	t.Run("hits on a Japanese title", func(t *testing.T) {
+		params := baseParams
+		params.Q = "ログイン画面の修正"
+		rows, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, japanese.ID, rows[0].ID)
+	})
+
+	t.Run("no match returns nothing", func(t *testing.T) {
+		params := baseParams
+		params.Q = "no-such-word"
+		rows, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		assert.Empty(t, rows)
+	})
+
+	// EXPLAIN with the planner's own cost estimates would flip to a seq scan
+	// on a table this small; enable_seqscan=off (rolled back with the
+	// transaction) instead asks "is the GIN index usable for this query at
+	// all", which is what the completion condition (#106) actually needs
+	// proven.
+	t.Run("the GIN index is usable for a search_vector match", func(t *testing.T) {
+		tx, err := pool.Begin(ctx)
+		require.NoError(t, err)
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		_, err = tx.Exec(ctx, `SET LOCAL enable_seqscan = off`)
+		require.NoError(t, err)
+
+		rows, err := tx.Query(ctx, `
+			EXPLAIN SELECT id FROM tasks
+			WHERE search_vector @@ websearch_to_tsquery('simple', $1)`,
+			"login")
+		require.NoError(t, err)
+		defer rows.Close()
+
+		var plan string
+		for rows.Next() {
+			var line string
+			require.NoError(t, rows.Scan(&line))
+			plan += line + "\n"
+		}
+		require.NoError(t, rows.Err())
+		assert.Contains(t, plan, "idx_tasks_search_vector", "expected the query planner to be able to use the GIN index:\n%s", plan)
+	})
+}
+
 // The 000012_project_members migration backfills an 'owner' membership row
 // for every existing project's owner_user_id (docs/decisions/0010-why-project-membership.md).
 // This proves that invariant against the real migration output, not just a

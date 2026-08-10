@@ -70,6 +70,41 @@ type LinkedGitlabProject struct {
 	WebhookRegistrationError string             `json:"webhook_registration_error"`
 }
 
+type MergeRequest struct {
+	ID                   uuid.UUID          `json:"id"`
+	RepositoryID         uuid.UUID          `json:"repository_id"`
+	GitlabMergeRequestID int64              `json:"gitlab_merge_request_id"`
+	Number               int32              `json:"number"`
+	Title                string             `json:"title"`
+	State                string             `json:"state"`
+	IsDraft              bool               `json:"is_draft"`
+	AuthorGitlabUsername string             `json:"author_gitlab_username"`
+	AuthorAvatarUrl      string             `json:"author_avatar_url"`
+	BaseBranch           string             `json:"base_branch"`
+	HeadBranch           string             `json:"head_branch"`
+	Additions            int32              `json:"additions"`
+	Deletions            int32              `json:"deletions"`
+	ChangedFiles         int32              `json:"changed_files"`
+	GitlabCreatedAt      pgtype.Timestamptz `json:"gitlab_created_at"`
+	GitlabUpdatedAt      pgtype.Timestamptz `json:"gitlab_updated_at"`
+	MergedAt             pgtype.Timestamptz `json:"merged_at"`
+	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
+	HtmlUrl              string             `json:"html_url"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	FirstReviewedAt      pgtype.Timestamptz `json:"first_reviewed_at"`
+	PipelineStatus       string             `json:"pipeline_status"`
+	PipelineID           pgtype.Int8        `json:"pipeline_id"`
+	PipelineUpdatedAt    pgtype.Timestamptz `json:"pipeline_updated_at"`
+}
+
+type MergeRequestReviewer struct {
+	MergeRequestID uuid.UUID          `json:"merge_request_id"`
+	GitlabUsername string             `json:"gitlab_username"`
+	AvatarUrl      string             `json:"avatar_url"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type NotificationDigest struct {
 	ID         uuid.UUID          `json:"id"`
 	ProjectID  uuid.UUID          `json:"project_id"`
@@ -86,23 +121,6 @@ type NotificationSetting struct {
 	SendHour   int32              `json:"send_hour"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
-}
-
-type Organization struct {
-	ID            uuid.UUID          `json:"id"`
-	GitlabGroupID int64              `json:"gitlab_group_id"`
-	Login         string             `json:"login"`
-	DisplayName   string             `json:"display_name"`
-	AvatarUrl     string             `json:"avatar_url"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-}
-
-type OrganizationMember struct {
-	OrganizationID uuid.UUID          `json:"organization_id"`
-	UserID         uuid.UUID          `json:"user_id"`
-	Role           string             `json:"role"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 type Project struct {
@@ -133,50 +151,28 @@ type ProjectMember struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
-type PullRequest struct {
-	ID                   uuid.UUID          `json:"id"`
-	RepositoryID         uuid.UUID          `json:"repository_id"`
-	GitlabMergeRequestID int64              `json:"gitlab_merge_request_id"`
-	Number               int32              `json:"number"`
-	Title                string             `json:"title"`
-	State                string             `json:"state"`
-	IsDraft              bool               `json:"is_draft"`
-	AuthorGitlabUsername string             `json:"author_gitlab_username"`
-	AuthorAvatarUrl      string             `json:"author_avatar_url"`
-	BaseBranch           string             `json:"base_branch"`
-	HeadBranch           string             `json:"head_branch"`
-	Additions            int32              `json:"additions"`
-	Deletions            int32              `json:"deletions"`
-	ChangedFiles         int32              `json:"changed_files"`
-	GitlabCreatedAt      pgtype.Timestamptz `json:"gitlab_created_at"`
-	GitlabUpdatedAt      pgtype.Timestamptz `json:"gitlab_updated_at"`
-	MergedAt             pgtype.Timestamptz `json:"merged_at"`
-	ClosedAt             pgtype.Timestamptz `json:"closed_at"`
-	HtmlUrl              string             `json:"html_url"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-}
-
-type PullRequestReviewer struct {
-	PullRequestID  uuid.UUID          `json:"pull_request_id"`
-	GitlabUsername string             `json:"gitlab_username"`
-	AvatarUrl      string             `json:"avatar_url"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-}
-
 type Repository struct {
-	ID              uuid.UUID          `json:"id"`
-	OrganizationID  uuid.UUID          `json:"organization_id"`
-	GitlabProjectID int64              `json:"gitlab_project_id"`
-	Name            string             `json:"name"`
-	FullName        string             `json:"full_name"`
-	Description     string             `json:"description"`
-	IsPrivate       bool               `json:"is_private"`
-	DefaultBranch   string             `json:"default_branch"`
-	HtmlUrl         string             `json:"html_url"`
-	IsActive        bool               `json:"is_active"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID                    uuid.UUID          `json:"id"`
+	Name                  string             `json:"name"`
+	FullName              string             `json:"full_name"`
+	Description           string             `json:"description"`
+	IsPrivate             bool               `json:"is_private"`
+	DefaultBranch         string             `json:"default_branch"`
+	HtmlUrl               string             `json:"html_url"`
+	IsActive              bool               `json:"is_active"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`
+}
+
+type RepositorySyncRun struct {
+	ID           uuid.UUID          `json:"id"`
+	RepositoryID uuid.UUID          `json:"repository_id"`
+	Status       string             `json:"status"`
+	StartedAt    pgtype.Timestamptz `json:"started_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	ErrorMessage string             `json:"error_message"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type Session struct {
@@ -200,16 +196,6 @@ type SyncJob struct {
 	LastError string             `json:"last_error"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-}
-
-type SyncRun struct {
-	ID           uuid.UUID          `json:"id"`
-	RepositoryID uuid.UUID          `json:"repository_id"`
-	Status       string             `json:"status"`
-	StartedAt    pgtype.Timestamptz `json:"started_at"`
-	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
-	ErrorMessage string             `json:"error_message"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type Task struct {

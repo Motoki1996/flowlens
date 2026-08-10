@@ -1156,10 +1156,15 @@ before implementation).
    tasks, per-project GitLab connection, linked GitLab projects,
    bidirectional sync, AI-facing context API — see
    [GitLab CE connection & sync](#gitlab-ce-connection--sync).
-3. **Organizations & repositories:** list from GitLab, import, select active
-   repositories for the merge-request feature.
-4. **Merge request sync:** manual sync button, idempotent upserts, rate-limit
-   and pagination handling.
+3. **Merge request sync design (done):** ADR + schema alignment — reuse the
+   per-project GitLab connection, `repositories` hangs off
+   `linked_gitlab_projects` instead of a dropped `organizations` table, and
+   `merge_requests`/`merge_request_reviewers` carry GitLab vocabulary and the
+   minimal delivery-flow metric columns — see
+   [ADR-0011](docs/decisions/0011-why-merge-request-sync.md).
+4. **Merge request sync:** webhook-primary (`merge_request`/`pipeline`
+   events) with periodic catch-up, idempotent upserts, rate-limit and
+   pagination handling.
 5. **Dashboard & MR views:** metrics, list with filters, detail page,
    empty/loading/error states.
 6. **Automation:** webhooks (with duplicate-delivery handling) and scheduled

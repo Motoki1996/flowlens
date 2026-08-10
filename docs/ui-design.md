@@ -43,25 +43,28 @@ The objects the UI is built from, and where they live today:
 | `LinkedGitLabProject` | A GitLab project a `Project` syncs issues with | `linked_gitlab_projects` |
 | `SyncRun` | One import / re-sync attempt against a linked GitLab project | `gitlab_sync_runs` |
 | `WebhookEvent` | One received GitLab webhook delivery and its processing state | `webhook_events` |
-| `Organization` | A GitLab group the team works in | `organizations` |
-| `Repository` | A GitLab project whose merge-request delivery flow we measure | `repositories` |
-| `MergeRequest` | One change under review | `pull_requests` |
-| `Reviewer` | A person assigned to review a merge request | `pull_request_reviewers` |
+| `Repository` | The merge-request-tracking sibling of a `LinkedGitLabProject` | `repositories` |
+| `MergeRequest` | One change under review | `merge_requests` |
+| `Reviewer` | A person assigned to review a merge request | `merge_request_reviewers` |
 
 Two notes on this table:
 
 - The first eight rows (issue sync / task tracker) are implemented and populated
-  today. `Organization`, `Repository`, `MergeRequest`, and `Reviewer` back the
-  deferred merge-request / CI delivery-flow feature; their tables exist but stay
-  unpopulated until that feature ships (see `CLAUDE.md`).
+  today. `Repository`, `MergeRequest`, and `Reviewer` back the deferred
+  merge-request / CI delivery-flow feature; their tables exist but stay
+  unpopulated until that feature ships (see `CLAUDE.md` and
+  [ADR-0011](decisions/0011-why-merge-request-sync.md)).
 - `Repository` and `LinkedGitLabProject` are both "a GitLab project" but name
   different things: `Repository` is the not-yet-built merge-request feature's
-  object, still backed by the GitHub-era `repositories` table; `LinkedGitLabProject`
-  is the issue-sync feature's object, backed by `linked_gitlab_projects`. `Project`
+  object, one per `LinkedGitLabProject` it tracks; `LinkedGitLabProject` is the
+  issue-sync feature's object, backed by `linked_gitlab_projects`. `Project`
   used to mean `Repository` before the issue-sync MVP claimed the noun for the
   app-level workspace — see [ADR-0008](decisions/0008-why-per-project-gitlab-connection.md)
   for why the rename happened and why the two GitLab-project objects don't share
-  a name.
+  a name. There is no separate `Organization` object: merge-request sync reuses
+  the per-project `GitLabConnection` (ADR-0008), so a `Repository` hangs off its
+  `LinkedGitLabProject` directly rather than off a GitLab group — see
+  [ADR-0011](decisions/0011-why-merge-request-sync.md).
 
 Objects that don't exist yet (`Pipeline`, `Release`) get added to this table
 when they get a table, not before.

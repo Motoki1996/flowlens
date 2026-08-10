@@ -18,6 +18,7 @@ import type {
   LinkedGitlabProject,
   Priority,
   Project,
+  ProjectMember,
   SyncJob,
   SyncRun,
   Task,
@@ -409,4 +410,23 @@ export const getProjectApiTokens = cache(async (projectId: string): Promise<ApiT
     throw new Error(`Failed to load api tokens: ${res.status}`);
   }
   return (await res.json()) as ApiToken[];
+});
+
+/**
+ * getProjectMembers returns every member of the project, oldest first. The
+ * listing endpoint is owner-only (issue #100), so a non-owner caller gets a
+ * 403 here — reported as `null` rather than thrown, since it is an expected
+ * outcome the section renders a read-only state for, not a load failure.
+ */
+export const getProjectMembers = cache(async (projectId: string): Promise<ProjectMember[] | null> => {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/members`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 403) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load project members: ${res.status}`);
+  }
+  return (await res.json()) as ProjectMember[];
 });

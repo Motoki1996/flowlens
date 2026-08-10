@@ -6,6 +6,7 @@ import {
   getLinkedGitlabProjects,
   getProject,
   getProjectApiTokens,
+  getProjectMembers,
   getTasks,
 } from "@/lib/api";
 import { ProjectDetail } from "@/components/ProjectDetail";
@@ -61,6 +62,16 @@ export default async function ProjectPage({
     // Left empty; the section still renders as "no failed sync jobs".
   }
 
+  // null (not []) is the failure default here: getProjectMembers already
+  // reports "not an owner" as null, and an unexpected error should render
+  // the same read-only state rather than falsely implying an empty project.
+  let members: Awaited<ReturnType<typeof getProjectMembers>> = null;
+  try {
+    members = await getProjectMembers(projectId);
+  } catch {
+    // Left null; the section renders its read-only state.
+  }
+
   return (
     <ProjectDetail
       project={project}
@@ -72,6 +83,7 @@ export default async function ProjectPage({
       linkedProjectCount={linkedGitlabProjects.length}
       apiTokens={apiTokens}
       failedSyncJobs={failedSyncJobs}
+      members={members}
     />
   );
 }

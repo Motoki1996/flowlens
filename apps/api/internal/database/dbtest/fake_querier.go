@@ -2512,10 +2512,15 @@ func (f *FakeQuerier) SeedProjectMember(projectID, userID uuid.UUID, role string
 	return m
 }
 
-// AddProjectMember mirrors the SQL.
+// AddProjectMember mirrors the SQL, including the (project_id, user_id)
+// primary key's unique violation on a duplicate insert.
 func (f *FakeQuerier) AddProjectMember(_ context.Context, arg db.AddProjectMemberParams) (db.ProjectMember, error) {
+	key := projectMemberKey{arg.ProjectID, arg.UserID}
+	if _, ok := f.projectMembers[key]; ok {
+		return db.ProjectMember{}, &pgconn.PgError{Code: "23505", ConstraintName: "project_members_pkey"}
+	}
 	m := db.ProjectMember{ProjectID: arg.ProjectID, UserID: arg.UserID, Role: arg.Role, CreatedAt: now()}
-	f.projectMembers[projectMemberKey{arg.ProjectID, arg.UserID}] = m
+	f.projectMembers[key] = m
 	return m, nil
 }
 
@@ -2526,6 +2531,30 @@ func (f *FakeQuerier) ListProjectMembers(_ context.Context, projectID uuid.UUID)
 		if m.ProjectID == projectID {
 			items = append(items, m)
 		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
+	})
+	return items, nil
+}
+
+// ListProjectMembersWithUser mirrors the SQL's join against users, ordered
+// by created_at ASC.
+func (f *FakeQuerier) ListProjectMembersWithUser(_ context.Context, projectID uuid.UUID) ([]db.ListProjectMembersWithUserRow, error) {
+	items := []db.ListProjectMembersWithUserRow{}
+	for _, m := range f.projectMembers {
+		if m.ProjectID != projectID {
+			continue
+		}
+		u := f.usersByID[m.UserID]
+		items = append(items, db.ListProjectMembersWithUserRow{
+			ProjectID:   m.ProjectID,
+			UserID:      m.UserID,
+			Role:        m.Role,
+			CreatedAt:   m.CreatedAt,
+			Username:    u.Username,
+			DisplayName: u.DisplayName,
+		})
 	}
 	sort.Slice(items, func(i, j int) bool {
 		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)

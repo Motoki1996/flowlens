@@ -16,6 +16,7 @@ import (
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/projectmember"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/syncjob"
 	"github.com/flowlens/api/internal/task"
@@ -40,6 +41,7 @@ type Server struct {
 	projects         *project.Service
 	backlogs         *backlog.Service
 	apiTokens        *apitoken.Service
+	projectMembers   *projectmember.Service
 	tasks            *task.Service
 	taskDependencies *taskdependency.Service
 	gitlabConns      *gitlabconn.Service
@@ -66,15 +68,18 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 	projects := project.NewService(queries)
 	backlogs := backlog.NewService(queries, projects)
 	apiTokens := apitoken.NewService(queries, projects)
+	users := user.NewService(queries)
+	projectMembers := projectmember.NewService(queries, projects, users)
 	clientFactory := func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
 	gitlabConns := gitlabconn.NewService(queries, projects, cipher, clientFactory)
 	tasks := task.NewService(queries, txRunner, projects, backlogs)
 	return &Server{
 		health:           health,
-		users:            user.NewService(queries),
+		users:            users,
 		projects:         projects,
 		backlogs:         backlogs,
 		apiTokens:        apiTokens,
+		projectMembers:   projectMembers,
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(queries, projects, tasks),
 		gitlabConns:      gitlabConns,
@@ -160,6 +165,14 @@ func (s *Server) Router() chi.Router {
 
 				projects.Get("/{projectID}/api-tokens", s.handleListAPITokens)
 				projects.Post("/{projectID}/api-tokens", s.handleCreateAPIToken)
+
+				// Member management (issue #100): owner-only, enforced by
+				// projectmember.Service itself, not by route middleware — the
+				// same pattern api-tokens above already follows.
+				projects.Get("/{projectID}/members", s.handleListProjectMembers)
+				projects.Post("/{projectID}/members", s.handleAddProjectMember)
+				projects.Patch("/{projectID}/members/{userID}", s.handleUpdateProjectMember)
+				projects.Delete("/{projectID}/members/{userID}", s.handleRemoveProjectMember)
 
 				// Failed sync jobs (issue #97): a permanently-failed
 				// sync_jobs row is otherwise invisible outside the

@@ -12,10 +12,10 @@ import (
 )
 
 type Querier interface {
-	// project_members has no queries wired into any handler yet (see
-	// docs/decisions/0010-why-project-membership.md); these exist so the schema
-	// and the backfill are exercised by a real query, ahead of the
-	// ownership-check replacement in a follow-up issue.
+	// These back internal/projectmember, the member invite/list/role-change/
+	// remove API (issue #100), the first thing to actually write to
+	// project_members since it was added by
+	// docs/decisions/0010-why-project-membership.md.
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) (ProjectMember, error)
 	// CountFailedSyncTasksByProjectForOwner backs the project single view's sync
 	// warning (docs/plans/issue-sync.md's "gitlab" fields, surfaced per-task by
@@ -335,6 +335,10 @@ type Querier interface {
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
 	ListProjectMembers(ctx context.Context, projectID uuid.UUID) ([]ProjectMember, error)
+	// ListProjectMembersWithUser joins in the username/display name the member
+	// list response needs; email is deliberately left out so the response never
+	// carries it (issue #100's "avoid user enumeration via email").
+	ListProjectMembersWithUser(ctx context.Context, projectID uuid.UUID) ([]ListProjectMembersWithUserRow, error)
 	ListProjectsByMember(ctx context.Context, userID uuid.UUID) ([]Project, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
 	// ListTasksByProject's priority and progress filters and sorts follow the same

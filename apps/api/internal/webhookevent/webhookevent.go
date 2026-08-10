@@ -40,14 +40,17 @@ const (
 // Skip reasons stored in webhook_events.skip_reason by this package.
 const SkipReasonUnsupportedEvent = "unsupported_event"
 
-// IssueEventHeader and NoteEventHeader are the X-Gitlab-Event header values
-// this phase applies — issue events (docs/plans/issue-sync.md, "Inbound")
-// and, since #104, note events (GitLab CE's discussion/comment webhook).
-// Any other event is still recorded, but as StatusSkipped /
+// IssueEventHeader, NoteEventHeader, MergeRequestEventHeader and
+// PipelineEventHeader are the X-Gitlab-Event header values this phase
+// applies — issue events (docs/plans/issue-sync.md, "Inbound"), note events
+// (#104), and merge request / pipeline events (issue #111, ADR-0011). Any
+// other event is still recorded, but as StatusSkipped /
 // SkipReasonUnsupportedEvent rather than StatusPending.
 const (
-	IssueEventHeader = "Issue Hook"
-	NoteEventHeader  = "Note Hook"
+	IssueEventHeader        = "Issue Hook"
+	NoteEventHeader         = "Note Hook"
+	MergeRequestEventHeader = "Merge Request Hook"
+	PipelineEventHeader     = "Pipeline Hook"
 
 	// SupportedEventHeader is IssueEventHeader, kept as an alias so existing
 	// callers/tests built around "the one supported event" still compile.
@@ -57,7 +60,12 @@ const (
 // IsSupportedEventHeader reports whether eventName is an X-Gitlab-Event
 // header value this phase applies.
 func IsSupportedEventHeader(eventName string) bool {
-	return eventName == IssueEventHeader || eventName == NoteEventHeader
+	switch eventName {
+	case IssueEventHeader, NoteEventHeader, MergeRequestEventHeader, PipelineEventHeader:
+		return true
+	default:
+		return false
+	}
 }
 
 // Service verifies webhook deliveries against a linked GitLab project's

@@ -63,6 +63,15 @@ type FakeQuerier struct {
 	gitlabSyncRuns     []db.GitlabSyncRun // insertion order, newest last
 	gitlabSyncRunsByID map[uuid.UUID]db.GitlabSyncRun
 
+	repositoriesByID                    map[uuid.UUID]db.Repository
+	repositoriesByLinkedGitlabProjectID map[uuid.UUID]db.Repository
+
+	mergeRequestsByID                   map[uuid.UUID]db.MergeRequest
+	mergeRequestsByGitlabMergeRequestID map[int64]uuid.UUID
+
+	repositorySyncRuns     []db.RepositorySyncRun // insertion order, newest last
+	repositorySyncRunsByID map[uuid.UUID]db.RepositorySyncRun
+
 	projectMembers map[projectMemberKey]db.ProjectMember // key: project_id + user_id
 
 	userGitlabIdentities map[userGitlabIdentityKey]db.UserGitlabIdentity // key: user_id + gitlab_base_url
@@ -122,6 +131,14 @@ func New() *FakeQuerier {
 		webhookEventsByID:  map[uuid.UUID]db.WebhookEvent{},
 
 		gitlabSyncRunsByID: map[uuid.UUID]db.GitlabSyncRun{},
+
+		repositoriesByID:                    map[uuid.UUID]db.Repository{},
+		repositoriesByLinkedGitlabProjectID: map[uuid.UUID]db.Repository{},
+
+		mergeRequestsByID:                   map[uuid.UUID]db.MergeRequest{},
+		mergeRequestsByGitlabMergeRequestID: map[int64]uuid.UUID{},
+
+		repositorySyncRunsByID: map[uuid.UUID]db.RepositorySyncRun{},
 
 		projectMembers: map[projectMemberKey]db.ProjectMember{},
 
@@ -2743,6 +2760,243 @@ func (f *FakeQuerier) ListGitlabSyncRunsByLinkedGitlabProjectID(_ context.Contex
 		return items[i].CreatedAt.Time.After(items[j].CreatedAt.Time)
 	})
 	return items, nil
+}
+
+// CreateRepository mirrors the SQL: linked_gitlab_project_id is UNIQUE.
+func (f *FakeQuerier) CreateRepository(_ context.Context, arg db.CreateRepositoryParams) (db.Repository, error) {
+	if _, ok := f.repositoriesByLinkedGitlabProjectID[arg.LinkedGitlabProjectID]; ok {
+		return db.Repository{}, &pgconn.PgError{Code: "23505", ConstraintName: "repositories_linked_gitlab_project_id_key"}
+	}
+	r := db.Repository{
+		ID:                    uuid.New(),
+		LinkedGitlabProjectID: arg.LinkedGitlabProjectID,
+		Name:                  arg.Name,
+		FullName:              arg.FullName,
+		Description:           arg.Description,
+		IsPrivate:             arg.IsPrivate,
+		DefaultBranch:         arg.DefaultBranch,
+		HtmlUrl:               arg.HtmlUrl,
+		IsActive:              true,
+		CreatedAt:             now(),
+		UpdatedAt:             now(),
+	}
+	f.repositoriesByID[r.ID] = r
+	f.repositoriesByLinkedGitlabProjectID[r.LinkedGitlabProjectID] = r
+	return r, nil
+}
+
+// GetRepositoryByLinkedGitlabProjectID mirrors the SQL: unscoped, for the
+// background worker.
+func (f *FakeQuerier) GetRepositoryByLinkedGitlabProjectID(_ context.Context, linkedGitlabProjectID uuid.UUID) (db.Repository, error) {
+	r, ok := f.repositoriesByLinkedGitlabProjectID[linkedGitlabProjectID]
+	if !ok {
+		return db.Repository{}, pgx.ErrNoRows
+	}
+	return r, nil
+}
+
+// GetRepositoryByID mirrors the SQL.
+func (f *FakeQuerier) GetRepositoryByID(_ context.Context, id uuid.UUID) (db.Repository, error) {
+	r, ok := f.repositoriesByID[id]
+	if !ok {
+		return db.Repository{}, pgx.ErrNoRows
+	}
+	return r, nil
+}
+
+// storeMergeRequest inserts m if it is new, or overwrites the existing row
+// in place otherwise.
+func (f *FakeQuerier) storeMergeRequest(m db.MergeRequest) {
+	f.mergeRequestsByID[m.ID] = m
+	f.mergeRequestsByGitlabMergeRequestID[m.GitlabMergeRequestID] = m.ID
+}
+
+// CreateMergeRequest mirrors the SQL: gitlab_merge_request_id is UNIQUE.
+func (f *FakeQuerier) CreateMergeRequest(_ context.Context, arg db.CreateMergeRequestParams) (db.MergeRequest, error) {
+	if _, ok := f.mergeRequestsByGitlabMergeRequestID[arg.GitlabMergeRequestID]; ok {
+		return db.MergeRequest{}, &pgconn.PgError{Code: "23505", ConstraintName: "merge_requests_gitlab_merge_request_id_key"}
+	}
+	m := db.MergeRequest{
+		ID:                   uuid.New(),
+		RepositoryID:         arg.RepositoryID,
+		GitlabMergeRequestID: arg.GitlabMergeRequestID,
+		Number:               arg.Number,
+		Title:                arg.Title,
+		State:                arg.State,
+		IsDraft:              arg.IsDraft,
+		AuthorGitlabUsername: arg.AuthorGitlabUsername,
+		AuthorAvatarUrl:      arg.AuthorAvatarUrl,
+		BaseBranch:           arg.BaseBranch,
+		HeadBranch:           arg.HeadBranch,
+		GitlabCreatedAt:      arg.GitlabCreatedAt,
+		GitlabUpdatedAt:      arg.GitlabUpdatedAt,
+		MergedAt:             arg.MergedAt,
+		ClosedAt:             arg.ClosedAt,
+		HtmlUrl:              arg.HtmlUrl,
+		PipelineStatus:       arg.PipelineStatus,
+		PipelineID:           arg.PipelineID,
+		PipelineUpdatedAt:    arg.PipelineUpdatedAt,
+		CreatedAt:            now(),
+		UpdatedAt:            now(),
+	}
+	f.storeMergeRequest(m)
+	return m, nil
+}
+
+// GetMergeRequestByGitlabMergeRequestID mirrors the SQL.
+func (f *FakeQuerier) GetMergeRequestByGitlabMergeRequestID(_ context.Context, gitlabMergeRequestID int64) (db.MergeRequest, error) {
+	id, ok := f.mergeRequestsByGitlabMergeRequestID[gitlabMergeRequestID]
+	if !ok {
+		return db.MergeRequest{}, pgx.ErrNoRows
+	}
+	return f.mergeRequestsByID[id], nil
+}
+
+// UpdateMergeRequest mirrors the SQL: first_reviewed_at and task_id are
+// deliberately left untouched.
+func (f *FakeQuerier) UpdateMergeRequest(_ context.Context, arg db.UpdateMergeRequestParams) (db.MergeRequest, error) {
+	id, ok := f.mergeRequestsByGitlabMergeRequestID[arg.GitlabMergeRequestID]
+	if !ok {
+		return db.MergeRequest{}, pgx.ErrNoRows
+	}
+	m := f.mergeRequestsByID[id]
+	m.Title = arg.Title
+	m.State = arg.State
+	m.IsDraft = arg.IsDraft
+	m.AuthorGitlabUsername = arg.AuthorGitlabUsername
+	m.AuthorAvatarUrl = arg.AuthorAvatarUrl
+	m.BaseBranch = arg.BaseBranch
+	m.HeadBranch = arg.HeadBranch
+	m.GitlabUpdatedAt = arg.GitlabUpdatedAt
+	m.MergedAt = arg.MergedAt
+	m.ClosedAt = arg.ClosedAt
+	m.HtmlUrl = arg.HtmlUrl
+	m.PipelineStatus = arg.PipelineStatus
+	m.PipelineID = arg.PipelineID
+	m.PipelineUpdatedAt = arg.PipelineUpdatedAt
+	m.UpdatedAt = now()
+	f.storeMergeRequest(m)
+	return m, nil
+}
+
+// UpdateMergeRequestFirstReviewedAt mirrors the SQL: a no-op once already set.
+func (f *FakeQuerier) UpdateMergeRequestFirstReviewedAt(_ context.Context, arg db.UpdateMergeRequestFirstReviewedAtParams) (db.MergeRequest, error) {
+	m, ok := f.mergeRequestsByID[arg.ID]
+	if !ok || m.FirstReviewedAt.Valid {
+		return db.MergeRequest{}, pgx.ErrNoRows
+	}
+	m.FirstReviewedAt = arg.FirstReviewedAt
+	f.storeMergeRequest(m)
+	return m, nil
+}
+
+// GetMergeRequestByRepositoryAndNumber mirrors the SQL.
+func (f *FakeQuerier) GetMergeRequestByRepositoryAndNumber(_ context.Context, arg db.GetMergeRequestByRepositoryAndNumberParams) (db.MergeRequest, error) {
+	for _, id := range f.mergeRequestsByGitlabMergeRequestID {
+		m := f.mergeRequestsByID[id]
+		if m.RepositoryID == arg.RepositoryID && m.Number == arg.Number {
+			return m, nil
+		}
+	}
+	return db.MergeRequest{}, pgx.ErrNoRows
+}
+
+// UpdateMergeRequestPipeline mirrors the SQL.
+func (f *FakeQuerier) UpdateMergeRequestPipeline(_ context.Context, arg db.UpdateMergeRequestPipelineParams) (db.MergeRequest, error) {
+	m, ok := f.mergeRequestsByID[arg.ID]
+	if !ok {
+		return db.MergeRequest{}, pgx.ErrNoRows
+	}
+	m.PipelineStatus = arg.PipelineStatus
+	m.PipelineID = arg.PipelineID
+	m.PipelineUpdatedAt = arg.PipelineUpdatedAt
+	m.UpdatedAt = now()
+	f.storeMergeRequest(m)
+	return m, nil
+}
+
+// UpdateMergeRequestTaskID mirrors the SQL.
+func (f *FakeQuerier) UpdateMergeRequestTaskID(_ context.Context, arg db.UpdateMergeRequestTaskIDParams) (db.MergeRequest, error) {
+	m, ok := f.mergeRequestsByID[arg.ID]
+	if !ok {
+		return db.MergeRequest{}, pgx.ErrNoRows
+	}
+	m.TaskID = arg.TaskID
+	f.storeMergeRequest(m)
+	return m, nil
+}
+
+// storeRepositorySyncRun inserts r if it is new, or overwrites the existing
+// row in place (preserving its position) otherwise.
+func (f *FakeQuerier) storeRepositorySyncRun(r db.RepositorySyncRun) {
+	f.repositorySyncRunsByID[r.ID] = r
+	for i, x := range f.repositorySyncRuns {
+		if x.ID == r.ID {
+			f.repositorySyncRuns[i] = r
+			return
+		}
+	}
+	f.repositorySyncRuns = append(f.repositorySyncRuns, r)
+}
+
+// CreateRepositorySyncRun mirrors the SQL: the partial UNIQUE index on
+// (repository_id) WHERE completed_at IS NULL (migration 000019).
+func (f *FakeQuerier) CreateRepositorySyncRun(_ context.Context, arg db.CreateRepositorySyncRunParams) (db.RepositorySyncRun, error) {
+	for _, r := range f.repositorySyncRuns {
+		if r.RepositoryID == arg.RepositoryID && !r.CompletedAt.Valid {
+			return db.RepositorySyncRun{}, &pgconn.PgError{Code: "23505", ConstraintName: "idx_repository_sync_runs_one_running_per_repository"}
+		}
+	}
+	r := db.RepositorySyncRun{
+		ID:           uuid.New(),
+		RepositoryID: arg.RepositoryID,
+		Kind:         arg.Kind,
+		Status:       "running",
+		StartedAt:    now(),
+		CreatedAt:    now(),
+	}
+	f.storeRepositorySyncRun(r)
+	return r, nil
+}
+
+// CompleteRepositorySyncRun mirrors the SQL.
+func (f *FakeQuerier) CompleteRepositorySyncRun(_ context.Context, arg db.CompleteRepositorySyncRunParams) (db.RepositorySyncRun, error) {
+	r, ok := f.repositorySyncRunsByID[arg.ID]
+	if !ok {
+		return db.RepositorySyncRun{}, pgx.ErrNoRows
+	}
+	r.Status = "succeeded"
+	r.MrsSeen = arg.MrsSeen
+	r.MrsCreated = arg.MrsCreated
+	r.MrsUpdated = arg.MrsUpdated
+	r.CompletedAt = now()
+	f.storeRepositorySyncRun(r)
+	return r, nil
+}
+
+// FailRepositorySyncRun mirrors the SQL.
+func (f *FakeQuerier) FailRepositorySyncRun(_ context.Context, arg db.FailRepositorySyncRunParams) (db.RepositorySyncRun, error) {
+	r, ok := f.repositorySyncRunsByID[arg.ID]
+	if !ok {
+		return db.RepositorySyncRun{}, pgx.ErrNoRows
+	}
+	r.Status = "failed"
+	r.MrsSeen = arg.MrsSeen
+	r.MrsCreated = arg.MrsCreated
+	r.MrsUpdated = arg.MrsUpdated
+	r.ErrorMessage = arg.ErrorMessage
+	r.CompletedAt = now()
+	f.storeRepositorySyncRun(r)
+	return r, nil
+}
+
+// GetRepositorySyncRunByID mirrors the SQL: unscoped, for the background worker.
+func (f *FakeQuerier) GetRepositorySyncRunByID(_ context.Context, id uuid.UUID) (db.RepositorySyncRun, error) {
+	r, ok := f.repositorySyncRunsByID[id]
+	if !ok {
+		return db.RepositorySyncRun{}, pgx.ErrNoRows
+	}
+	return r, nil
 }
 
 // SeedProjectMember inserts a ready-made project_members row directly,

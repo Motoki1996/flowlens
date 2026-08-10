@@ -25,6 +25,7 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
+	"github.com/flowlens/api/internal/mrsync"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/google/uuid"
@@ -387,6 +388,16 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 		slog.Error("linked gitlab project: enqueue initial import", "linked_gitlab_project_id", row.ID, "error", err)
 	}
 
+	// Merge-request sync (issue #111, ADR-0011 §1): a Repository is created
+	// for every linked GitLab project automatically, the same "no separate
+	// enable flow" reasoning issue sync's initial import above already
+	// follows. Best-effort like the rest of Create's side effects.
+	if repo, err := mrsync.EnsureRepository(ctx, s.q, row); err != nil {
+		slog.Error("linked gitlab project: ensure repository", "linked_gitlab_project_id", row.ID, "error", err)
+	} else if _, err := mrsync.EnqueueImport(ctx, s.txRunner, repo.ID, projectID); err != nil {
+		slog.Error("linked gitlab project: enqueue mr import", "repository_id", repo.ID, "error", err)
+	}
+
 	return fromRow(row), nil
 }
 
@@ -602,7 +613,7 @@ func (s *Service) establishWebhook(ctx context.Context, ownerID uuid.UUID, clien
 		return db.LinkedGitlabProject{}, fmt.Errorf("linkedproject: generate webhook secret: %w", err)
 	}
 	hookURL := webhookURL(s.appPublicURL, link.ID)
-	payload := gitlab.ProjectHook{URL: hookURL, Token: secret, IssuesEvents: true, NoteEvents: true}
+	payload := gitlab.ProjectHook{URL: hookURL, Token: secret, IssuesEvents: true, NoteEvents: true, MergeRequestsEvents: true, PipelineEvents: true}
 
 	existingHooks, err := client.ListProjectHooks(ctx, token, link.GitlabProjectID)
 	if err != nil {

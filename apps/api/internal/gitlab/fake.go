@@ -67,6 +67,30 @@ type FakeClient struct {
 	CreateNoteErr error
 	nextNoteID    int64
 
+	// MergeRequests is returned by ListMergeRequests. Ignored once
+	// MergeRequestsPages is set.
+	MergeRequests []MergeRequest
+	// MergeRequestsPages, when set, overrides MergeRequests so a test can
+	// exercise a multi-page ListMergeRequests walk (internal/mrsync), the
+	// same shape as IssuesPages.
+	MergeRequestsPages [][]MergeRequest
+	// MergeRequestsErr, when set, is returned by ListMergeRequests.
+	MergeRequestsErr error
+	// MergeRequest is returned by GetMergeRequest, unless MergeRequestByIID
+	// has an entry for the requested mrIID.
+	MergeRequest *MergeRequest
+	// MergeRequestByIID, when set, lets GetMergeRequest return a different
+	// value per project-scoped IID — needed once a test drives more than one
+	// merge request through a single import run (internal/mrsync calls
+	// GetMergeRequest once per item to also fetch its head pipeline).
+	MergeRequestByIID map[int64]*MergeRequest
+	// GetMergeRequestErr, when set, is returned by GetMergeRequest.
+	GetMergeRequestErr error
+	// MergeRequestNotes is returned by ListMergeRequestNotes.
+	MergeRequestNotes []Note
+	// MergeRequestNotesErr, when set, is returned by ListMergeRequestNotes.
+	MergeRequestNotesErr error
+
 	// Hooks is returned by ListProjectHooks.
 	Hooks []ProjectHook
 	// HooksErr, when set, is returned by ListProjectHooks.
@@ -201,6 +225,51 @@ func (f *FakeClient) CreateNote(ctx context.Context, personalAccessToken string,
 	}
 	f.nextNoteID++
 	return &Note{ID: f.nextNoteID, Body: payload.Body}, nil
+}
+
+// ListMergeRequests implements Client.
+func (f *FakeClient) ListMergeRequests(ctx context.Context, personalAccessToken string, projectID int64, opts ListMergeRequestsOptions) ([]MergeRequest, PageInfo, error) {
+	f.record("ListMergeRequests", personalAccessToken, projectID, opts)
+	if f.MergeRequestsErr != nil {
+		return nil, PageInfo{}, f.MergeRequestsErr
+	}
+	if f.MergeRequestsPages != nil {
+		page := opts.Page
+		if page < 1 {
+			page = 1
+		}
+		idx := page - 1
+		if idx >= len(f.MergeRequestsPages) {
+			return nil, PageInfo{}, nil
+		}
+		next := 0
+		if idx+1 < len(f.MergeRequestsPages) {
+			next = page + 1
+		}
+		return f.MergeRequestsPages[idx], PageInfo{NextPage: next}, nil
+	}
+	return f.MergeRequests, PageInfo{NextPage: f.NextPage}, nil
+}
+
+// GetMergeRequest implements Client.
+func (f *FakeClient) GetMergeRequest(ctx context.Context, personalAccessToken string, projectID, mrIID int64) (*MergeRequest, error) {
+	f.record("GetMergeRequest", personalAccessToken, projectID, mrIID)
+	if f.GetMergeRequestErr != nil {
+		return nil, f.GetMergeRequestErr
+	}
+	if mr, ok := f.MergeRequestByIID[mrIID]; ok {
+		return mr, nil
+	}
+	return f.MergeRequest, nil
+}
+
+// ListMergeRequestNotes implements Client.
+func (f *FakeClient) ListMergeRequestNotes(ctx context.Context, personalAccessToken string, projectID, mrIID int64, opts ListOptions) ([]Note, PageInfo, error) {
+	f.record("ListMergeRequestNotes", personalAccessToken, projectID, mrIID, opts)
+	if f.MergeRequestNotesErr != nil {
+		return nil, PageInfo{}, f.MergeRequestNotesErr
+	}
+	return f.MergeRequestNotes, PageInfo{NextPage: f.NextPage}, nil
 }
 
 // ListProjectHooks implements Client.

@@ -57,6 +57,43 @@ type Issue struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// Pipeline is the subset of a GitLab CI pipeline FlowLens reads. It tracks
+// only the latest pipeline for a merge request's head branch, not history
+// (ADR-0011 §3).
+type Pipeline struct {
+	ID        int64     `json:"id"`
+	SHA       string    `json:"sha"`
+	Ref       string    `json:"ref"`
+	Status    string    `json:"status"`
+	WebURL    string    `json:"web_url"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// MergeRequest is the subset of a GitLab merge request FlowLens reads
+// (issue #111). It is read-only — FlowLens never writes back to GitLab MRs.
+// HeadPipeline is only populated by GetMergeRequest (GitLab's single-MR
+// endpoint), not by ListMergeRequests.
+type MergeRequest struct {
+	ID           int64      `json:"id"`
+	IID          int64      `json:"iid"`
+	ProjectID    int64      `json:"project_id"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	State        string     `json:"state"`
+	Draft        bool       `json:"draft"`
+	Author       User       `json:"author"`
+	SourceBranch string     `json:"source_branch"`
+	TargetBranch string     `json:"target_branch"`
+	SHA          string     `json:"sha"`
+	WebURL       string     `json:"web_url"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	MergedAt     *time.Time `json:"merged_at"`
+	ClosedAt     *time.Time `json:"closed_at"`
+	HeadPipeline *Pipeline  `json:"head_pipeline"`
+}
+
 // ProjectHook is a GitLab CE project webhook. Token is write-only: GitLab CE
 // never echoes it back in a response body, so it is empty on List/Get.
 type ProjectHook struct {
@@ -78,6 +115,7 @@ type Note struct {
 	ID        int64     `json:"id"`
 	Body      string    `json:"body"`
 	System    bool      `json:"system"`
+	Author    User      `json:"author"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -135,6 +173,29 @@ func (o ListIssuesOptions) toQuery() url.Values {
 	return q
 }
 
+// ListMergeRequestsOptions filters a merge-request listing for initial
+// import and resync (issue #111), the same shape as ListIssuesOptions.
+type ListMergeRequestsOptions struct {
+	ListOptions
+	// UpdatedAfter, when set, limits results to MRs touched since this time.
+	UpdatedAfter *time.Time
+	// State is one of "opened", "closed", "merged", "all". Empty means
+	// GitLab's default.
+	State string
+}
+
+func (o ListMergeRequestsOptions) toQuery() url.Values {
+	q := url.Values{}
+	o.addTo(q)
+	if o.UpdatedAfter != nil {
+		q.Set("updated_after", o.UpdatedAfter.UTC().Format(time.RFC3339))
+	}
+	if o.State != "" {
+		q.Set("state", o.State)
+	}
+	return q
+}
+
 // PageInfo reports GitLab's `X-Next-Page` pagination header. NextPage is 0
 // once the last page has been reached.
 type PageInfo struct {
@@ -167,6 +228,16 @@ type Client interface {
 	UpdateIssue(ctx context.Context, personalAccessToken string, projectID, issueIID int64, payload UpdateIssuePayload) (*Issue, error)
 	// CreateNote posts a new note (comment) on an issue.
 	CreateNote(ctx context.Context, personalAccessToken string, projectID, issueIID int64, payload CreateNotePayload) (*Note, error)
+
+	// ListMergeRequests lists a project's merge requests, for initial import
+	// and resync (issue #111). Read-only — FlowLens never pushes MR changes.
+	ListMergeRequests(ctx context.Context, personalAccessToken string, projectID int64, opts ListMergeRequestsOptions) ([]MergeRequest, PageInfo, error)
+	// GetMergeRequest fetches a single merge request by its project-scoped
+	// IID, including its current head pipeline.
+	GetMergeRequest(ctx context.Context, personalAccessToken string, projectID, mrIID int64) (*MergeRequest, error)
+	// ListMergeRequestNotes lists a merge request's notes/comments, used to
+	// detect the first review activity (ADR-0011 §3).
+	ListMergeRequestNotes(ctx context.Context, personalAccessToken string, projectID, mrIID int64, opts ListOptions) ([]Note, PageInfo, error)
 
 	// ListProjectHooks lists a project's webhooks.
 	ListProjectHooks(ctx context.Context, personalAccessToken string, projectID int64) ([]ProjectHook, error)
@@ -320,6 +391,30 @@ func (c *HTTPClient) CreateNote(ctx context.Context, personalAccessToken string,
 		return nil, err
 	}
 	return &note, nil
+}
+
+func (c *HTTPClient) ListMergeRequests(ctx context.Context, personalAccessToken string, projectID int64, opts ListMergeRequestsOptions) ([]MergeRequest, PageInfo, error) {
+	var mrs []MergeRequest
+	page, err := c.getList(ctx, personalAccessToken, fmt.Sprintf("/api/v4/projects/%d/merge_requests", projectID), opts.toQuery(), &mrs)
+	return mrs, page, err
+}
+
+func (c *HTTPClient) GetMergeRequest(ctx context.Context, personalAccessToken string, projectID, mrIID int64) (*MergeRequest, error) {
+	var mr MergeRequest
+	path := fmt.Sprintf("/api/v4/projects/%d/merge_requests/%d", projectID, mrIID)
+	if err := c.getOne(ctx, personalAccessToken, path, &mr); err != nil {
+		return nil, err
+	}
+	return &mr, nil
+}
+
+func (c *HTTPClient) ListMergeRequestNotes(ctx context.Context, personalAccessToken string, projectID, mrIID int64, opts ListOptions) ([]Note, PageInfo, error) {
+	q := url.Values{}
+	opts.addTo(q)
+
+	var notes []Note
+	page, err := c.getList(ctx, personalAccessToken, fmt.Sprintf("/api/v4/projects/%d/merge_requests/%d/notes", projectID, mrIID), q, &notes)
+	return notes, page, err
 }
 
 func (c *HTTPClient) ListProjectHooks(ctx context.Context, personalAccessToken string, projectID int64) ([]ProjectHook, error) {

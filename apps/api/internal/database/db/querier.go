@@ -54,6 +54,7 @@ type Querier interface {
 	ClearDefaultLinkedGitlabProjectsForOwner(ctx context.Context, arg ClearDefaultLinkedGitlabProjectsForOwnerParams) error
 	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
+	CompleteRepositorySyncRun(ctx context.Context, arg CompleteRepositorySyncRunParams) (RepositorySyncRun, error)
 	CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
@@ -82,6 +83,11 @@ type Querier interface {
 	// is_default is computed here, not by the caller: the first project linked
 	// to a connection becomes its default, later ones do not.
 	CreateLinkedGitlabProject(ctx context.Context, arg CreateLinkedGitlabProjectParams) (LinkedGitlabProject, error)
+	// merge_requests mirrors a repository's GitLab merge requests, read-only
+	// (issue #111: FlowLens never writes back to GitLab). Idempotency comes
+	// from the UNIQUE constraint on gitlab_merge_request_id, the same shape as
+	// task_gitlab_links' issue-iid uniqueness.
+	CreateMergeRequest(ctx context.Context, arg CreateMergeRequestParams) (MergeRequest, error)
 	// Every project-scoped query filters on project_members in SQL (see
 	// docs/decisions/0010-why-project-membership.md and issue #99): access is
 	// therefore enforced by the query itself, not by application code. A
@@ -110,6 +116,21 @@ type Querier interface {
 	// session, so the project's owner is the only user it can act as (see
 	// internal/apitoken's Auth type).
 	CreateProjectAPIToken(ctx context.Context, arg CreateProjectAPITokenParams) (ProjectApiToken, error)
+	// repositories is the MR-tracking sibling of a linked GitLab project
+	// (ADR-0011 §1): one linked_gitlab_projects row has at most one repositories
+	// row, created automatically alongside it (internal/linkedproject.Service.Create),
+	// never through a separate flow. No owner column of its own — every access
+	// goes through linked_gitlab_projects, same as task_gitlab_links.
+	CreateRepository(ctx context.Context, arg CreateRepositoryParams) (Repository, error)
+	// repository_sync_runs records one mr.import / mr.resync execution against a
+	// repository (ADR-0011 §2: reuses gitlab_sync_runs' shape, scoped to a
+	// Repository instead of a LinkedGitlabProject). Concurrency is enforced at
+	// the database level: a partial UNIQUE index on (repository_id) WHERE
+	// completed_at IS NULL (migration 000019) means CreateRepositorySyncRun
+	// itself fails with a unique-constraint violation when a run is already in
+	// progress for the same repository, which internal/mrsync maps to
+	// ErrRunInProgress (HTTP 409), the same as issue sync's gitlab_sync_runs.
+	CreateRepositorySyncRun(ctx context.Context, arg CreateRepositorySyncRunParams) (RepositorySyncRun, error)
 	CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error)
 	// Tasks are scoped through their parent project the same way backlogs are:
 	// every single-task query joins to projects and filters on
@@ -190,6 +211,7 @@ type Querier interface {
 	// polling concurrently never claim the same row.
 	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
 	FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunParams) (GitlabSyncRun, error)
+	FailRepositorySyncRun(ctx context.Context, arg FailRepositorySyncRunParams) (RepositorySyncRun, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	// GetBacklogProjectID is the lightweight project lookup
 	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
@@ -249,6 +271,12 @@ type Querier interface {
 	// gitlab_connections the same way linkedProjectOwner (dbtest) does, since a
 	// linked project has no project_id column of its own.
 	GetLinkedGitlabProjectProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	GetMergeRequestByGitlabMergeRequestID(ctx context.Context, gitlabMergeRequestID int64) (MergeRequest, error)
+	// GetMergeRequestByRepositoryAndNumber looks up a merge request by its
+	// project-scoped IID (the "number" column) rather than its global GitLab
+	// id — the key a "Pipeline Hook" delivery's merge_request.iid gives
+	// (internal/webhookapply), unlike an MR event's own object_attributes.id.
+	GetMergeRequestByRepositoryAndNumber(ctx context.Context, arg GetMergeRequestByRepositoryAndNumberParams) (MergeRequest, error)
 	GetNotificationSettingsForOwner(ctx context.Context, arg GetNotificationSettingsForOwnerParams) (NotificationSetting, error)
 	// GetPendingSyncJobQueueStats backs the worker's queue-depth gauges (issue
 	// #96): how many jobs are waiting, and how long the oldest of them has been
@@ -266,6 +294,17 @@ type Querier interface {
 	GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
 	GetProjectMemberRole(ctx context.Context, arg GetProjectMemberRoleParams) (string, error)
+	GetRepositoryByID(ctx context.Context, id uuid.UUID) (Repository, error)
+	// Unscoped, like GetLinkedGitlabProjectByID: the background sync worker
+	// (internal/mrsync) reads this with no acting user of its own — the job row
+	// that names this repository's linked project was already authorized when
+	// it was created.
+	GetRepositoryByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) (Repository, error)
+	// Unscoped, like GetGitlabSyncRunByID: the background worker
+	// (internal/mrsync) reads this with no acting user of its own — the job row
+	// that names this run's ID was already authorized when it was created
+	// (automatically, alongside the repository, at link creation).
+	GetRepositorySyncRunByID(ctx context.Context, id uuid.UUID) (RepositorySyncRun, error)
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	// GetSyncJobForOwner backs POST /sync-jobs/{jobID}/retry: resolves a job by
 	// ID scoped to its project's owner in one round trip, since the URL carries
@@ -536,6 +575,22 @@ type Querier interface {
 	// project to link/sync is a member-level action, distinct from managing the
 	// connection's credential itself (owner-only, gitlab_connections.sql).
 	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)
+	// UpdateMergeRequest applies the latest GitLab-sourced fields to an
+	// already-imported merge request. first_reviewed_at and task_id are
+	// intentionally not touched here — see UpdateMergeRequestFirstReviewedAt
+	// and UpdateMergeRequestTaskID, which set them at most once each.
+	UpdateMergeRequest(ctx context.Context, arg UpdateMergeRequestParams) (MergeRequest, error)
+	// UpdateMergeRequestFirstReviewedAt records the first review activity
+	// (ADR-0011 §3) at most once: the WHERE guard means a later, later-timed
+	// call is a no-op rather than clobbering the true first review.
+	UpdateMergeRequestFirstReviewedAt(ctx context.Context, arg UpdateMergeRequestFirstReviewedAtParams) (MergeRequest, error)
+	// UpdateMergeRequestPipeline applies a "Pipeline Hook" delivery's status to
+	// the merge request it belongs to (internal/webhookapply), narrower than
+	// UpdateMergeRequest since a pipeline event carries no MR fields at all.
+	UpdateMergeRequestPipeline(ctx context.Context, arg UpdateMergeRequestPipelineParams) (MergeRequest, error)
+	// UpdateMergeRequestTaskID links a merge request to the task its
+	// description/branch name references (resolved through task_gitlab_links).
+	UpdateMergeRequestTaskID(ctx context.Context, arg UpdateMergeRequestTaskIDParams) (MergeRequest, error)
 	UpdateProjectAPITokenLastUsedAt(ctx context.Context, arg UpdateProjectAPITokenLastUsedAtParams) error
 	// UpdateProjectForOwner backs project.Service.Update (name/description
 	// edit), member-minimum per issue #99 — not explicitly named owner-only, so

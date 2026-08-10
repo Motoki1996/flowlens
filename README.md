@@ -1140,13 +1140,50 @@ before implementation).
   it doesn't block a later same-day sweep once something *does* need
   reporting.
 
+### Merge request sync (issue #111)
+
+Read-only sync of a linked GitLab project's merge requests and their latest
+pipeline status, building on [ADR-0011](docs/decisions/0011-why-merge-request-sync.md)'s
+schema/design. **FlowLens never writes a merge request back to GitLab** —
+unlike issue sync, this is one-way.
+
+- A `repositories` row (the MR-tracking sibling of a `linked_gitlab_projects`
+  row) and an initial import are both created automatically the moment a
+  GitLab project is linked, alongside issue sync's own initial import — no
+  separate "enable MR sync" step.
+- **Webhook-primary:** linking a project's webhook now also requests
+  `merge_requests`/`pipeline` events (previously issues/notes only).
+  `Merge Request Hook` deliveries create/update a `merge_requests` row;
+  `Pipeline Hook` deliveries update the merge request's
+  `pipeline_status`/`pipeline_id`/`pipeline_updated_at` when the pipeline
+  names a merge request (`merge_request.iid`) already imported — a plain
+  branch/tag pipeline, or one for an MR not yet imported, is skipped.
+  Idempotency is the same `gitlab_merge_request_id` UNIQUE constraint /
+  strict `updated_at` staleness guard issue sync uses.
+- **Periodic catch-up:** `internal/mrsync` walks every page of a
+  repository's merge requests (`mr.import` sync job, the same outbox/worker
+  shape as `project.import`), fetching each one's current pipeline
+  (`head_pipeline`) and, once, its first review activity (earliest note from
+  someone other than the author, `first_reviewed_at` — GitLab CE's
+  approvals endpoint carries no per-approval timestamp, so notes are the
+  only source with one) and recording the run on `repository_sync_runs`.
+- **Task linking:** a merge request whose description contains a closing
+  keyword (`Closes #12`, `fixes #12`, ...) or whose source branch starts
+  with an issue number (`12-fix-thing`, `issue-12`) is linked to that
+  issue's task via the existing `task_gitlab_links` table, giving a
+  task → MR → pipeline chain. A merge request that references nothing
+  recognizable is simply left unlinked.
+- No API/UI surfaces this data yet — see [Roadmap](#roadmap).
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault
   implementation is not written yet (the interface is in place).
 - Integration tests assume migrations are already applied.
-- The merge-request / CI delivery-flow visualization described in
-  [Solution](#solution) is not built yet — see [Roadmap](#roadmap).
+- The merge-request / CI delivery-flow **visualization** (dashboard, list,
+  detail views) described in [Solution](#solution) is not built yet — the
+  sync engine that feeds it is (see [Merge request sync](#merge-request-sync-issue-111)
+  and [Roadmap](#roadmap)).
 
 ## Roadmap
 
@@ -1162,9 +1199,10 @@ before implementation).
    `merge_requests`/`merge_request_reviewers` carry GitLab vocabulary and the
    minimal delivery-flow metric columns — see
    [ADR-0011](docs/decisions/0011-why-merge-request-sync.md).
-4. **Merge request sync:** webhook-primary (`merge_request`/`pipeline`
-   events) with periodic catch-up, idempotent upserts, rate-limit and
-   pagination handling.
+4. **Merge request sync (done):** webhook-primary (`merge_request`/
+   `pipeline` events) with periodic catch-up, idempotent upserts, and
+   task ↔ MR linking — see
+   [Merge request sync](#merge-request-sync-issue-111).
 5. **Dashboard & MR views:** metrics, list with filters, detail page,
    empty/loading/error states.
 6. **Automation:** webhooks (with duplicate-delivery handling) and scheduled

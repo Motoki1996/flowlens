@@ -18,6 +18,7 @@ import (
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/projectmember"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/syncjob"
 	"github.com/flowlens/api/internal/task"
@@ -64,15 +65,18 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, projects)
 	apiTokens := apitoken.NewService(q, projects)
+	users := user.NewService(q)
+	projectMembers := projectmember.NewService(q, projects, users)
 	txRunner := dbtest.FakeTxRunner{Q: q}
 	clientFactory := func(string) gitlab.Client { return fake }
 	gitlabConns := gitlabconn.NewService(q, projects, cipher, clientFactory)
 	tasks := task.NewService(q, txRunner, projects, backlogs)
 	return &Server{
-		users:            user.NewService(q),
+		users:            users,
 		projects:         projects,
 		backlogs:         backlogs,
 		apiTokens:        apiTokens,
+		projectMembers:   projectMembers,
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(q, projects, tasks),
 		gitlabConns:      gitlabConns,

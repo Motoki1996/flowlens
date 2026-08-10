@@ -239,6 +239,24 @@ func (s *Service) Get(ctx context.Context, ownerID, projectID uuid.UUID) (Projec
 	return fromRow(row), nil
 }
 
+// OwnerUserID returns projectID's single designated owner
+// (projects.owner_user_id) — the column docs/decisions/0010-why-project-membership.md
+// keeps around precisely so "is this the last owner" has one unambiguous
+// answer, without a COUNT(*) ... WHERE role = 'owner' on every membership
+// write. Callers are expected to have already authorized the caller (e.g.
+// via Authorize with RoleOwner); this performs no access check of its own,
+// the same way GetProjectByID is unscoped for its own caller.
+func (s *Service) OwnerUserID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	row, err := s.q.GetProjectByID(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, fmt.Errorf("project: owner: %w", err)
+	}
+	return row.OwnerUserID, nil
+}
+
 // FailedSyncTaskCount returns how many of projectID's tasks currently have a
 // failed GitLab sync (docs/plans/issue-sync.md), for the project single
 // view's warning banner. It returns 0, not ErrNotFound, for a project that

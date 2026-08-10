@@ -585,6 +585,9 @@ boundary:
 - **API tokens themselves** (`GET`/`POST .../api-tokens`,
   `DELETE /api-tokens/{tokenID}`) — otherwise a read-only token could mint
   itself a write token, defeating the scope check entirely.
+- **Project membership** (`GET`/`POST .../members`,
+  `PATCH`/`DELETE .../members/{userID}`) — who can access a project at all
+  is a project-management decision, the same reasoning as API tokens above.
 - **Creating or deleting a project** (`POST /projects`,
   `DELETE /projects/{projectID}`) — a token could otherwise create or
   destroy its own footing.
@@ -597,6 +600,51 @@ boundary:
 `Authorization` is also never added to the web app's CORS-allowed request
 headers, so a bearer token stays usable only for direct, server-to-server
 calls, never from browser script.
+
+### Project membership
+
+A project can have more than one user, each with a role — `owner`,
+`member`, or `viewer` — recorded in `project_members`
+([ADR-0010](docs/decisions/0010-why-project-membership.md)). Managing
+membership is always owner-only, session-only (a project API token can
+never reach these routes — see
+[What a token can't reach](#what-a-token-cant-reach) above), and inviting
+someone only adds an *existing* FlowLens user; there is no email-invite
+flow (sign-up is already open).
+
+```bash
+# Add an existing user by username or email
+curl -X POST "$API_BASE_URL/api/v1/projects/$PROJECT_ID/members" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: flowlens_session=$SESSION_COOKIE" \
+  -d '{"identifier": "octocat", "role": "member"}'
+
+# List members
+curl "$API_BASE_URL/api/v1/projects/$PROJECT_ID/members" \
+  -H "Cookie: flowlens_session=$SESSION_COOKIE"
+```
+
+```jsonc
+// GET /api/v1/projects/{projectID}/members
+[
+  {
+    "userId": "b7e1...",
+    "username": "octocat",
+    "displayName": "Octo Cat",
+    "role": "member",
+    "createdAt": "2026-08-02T00:00:00Z"
+  }
+]
+```
+
+The response never includes email — this endpoint accepts a username or
+email to invite, but returning one back would let an owner use it to
+enumerate registered accounts.
+
+Two invariants apply to `PATCH`/`DELETE .../members/{userID}`: you cannot
+change your own role (use another owner's session), and the project's
+single designated owner (`projects.owner_user_id`) can neither be demoted
+nor removed — both return `400`.
 
 ### Task & backlog scheduling, Gantt charts
 

@@ -121,3 +121,18 @@ func (s *Service) ByID(ctx context.Context, id uuid.UUID) (User, error) {
 	}
 	return FromRow(row), nil
 }
+
+// ByUsernameOrEmail returns one user matching identifier against username or
+// email — the same lookup Authenticate does, minus the password check, for
+// callers that only need to resolve an identifier to a user (e.g. adding an
+// existing user to a project by username/email, issue #100).
+func (s *Service) ByUsernameOrEmail(ctx context.Context, identifier string) (User, error) {
+	row, err := s.q.GetUserByUsernameOrEmail(ctx, identifier)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return User{}, ErrNotFound
+		}
+		return User{}, fmt.Errorf("user: lookup: %w", err)
+	}
+	return FromRow(row), nil
+}

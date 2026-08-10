@@ -6,7 +6,7 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
-import type { ApiError, ApiToken, GitlabConnection, Project, SyncJob } from "@/types";
+import type { ApiError, ApiToken, GitlabConnection, Project, ProjectMember, SyncJob } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiTokenSection } from "@/components/ApiTokenSection";
 import { FailedSyncJobSection } from "@/components/FailedSyncJobSection";
+import { ProjectMemberSection } from "@/components/ProjectMemberSection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -211,6 +212,7 @@ export function ProjectDetail({
   linkedProjectCount = 0,
   apiTokens = [],
   failedSyncJobs = [],
+  members = null,
 }: {
   project: Project;
   backlogCount?: number;
@@ -222,6 +224,8 @@ export function ProjectDetail({
   linkedProjectCount?: number;
   apiTokens?: ApiToken[];
   failedSyncJobs?: SyncJob[];
+  /** null when the caller isn't a project owner (the listing is owner-only). */
+  members?: ProjectMember[] | null;
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -302,6 +306,10 @@ export function ProjectDetail({
 
       <div className="mt-8">
         <FailedSyncJobSection jobs={failedSyncJobs} />
+      </div>
+
+      <div className="mt-8">
+        <ProjectMemberSection projectId={project.id} members={members} />
       </div>
 
       <div className="mt-8">

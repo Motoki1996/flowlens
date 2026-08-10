@@ -257,3 +257,17 @@ export interface ApiToken {
 export interface ApiTokenWithSecret extends ApiToken {
   token: string;
 }
+
+export type ProjectMemberRole = "owner" | "member" | "viewer";
+
+/** ProjectMember is one project_members row joined with the user it belongs
+ *  to (see projectmember.Member). Email is deliberately absent — the API
+ *  never returns it here, to avoid using this endpoint to enumerate
+ *  registered addresses. */
+export interface ProjectMember {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: ProjectMemberRole;
+  createdAt: string;
+}

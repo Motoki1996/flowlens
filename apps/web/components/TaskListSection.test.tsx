@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import type { Backlog, Task } from "@/types";
 import { TaskListSection } from "./TaskListSection";
 
@@ -109,7 +109,8 @@ describe("TaskListSection", () => {
     expect(screen.getByText("Closed", { selector: "span" })).toBeInTheDocument();
   });
 
-  it("narrows the list to tasks whose title or description matches the search text", () => {
+  it("narrows the list to tasks whose title or description matches the search text, debounced", () => {
+    vi.useFakeTimers();
     const tasks = [
       makeTask({ id: "t1", title: "Fix login bug" }),
       makeTask({ id: "t2", title: "Something else", description: "touches the login flow" }),
@@ -119,6 +120,13 @@ describe("TaskListSection", () => {
 
     fireEvent.change(screen.getByRole("textbox", { name: "Search tasks" }), {
       target: { value: "login" },
+    });
+
+    // The filter hasn't applied yet — the debounce hasn't elapsed.
+    expect(screen.getByText("Unrelated task")).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(300);
     });
 
     expect(screen.getByText("Fix login bug")).toBeInTheDocument();

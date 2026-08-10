@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { TaskSearchBox } from "@/components/TaskSearchBox";
 
 type SortValue = "dueOn" | "priority" | "updatedAt";
 
@@ -47,6 +48,7 @@ export function AllTasksSection({
   priority,
   sort,
   assigneeMe = false,
+  search,
   error = false,
 }: {
   tasks: TaskWithProject[];
@@ -58,6 +60,11 @@ export function AllTasksSection({
   // caller's own registered GitLab identity. Held in the URL like the other
   // filters above, not local state, so it survives navigation/refresh.
   assigneeMe?: boolean;
+  // The `?q=` the screen was opened with, if any (issue #107) — matched
+  // server-side, unlike the project-scoped TaskListSection's client-side
+  // search, since this screen already round-trips to the API for every
+  // other filter.
+  search?: string;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -93,6 +100,10 @@ export function AllTasksSection({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base font-medium">Tasks</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
+            <TaskSearchBox
+              value={search ?? ""}
+              onChange={(value) => updateQuery({ q: value.trim() === "" ? undefined : value })}
+            />
             <Select
               value={status}
               onValueChange={(value) => updateQuery({ status: value === "all" ? undefined : value })}
@@ -167,7 +178,9 @@ export function AllTasksSection({
         {error ? (
           <p className="text-destructive text-sm">Failed to load tasks. Try refreshing the page.</p>
         ) : tasks.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No tasks match the current filters.</p>
+          <p className="text-muted-foreground text-sm">
+            {search ? `No tasks match "${search}".` : "No tasks match the current filters."}
+          </p>
         ) : visible.length === 0 ? (
           // Checked before the empty-list branch so this hint (rather than the
           // generic "no tasks" one) is what a wide-open filter with nothing

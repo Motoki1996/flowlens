@@ -38,6 +38,7 @@ import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskBoardSection } from "@/components/TaskBoardSection";
+import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
 
 /**
@@ -716,13 +717,7 @@ export function TaskListSection({
               with the project and get the searchable Combobox. */}
           {!error && tasks.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <Input
-                aria-label="Search tasks"
-                placeholder="Search tasks…"
-                value={search}
-                onChange={(e) => changeSearch(e.target.value)}
-                className="h-8 w-40"
-              />
+              <TaskSearchBox value={search} onChange={changeSearch} />
               <Select
                 value={statusFilter}
                 onValueChange={(value) => changeStatusFilter(value as "all" | TaskStatus)}

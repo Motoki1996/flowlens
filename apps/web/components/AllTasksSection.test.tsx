@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import type { Project, TaskWithProject } from "@/types";
 import { AllTasksSection } from "./AllTasksSection";
 
@@ -53,11 +53,45 @@ describe("AllTasksSection", () => {
     push.mockClear();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("shows an empty state with zero tasks", () => {
     render(
       <AllTasksSection tasks={[]} projects={projects} status="open" sort="dueOn" />,
     );
     expect(screen.getByText("No tasks match the current filters.")).toBeInTheDocument();
+  });
+
+  it("shows a search-specific empty state when a query has no matches", () => {
+    render(
+      <AllTasksSection
+        tasks={[]}
+        projects={projects}
+        status="open"
+        sort="dueOn"
+        search="nonexistent"
+      />,
+    );
+    expect(screen.getByText('No tasks match "nonexistent".')).toBeInTheDocument();
+  });
+
+  it("pushes ?q= after the search text settles, debounced", () => {
+    vi.useFakeTimers();
+    const tasks = [makeTask({ dueOn: "2026-02-01T00:00:00Z" })];
+    render(<AllTasksSection tasks={tasks} projects={projects} status="open" sort="dueOn" />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Search tasks" }), {
+      target: { value: "login" },
+    });
+    expect(push).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    expect(push).toHaveBeenCalledWith("/tasks?q=login");
   });
 
   it("shows the error state instead of the task list", () => {

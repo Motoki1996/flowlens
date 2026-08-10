@@ -79,6 +79,8 @@ vi.mock("@/lib/api", () => ({
   getLinkedGitlabProjects: () => Promise.resolve([]),
   getLinkedGitlabProjectMembers: () => Promise.resolve([]),
   getLinkedGitlabProjectLabels: () => Promise.resolve([]),
+  getTaskComments: () => Promise.resolve([]),
+  getProjectApiTokens: () => Promise.resolve([]),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),

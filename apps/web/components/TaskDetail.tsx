@@ -7,10 +7,12 @@ import { csrfHeaders } from "@/lib/csrf";
 import { tasksPath } from "@/lib/routes";
 import type {
   ApiError,
+  ApiToken,
   Backlog,
   GitlabLabelOption,
   GitlabMemberOption,
   Task,
+  TaskComment,
   TaskDependency,
 } from "@/types";
 import { formatDate } from "@/lib/dates";
@@ -19,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { AIContextSection } from "@/components/AIContextSection";
+import { TaskActivitySection } from "@/components/TaskActivitySection";
 import { TaskDependencySection } from "@/components/TaskDependencySection";
 import { TaskEditForm } from "@/components/TaskEditForm";
 import { PriorityBadge } from "@/components/PriorityBadge";
@@ -278,6 +281,9 @@ export function TaskDetail({
   dependencies,
   assigneeOptions = null,
   labelOptions = null,
+  comments = [],
+  currentUserId = "",
+  apiTokens = [],
 }: {
   task: Task;
   backlogs: Backlog[];
@@ -290,6 +296,14 @@ export function TaskDetail({
   // to free-text assignee/label entry in that case (issue #80).
   assigneeOptions?: GitlabMemberOption[] | null;
   labelOptions?: GitlabLabelOption[] | null;
+  // The task's activity log (issue #105) and what TaskActivitySection needs
+  // to render it: the caller's own id (to tell "you" apart and gate the
+  // delete button) and the project's API tokens (to name an agent comment's
+  // author — empty for a non-owner, since issuing/listing tokens is
+  // owner-only).
+  comments?: TaskComment[];
+  currentUserId?: string;
+  apiTokens?: ApiToken[];
 }) {
   const [task, setTask] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -424,6 +438,23 @@ export function TaskDetail({
         </CardHeader>
         <CardContent>
           <AIContextSection taskId={task.id} aiContext={task.aiContext} />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-8">
+        <CardHeader>
+          <CardTitle className="text-base font-medium">Activity</CardTitle>
+          <CardDescription>
+            What happened on this task — human notes and an AI agent&apos;s reports back.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TaskActivitySection
+            taskId={task.id}
+            comments={comments}
+            currentUserId={currentUserId}
+            apiTokens={apiTokens}
+          />
         </CardContent>
       </Card>
     </>

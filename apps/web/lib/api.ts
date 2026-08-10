@@ -23,6 +23,7 @@ import type {
   SyncJob,
   SyncRun,
   Task,
+  TaskComment,
   TaskDependency,
   TaskStatus,
   TaskWithProject,
@@ -264,6 +265,23 @@ export async function getTaskDependencies(projectId: string): Promise<TaskDepend
     throw new Error(`Failed to load task dependencies: ${res.status}`);
   }
   return (await res.json()) as TaskDependency[];
+}
+
+/**
+ * getTaskComments returns a task's activity log, oldest first, with no page
+ * cap (issue #103/#105). Callers must already know the request is
+ * authenticated.
+ */
+export async function getTaskComments(taskId: string): Promise<TaskComment[]> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/tasks/${taskId}/comments`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load task comments: ${res.status}`);
+  }
+  return (await res.json()) as TaskComment[];
 }
 
 /**

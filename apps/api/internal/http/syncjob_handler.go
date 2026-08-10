@@ -65,6 +65,8 @@ func writeSyncJobError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, syncjob.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "sync job not found")
+	case errors.Is(err, syncjob.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	case errors.Is(err, syncjob.ErrNotFailed):
 		writeError(w, http.StatusConflict, "job_not_failed", "only a failed sync job can be retried")
 	default:

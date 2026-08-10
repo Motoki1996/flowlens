@@ -79,7 +79,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		taskDependencies: taskdependency.NewService(queries, projects, tasks),
 		gitlabConns:      gitlabConns,
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
-		projectSync:      projectsync.NewService(queries, txRunner, cipher, clientFactory),
+		projectSync:      projectsync.NewService(queries, txRunner, projects, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(queries, cipher),
 		syncJobs:         syncjob.NewService(queries, projects),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),

@@ -23,6 +23,7 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
+	"github.com/flowlens/api/internal/project"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
@@ -59,6 +60,7 @@ const (
 // codes.
 var (
 	ErrNotFound      = errors.New("projectsync: not found")
+	ErrForbidden     = errors.New("projectsync: forbidden")
 	ErrRunInProgress = errors.New("projectsync: a sync run is already in progress for this linked project")
 )
 
@@ -121,15 +123,33 @@ func fromRunRow(row db.GitlabSyncRun) SyncRun {
 type Service struct {
 	q             db.Querier
 	txRunner      database.TxRunner
+	projects      *project.Service
 	cipher        *crypto.Cipher
 	clientFactory gitlabconn.ClientFactory
 }
 
 // NewService constructs a Service. clientFactory builds the gitlab.Client
 // used to call a linked project's GitLab instance; cipher decrypts its
-// connection's stored access token.
-func NewService(q db.Querier, txRunner database.TxRunner, cipher *crypto.Cipher, clientFactory gitlabconn.ClientFactory) *Service {
-	return &Service{q: q, txRunner: txRunner, cipher: cipher, clientFactory: clientFactory}
+// connection's stored access token. projects verifies project access before
+// TriggerResync/ListRuns (issue #99).
+func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service, cipher *crypto.Cipher, clientFactory gitlabconn.ClientFactory) *Service {
+	return &Service{q: q, txRunner: txRunner, projects: projects, cipher: cipher, clientFactory: clientFactory}
+}
+
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("projectsync: authorize: %w", err)
+	}
 }
 
 // createRunAndEnqueue records a new gitlab_sync_runs row and enqueues the
@@ -198,6 +218,9 @@ func (s *Service) TriggerResync(ctx context.Context, ownerID, linkID uuid.UUID, 
 	if err != nil {
 		return SyncRun{}, fmt.Errorf("projectsync: trigger resync: get connection: %w", err)
 	}
+	if err := s.authorize(ctx, ownerID, conn.ProjectID, project.RoleMember); err != nil {
+		return SyncRun{}, err
+	}
 
 	var run db.GitlabSyncRun
 	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
@@ -215,11 +238,19 @@ func (s *Service) TriggerResync(ctx context.Context, ownerID, linkID uuid.UUID, 
 // ownerID. It returns ErrNotFound if linkID does not exist or belongs to
 // another user.
 func (s *Service) ListRuns(ctx context.Context, ownerID, linkID uuid.UUID) ([]SyncRun, error) {
-	if _, err := s.q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{ID: linkID, OwnerUserID: ownerID}); err != nil {
+	link, err := s.q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{ID: linkID, OwnerUserID: ownerID})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("projectsync: list runs: %w", err)
+	}
+	conn, err := s.q.GetGitlabConnectionByID(ctx, link.GitlabConnectionID)
+	if err != nil {
+		return nil, fmt.Errorf("projectsync: list runs: get connection: %w", err)
+	}
+	if err := s.authorize(ctx, ownerID, conn.ProjectID, project.RoleViewer); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.q.ListGitlabSyncRunsByLinkedGitlabProjectID(ctx, linkID)

@@ -46,8 +46,12 @@ func (q *Queries) CreateTaskDependency(ctx context.Context, arg CreateTaskDepend
 
 const deleteTaskDependencyForOwner = `-- name: DeleteTaskDependencyForOwner :execrows
 DELETE FROM task_dependencies td
-USING tasks t, projects p
-WHERE td.id = $1 AND t.id = td.predecessor_task_id AND t.project_id = p.id AND p.owner_user_id = $2
+USING tasks t
+WHERE td.id = $1 AND t.id = td.predecessor_task_id
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $2
+  )
 `
 
 type DeleteTaskDependencyForOwnerParams struct {

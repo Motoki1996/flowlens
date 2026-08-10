@@ -110,6 +110,11 @@ func TestProjectQueriesEnforceOwnership(t *testing.T) {
 		Description: "desc",
 	})
 	require.NoError(t, err)
+	// CreateProject alone leaves no project_members row (see
+	// TestProjectMembers_BackfilledOwnerRow); project.Service.Create adds
+	// one, but this test exercises the raw db.Queries layer directly.
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
 
 	t.Run("owner reads its own project", func(t *testing.T) {
 		got, err := q.GetProjectForOwner(ctx, db.GetProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
@@ -160,6 +165,8 @@ func TestBacklogQueriesEnforceOwnership(t *testing.T) {
 	owner := createUser(t, q, "owner")
 	intruder := createUser(t, q, "intruder")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
 	require.NoError(t, err)
 
 	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium", Progress: "not_started"})
@@ -217,6 +224,8 @@ func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
 	owner := createUser(t, q, "owner")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
 	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
 	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium", Progress: "not_started"})
 	require.NoError(t, err)
 
@@ -256,6 +265,8 @@ func TestGitlabConnectionQueries_TokenIsStoredEncrypted(t *testing.T) {
 	owner := createUser(t, q, "owner")
 	intruder := createUser(t, q, "intruder")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
@@ -353,6 +364,8 @@ func TestLinkedGitlabProjectQueries_DefaultPromotionAndOwnership(t *testing.T) {
 	intruder := createUser(t, q, "intruder")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
 	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
 	})
@@ -420,6 +433,8 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 	owner := createUser(t, q, "owner")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
 	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
 	})
@@ -461,13 +476,13 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 	assert.Equal(t, 0, linkCount, "the gitlab sync link row must be gone")
 }
 
-// ListTasksForOwner (GET /api/v1/tasks, issue #76) is hand-written rather
-// than sqlc-generated in this branch, since sqlc wasn't runnable in the
-// environment that authored it — this integration test is the one thing
-// that actually proves the raw SQL parses and does what its doc comment
-// claims against a real Postgres, rather than only the fake querier's
-// approximation of it.
-func TestListTasksForOwner(t *testing.T) {
+// ListTasksForMember (GET /api/v1/tasks, issue #76, membership-based since
+// issue #99) is hand-written rather than sqlc-generated in this branch,
+// since sqlc wasn't runnable in the environment that authored it — this
+// integration test is the one thing that actually proves the raw SQL parses
+// and does what its doc comment claims against a real Postgres, rather than
+// only the fake querier's approximation of it.
+func TestListTasksForMember(t *testing.T) {
 	q := testDB(t)
 	ctx := context.Background()
 
@@ -478,6 +493,16 @@ func TestListTasksForOwner(t *testing.T) {
 	beta, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("Beta-%d", time.Now().UnixNano())})
 	require.NoError(t, err)
 	theirs, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: intruder.ID, Name: fmt.Sprintf("Theirs-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	// CreateProject alone leaves no project_members row (see
+	// TestProjectMembers_BackfilledOwnerRow) — project.Service.Create adds
+	// one, but this test exercises the raw db.Queries layer directly, so it
+	// must add its own, the same way SeedProject does in the fake querier.
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: alpha.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: beta.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: theirs.ID, UserID: intruder.ID, Role: "owner"})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: alpha.ID, OwnerUserID: owner.ID})
@@ -504,12 +529,12 @@ func TestListTasksForOwner(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("spans every owned project, carries project_name, and never leaks another owner's task", func(t *testing.T) {
-		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+		rows, err := q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
 			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{}, Sort: "dueOn", LimitCount: 50,
 		})
 		require.NoError(t, err)
 
-		byID := map[uuid.UUID]db.ListTasksForOwnerRow{}
+		byID := map[uuid.UUID]db.ListTasksForMemberRow{}
 		for _, r := range rows {
 			byID[r.ID] = r
 		}
@@ -524,7 +549,7 @@ func TestListTasksForOwner(t *testing.T) {
 	})
 
 	t.Run("priority filter narrows to one task", func(t *testing.T) {
-		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+		rows, err := q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
 			OwnerUserID: owner.ID, Priority: "low", ProjectIds: []uuid.UUID{}, Sort: "dueOn", LimitCount: 50,
 		})
 		require.NoError(t, err)
@@ -533,7 +558,7 @@ func TestListTasksForOwner(t *testing.T) {
 	})
 
 	t.Run("progress filter narrows to one task", func(t *testing.T) {
-		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+		rows, err := q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
 			OwnerUserID: owner.ID, Progress: "in_progress", ProjectIds: []uuid.UUID{}, Sort: "dueOn", LimitCount: 50,
 		})
 		require.NoError(t, err)
@@ -543,7 +568,7 @@ func TestListTasksForOwner(t *testing.T) {
 
 	// Progress ranks the other way from priority: not_started first.
 	t.Run("sort=progress ranks not_started first regardless of due date", func(t *testing.T) {
-		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+		rows, err := q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
 			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{}, Sort: "progress", LimitCount: 50,
 		})
 		require.NoError(t, err)
@@ -553,7 +578,7 @@ func TestListTasksForOwner(t *testing.T) {
 	})
 
 	t.Run("sort=priority ranks urgent first regardless of due date", func(t *testing.T) {
-		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+		rows, err := q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
 			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{}, Sort: "priority", LimitCount: 50,
 		})
 		require.NoError(t, err)
@@ -562,7 +587,7 @@ func TestListTasksForOwner(t *testing.T) {
 	})
 
 	t.Run("project_ids narrows within the caller's own projects, never a way to reach someone else's", func(t *testing.T) {
-		rows, err := q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+		rows, err := q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
 			OwnerUserID: owner.ID, ProjectIds: []uuid.UUID{theirs.ID}, Sort: "dueOn", LimitCount: 50,
 		})
 		require.NoError(t, err)
@@ -606,17 +631,23 @@ func TestProjectMembers_BackfilledOwnerRow(t *testing.T) {
 		require.NoError(t, err)
 		defer func() { _ = tx.Rollback(ctx) }()
 
-		_, err = tx.Exec(ctx, `DELETE FROM project_members`)
+		// A temp table, not the live project_members, so this never locks
+		// against concurrent tests writing real membership rows (issue #99
+		// made project.Service.Create do exactly that on every project
+		// creation, which turned a `DELETE FROM project_members` here into a
+		// frequent deadlock against the rest of this package's parallel
+		// tests).
+		_, err = tx.Exec(ctx, `CREATE TEMP TABLE tmp_project_members (LIKE project_members INCLUDING ALL) ON COMMIT DROP`)
 		require.NoError(t, err)
 
-		_, err = tx.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role) SELECT id, owner_user_id, 'owner' FROM projects`)
+		_, err = tx.Exec(ctx, `INSERT INTO tmp_project_members (project_id, user_id, role) SELECT id, owner_user_id, 'owner' FROM projects`)
 		require.NoError(t, err)
 
 		var missing int
 		require.NoError(t, tx.QueryRow(ctx, `
 			SELECT count(*) FROM projects p
 			WHERE NOT EXISTS (
-				SELECT 1 FROM project_members pm
+				SELECT 1 FROM tmp_project_members pm
 				WHERE pm.project_id = p.id AND pm.user_id = p.owner_user_id AND pm.role = 'owner'
 			)`).Scan(&missing))
 		assert.Equal(t, 0, missing, "the backfill statement must give every project an owner membership row")
@@ -659,6 +690,8 @@ func TestCreateWebhookEvent_DuplicateDeliveryIsNoOp(t *testing.T) {
 
 	owner := createUser(t, q, "owner")
 	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})

@@ -77,10 +77,18 @@ type Querier interface {
 	// is_default is computed here, not by the caller: the first project linked
 	// to a connection becomes its default, later ones do not.
 	CreateLinkedGitlabProject(ctx context.Context, arg CreateLinkedGitlabProjectParams) (LinkedGitlabProject, error)
-	// Every project-scoped query filters on owner_user_id in SQL. Authorization
-	// is therefore enforced by the query itself: a non-owner gets "no rows",
-	// which callers map to ErrNotFound. Handlers must never do their own
-	// ownership check, and later project-scoped tables follow the same rule.
+	// Every project-scoped query filters on project_members in SQL (see
+	// docs/decisions/0010-why-project-membership.md and issue #99): access is
+	// therefore enforced by the query itself, not by application code. A
+	// read query (Get/List) accepts any role; a write query restricts the
+	// EXISTS subquery's role IN (...) to the roles that action requires. A
+	// caller with no membership row at all gets "no rows", which callers map to
+	// ErrNotFound; one with a membership row of too low a role also gets "no
+	// rows" from these queries alone — the distinct ErrForbidden comes from
+	// project.Service.Authorize (backed by GetProjectMemberRole), not from
+	// these list/get/write queries. DeleteProjectForOwner is the one exception:
+	// it stays keyed on projects.owner_user_id directly, not project_members,
+	// per the ADR's "last owner" reasoning.
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	// project_api_tokens has no owner column of its own; ownership is always
 	// checked through the parent project, the same way backlogs, tasks and
@@ -151,6 +159,11 @@ type Querier interface {
 	// pending row out of that state.
 	DeleteProcessedWebhookEventsOlderThan(ctx context.Context, processedAt pgtype.Timestamptz) (int64, error)
 	DeleteProjectAPITokenForOwner(ctx context.Context, arg DeleteProjectAPITokenForOwnerParams) (int64, error)
+	// DeleteProjectForOwner deliberately stays keyed on the single
+	// owner_user_id column, not a project_members role check: restricting
+	// delete to the one designated owner avoids the "last owner deletes, a
+	// second owner-role member is left holding a project with no owner" race a
+	// membership table alone invites (docs/decisions/0010-why-project-membership.md).
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	DeleteTaskDependencyForOwner(ctx context.Context, arg DeleteTaskDependencyForOwnerParams) (int64, error)
@@ -191,6 +204,18 @@ type Querier interface {
 	// linked_gitlab_projects row, which carries gitlab_connection_id but not the
 	// app project ID.
 	GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGitlabConnectionByIDForOwnerParams) (GitlabConnection, error)
+	// GetGitlabConnectionForOwner/GetGitlabConnectionByIDForOwner only check
+	// membership exists (any role), not a specific role: they back both
+	// gitlabconn.Service's own owner-only HTTP-facing methods (Get/Test, via
+	// getRow) *and* Dial/DialByConnectionID, which internal/linkedproject calls
+	// on behalf of a member performing a member-level linked-project action
+	// (Create/RegisterWebhook/...). The role-specific check
+	// ("is ownerID actually allowed to do *this*") is enforced once, by the
+	// caller: gitlabconn.Service.{Save,Get,Test,Delete} call
+	// project.Service.Authorize(..., RoleOwner) themselves before touching the
+	// row; internal/linkedproject authorizes its own member-minimum before ever
+	// calling Dial/DialByConnectionID. Update/Delete below stay owner-only in
+	// SQL directly, since nothing else reuses them.
 	GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error)
 	// Unscoped, like GetLinkedGitlabProjectByID: the background worker
 	// (internal/projectsync) reads this with no acting user of its own — the
@@ -236,7 +261,9 @@ type Querier interface {
 	GetSyncJobByDedupeKey(ctx context.Context, dedupeKey pgtype.Text) (SyncJob, error)
 	// GetSyncJobForOwner backs POST /sync-jobs/{jobID}/retry: resolves a job by
 	// ID scoped to its project's owner in one round trip, since the URL carries
-	// no projectID for this route.
+	// no projectID for this route. Membership only (any role) is checked here —
+	// Retry (member-minimum) does its own project.Service.Authorize call first,
+	// so it can distinguish ErrForbidden from ErrNotFound.
 	GetSyncJobForOwner(ctx context.Context, arg GetSyncJobForOwnerParams) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
 	// GetTaskDependencyProjectID is the lightweight project lookup
@@ -294,21 +321,21 @@ type Querier interface {
 	// a join on projects, so an unknown or foreign projectID simply returns no
 	// rows rather than needing a separate ownership check first.
 	ListFailedSyncJobsByProjectForOwner(ctx context.Context, arg ListFailedSyncJobsByProjectForOwnerParams) ([]SyncJob, error)
-	// ListFailedSyncProjectsByOwner backs the dashboard's "sync failures"
-	// section (issue #77): every project ownerID owns that has at least one
-	// task with a failed GitLab sync, counted the same way
+	// ListFailedSyncProjectsByMember backs the dashboard's "sync failures"
+	// section (issue #77): every project ownerID is a member of (any role) that
+	// has at least one task with a failed GitLab sync, counted the same way
 	// CountFailedSyncTasksByProjectForOwner counts a single project — from
 	// task_gitlab_links when a link exists, or from the task's most recent
 	// sync_jobs row otherwise — but joined across every project in one round
 	// trip instead of one query per project.
-	ListFailedSyncProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]ListFailedSyncProjectsByOwnerRow, error)
+	ListFailedSyncProjectsByMember(ctx context.Context, userID uuid.UUID) ([]ListFailedSyncProjectsByMemberRow, error)
 	// Ownership of linkID must already be verified by the caller via
 	// GetLinkedGitlabProjectForOwner before this runs.
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
 	ListProjectMembers(ctx context.Context, projectID uuid.UUID) ([]ProjectMember, error)
-	ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error)
+	ListProjectsByMember(ctx context.Context, userID uuid.UUID) ([]Project, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
 	// ListTasksByProject's priority and progress filters and sorts follow the same
 	// "empty/false disables it" convention as the other three filters. Sorting by
@@ -348,7 +375,7 @@ type Querier interface {
 	// sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
 	// sink to the bottom", so it works unguarded both as sort=dueOn's primary
 	// key and as every other sort's final tiebreak.
-	ListTasksForOwner(ctx context.Context, arg ListTasksForOwnerParams) ([]ListTasksForOwnerRow, error)
+	ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error)
 	// The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID
 	// and GetWebhookEventByLinkedGitlabProjectIDAndID are scoped by
 	// linked_gitlab_project_id only, not owner — internal/webhookevent.Service
@@ -447,8 +474,14 @@ type Querier interface {
 	// worker (internal/projectsync) after a project.import/project.resync run
 	// finishes, which has no acting user to scope through.
 	UpdateLinkedGitlabProjectLastSyncedAt(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
+	// Everything below is member-minimum (issue #99): using an already-connected
+	// project to link/sync is a member-level action, distinct from managing the
+	// connection's credential itself (owner-only, gitlab_connections.sql).
 	UpdateLinkedGitlabProjectSyncScopeForOwner(ctx context.Context, arg UpdateLinkedGitlabProjectSyncScopeForOwnerParams) (LinkedGitlabProject, error)
 	UpdateProjectAPITokenLastUsedAt(ctx context.Context, arg UpdateProjectAPITokenLastUsedAtParams) error
+	// UpdateProjectForOwner backs project.Service.Update (name/description
+	// edit), member-minimum per issue #99 — not explicitly named owner-only, so
+	// it follows the "writes are member-tier by default" rule.
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateProjectMemberRole(ctx context.Context, arg UpdateProjectMemberRoleParams) (ProjectMember, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)

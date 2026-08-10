@@ -208,8 +208,11 @@ const getSyncJobForOwner = `-- name: GetSyncJobForOwner :one
 
 SELECT sj.id, sj.project_id, sj.task_id, sj.kind, sj.payload, sj.dedupe_key, sj.status, sj.attempts, sj.run_after, sj.last_error, sj.created_at, sj.updated_at
 FROM sync_jobs sj
-JOIN projects p ON p.id = sj.project_id
-WHERE sj.id = $1 AND p.owner_user_id = $2
+WHERE sj.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = sj.project_id AND pm.user_id = $2
+  )
 `
 
 type GetSyncJobForOwnerParams struct {
@@ -219,7 +222,9 @@ type GetSyncJobForOwnerParams struct {
 
 // GetSyncJobForOwner backs POST /sync-jobs/{jobID}/retry: resolves a job by
 // ID scoped to its project's owner in one round trip, since the URL carries
-// no projectID for this route.
+// no projectID for this route. Membership only (any role) is checked here —
+// Retry (member-minimum) does its own project.Service.Authorize call first,
+// so it can distinguish ErrForbidden from ErrNotFound.
 func (q *Queries) GetSyncJobForOwner(ctx context.Context, arg GetSyncJobForOwnerParams) (SyncJob, error) {
 	row := q.db.QueryRow(ctx, getSyncJobForOwner, arg.ID, arg.OwnerUserID)
 	var i SyncJob
@@ -244,8 +249,12 @@ const listFailedSyncJobsByProjectForOwner = `-- name: ListFailedSyncJobsByProjec
 
 SELECT sj.id, sj.project_id, sj.task_id, sj.kind, sj.payload, sj.dedupe_key, sj.status, sj.attempts, sj.run_after, sj.last_error, sj.created_at, sj.updated_at
 FROM sync_jobs sj
-JOIN projects p ON p.id = sj.project_id
-WHERE sj.project_id = $1 AND p.owner_user_id = $2 AND sj.status = 'failed'
+WHERE sj.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = sj.project_id AND pm.user_id = $2
+  )
+  AND sj.status = 'failed'
 ORDER BY sj.created_at DESC
 `
 

@@ -22,12 +22,28 @@ SET base_url = EXCLUDED.base_url,
     updated_at = now()
 RETURNING *;
 
+-- GetGitlabConnectionForOwner/GetGitlabConnectionByIDForOwner only check
+-- membership exists (any role), not a specific role: they back both
+-- gitlabconn.Service's own owner-only HTTP-facing methods (Get/Test, via
+-- getRow) *and* Dial/DialByConnectionID, which internal/linkedproject calls
+-- on behalf of a member performing a member-level linked-project action
+-- (Create/RegisterWebhook/...). The role-specific check
+-- ("is ownerID actually allowed to do *this*") is enforced once, by the
+-- caller: gitlabconn.Service.{Save,Get,Test,Delete} call
+-- project.Service.Authorize(..., RoleOwner) themselves before touching the
+-- row; internal/linkedproject authorizes its own member-minimum before ever
+-- calling Dial/DialByConnectionID. Update/Delete below stay owner-only in
+-- SQL directly, since nothing else reuses them.
+
 -- name: GetGitlabConnectionForOwner :one
 SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at
 FROM gitlab_connections gc
-JOIN projects p ON p.id = gc.project_id
-WHERE gc.project_id = $1 AND p.owner_user_id = $2;
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
 
 -- name: GetGitlabConnectionByIDForOwner :one
 -- Same as GetGitlabConnectionForOwner, but keyed by the connection's own ID
@@ -38,8 +54,11 @@ WHERE gc.project_id = $1 AND p.owner_user_id = $2;
 SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at
 FROM gitlab_connections gc
-JOIN projects p ON p.id = gc.project_id
-WHERE gc.id = $1 AND p.owner_user_id = $2;
+WHERE gc.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
 
 -- name: GetGitlabConnectionByID :one
 -- Unscoped, for the outbox worker (internal/issuesync): a linked_gitlab_projects
@@ -49,17 +68,23 @@ SELECT * FROM gitlab_connections WHERE id = $1;
 
 -- name: UpdateGitlabConnectionVerificationForOwner :one
 UPDATE gitlab_connections gc
-SET token_gitlab_user_id = $3,
-    token_gitlab_username = $4,
-    last_verified_at = $5,
-    last_verify_error = $6,
+SET token_gitlab_user_id = $2,
+    token_gitlab_username = $3,
+    last_verified_at = $4,
+    last_verify_error = $5,
     updated_at = now()
-FROM projects p
-WHERE gc.project_id = $1 AND gc.project_id = p.id AND p.owner_user_id = $2
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role = 'owner'
+  )
 RETURNING gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at;
 
 -- name: DeleteGitlabConnectionForOwner :execrows
 DELETE FROM gitlab_connections gc
-USING projects p
-WHERE gc.project_id = $1 AND gc.project_id = p.id AND p.owner_user_id = $2;
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role = 'owner'
+  );

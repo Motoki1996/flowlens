@@ -564,6 +564,8 @@ func writeTaskError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "task_ids_mismatch", "taskIds must exactly match the current tasks in that backlog")
 	case errors.Is(err, task.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "task not found")
+	case errors.Is(err, task.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	default:
 		slog.Error("task request", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

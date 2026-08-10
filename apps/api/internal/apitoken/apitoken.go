@@ -44,6 +44,7 @@ var (
 	ErrInvalidName   = errors.New("apitoken: name must be 1-100 characters")
 	ErrInvalidScopes = errors.New("apitoken: scopes must be a non-empty subset of read, write")
 	ErrNotFound      = errors.New("apitoken: not found")
+	ErrForbidden     = errors.New("apitoken: forbidden")
 	ErrTokenNotFound = errors.New("apitoken: token not found")
 )
 
@@ -156,6 +157,25 @@ func NewService(q db.Querier, projects *project.Service) *Service {
 	return &Service{q: q, projects: projects}
 }
 
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels. API
+// tokens are owner-minimum throughout (issue #99): issuing/listing/revoking
+// a credential that can act as the project is a project-management action,
+// not a day-to-day member one.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("apitoken: authorize: %w", err)
+	}
+}
+
 // normalizeName trims raw and enforces the 1-100 character rule.
 func normalizeName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
@@ -201,11 +221,8 @@ func normalizeScopes(raw []string) ([]string, error) {
 // non-empty subset of ScopeRead/ScopeWrite (see normalizeScopes). expiresAt
 // is optional; a nil value means the token never expires.
 func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, name string, scopes []string, expiresAt *time.Time) (APIToken, string, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return APIToken{}, "", ErrNotFound
-		}
-		return APIToken{}, "", fmt.Errorf("apitoken: create: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleOwner); err != nil {
+		return APIToken{}, "", err
 	}
 
 	normalizedName, err := normalizeName(name)
@@ -246,11 +263,8 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, name
 // returns ErrNotFound if projectID does not exist or belongs to another
 // user.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID) ([]APIToken, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("apitoken: list: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleOwner); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.q.ListProjectAPITokensByProject(ctx, projectID)

@@ -165,6 +165,8 @@ func writeProjectError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "name_taken", "a project with this name already exists")
 	case errors.Is(err, project.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "project not found")
+	case errors.Is(err, project.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	default:
 		slog.Error("project request", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

@@ -114,6 +114,8 @@ func writeAPITokenError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_scopes", "scopes must be a non-empty subset of read, write")
 	case errors.Is(err, apitoken.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "api token not found")
+	case errors.Is(err, apitoken.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	default:
 		slog.Error("api token request", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

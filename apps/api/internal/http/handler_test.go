@@ -77,7 +77,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		taskDependencies: taskdependency.NewService(q, projects, tasks),
 		gitlabConns:      gitlabConns,
 		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),
-		projectSync:      projectsync.NewService(q, txRunner, cipher, clientFactory),
+		projectSync:      projectsync.NewService(q, txRunner, projects, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(q, cipher),
 		syncJobs:         syncjob.NewService(q, projects),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),

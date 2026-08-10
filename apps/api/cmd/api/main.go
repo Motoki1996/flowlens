@@ -17,6 +17,7 @@ import (
 	"github.com/flowlens/api/internal/gitlab"
 	apihttp "github.com/flowlens/api/internal/http"
 	"github.com/flowlens/api/internal/issuesync"
+	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/webhookapply"
@@ -77,7 +78,7 @@ func run() error {
 	// project.import / project.resync job handlers (issue #25): initial
 	// import (auto-enqueued by internal/linkedproject.Service.Create) and
 	// manual re-sync (POST /linked-gitlab-projects/{linkID}/sync-runs).
-	projectSync := projectsync.NewService(database.NewQuerier(pool), database.NewTxRunner(pool), cipher, clientFactory)
+	projectSync := projectsync.NewService(database.NewQuerier(pool), database.NewTxRunner(pool), project.NewService(database.NewQuerier(pool)), cipher, clientFactory)
 	registry.Register(projectsync.KindProjectImport, projectSync.HandleImport)
 	registry.Register(projectsync.KindProjectResync, projectSync.HandleResync)
 

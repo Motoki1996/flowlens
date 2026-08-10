@@ -321,6 +321,8 @@ func writeLinkedProjectError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, linkedproject.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "linked gitlab project not found")
+	case errors.Is(err, linkedproject.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	case errors.Is(err, linkedproject.ErrInvalidSyncScope):
 		writeError(w, http.StatusBadRequest, "invalid_sync_scope", `sync_scope must be "all" or "labels"`)
 	case errors.Is(err, linkedproject.ErrSyncLabelsRequired):

@@ -77,10 +77,13 @@ Three rules keep the packages honest. The first two are enforced by
    return only domain types, so row types and `pgtype` cannot leak into a
    JSON response. Wiring obtains the queries via `database.NewQuerier`.
 3. **Authorization lives in SQL, not in handlers.** Every project-scoped
-   query filters on `owner_user_id`, and each service method takes the
-   acting user's ID. A non-owner therefore gets "no rows", which the
-   service maps to `ErrNotFound` — indistinguishable from a project that
-   does not exist, and impossible to forget at a call site.
+   query filters on `project_members` (a caller's role for a project — see
+   [ADR-0010](decisions/0010-why-project-membership.md)), and each service
+   method takes the acting user's ID. A caller with no membership row
+   therefore gets "no rows", which the service maps to `ErrNotFound` —
+   indistinguishable from a project that does not exist, and impossible to
+   forget at a call site. A caller with a membership row of too low a role
+   gets `ErrForbidden` instead, via `project.Service.Authorize`.
 
 IDs are `uuid.UUID` end to end: sqlc is configured (`sqlc.yaml`
 `overrides`) to map `NOT NULL uuid` columns to `github.com/google/uuid`,

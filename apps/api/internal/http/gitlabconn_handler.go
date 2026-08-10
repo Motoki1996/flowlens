@@ -121,6 +121,8 @@ func writeGitlabConnError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, gitlabconn.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "gitlab connection not found")
+	case errors.Is(err, gitlabconn.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	case errors.Is(err, gitlabconn.ErrInvalidBaseURL):
 		writeError(w, http.StatusBadRequest, "invalid_base_url", "base_url must be an absolute http(s) URL")
 	case errors.Is(err, gitlabconn.ErrTokenRequired):

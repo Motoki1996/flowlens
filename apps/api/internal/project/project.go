@@ -6,9 +6,12 @@
 //
 //   - Service accepts and returns only types declared here (Project,
 //     uuid.UUID). Database row types never cross the package boundary.
-//   - Every method takes the acting user's ID and enforces ownership in the
-//     SQL WHERE clause. Callers never perform their own ownership check, and
-//     a non-owner is indistinguishable from a missing project (ErrNotFound).
+//   - Every method takes the acting user's ID and enforces access in the SQL
+//     WHERE clause (a project_members row, not owner_user_id equality — see
+//     docs/decisions/0010-why-project-membership.md and Role/Authorize
+//     below). Callers never perform their own access check, and a caller
+//     with no membership row is indistinguishable from a missing project
+//     (ErrNotFound); one with an insufficient role gets ErrForbidden.
 package project
 
 import (
@@ -26,13 +29,61 @@ import (
 )
 
 // Sentinel errors returned by Service. Handlers map these to HTTP status
-// codes. ErrNotFound is also returned when a project exists but belongs to
-// another user, so callers never leak existence to non-owners.
+// codes. ErrNotFound means the caller has no project_members row at all for
+// projectID (the project doesn't exist, or the caller was never added to
+// it — the two are indistinguishable on purpose, so existence is never
+// leaked). ErrForbidden means the caller does have a membership row, but its
+// role is below what the action requires.
 var (
 	ErrInvalidName = errors.New("project: name must be 1-100 characters")
 	ErrNameTaken   = errors.New("project: name already taken")
 	ErrNotFound    = errors.New("project: not found")
+	ErrForbidden   = errors.New("project: forbidden")
 )
+
+// Role is a caller's project_members role, ordered so comparison operators
+// express "at least as privileged as": RoleViewer < RoleMember < RoleOwner.
+// RoleNone has no project_members representation — it means the caller has
+// no membership row for the project at all.
+type Role int
+
+const (
+	RoleNone Role = iota
+	RoleViewer
+	RoleMember
+	RoleOwner
+)
+
+// String returns the project_members.role TEXT value for r, or "" for
+// RoleNone, which has no DB representation.
+func (r Role) String() string {
+	switch r {
+	case RoleOwner:
+		return "owner"
+	case RoleMember:
+		return "member"
+	case RoleViewer:
+		return "viewer"
+	default:
+		return ""
+	}
+}
+
+// roleFromDB converts a project_members.role TEXT value to a Role. An
+// unrecognized value (which the DB CHECK constraint should prevent) maps to
+// RoleNone, the safest failure mode for an authorization check.
+func roleFromDB(s string) Role {
+	switch s {
+	case "owner":
+		return RoleOwner
+	case "member":
+		return RoleMember
+	case "viewer":
+		return RoleViewer
+	default:
+		return RoleNone
+	}
+}
 
 // Project is the API-facing representation of a FlowLens project.
 //
@@ -82,7 +133,11 @@ func normalizeName(raw string) (string, error) {
 	return name, nil
 }
 
-// Create validates name and creates a project owned by ownerID.
+// Create validates name and creates a project owned by ownerID. ownerID also
+// gets an 'owner'-role project_members row in the same call, so Role/
+// Authorize work for the creator immediately — the same invariant migration
+// 000012 backfilled for every project that existed before project_members
+// was added (docs/decisions/0010-why-project-membership.md).
 func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, name, description string) (Project, error) {
 	normalized, err := normalizeName(name)
 	if err != nil {
@@ -99,12 +154,55 @@ func (s *Service) Create(ctx context.Context, ownerID uuid.UUID, name, descripti
 		}
 		return Project{}, fmt.Errorf("project: create: %w", err)
 	}
+	if _, err := s.q.AddProjectMember(ctx, db.AddProjectMemberParams{
+		ProjectID: row.ID,
+		UserID:    ownerID,
+		Role:      RoleOwner.String(),
+	}); err != nil {
+		return Project{}, fmt.Errorf("project: create: add owner membership: %w", err)
+	}
 	return fromRow(row), nil
 }
 
-// List returns every project owned by ownerID.
+// Role reports userID's project_members role for projectID. It returns
+// RoleNone, not an error, when there is no membership row at all — no
+// membership is a valid state to be in, not a failure.
+func (s *Service) Role(ctx context.Context, userID, projectID uuid.UUID) (Role, error) {
+	role, err := s.q.GetProjectMemberRole(ctx, db.GetProjectMemberRoleParams{
+		ProjectID: projectID,
+		UserID:    userID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RoleNone, nil
+		}
+		return RoleNone, fmt.Errorf("project: role: %w", err)
+	}
+	return roleFromDB(role), nil
+}
+
+// Authorize is the primitive every project-scoped service uses to gate an
+// action that doesn't need the Project value back (replacing what used to be
+// a call to Get whose return value was discarded). It returns ErrNotFound
+// when userID has no membership row for projectID at all, ErrForbidden when
+// it has one but below min, and nil when userID may proceed.
+func (s *Service) Authorize(ctx context.Context, userID, projectID uuid.UUID, min Role) error {
+	role, err := s.Role(ctx, userID, projectID)
+	if err != nil {
+		return err
+	}
+	if role == RoleNone {
+		return ErrNotFound
+	}
+	if role < min {
+		return ErrForbidden
+	}
+	return nil
+}
+
+// List returns every project ownerID is a member of, any role.
 func (s *Service) List(ctx context.Context, ownerID uuid.UUID) ([]Project, error) {
-	rows, err := s.q.ListProjectsByOwner(ctx, ownerID)
+	rows, err := s.q.ListProjectsByMember(ctx, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("project: list: %w", err)
 	}
@@ -116,12 +214,14 @@ func (s *Service) List(ctx context.Context, ownerID uuid.UUID) ([]Project, error
 }
 
 // Get returns the project by ID. It returns ErrNotFound both when the
-// project does not exist and when it belongs to another user.
+// project does not exist and when the caller has no project_members row for
+// it — Get is viewer-minimum, the lowest tier, so this covers "not a member
+// at all"; a member below Get's own no-op minimum can't happen.
 //
 // Get never populates FailedSyncTaskCount itself: Get is also used
 // internally, by this package's own callers and others (internal/task,
 // internal/backlog, internal/gitlabconn, internal/linkedproject), purely as
-// an ownership check whose Project value is discarded. Running the count
+// a read-access check whose Project value is discarded. Running the count
 // query on every one of those would be silent, unwanted overhead. Only the
 // single-project HTTP handler needs the count, so it calls
 // FailedSyncTaskCount itself after Get succeeds.
@@ -162,7 +262,7 @@ func (s *Service) FailedSyncTaskCount(ctx context.Context, ownerID, projectID uu
 // is non-zero by construction, since a zero-count project never has a
 // failed-sync task to match on.
 func (s *Service) ListFailedSync(ctx context.Context, ownerID uuid.UUID) ([]Project, error) {
-	rows, err := s.q.ListFailedSyncProjectsByOwner(ctx, ownerID)
+	rows, err := s.q.ListFailedSyncProjectsByMember(ctx, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("project: list failed sync: %w", err)
 	}
@@ -180,9 +280,15 @@ func (s *Service) ListFailedSync(ctx context.Context, ownerID uuid.UUID) ([]Proj
 	return out, nil
 }
 
-// Update overwrites name and description. Ownership is enforced by the
-// query, so a non-owner gets ErrNotFound and nothing is written.
+// Update overwrites name and description. It is member-minimum (not
+// explicitly named owner-only by issue #99, so it follows the "writes are
+// member-tier by default" rule). Authorize distinguishes ErrForbidden (a
+// viewer tried to write) from ErrNotFound (no membership row at all) before
+// anything is written.
 func (s *Service) Update(ctx context.Context, ownerID, projectID uuid.UUID, name, description string) (Project, error) {
+	if err := s.Authorize(ctx, ownerID, projectID, RoleMember); err != nil {
+		return Project{}, err
+	}
 	normalized, err := normalizeName(name)
 	if err != nil {
 		return Project{}, err

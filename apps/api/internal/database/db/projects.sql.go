@@ -25,10 +25,18 @@ type CreateProjectParams struct {
 	Description string    `json:"description"`
 }
 
-// Every project-scoped query filters on owner_user_id in SQL. Authorization
-// is therefore enforced by the query itself: a non-owner gets "no rows",
-// which callers map to ErrNotFound. Handlers must never do their own
-// ownership check, and later project-scoped tables follow the same rule.
+// Every project-scoped query filters on project_members in SQL (see
+// docs/decisions/0010-why-project-membership.md and issue #99): access is
+// therefore enforced by the query itself, not by application code. A
+// read query (Get/List) accepts any role; a write query restricts the
+// EXISTS subquery's role IN (...) to the roles that action requires. A
+// caller with no membership row at all gets "no rows", which callers map to
+// ErrNotFound; one with a membership row of too low a role also gets "no
+// rows" from these queries alone — the distinct ErrForbidden comes from
+// project.Service.Authorize (backed by GetProjectMemberRole), not from
+// these list/get/write queries. DeleteProjectForOwner is the one exception:
+// it stays keyed on projects.owner_user_id directly, not project_members,
+// per the ADR's "last owner" reasoning.
 func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error) {
 	row := q.db.QueryRow(ctx, createProject, arg.OwnerUserID, arg.Name, arg.Description)
 	var i Project
@@ -44,6 +52,7 @@ func (q *Queries) CreateProject(ctx context.Context, arg CreateProjectParams) (P
 }
 
 const deleteProjectForOwner = `-- name: DeleteProjectForOwner :execrows
+
 DELETE FROM projects WHERE id = $1 AND owner_user_id = $2
 `
 
@@ -52,6 +61,11 @@ type DeleteProjectForOwnerParams struct {
 	OwnerUserID uuid.UUID `json:"owner_user_id"`
 }
 
+// DeleteProjectForOwner deliberately stays keyed on the single
+// owner_user_id column, not a project_members role check: restricting
+// delete to the one designated owner avoids the "last owner deletes, a
+// second owner-role member is left holding a project with no owner" race a
+// membership table alone invites (docs/decisions/0010-why-project-membership.md).
 func (q *Queries) DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteProjectForOwner, arg.ID, arg.OwnerUserID)
 	if err != nil {
@@ -85,7 +99,12 @@ func (q *Queries) GetProjectByID(ctx context.Context, id uuid.UUID) (Project, er
 }
 
 const getProjectForOwner = `-- name: GetProjectForOwner :one
-SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE id = $1 AND owner_user_id = $2
+SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects
+WHERE id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = projects.id AND pm.user_id = $2
+  )
 `
 
 type GetProjectForOwnerParams struct {
@@ -107,13 +126,14 @@ func (q *Queries) GetProjectForOwner(ctx context.Context, arg GetProjectForOwner
 	return i, err
 }
 
-const listFailedSyncProjectsByOwner = `-- name: ListFailedSyncProjectsByOwner :many
+const listFailedSyncProjectsByMember = `-- name: ListFailedSyncProjectsByMember :many
 
 SELECT p.id, p.owner_user_id, p.name, p.description, p.created_at, p.updated_at, COUNT(*) AS failed_sync_task_count
 FROM projects p
+JOIN project_members pm ON pm.project_id = p.id
 JOIN tasks t ON t.project_id = p.id
 LEFT JOIN task_gitlab_links tgl ON tgl.task_id = t.id
-WHERE p.owner_user_id = $1
+WHERE pm.user_id = $1
   AND (
     tgl.sync_status = 'failed'
     OR (tgl.task_id IS NULL AND EXISTS (
@@ -124,7 +144,7 @@ GROUP BY p.id
 ORDER BY p.updated_at DESC
 `
 
-type ListFailedSyncProjectsByOwnerRow struct {
+type ListFailedSyncProjectsByMemberRow struct {
 	ID                  uuid.UUID          `json:"id"`
 	OwnerUserID         uuid.UUID          `json:"owner_user_id"`
 	Name                string             `json:"name"`
@@ -134,22 +154,22 @@ type ListFailedSyncProjectsByOwnerRow struct {
 	FailedSyncTaskCount int64              `json:"failed_sync_task_count"`
 }
 
-// ListFailedSyncProjectsByOwner backs the dashboard's "sync failures"
-// section (issue #77): every project ownerID owns that has at least one
-// task with a failed GitLab sync, counted the same way
+// ListFailedSyncProjectsByMember backs the dashboard's "sync failures"
+// section (issue #77): every project ownerID is a member of (any role) that
+// has at least one task with a failed GitLab sync, counted the same way
 // CountFailedSyncTasksByProjectForOwner counts a single project — from
 // task_gitlab_links when a link exists, or from the task's most recent
 // sync_jobs row otherwise — but joined across every project in one round
 // trip instead of one query per project.
-func (q *Queries) ListFailedSyncProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]ListFailedSyncProjectsByOwnerRow, error) {
-	rows, err := q.db.Query(ctx, listFailedSyncProjectsByOwner, ownerUserID)
+func (q *Queries) ListFailedSyncProjectsByMember(ctx context.Context, userID uuid.UUID) ([]ListFailedSyncProjectsByMemberRow, error) {
+	rows, err := q.db.Query(ctx, listFailedSyncProjectsByMember, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListFailedSyncProjectsByOwnerRow{}
+	items := []ListFailedSyncProjectsByMemberRow{}
 	for rows.Next() {
-		var i ListFailedSyncProjectsByOwnerRow
+		var i ListFailedSyncProjectsByMemberRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OwnerUserID,
@@ -169,12 +189,15 @@ func (q *Queries) ListFailedSyncProjectsByOwner(ctx context.Context, ownerUserID
 	return items, nil
 }
 
-const listProjectsByOwner = `-- name: ListProjectsByOwner :many
-SELECT id, owner_user_id, name, description, created_at, updated_at FROM projects WHERE owner_user_id = $1 ORDER BY created_at DESC
+const listProjectsByMember = `-- name: ListProjectsByMember :many
+SELECT p.id, p.owner_user_id, p.name, p.description, p.created_at, p.updated_at FROM projects p
+JOIN project_members pm ON pm.project_id = p.id
+WHERE pm.user_id = $1
+ORDER BY p.created_at DESC
 `
 
-func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID) ([]Project, error) {
-	rows, err := q.db.Query(ctx, listProjectsByOwner, ownerUserID)
+func (q *Queries) ListProjectsByMember(ctx context.Context, userID uuid.UUID) ([]Project, error) {
+	rows, err := q.db.Query(ctx, listProjectsByMember, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -201,25 +224,33 @@ func (q *Queries) ListProjectsByOwner(ctx context.Context, ownerUserID uuid.UUID
 }
 
 const updateProjectForOwner = `-- name: UpdateProjectForOwner :one
+
 UPDATE projects
-SET name = $3, description = $4, updated_at = now()
-WHERE id = $1 AND owner_user_id = $2
+SET name = $2, description = $3, updated_at = now()
+WHERE id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = projects.id AND pm.user_id = $4 AND pm.role IN ('member', 'owner')
+  )
 RETURNING id, owner_user_id, name, description, created_at, updated_at
 `
 
 type UpdateProjectForOwnerParams struct {
 	ID          uuid.UUID `json:"id"`
-	OwnerUserID uuid.UUID `json:"owner_user_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
 }
 
+// UpdateProjectForOwner backs project.Service.Update (name/description
+// edit), member-minimum per issue #99 — not explicitly named owner-only, so
+// it follows the "writes are member-tier by default" rule.
 func (q *Queries) UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error) {
 	row := q.db.QueryRow(ctx, updateProjectForOwner,
 		arg.ID,
-		arg.OwnerUserID,
 		arg.Name,
 		arg.Description,
+		arg.OwnerUserID,
 	)
 	var i Project
 	err := row.Scan(

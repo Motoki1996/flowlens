@@ -43,8 +43,11 @@ ORDER BY
 -- name: GetBacklogForOwner :one
 SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress
 FROM backlogs b
-JOIN projects p ON p.id = b.project_id
-WHERE b.id = $1 AND p.owner_user_id = $2;
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
 
 -- GetBacklogProjectID is the lightweight project lookup
 -- requireTokenResourceProject (internal/http, issue #66) uses to enforce a
@@ -77,12 +80,18 @@ WHERE backlogs.id = ordered.id
 -- fills in whatever the PATCH body left out (see its Update).
 -- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, progress = $9, updated_at = now()
-FROM projects p
-WHERE b.id = $1 AND b.project_id = p.id AND p.owner_user_id = $2
+SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, updated_at = now()
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
 RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress;
 
 -- name: DeleteBacklogForOwner :execrows
 DELETE FROM backlogs b
-USING projects p
-WHERE b.id = $1 AND b.project_id = p.id AND p.owner_user_id = $2;
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  );

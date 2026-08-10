@@ -5,11 +5,10 @@
 // The access token is encrypted at rest (internal/crypto) and never leaves
 // this package or crosses into an API response in plaintext — Connection,
 // the only type Service returns, carries just the token's last four
-// characters. Every method takes the acting user's ID and verifies project
-// ownership the same way internal/backlog does, either directly via
-// project.Service.Get or through the SQL JOIN in the single-connection
-// queries. A connection belonging to another user's project is
-// indistinguishable from a missing one (ErrNotFound).
+// characters. Every HTTP-facing method (Save/Get/Test/Delete) requires
+// project.RoleOwner via authorizeOwner, since the connection carries a
+// credential (issue #99); a caller with no membership row at all gets
+// ErrNotFound, one with a lesser role gets ErrForbidden.
 package gitlabconn
 
 import (
@@ -31,11 +30,15 @@ import (
 
 // Sentinel errors returned by Service. Handlers map these to HTTP status
 // codes. ErrNotFound is returned both when a connection/project does not
-// exist and when it belongs to another user.
+// exist and when the caller has no project_members row for it at all.
+// ErrForbidden means the caller is a member but not owner: every
+// HTTP-facing method here (Save/Get/Test/Delete) is owner-minimum, since the
+// connection carries a credential — see project.RoleOwner and issue #99.
 var (
 	ErrInvalidBaseURL = errors.New("gitlabconn: base_url must be an absolute http(s) URL")
 	ErrTokenRequired  = errors.New("gitlabconn: personal access token is required")
 	ErrNotFound       = errors.New("gitlabconn: not found")
+	ErrForbidden      = errors.New("gitlabconn: forbidden")
 
 	// ErrUnreachable means the GitLab instance could not be reached at all
 	// (DNS/connection failure, timeout, or an unexpected non-auth status).
@@ -164,11 +167,8 @@ func lastFour(token string) string {
 // (ErrUnreachable, ErrTokenInvalid, ErrInsufficientScope) — nothing is
 // written to the database.
 func (s *Service) Save(ctx context.Context, ownerID, projectID uuid.UUID, rawBaseURL, token string) (Connection, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return Connection{}, ErrNotFound
-		}
-		return Connection{}, fmt.Errorf("gitlabconn: save: %w", err)
+	if err := s.authorizeOwner(ctx, ownerID, projectID); err != nil {
+		return Connection{}, err
 	}
 
 	baseURL, err := normalizeBaseURL(rawBaseURL)
@@ -208,6 +208,9 @@ func (s *Service) Save(ctx context.Context, ownerID, projectID uuid.UUID, rawBas
 // characters (decrypted transiently to compute them, never returned or
 // logged as a whole).
 func (s *Service) Get(ctx context.Context, ownerID, projectID uuid.UUID) (Connection, error) {
+	if err := s.authorizeOwner(ctx, ownerID, projectID); err != nil {
+		return Connection{}, err
+	}
 	row, err := s.getRow(ctx, ownerID, projectID)
 	if err != nil {
 		return Connection{}, err
@@ -224,6 +227,9 @@ func (s *Service) Get(ctx context.Context, ownerID, projectID uuid.UUID) (Connec
 // last_verify_error), the same fields Save records. It distinguishes
 // unreachable, invalid-token, and insufficient-scope failures.
 func (s *Service) Test(ctx context.Context, ownerID, projectID uuid.UUID) (Connection, error) {
+	if err := s.authorizeOwner(ctx, ownerID, projectID); err != nil {
+		return Connection{}, err
+	}
 	row, err := s.getRow(ctx, ownerID, projectID)
 	if err != nil {
 		return Connection{}, err
@@ -272,6 +278,9 @@ func (s *Service) Test(ctx context.Context, ownerID, projectID uuid.UUID) (Conne
 // itself never needs to reach GitLab. Ownership is enforced by the query,
 // so a non-owner gets ErrNotFound and nothing is deleted.
 func (s *Service) Delete(ctx context.Context, ownerID, projectID uuid.UUID) error {
+	if err := s.authorizeOwner(ctx, ownerID, projectID); err != nil {
+		return err
+	}
 	affected, err := s.q.DeleteGitlabConnectionForOwner(ctx, db.DeleteGitlabConnectionForOwnerParams{
 		ProjectID:   projectID,
 		OwnerUserID: ownerID,
@@ -324,8 +333,30 @@ func (s *Service) DialByConnectionID(ctx context.Context, ownerID, connectionID 
 	return s.clientFactory(row.BaseUrl), token, nil
 }
 
-// getRow fetches the raw database row for projectID, scoped to ownerID,
-// mapping "no rows" (missing or foreign) to ErrNotFound.
+// authorizeOwner requires ownerID to hold project.RoleOwner on projectID.
+// Every HTTP-facing method here (Save/Get/Test/Delete) calls this first,
+// since the connection carries a credential and stays owner-only even
+// though a member may use it indirectly via internal/linkedproject's
+// Dial/DialByConnectionID calls (see gitlab_connections.sql).
+func (s *Service) authorizeOwner(ctx context.Context, ownerID, projectID uuid.UUID) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, project.RoleOwner)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("gitlabconn: authorize: %w", err)
+	}
+}
+
+// getRow fetches the raw database row for projectID. It only requires
+// ownerID to have *some* project_members row (any role), not specifically
+// project.RoleOwner — see gitlab_connections.sql's GetGitlabConnectionForOwner
+// comment for why: Dial reuses this for a member-level caller whose
+// authorization was already checked by internal/linkedproject.
 func (s *Service) getRow(ctx context.Context, ownerID, projectID uuid.UUID) (db.GitlabConnection, error) {
 	row, err := s.q.GetGitlabConnectionForOwner(ctx, db.GetGitlabConnectionForOwnerParams{
 		ProjectID:   projectID,

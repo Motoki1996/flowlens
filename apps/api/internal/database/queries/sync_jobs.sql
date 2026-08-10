@@ -117,19 +117,28 @@ WHERE status = 'pending';
 -- name: ListFailedSyncJobsByProjectForOwner :many
 SELECT sj.id, sj.project_id, sj.task_id, sj.kind, sj.payload, sj.dedupe_key, sj.status, sj.attempts, sj.run_after, sj.last_error, sj.created_at, sj.updated_at
 FROM sync_jobs sj
-JOIN projects p ON p.id = sj.project_id
-WHERE sj.project_id = $1 AND p.owner_user_id = $2 AND sj.status = 'failed'
+WHERE sj.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = sj.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  )
+  AND sj.status = 'failed'
 ORDER BY sj.created_at DESC;
 
 -- GetSyncJobForOwner backs POST /sync-jobs/{jobID}/retry: resolves a job by
 -- ID scoped to its project's owner in one round trip, since the URL carries
--- no projectID for this route.
+-- no projectID for this route. Membership only (any role) is checked here —
+-- Retry (member-minimum) does its own project.Service.Authorize call first,
+-- so it can distinguish ErrForbidden from ErrNotFound.
 
 -- name: GetSyncJobForOwner :one
 SELECT sj.id, sj.project_id, sj.task_id, sj.kind, sj.payload, sj.dedupe_key, sj.status, sj.attempts, sj.run_after, sj.last_error, sj.created_at, sj.updated_at
 FROM sync_jobs sj
-JOIN projects p ON p.id = sj.project_id
-WHERE sj.id = $1 AND p.owner_user_id = $2;
+WHERE sj.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = sj.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
 
 -- RetrySyncJob mirrors RetryFailedSyncJobForTask's reset (attempts back to
 -- 0, a fresh pending attempt) but is keyed by job ID directly rather than by

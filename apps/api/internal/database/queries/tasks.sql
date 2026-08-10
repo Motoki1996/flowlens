@@ -86,12 +86,13 @@ LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
 -- sink to the bottom", so it works unguarded both as sort=dueOn's primary
 -- key and as every other sort's final tiebreak.
 
--- name: ListTasksForOwner :many
+-- name: ListTasksForMember :many
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress,
        p.name AS project_name
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
-WHERE p.owner_user_id = sqlc.arg(owner_user_id)
+JOIN project_members pm ON pm.project_id = p.id
+WHERE pm.user_id = sqlc.arg(owner_user_id)
   AND (sqlc.arg(status)::text = '' OR t.status = sqlc.arg(status))
   AND (sqlc.arg(priority)::text = '' OR t.priority = sqlc.arg(priority))
   AND (sqlc.arg(progress)::text = '' OR t.progress = sqlc.arg(progress))
@@ -114,8 +115,11 @@ LIMIT sqlc.arg(limit_count);
 -- name: GetTaskForOwner :one
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress
 FROM tasks t
-JOIN projects p ON p.id = t.project_id
-WHERE t.id = $1 AND p.owner_user_id = $2;
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
 
 -- GetTaskForProject scopes a task by its project directly, not by owner: the
 -- AI-facing bearer-token path (docs/plans/issue-sync.md "AI-facing") has no
@@ -161,38 +165,53 @@ WHERE tasks.id = ordered.id
 
 -- name: UpdateTaskForOwner :one
 UPDATE tasks t
-SET backlog_id = $3, title = $4, description = $5,
-    assignee_gitlab_user_id = $6, assignee_gitlab_username = $7,
-    labels = $8, due_on = $9, start_date = $10, priority = $11, progress = $12, position = $13, updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+SET backlog_id = $2, title = $3, description = $4,
+    assignee_gitlab_user_id = $5, assignee_gitlab_username = $6,
+    labels = $7, due_on = $8, start_date = $9, priority = $10, progress = $11, position = $12, updated_at = now()
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
 
 -- name: AssignTaskBacklogForOwner :one
 UPDATE tasks t
-SET backlog_id = $3, updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+SET backlog_id = $2, updated_at = now()
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
 
 -- name: CloseTaskForOwner :one
 UPDATE tasks t
 SET status = 'closed', closed_at = now(), updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
 
 -- name: ReopenTaskForOwner :one
 UPDATE tasks t
 SET status = 'open', closed_at = NULL, updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
 
 -- name: DeleteTaskForOwner :execrows
 DELETE FROM tasks t
-USING projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2;
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  );
 
 -- CountFailedSyncTasksByProjectForOwner backs the project single view's sync
 -- warning (docs/plans/issue-sync.md's "gitlab" fields, surfaced per-task by
@@ -230,9 +249,12 @@ RETURNING id, project_id, backlog_id, title, description, status, closed_at, ass
 
 -- name: CountFailedSyncTasksByProjectForOwner :one
 SELECT COUNT(*) FROM tasks t
-JOIN projects p ON p.id = t.project_id
 LEFT JOIN task_gitlab_links tgl ON tgl.task_id = t.id
-WHERE t.project_id = $1 AND p.owner_user_id = $2
+WHERE t.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  )
   AND (
     tgl.sync_status = 'failed'
     OR (tgl.task_id IS NULL AND EXISTS (

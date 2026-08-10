@@ -385,6 +385,43 @@ func TestHandleCreateTask_ForeignProjectGets404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+// TestHandleCreateTask_ViewerRoleGets403 covers issue #99's completion
+// criterion: a viewer-role member can read a project but gets 403, not 404,
+// on a write — the caller's existence check already succeeded, only the
+// role check fails.
+func TestHandleCreateTask_ViewerRoleGets403(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	viewerID, viewerToken := loginSession(t, s, q)
+	q.SeedProjectMember(p.ID, viewerID, "viewer")
+
+	// The viewer can still read the project.
+	getRec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String(), nil, viewerToken)
+	require.Equal(t, http.StatusOK, getRec.Code)
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Fix bug"}, viewerToken)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// TestHandleCreateTask_NonMemberGets404 confirms a user with no
+// project_members row at all still gets 404, never leaking that the project
+// exists (issue #99).
+func TestHandleCreateTask_NonMemberGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, strangerToken := loginSession(t, s, q)
+
+	readRec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String(), nil, strangerToken)
+	assert.Equal(t, http.StatusNotFound, readRec.Code)
+
+	writeRec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Fix bug"}, strangerToken)
+	assert.Equal(t, http.StatusNotFound, writeRec.Code)
+}
+
 func TestHandleCreateTask_RejectsBacklogFromAnotherProject(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

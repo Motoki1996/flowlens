@@ -100,6 +100,8 @@ func writeTaskDependencyError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "cyclic_dependency", "would create a cyclic dependency")
 	case errors.Is(err, taskdependency.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "dependency not found")
+	case errors.Is(err, taskdependency.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	default:
 		slog.Error("task dependency request", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

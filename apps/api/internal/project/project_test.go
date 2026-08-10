@@ -112,6 +112,122 @@ func TestService_ScopesEveryOperationToOwner(t *testing.T) {
 	})
 }
 
+// TestService_Role_ReflectsMembership covers issue #99's core primitive:
+// RoleOwner for the creator (backfilled by Create), RoleNone (not an error)
+// for a user with no project_members row at all, and whatever role a
+// SeedProjectMember row carries for anyone else.
+func TestService_Role_ReflectsMembership(t *testing.T) {
+	ctx := context.Background()
+	q := dbtest.New()
+	svc := project.NewService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	viewer := q.SeedUser("viewer", "viewer@example.com").ID
+	stranger := q.SeedUser("stranger", "stranger@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	q.SeedProjectMember(p.ID, viewer, "viewer")
+
+	role, err := svc.Role(ctx, owner, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, project.RoleOwner, role)
+
+	role, err = svc.Role(ctx, viewer, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, project.RoleViewer, role)
+
+	role, err = svc.Role(ctx, stranger, p.ID)
+	require.NoError(t, err, "no membership row is a valid state, not an error")
+	assert.Equal(t, project.RoleNone, role)
+}
+
+// TestService_Create_GrantsCreatorOwnerMembership confirms Create itself
+// (not just SeedProject) leaves the creator able to act as owner
+// immediately — the same invariant migration 000012's backfill establishes
+// for pre-existing projects (docs/decisions/0010-why-project-membership.md).
+func TestService_Create_GrantsCreatorOwnerMembership(t *testing.T) {
+	ctx := context.Background()
+	q := dbtest.New()
+	svc := project.NewService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+
+	p, err := svc.Create(ctx, owner, "Alpha", "")
+	require.NoError(t, err)
+
+	role, err := svc.Role(ctx, owner, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, project.RoleOwner, role)
+	assert.NoError(t, svc.Authorize(ctx, owner, p.ID, project.RoleOwner))
+}
+
+// TestService_Authorize_DistinguishesForbiddenFromNotFound is issue #99's
+// central completion criterion: a caller with a membership row below min
+// gets ErrForbidden (they exist, their role is insufficient); a caller with
+// no membership row at all gets ErrNotFound (existence is never leaked).
+func TestService_Authorize_DistinguishesForbiddenFromNotFound(t *testing.T) {
+	ctx := context.Background()
+	q := dbtest.New()
+	svc := project.NewService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	viewer := q.SeedUser("viewer", "viewer@example.com").ID
+	member := q.SeedUser("member", "member@example.com").ID
+	stranger := q.SeedUser("stranger", "stranger@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	q.SeedProjectMember(p.ID, viewer, "viewer")
+	q.SeedProjectMember(p.ID, member, "member")
+
+	assert.NoError(t, svc.Authorize(ctx, owner, p.ID, project.RoleOwner))
+	assert.NoError(t, svc.Authorize(ctx, member, p.ID, project.RoleMember))
+	assert.NoError(t, svc.Authorize(ctx, viewer, p.ID, project.RoleViewer))
+
+	assert.ErrorIs(t, svc.Authorize(ctx, viewer, p.ID, project.RoleMember), project.ErrForbidden)
+	assert.ErrorIs(t, svc.Authorize(ctx, member, p.ID, project.RoleOwner), project.ErrForbidden)
+
+	assert.ErrorIs(t, svc.Authorize(ctx, stranger, p.ID, project.RoleViewer), project.ErrNotFound)
+	assert.ErrorIs(t, svc.Authorize(ctx, stranger, p.ID, project.RoleOwner), project.ErrNotFound)
+}
+
+// TestService_Update_MemberCanWriteViewerCannot covers Update's
+// member-minimum tier: a member can rename the project, a viewer gets
+// ErrForbidden and the project is left untouched.
+func TestService_Update_MemberCanWriteViewerCannot(t *testing.T) {
+	ctx := context.Background()
+	q := dbtest.New()
+	svc := project.NewService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	member := q.SeedUser("member", "member@example.com").ID
+	viewer := q.SeedUser("viewer", "viewer@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	q.SeedProjectMember(p.ID, member, "member")
+	q.SeedProjectMember(p.ID, viewer, "viewer")
+
+	_, err := svc.Update(ctx, viewer, p.ID, "Hijacked", "")
+	assert.ErrorIs(t, err, project.ErrForbidden)
+
+	updated, err := svc.Update(ctx, member, p.ID, "Renamed", "")
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed", updated.Name)
+}
+
+// TestService_List_ReturnsEveryProjectTheCallerIsAMemberOf covers issue
+// #99's "List becomes membership-based" change: a project the caller was
+// merely added to (not owns) is returned too, and a project the caller has
+// no membership row for at all is not.
+func TestService_List_ReturnsEveryProjectTheCallerIsAMemberOf(t *testing.T) {
+	q := dbtest.New()
+	svc := project.NewService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	member := q.SeedUser("member", "member@example.com").ID
+	owned := q.SeedProject(member, "Mine")
+	shared := q.SeedProject(owner, "Shared")
+	q.SeedProjectMember(shared.ID, member, "viewer")
+	q.SeedProject(owner, "NotMine")
+
+	projects, err := svc.List(context.Background(), member)
+	require.NoError(t, err)
+	require.Len(t, projects, 2)
+	names := []string{projects[0].Name, projects[1].Name}
+	assert.ElementsMatch(t, []string{owned.Name, shared.Name}, names)
+}
+
 func TestService_Get_ReturnsNotFoundForMissingProject(t *testing.T) {
 	q := dbtest.New()
 	svc := project.NewService(q)

@@ -14,6 +14,7 @@ import (
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
+	"github.com/flowlens/api/internal/gitlabidentity"
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectmember"
@@ -45,6 +46,7 @@ type Server struct {
 	tasks            *task.Service
 	taskDependencies *taskdependency.Service
 	gitlabConns      *gitlabconn.Service
+	gitlabIdentities *gitlabidentity.Service
 	linkedProjects   *linkedproject.Service
 	projectSync      *projectsync.Service
 	webhookEvents    *webhookevent.Service
@@ -83,6 +85,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(queries, projects, tasks),
 		gitlabConns:      gitlabConns,
+		gitlabIdentities: gitlabidentity.NewService(queries),
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
 		projectSync:      projectsync.NewService(queries, txRunner, projects, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(queries, cipher),
@@ -134,6 +137,13 @@ func (s *Server) Router() chi.Router {
 			protected.Use(s.requireAuth)
 			protected.Use(s.requireCSRF)
 			protected.Get("/me", s.handleMe)
+
+			// Registers the caller's own GitLab user ID/username per GitLab
+			// base URL (issue #102), so ?assignee=me on the task collections
+			// below can match it against a task's assignee. No access token
+			// here — that is a distinct, still-unbuilt feature (ADR-0008).
+			protected.Get("/me/gitlab-identities", s.handleListMyGitlabIdentities)
+			protected.Put("/me/gitlab-identities", s.handlePutMyGitlabIdentity)
 
 			// Cross-project task collection (issue #76): every task across
 			// every project the caller owns, "what should I be doing right

@@ -30,23 +30,32 @@ RETURNING id, project_id, backlog_id, title, description, status, closed_at, ass
 -- its CASE always evaluates to 0, leaving the original position/created_at
 -- order untouched. The two flags are mutually exclusive in practice —
 -- internal/task sets at most one from a single ?sort=.
+-- ListTasksByProject's assignee_me filter joins the project's own GitLab
+-- connection (if any) to the caller's registered identity for that same
+-- base_url (internal/gitlabidentity, issue #102): a caller with no
+-- registered identity, or a project with no GitLab connection, joins to
+-- NULL, and NULL never equals assignee_gitlab_user_id, so the filter
+-- correctly yields zero rows instead of erroring.
 -- name: ListTasksByProject :many
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress
+SELECT tasks.id, tasks.project_id, tasks.backlog_id, tasks.title, tasks.description, tasks.status, tasks.closed_at, tasks.assignee_gitlab_user_id, tasks.assignee_gitlab_username, tasks.labels, tasks.due_on, tasks.position, tasks.created_by_user_id, tasks.created_at, tasks.updated_at, tasks.start_date, tasks.priority, tasks.progress
 FROM tasks
-WHERE project_id = $1
-  AND (NOT sqlc.arg(unassigned)::boolean OR backlog_id IS NULL)
-  AND (sqlc.narg(backlog_id)::uuid IS NULL OR backlog_id = sqlc.narg(backlog_id))
-  AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
-  AND (sqlc.arg(priority)::text = '' OR priority = sqlc.arg(priority))
-  AND (sqlc.arg(progress)::text = '' OR progress = sqlc.arg(progress))
+LEFT JOIN gitlab_connections gc ON gc.project_id = tasks.project_id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = sqlc.arg(owner_user_id)
+WHERE tasks.project_id = sqlc.arg(project_id)
+  AND (NOT sqlc.arg(unassigned)::boolean OR tasks.backlog_id IS NULL)
+  AND (sqlc.narg(backlog_id)::uuid IS NULL OR tasks.backlog_id = sqlc.narg(backlog_id))
+  AND (sqlc.arg(status)::text = '' OR tasks.status = sqlc.arg(status))
+  AND (sqlc.arg(priority)::text = '' OR tasks.priority = sqlc.arg(priority))
+  AND (sqlc.arg(progress)::text = '' OR tasks.progress = sqlc.arg(progress))
+  AND (NOT sqlc.arg(assignee_me)::boolean OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
 ORDER BY
   (CASE WHEN sqlc.arg(sort_by_priority)::boolean THEN
-     CASE priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
+     CASE tasks.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
   (CASE WHEN sqlc.arg(sort_by_progress)::boolean THEN
-     CASE progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
+     CASE tasks.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  position ASC, created_at ASC;
+  tasks.position ASC, tasks.created_at ASC;
 
 -- ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
 -- /api/v1/projects/{projectID}/tasks/context, docs/plans/issue-sync.md
@@ -86,12 +95,18 @@ LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
 -- sink to the bottom", so it works unguarded both as sort=dueOn's primary
 -- key and as every other sort's final tiebreak.
 
+-- ListTasksForMember's assignee_me filter follows the same
+-- gitlab_connections/user_gitlab_identities join ListTasksByProject uses
+-- (issue #102), joined per-project since the cross-project list spans
+-- however many projects and GitLab connections the caller belongs to.
 -- name: ListTasksForMember :many
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress,
        p.name AS project_name
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
 JOIN project_members pm ON pm.project_id = p.id
+LEFT JOIN gitlab_connections gc ON gc.project_id = p.id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = pm.user_id
 WHERE pm.user_id = sqlc.arg(owner_user_id)
   AND (sqlc.arg(status)::text = '' OR t.status = sqlc.arg(status))
   AND (sqlc.arg(priority)::text = '' OR t.priority = sqlc.arg(priority))
@@ -100,6 +115,7 @@ WHERE pm.user_id = sqlc.arg(owner_user_id)
   AND (sqlc.narg(due_after)::date IS NULL OR t.due_on >= sqlc.narg(due_after))
   AND (sqlc.narg(started_before)::date IS NULL OR t.start_date <= sqlc.narg(started_before))
   AND (cardinality(sqlc.arg(project_ids)::uuid[]) = 0 OR t.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+  AND (NOT sqlc.arg(assignee_me)::boolean OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
 ORDER BY
   (CASE WHEN sqlc.arg(sort)::text = 'priority' THEN
      CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END

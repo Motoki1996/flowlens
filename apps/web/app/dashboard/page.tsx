@@ -10,6 +10,7 @@ import type { Project, TaskWithProject } from "@/types";
 const DUE_POOL_LIMIT = 50;
 const WAITING_LIMIT = 10;
 const PRIORITY_POOL_LIMIT = 20;
+const ASSIGNED_TO_ME_LIMIT = 10;
 const HIGH_PRIORITIES = new Set(["urgent", "high"]);
 
 /**
@@ -49,6 +50,7 @@ export default async function DashboardPage() {
             dueSoonTasks={[]}
             waitingTasks={[]}
             priorityTasks={[]}
+            assignedToMeTasks={[]}
             showDueDateHint={false}
             failedSyncProjects={[]}
             recentProjects={[]}
@@ -56,6 +58,7 @@ export default async function DashboardPage() {
             dueSoonHref={allTasksPath()}
             waitingHref={allTasksPath()}
             priorityHref={allTasksPath()}
+            assignedToMeHref={allTasksPath()}
           />
         </main>
       </>
@@ -70,15 +73,20 @@ export default async function DashboardPage() {
   let duePool: TaskWithProject[] = [];
   let waitingTasks: TaskWithProject[] = [];
   let priorityPool: TaskWithProject[] = [];
+  let assignedToMeTasks: TaskWithProject[] = [];
   let failedSyncProjects: Project[] = [];
   let error = false;
   try {
-    [duePool, waitingTasks, priorityPool, failedSyncProjects] = await Promise.all([
+    [duePool, waitingTasks, priorityPool, assignedToMeTasks, failedSyncProjects] = await Promise.all([
       // Sorted by due date ascending (nulls last): the same fetch covers
       // both "overdue" and "due this week", split client-side below.
       getAllTasks({ status: "open", sort: "dueOn", limit: DUE_POOL_LIMIT }),
       getAllTasks({ status: "open", startedBefore: today, sort: "dueOn", limit: WAITING_LIMIT }),
       getAllTasks({ status: "open", sort: "priority", limit: PRIORITY_POOL_LIMIT }),
+      // Empty for a user who hasn't registered a GitLab identity yet
+      // (issue #102) — GET /api/v1/tasks?assignee=me itself returns [],
+      // not an error, so this teaser is just another empty state.
+      getAllTasks({ status: "open", sort: "dueOn", limit: ASSIGNED_TO_ME_LIMIT, assignee: "me" }),
       getFailedSyncProjects(),
     ]);
   } catch {
@@ -105,6 +113,7 @@ export default async function DashboardPage() {
           dueSoonTasks={dueSoon}
           waitingTasks={waitingTasks}
           priorityTasks={priorityTasks}
+          assignedToMeTasks={assignedToMeTasks}
           showDueDateHint={showDueDateHint}
           failedSyncProjects={failedSyncProjects}
           recentProjects={recentProjects}
@@ -112,6 +121,7 @@ export default async function DashboardPage() {
           dueSoonHref={`${tasksQuery}&dueAfter=${today}&dueBefore=${weekEnd}`}
           waitingHref={`${allTasksPath()}?status=open&sort=dueOn&startedBefore=${today}`}
           priorityHref={`${allTasksPath()}?status=open&sort=priority`}
+          assignedToMeHref={`${tasksQuery}&assignee=me`}
         />
       </main>
     </>

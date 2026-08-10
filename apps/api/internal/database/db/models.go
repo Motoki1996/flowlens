@@ -254,6 +254,16 @@ type User struct {
 	PasswordHash string             `json:"password_hash"`
 }
 
+type UserGitlabIdentity struct {
+	ID             uuid.UUID          `json:"id"`
+	UserID         uuid.UUID          `json:"user_id"`
+	GitlabBaseUrl  string             `json:"gitlab_base_url"`
+	GitlabUserID   int64              `json:"gitlab_user_id"`
+	GitlabUsername string             `json:"gitlab_username"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type WebhookEvent struct {
 	ID                    uuid.UUID          `json:"id"`
 	LinkedGitlabProjectID uuid.UUID          `json:"linked_gitlab_project_id"`

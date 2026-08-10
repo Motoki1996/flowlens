@@ -196,6 +196,46 @@ func TestHandleListTasks_SortQueryAcceptsTheCrossProjectValues(t *testing.T) {
 	}
 }
 
+// TestHandleListTasks_FiltersByAssigneeMeQuery covers issue #102's completion
+// conditions: ?assignee=me returns only tasks assigned to the caller's own
+// registered GitLab identity for the project's own connection, and a caller
+// with no registered identity gets an empty list rather than an error.
+func TestHandleListTasks_FiltersByAssigneeMeQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, nil)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?assignee=me", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, "[]", rec.Body.String(), "no identity registered yet must return an empty list, not an error")
+
+	rec = doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Mine", AssigneeGitlabUserID: int64Ptr(42)}, token)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Someone else's", AssigneeGitlabUserID: int64Ptr(99)}, token)
+
+	doRequest(t, s, http.MethodPut, "/api/v1/me/gitlab-identities",
+		putGitlabIdentityRequest{GitlabBaseURL: conn.BaseUrl, GitlabUserID: 42, GitlabUsername: "octocat"}, token)
+
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?assignee=me", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, "Mine", body[0]["title"])
+}
+
+func TestHandleListTasks_RejectsInvalidAssigneeQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?assignee=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestHandleListAllTasks_NoCookie(t *testing.T) {
 	s, _ := newTestServer(t)
 
@@ -256,6 +296,36 @@ func TestHandleListAllTasks_FiltersByStatusQuery(t *testing.T) {
 	assert.Equal(t, "Open task", body[0]["title"])
 }
 
+// TestHandleListAllTasks_FiltersByAssigneeMeQuery is
+// TestHandleListTasks_FiltersByAssigneeMeQuery for the cross-project
+// collection: it must resolve the identity match per task's own project
+// (issue #102), not against a single project-wide connection.
+func TestHandleListAllTasks_FiltersByAssigneeMeQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, nil)
+
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Mine", AssigneeGitlabUserID: int64Ptr(42)}, token)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Someone else's", AssigneeGitlabUserID: int64Ptr(99)}, token)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks?assignee=me", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.JSONEq(t, "[]", rec.Body.String(), "no identity registered yet must return an empty list, not an error")
+
+	doRequest(t, s, http.MethodPut, "/api/v1/me/gitlab-identities",
+		putGitlabIdentityRequest{GitlabBaseURL: conn.BaseUrl, GitlabUserID: 42, GitlabUsername: "octocat"}, token)
+
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/tasks?assignee=me", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, "Mine", body[0]["title"])
+}
+
 func TestHandleListAllTasks_RejectsInvalidQuery(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -269,6 +339,7 @@ func TestHandleListAllTasks_RejectsInvalidQuery(t *testing.T) {
 		{"invalid dueAfter", "?dueAfter=not-a-date"},
 		{"invalid startedBefore", "?startedBefore=not-a-date"},
 		{"invalid projectId", "?projectId=not-a-uuid"},
+		{"invalid assignee", "?assignee=bogus"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -295,6 +366,8 @@ func TestHandleListAllTasks_LimitCapsResults(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Len(t, body, 2)
 }
+
+func int64Ptr(v int64) *int64 { return &v }
 
 func TestHandleCreateTask(t *testing.T) {
 	s, q := newTestServer(t)

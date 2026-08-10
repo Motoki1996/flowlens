@@ -98,6 +98,7 @@ describe("DashboardPage", () => {
     getAllTasks
       .mockResolvedValueOnce([makeTask({ id: "t1", title: "Overdue task", dueOn: "2020-01-01" })])
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([]);
     getFailedSyncProjects.mockResolvedValue([{ ...project, failedSyncTaskCount: 2 }]);
 

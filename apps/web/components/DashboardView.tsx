@@ -22,6 +22,7 @@ export function DashboardView({
   dueSoonTasks,
   waitingTasks,
   priorityTasks,
+  assignedToMeTasks,
   showDueDateHint,
   failedSyncProjects,
   recentProjects,
@@ -29,6 +30,7 @@ export function DashboardView({
   dueSoonHref,
   waitingHref,
   priorityHref,
+  assignedToMeHref,
   error = false,
 }: {
   hasProjects: boolean;
@@ -36,6 +38,11 @@ export function DashboardView({
   dueSoonTasks: TaskWithProject[];
   waitingTasks: TaskWithProject[];
   priorityTasks: TaskWithProject[];
+  /** Open tasks assigned to the caller's own registered GitLab identity
+   *  (issue #102) — empty for a user who hasn't registered one yet, the
+   *  same "no error, just nothing to show" GET /api/v1/tasks?assignee=me
+   *  itself returns. */
+  assignedToMeTasks: TaskWithProject[];
   /** True when the user has open tasks but none of them has a due date —
    *  the overdue/due-soon empty states then explain what setting one would
    *  surface, instead of implying "nothing overdue" (issue #77's empty
@@ -47,6 +54,7 @@ export function DashboardView({
   dueSoonHref: string;
   waitingHref: string;
   priorityHref: string;
+  assignedToMeHref: string;
   error?: boolean;
 }) {
   if (!hasProjects) {
@@ -101,6 +109,12 @@ export function DashboardView({
         tasks={priorityTasks}
         viewAllHref={priorityHref}
         emptyMessage="No high-priority open tasks."
+      />
+      <DashboardTaskListSection
+        title="Assigned to me"
+        tasks={assignedToMeTasks}
+        viewAllHref={assignedToMeHref}
+        emptyMessage="No open tasks assigned to you, or you haven't registered your GitLab identity yet — see Settings."
       />
       <DashboardSyncFailuresSection projects={failedSyncProjects} />
       <DashboardRecentProjectsSection projects={recentProjects} />

@@ -40,6 +40,9 @@ type FakeQuerier struct {
 	taskDependencies     []db.TaskDependency // insertion order, newest last
 	taskDependenciesByID map[uuid.UUID]db.TaskDependency
 
+	taskComments     []db.TaskComment // insertion order, newest last
+	taskCommentsByID map[uuid.UUID]db.TaskComment
+
 	gitlabConnectionsByProjectID map[uuid.UUID]db.GitlabConnection
 	gitlabConnectionsByID        map[uuid.UUID]db.GitlabConnection
 
@@ -93,6 +96,8 @@ func New() *FakeQuerier {
 		taskAIContextsByTaskID: map[uuid.UUID]db.TaskAiContext{},
 
 		taskDependenciesByID: map[uuid.UUID]db.TaskDependency{},
+
+		taskCommentsByID: map[uuid.UUID]db.TaskComment{},
 
 		gitlabConnectionsByProjectID: map[uuid.UUID]db.GitlabConnection{},
 		gitlabConnectionsByID:        map[uuid.UUID]db.GitlabConnection{},
@@ -1301,6 +1306,73 @@ func (f *FakeQuerier) DeleteTaskDependencyForOwner(_ context.Context, arg db.Del
 	for i, x := range f.taskDependencies {
 		if x.ID == d.ID {
 			f.taskDependencies = append(f.taskDependencies[:i], f.taskDependencies[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
+}
+
+// CreateTaskComment mirrors the SQL: exactly one of AuthorUserID/
+// AuthorTokenID is expected to be set by the caller (internal/taskcomment).
+func (f *FakeQuerier) CreateTaskComment(_ context.Context, arg db.CreateTaskCommentParams) (db.TaskComment, error) {
+	c := db.TaskComment{
+		ID:            uuid.New(),
+		TaskID:        arg.TaskID,
+		AuthorUserID:  arg.AuthorUserID,
+		AuthorTokenID: arg.AuthorTokenID,
+		AuthorKind:    arg.AuthorKind,
+		Body:          arg.Body,
+		CreatedAt:     now(),
+		UpdatedAt:     now(),
+	}
+	f.taskCommentsByID[c.ID] = c
+	f.taskComments = append(f.taskComments, c)
+	return c, nil
+}
+
+// ListTaskCommentsByTask mirrors the SQL: every comment on taskID, oldest
+// first (insertion order).
+func (f *FakeQuerier) ListTaskCommentsByTask(_ context.Context, taskID uuid.UUID) ([]db.TaskComment, error) {
+	items := []db.TaskComment{}
+	for _, c := range f.taskComments {
+		if c.TaskID == taskID {
+			items = append(items, c)
+		}
+	}
+	return items, nil
+}
+
+func (f *FakeQuerier) GetTaskCommentByID(_ context.Context, id uuid.UUID) (db.TaskComment, error) {
+	c, ok := f.taskCommentsByID[id]
+	if !ok {
+		return db.TaskComment{}, pgx.ErrNoRows
+	}
+	return c, nil
+}
+
+// GetTaskCommentProjectID mirrors the SQL: resolved through the comment's
+// task, the same way GetTaskDependencyProjectID resolves through a
+// dependency's predecessor task.
+func (f *FakeQuerier) GetTaskCommentProjectID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	c, ok := f.taskCommentsByID[id]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	t, ok := f.tasksByID[c.TaskID]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return t.ProjectID, nil
+}
+
+func (f *FakeQuerier) DeleteTaskCommentByID(_ context.Context, id uuid.UUID) (int64, error) {
+	if _, ok := f.taskCommentsByID[id]; !ok {
+		return 0, nil
+	}
+	delete(f.taskCommentsByID, id)
+	for i, c := range f.taskComments {
+		if c.ID == id {
+			f.taskComments = append(f.taskComments[:i], f.taskComments[i+1:]...)
 			break
 		}
 	}

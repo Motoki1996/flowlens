@@ -21,6 +21,7 @@ import (
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/syncjob"
 	"github.com/flowlens/api/internal/task"
+	"github.com/flowlens/api/internal/taskcomment"
 	"github.com/flowlens/api/internal/taskdependency"
 	"github.com/flowlens/api/internal/user"
 	"github.com/flowlens/api/internal/webhookevent"
@@ -45,6 +46,7 @@ type Server struct {
 	projectMembers   *projectmember.Service
 	tasks            *task.Service
 	taskDependencies *taskdependency.Service
+	taskComments     *taskcomment.Service
 	gitlabConns      *gitlabconn.Service
 	gitlabIdentities *gitlabidentity.Service
 	linkedProjects   *linkedproject.Service
@@ -84,6 +86,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		projectMembers:   projectMembers,
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(queries, projects, tasks),
+		taskComments:     taskcomment.NewService(queries, projects, tasks),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(queries),
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
@@ -280,6 +283,15 @@ func (s *Server) Router() chi.Router {
 			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/assign-backlog", s.handleAssignTaskBacklog)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/sync-retry", s.handleRetryTaskSync)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Put("/tasks/{taskID}/ai-context", s.handleUpsertTaskAIContext)
+
+			// A task's activity log (issue #103): the return path for an
+			// agent that has been reading /tasks/{taskID}/context but had
+			// no way to report back what it did.
+			shared.With(taskResource).Get("/tasks/{taskID}/comments", s.handleListTaskComments)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/comments", s.handleCreateTaskComment)
+
+			commentResource := requireTokenResourceProject("commentID", taskcomment.ErrNotFound, s.taskComments.ProjectID)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), commentResource).Delete("/task-comments/{commentID}", s.handleDeleteTaskComment)
 
 			// handleGetTaskContext is already project-scoped through the
 			// token itself (task.Service.ContextForProject, driven by

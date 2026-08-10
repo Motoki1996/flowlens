@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/task"
+	"github.com/flowlens/api/internal/taskcomment"
 	"github.com/google/uuid"
 )
 
@@ -48,6 +49,16 @@ func parseTaskContextListFilter(r *http.Request) (task.ContextListFilter, error)
 	return filter, nil
 }
 
+// taskContextResponse is task.Context plus the task's most recent activity
+// log entries (issue #103), so an AI agent reading its context in one call
+// also sees what has already been reported back — its own prior comments,
+// or a teammate's. Comments is capped to taskcomment.RecentLimit, oldest
+// first; the full log is available via GET /tasks/{taskID}/comments.
+type taskContextResponse struct {
+	task.Context
+	Comments []taskcomment.TaskComment `json:"comments"`
+}
+
 // handleGetTaskContext returns one task's combined AI-facing context
 // (task.Context): mirrored task fields, GitLab sync state, and AI context in
 // one payload — see docs/plans/issue-sync.md's "AI-facing" API surface.
@@ -63,20 +74,27 @@ func (s *Server) handleGetTaskContext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var (
-		c   task.Context
-		err error
+		c        task.Context
+		comments []taskcomment.TaskComment
+		err      error
 	)
 	if projectID, ok := tokenProjectFromContext(r.Context()); ok {
 		c, err = s.tasks.ContextForProject(r.Context(), projectID, taskID)
+		if err == nil {
+			comments, err = s.taskComments.ListForProject(r.Context(), projectID, taskID)
+		}
 	} else {
 		u, _ := userFromContext(r.Context())
 		c, err = s.tasks.Context(r.Context(), u.ID, taskID)
+		if err == nil {
+			comments, err = s.taskComments.List(r.Context(), u.ID, taskID)
+		}
 	}
 	if err != nil {
 		writeTaskError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	writeJSON(w, http.StatusOK, taskContextResponse{Context: c, Comments: taskcomment.ListRecent(comments)})
 }
 
 // handleListTaskContexts returns a page of a project's combined AI-facing

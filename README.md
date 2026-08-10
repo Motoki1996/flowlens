@@ -529,6 +529,39 @@ which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
 
+#### Activity log (comments)
+
+`GET /api/v1/tasks/{taskID}/context` above also carries `comments`: the
+task's most recent activity-log entries (at most 20, oldest first) — the
+return path for an agent that has been reading a task's context but had no
+way to report back what it did or where it got stuck. Post to that log with
+`POST /api/v1/tasks/{taskID}/comments`:
+
+```bash
+curl -X POST "$API_BASE_URL/api/v1/tasks/$TASK_ID/comments" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer flt_9f3a2c1d8e2b4a1f6c3d5e7a9b0f1c2d" \
+  -d '{"body": "Pushed a fix in MR !12; CI is green."}'
+```
+
+```jsonc
+// POST /api/v1/tasks/{taskID}/comments
+{
+  "id": "e4a1...",
+  "taskId": "3fa2...",
+  "authorUserId": null,       // set for a human's comment, null for a token's
+  "authorTokenId": "b7e1...", // set for a token's comment, null for a human's
+  "authorKind": "agent",      // "user" | "agent" | "gitlab" (the last reserved for GitLab-discussion sync)
+  "body": "Pushed a fix in MR !12; CI is green.",
+  "createdAt": "2026-08-10T00:00:00Z",
+  "updatedAt": "2026-08-10T00:00:00Z"
+}
+```
+
+`GET /api/v1/tasks/{taskID}/comments` returns the full log, oldest first,
+with no page cap. `DELETE /api/v1/task-comments/{commentID}` removes one
+comment — a caller (session or token) can only delete its own.
+
 #### Scopes
 
 | Scope | Grants |
@@ -560,15 +593,18 @@ allowlist of the regular task-tracker routes:
 | PATCH, DELETE | `/tasks/{taskID}` | `write` |
 | POST | `/tasks/{taskID}/close`, `/reopen`, `/assign-backlog`, `/sync-retry` | `write` |
 | PUT | `/tasks/{taskID}/ai-context` | `write` |
+| GET | `/tasks/{taskID}/comments` | `read` |
+| POST | `/tasks/{taskID}/comments` | `write` |
+| DELETE | `/task-comments/{commentID}` (own comment only) | `write` |
 | GET | `/projects/{projectID}/task-dependencies` | `read` |
 | POST | `/projects/{projectID}/task-dependencies` | `write` |
 | DELETE | `/task-dependencies/{dependencyID}` | `write` |
 | GET | `/linked-gitlab-projects/{linkID}/sync-runs` | `read` |
 
 A single-resource URL (`{taskID}`, `{backlogID}`, `{dependencyID}`,
-`{linkID}`) is checked against the token's own project the same way
-`{projectID}` is: a resource in a *different* project owned by the same
-user gets the same 404 as one that doesn't exist.
+`{commentID}`, `{linkID}`) is checked against the token's own project the
+same way `{projectID}` is: a resource in a *different* project owned by the
+same user gets the same 404 as one that doesn't exist.
 
 #### What a token can't reach
 

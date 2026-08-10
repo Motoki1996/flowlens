@@ -1,5 +1,6 @@
-// Package webhookevent verifies and records inbound GitLab issue webhook
-// deliveries (docs/plans/issue-sync.md, "Inbound"; ADR-0008). Service never
+// Package webhookevent verifies and records inbound GitLab issue and note
+// webhook deliveries (docs/plans/issue-sync.md, "Inbound"; ADR-0008; note
+// events since #104). Service never
 // applies an event to a task — Record only stores it (status='pending' or
 // 'skipped') and returns; applying pending events to tasks is
 // internal/webhookapply's job. This package also owns the troubleshooting
@@ -39,10 +40,25 @@ const (
 // Skip reasons stored in webhook_events.skip_reason by this package.
 const SkipReasonUnsupportedEvent = "unsupported_event"
 
-// SupportedEventHeader is the only X-Gitlab-Event header value this phase
-// applies. Any other event is still recorded, but as StatusSkipped /
+// IssueEventHeader and NoteEventHeader are the X-Gitlab-Event header values
+// this phase applies — issue events (docs/plans/issue-sync.md, "Inbound")
+// and, since #104, note events (GitLab CE's discussion/comment webhook).
+// Any other event is still recorded, but as StatusSkipped /
 // SkipReasonUnsupportedEvent rather than StatusPending.
-const SupportedEventHeader = "Issue Hook"
+const (
+	IssueEventHeader = "Issue Hook"
+	NoteEventHeader  = "Note Hook"
+
+	// SupportedEventHeader is IssueEventHeader, kept as an alias so existing
+	// callers/tests built around "the one supported event" still compile.
+	SupportedEventHeader = IssueEventHeader
+)
+
+// IsSupportedEventHeader reports whether eventName is an X-Gitlab-Event
+// header value this phase applies.
+func IsSupportedEventHeader(eventName string) bool {
+	return eventName == IssueEventHeader || eventName == NoteEventHeader
+}
 
 // Service verifies webhook deliveries against a linked GitLab project's
 // secret and records them.

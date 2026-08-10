@@ -28,13 +28,29 @@ const (
 
 // gitlabIssueHookPayload extracts only the fields the receiver needs to
 // store alongside the raw payload. The full payload is kept verbatim in
-// webhook_events.payload for the apply pipeline (a later phase) to parse.
+// webhook_events.payload for the apply pipeline to parse. It covers both
+// "Issue Hook" (object_attributes.iid is the issue's own IID) and, since
+// #104, "Note Hook" (object_attributes.iid is the note's own id — the
+// issue it's attached to is the separate top-level "issue" object) payloads.
 type gitlabIssueHookPayload struct {
 	ObjectKind       string `json:"object_kind"`
 	ObjectAttributes struct {
 		IID       int64  `json:"iid"`
 		UpdatedAt string `json:"updated_at"`
 	} `json:"object_attributes"`
+	Issue struct {
+		IID int64 `json:"iid"`
+	} `json:"issue"`
+}
+
+// issueIID returns the GitLab issue IID a payload is about, regardless of
+// whether it's an issue event (carried on object_attributes) or a note event
+// (carried on the separate "issue" object).
+func (p gitlabIssueHookPayload) issueIID() int64 {
+	if p.ObjectKind == "note" {
+		return p.Issue.IID
+	}
+	return p.ObjectAttributes.IID
 }
 
 // handleGitlabWebhook receives a GitLab project webhook delivery
@@ -85,7 +101,7 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 
 	eventName := r.Header.Get("X-Gitlab-Event")
 	status, skipReason, respStatus := webhookevent.StatusPending, "", http.StatusOK
-	if eventName != webhookevent.SupportedEventHeader {
+	if !webhookevent.IsSupportedEventHeader(eventName) {
 		status, skipReason, respStatus = webhookevent.StatusSkipped, webhookevent.SkipReasonUnsupportedEvent, http.StatusAccepted
 	}
 
@@ -94,7 +110,7 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 		DeliveryUUID:          r.Header.Get("X-Gitlab-Event-UUID"),
 		EventName:             eventName,
 		ObjectKind:            payload.ObjectKind,
-		GitlabIssueIID:        payload.ObjectAttributes.IID,
+		GitlabIssueIID:        payload.issueIID(),
 		Payload:               body,
 		GitlabUpdatedAt:       parseGitlabTime(payload.ObjectAttributes.UpdatedAt),
 		Status:                status,

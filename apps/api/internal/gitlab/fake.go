@@ -58,6 +58,15 @@ type FakeClient struct {
 	// UpdateIssueErr, when set, is returned by UpdateIssue.
 	UpdateIssueErr error
 
+	// Note is returned by CreateNote when set. Otherwise CreateNote
+	// synthesizes a Note with an auto-incrementing ID (nextNoteID): unlike
+	// Issue (pushed once per task), a test may push several comments and
+	// needs each to get a distinct GitLab note id.
+	Note *Note
+	// CreateNoteErr, when set, is returned by CreateNote.
+	CreateNoteErr error
+	nextNoteID    int64
+
 	// Hooks is returned by ListProjectHooks.
 	Hooks []ProjectHook
 	// HooksErr, when set, is returned by ListProjectHooks.
@@ -179,6 +188,19 @@ func (f *FakeClient) UpdateIssue(ctx context.Context, personalAccessToken string
 		return nil, f.UpdateIssueErr
 	}
 	return f.Issue, nil
+}
+
+// CreateNote implements Client.
+func (f *FakeClient) CreateNote(ctx context.Context, personalAccessToken string, projectID, issueIID int64, payload CreateNotePayload) (*Note, error) {
+	f.record("CreateNote", personalAccessToken, projectID, issueIID, payload)
+	if f.CreateNoteErr != nil {
+		return nil, f.CreateNoteErr
+	}
+	if f.Note != nil {
+		return f.Note, nil
+	}
+	f.nextNoteID++
+	return &Note{ID: f.nextNoteID, Body: payload.Body}, nil
 }
 
 // ListProjectHooks implements Client.

@@ -21,6 +21,7 @@ Run from the repo root (Makefile targets load `.env` automatically):
 | `make generate` | Regenerate sqlc query code — **run after editing any `.up.sql` schema or `internal/database/queries/*.sql`** |
 | `make test` | Go + web unit tests |
 | `make test-integration` | Go integration tests, gated by the `integration` build tag; needs a running Postgres with migrations applied |
+| `make test-e2e` | Playwright browser e2e tests (`apps/web/e2e`); needs a running Postgres with migrations applied, starts its own API+web |
 | `make lint` | golangci-lint + ESLint |
 | `make build` | Build API binary and web app |
 

@@ -67,6 +67,10 @@ test: ## Run api and web unit tests.
 test-integration: ## Run api integration tests (requires a running Postgres).
 	cd $(API_DIR) && go test -tags=integration ./...
 
+.PHONY: test-e2e
+test-e2e: ## Run Playwright browser e2e tests (requires a running, migrated Postgres; starts its own api+web).
+	cd $(WEB_DIR) && npx playwright test
+
 .PHONY: lint
 lint: ## Lint api (golangci-lint) and web (eslint).
 	cd $(API_DIR) && golangci-lint run ./...

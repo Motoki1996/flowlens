@@ -28,6 +28,7 @@ import (
 // codes.
 var (
 	ErrNotFound         = errors.New("taskdependency: not found")
+	ErrForbidden        = errors.New("taskdependency: forbidden")
 	ErrSelfDependency   = errors.New("taskdependency: a task cannot depend on itself")
 	ErrTaskNotInProject = errors.New("taskdependency: task belongs to a different project")
 	ErrCyclicDependency = errors.New("taskdependency: would create a cyclic dependency")
@@ -63,6 +64,22 @@ type Service struct {
 // used to verify project ownership and task membership before any write.
 func NewService(q db.Querier, projects *project.Service, tasks *task.Service) *Service {
 	return &Service{q: q, projects: projects, tasks: tasks}
+}
+
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("taskdependency: authorize: %w", err)
+	}
 }
 
 // validateTaskInProject checks that taskID belongs to ownerID and is inside
@@ -120,11 +137,8 @@ func wouldCycle(deps []db.TaskDependency, predecessorID, successorID uuid.UUID) 
 // a different project, ErrSelfDependency if the two IDs are equal, and
 // ErrCyclicDependency if the new edge would close a loop.
 func (s *Service) Create(ctx context.Context, ownerID, projectID, predecessorTaskID, successorTaskID uuid.UUID) (TaskDependency, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return TaskDependency{}, ErrNotFound
-		}
-		return TaskDependency{}, fmt.Errorf("taskdependency: create: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return TaskDependency{}, err
 	}
 	if predecessorTaskID == successorTaskID {
 		return TaskDependency{}, ErrSelfDependency
@@ -157,11 +171,8 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID, predecessorTas
 // List returns every dependency between tasks in projectID. It returns
 // ErrNotFound if projectID does not exist or belongs to another user.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID) ([]TaskDependency, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("taskdependency: list: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.q.ListTaskDependenciesByProject(ctx, projectID)
@@ -179,6 +190,13 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID) ([]Tas
 // project owner. It returns ErrNotFound both when the dependency does not
 // exist and when it belongs to another user.
 func (s *Service) Delete(ctx context.Context, ownerID, dependencyID uuid.UUID) error {
+	projectID, err := s.ProjectID(ctx, dependencyID)
+	if err != nil {
+		return err
+	}
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return err
+	}
 	affected, err := s.q.DeleteTaskDependencyForOwner(ctx, db.DeleteTaskDependencyForOwnerParams{
 		ID:          dependencyID,
 		OwnerUserID: ownerID,

@@ -95,20 +95,23 @@ func (q *Queries) ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTa
 
 const assignTaskBacklogForOwner = `-- name: AssignTaskBacklogForOwner :one
 UPDATE tasks t
-SET backlog_id = $3, updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+SET backlog_id = $2, updated_at = now()
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $3 AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress
 `
 
 type AssignTaskBacklogForOwnerParams struct {
 	ID          uuid.UUID   `json:"id"`
-	OwnerUserID uuid.UUID   `json:"owner_user_id"`
 	BacklogID   pgtype.UUID `json:"backlog_id"`
+	OwnerUserID uuid.UUID   `json:"owner_user_id"`
 }
 
 func (q *Queries) AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskBacklogForOwnerParams) (Task, error) {
-	row := q.db.QueryRow(ctx, assignTaskBacklogForOwner, arg.ID, arg.OwnerUserID, arg.BacklogID)
+	row := q.db.QueryRow(ctx, assignTaskBacklogForOwner, arg.ID, arg.BacklogID, arg.OwnerUserID)
 	var i Task
 	err := row.Scan(
 		&i.ID,
@@ -136,8 +139,11 @@ func (q *Queries) AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskB
 const closeTaskForOwner = `-- name: CloseTaskForOwner :one
 UPDATE tasks t
 SET status = 'closed', closed_at = now(), updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress
 `
 
@@ -174,9 +180,12 @@ func (q *Queries) CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerPa
 
 const countFailedSyncTasksByProjectForOwner = `-- name: CountFailedSyncTasksByProjectForOwner :one
 SELECT COUNT(*) FROM tasks t
-JOIN projects p ON p.id = t.project_id
 LEFT JOIN task_gitlab_links tgl ON tgl.task_id = t.id
-WHERE t.project_id = $1 AND p.owner_user_id = $2
+WHERE t.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $2
+  )
   AND (
     tgl.sync_status = 'failed'
     OR (tgl.task_id IS NULL AND EXISTS (
@@ -276,8 +285,11 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 
 const deleteTaskForOwner = `-- name: DeleteTaskForOwner :execrows
 DELETE FROM tasks t
-USING projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
 `
 
 type DeleteTaskForOwnerParams struct {
@@ -296,8 +308,11 @@ func (q *Queries) DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwner
 const getTaskForOwner = `-- name: GetTaskForOwner :one
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress
 FROM tasks t
-JOIN projects p ON p.id = t.project_id
-WHERE t.id = $1 AND p.owner_user_id = $2
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $2
+  )
 `
 
 type GetTaskForOwnerParams struct {
@@ -554,13 +569,14 @@ func (q *Queries) ListTasksByProjectPaged(ctx context.Context, arg ListTasksByPr
 	return items, nil
 }
 
-const listTasksForOwner = `-- name: ListTasksForOwner :many
+const listTasksForMember = `-- name: ListTasksForMember :many
 
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress,
        p.name AS project_name
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
-WHERE p.owner_user_id = $1
+JOIN project_members pm ON pm.project_id = p.id
+WHERE pm.user_id = $1
   AND ($2::text = '' OR t.status = $2)
   AND ($3::text = '' OR t.priority = $3)
   AND ($4::text = '' OR t.progress = $4)
@@ -581,7 +597,7 @@ ORDER BY
 LIMIT $10
 `
 
-type ListTasksForOwnerParams struct {
+type ListTasksForMemberParams struct {
 	OwnerUserID   uuid.UUID   `json:"owner_user_id"`
 	Status        string      `json:"status"`
 	Priority      string      `json:"priority"`
@@ -594,7 +610,7 @@ type ListTasksForOwnerParams struct {
 	LimitCount    int32       `json:"limit_count"`
 }
 
-type ListTasksForOwnerRow struct {
+type ListTasksForMemberRow struct {
 	ID                     uuid.UUID          `json:"id"`
 	ProjectID              uuid.UUID          `json:"project_id"`
 	BacklogID              pgtype.UUID        `json:"backlog_id"`
@@ -634,8 +650,8 @@ type ListTasksForOwnerRow struct {
 // sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
 // sink to the bottom", so it works unguarded both as sort=dueOn's primary
 // key and as every other sort's final tiebreak.
-func (q *Queries) ListTasksForOwner(ctx context.Context, arg ListTasksForOwnerParams) ([]ListTasksForOwnerRow, error) {
-	rows, err := q.db.Query(ctx, listTasksForOwner,
+func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error) {
+	rows, err := q.db.Query(ctx, listTasksForMember,
 		arg.OwnerUserID,
 		arg.Status,
 		arg.Priority,
@@ -651,9 +667,9 @@ func (q *Queries) ListTasksForOwner(ctx context.Context, arg ListTasksForOwnerPa
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListTasksForOwnerRow{}
+	items := []ListTasksForMemberRow{}
 	for rows.Next() {
-		var i ListTasksForOwnerRow
+		var i ListTasksForMemberRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -688,8 +704,11 @@ func (q *Queries) ListTasksForOwner(ctx context.Context, arg ListTasksForOwnerPa
 const reopenTaskForOwner = `-- name: ReopenTaskForOwner :one
 UPDATE tasks t
 SET status = 'open', closed_at = NULL, updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress
 `
 
@@ -760,17 +779,19 @@ func (q *Queries) ReorderTasks(ctx context.Context, arg ReorderTasksParams) erro
 
 const updateTaskForOwner = `-- name: UpdateTaskForOwner :one
 UPDATE tasks t
-SET backlog_id = $3, title = $4, description = $5,
-    assignee_gitlab_user_id = $6, assignee_gitlab_username = $7,
-    labels = $8, due_on = $9, start_date = $10, priority = $11, progress = $12, position = $13, updated_at = now()
-FROM projects p
-WHERE t.id = $1 AND t.project_id = p.id AND p.owner_user_id = $2
+SET backlog_id = $2, title = $3, description = $4,
+    assignee_gitlab_user_id = $5, assignee_gitlab_username = $6,
+    labels = $7, due_on = $8, start_date = $9, priority = $10, progress = $11, position = $12, updated_at = now()
+WHERE t.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = t.project_id AND pm.user_id = $13 AND pm.role IN ('member', 'owner')
+  )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress
 `
 
 type UpdateTaskForOwnerParams struct {
 	ID                     uuid.UUID   `json:"id"`
-	OwnerUserID            uuid.UUID   `json:"owner_user_id"`
 	BacklogID              pgtype.UUID `json:"backlog_id"`
 	Title                  string      `json:"title"`
 	Description            string      `json:"description"`
@@ -782,12 +803,12 @@ type UpdateTaskForOwnerParams struct {
 	Priority               string      `json:"priority"`
 	Progress               string      `json:"progress"`
 	Position               int32       `json:"position"`
+	OwnerUserID            uuid.UUID   `json:"owner_user_id"`
 }
 
 func (q *Queries) UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error) {
 	row := q.db.QueryRow(ctx, updateTaskForOwner,
 		arg.ID,
-		arg.OwnerUserID,
 		arg.BacklogID,
 		arg.Title,
 		arg.Description,
@@ -799,6 +820,7 @@ func (q *Queries) UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwner
 		arg.Priority,
 		arg.Progress,
 		arg.Position,
+		arg.OwnerUserID,
 	)
 	var i Task
 	err := row.Scan(

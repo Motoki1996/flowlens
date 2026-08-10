@@ -110,6 +110,31 @@ func now() pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: time.Now(), Valid: true}
 }
 
+// roleRank orders project_members.role the same way project.Role does:
+// viewer < member < owner. A role missing from this map (i.e. no membership
+// row at all) ranks below every real role.
+var roleRank = map[string]int{"viewer": 1, "member": 2, "owner": 3}
+
+// hasMembership reports whether userID has any project_members row at all
+// for projectID, mirroring an unrestricted "EXISTS (... pm.user_id = $N)"
+// subquery — the read-tier (viewer-minimum) check every *ForOwner query
+// below uses.
+func (f *FakeQuerier) hasMembership(projectID, userID uuid.UUID) bool {
+	_, ok := f.projectMembers[projectMemberKey{projectID, userID}]
+	return ok
+}
+
+// hasRoleAtLeast reports whether userID's project_members role for
+// projectID is at least min ("member" or "owner"), mirroring an
+// "EXISTS (... AND pm.role IN (...))" subquery — the write-tier check.
+func (f *FakeQuerier) hasRoleAtLeast(projectID, userID uuid.UUID, min string) bool {
+	m, ok := f.projectMembers[projectMemberKey{projectID, userID}]
+	if !ok {
+		return false
+	}
+	return roleRank[m.Role] >= roleRank[min]
+}
+
 func projectOwnerNameKey(ownerID uuid.UUID, name string) string {
 	return ownerID.String() + "\x00" + name
 }
@@ -338,6 +363,13 @@ func (f *FakeQuerier) SeedProject(ownerID uuid.UUID, name string) db.Project {
 		UpdatedAt:   now(),
 	}
 	f.storeProject(p)
+	// Every project has an 'owner'-role project_members row from the moment
+	// it exists — migration 000012 backfilled this for projects that
+	// predate project_members, and project.Service.Create does the
+	// equivalent for new ones; SeedProject mirrors both so a test that only
+	// calls SeedProject and acts as ownerID keeps passing unmodified
+	// (docs/decisions/0010-why-project-membership.md).
+	f.SeedProjectMember(p.ID, ownerID, "owner")
 	return p
 }
 
@@ -363,11 +395,12 @@ func (f *FakeQuerier) CreateProject(_ context.Context, arg db.CreateProjectParam
 	return p, nil
 }
 
-// GetProjectForOwner mirrors the SQL: a project owned by someone else is
-// reported as missing, never as a distinct "forbidden" outcome.
+// GetProjectForOwner mirrors the SQL: viewer-minimum (any project_members
+// role), since a caller with no membership row at all is reported as
+// missing, indistinguishable from a project that doesn't exist.
 func (f *FakeQuerier) GetProjectForOwner(_ context.Context, arg db.GetProjectForOwnerParams) (db.Project, error) {
 	p, ok := f.projectsByID[arg.ID]
-	if !ok || p.OwnerUserID != arg.OwnerUserID {
+	if !ok || !f.hasMembership(arg.ID, arg.OwnerUserID) {
 		return db.Project{}, pgx.ErrNoRows
 	}
 	return p, nil
@@ -384,19 +417,22 @@ func (f *FakeQuerier) GetProjectByID(_ context.Context, id uuid.UUID) (db.Projec
 	return p, nil
 }
 
-func (f *FakeQuerier) ListProjectsByOwner(_ context.Context, ownerUserID uuid.UUID) ([]db.Project, error) {
+// ListProjectsByMember mirrors the SQL: every project userID is a member of,
+// any role, newest first.
+func (f *FakeQuerier) ListProjectsByMember(_ context.Context, userID uuid.UUID) ([]db.Project, error) {
 	items := []db.Project{}
 	for i := len(f.projects) - 1; i >= 0; i-- {
-		if p := f.projects[i]; p.OwnerUserID == ownerUserID {
+		if p := f.projects[i]; f.hasMembership(p.ID, userID) {
 			items = append(items, p)
 		}
 	}
 	return items, nil
 }
 
+// UpdateProjectForOwner mirrors the SQL: member-minimum.
 func (f *FakeQuerier) UpdateProjectForOwner(_ context.Context, arg db.UpdateProjectForOwnerParams) (db.Project, error) {
 	existing, ok := f.projectsByID[arg.ID]
-	if !ok || existing.OwnerUserID != arg.OwnerUserID {
+	if !ok || !f.hasRoleAtLeast(arg.ID, arg.OwnerUserID, "member") {
 		return db.Project{}, pgx.ErrNoRows
 	}
 
@@ -555,26 +591,11 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 	return items, nil
 }
 
-// backlogOwner returns the owner_user_id of the project a backlog belongs
-// to, mirroring the JOIN the real query performs.
-func (f *FakeQuerier) backlogOwner(b db.Backlog) (uuid.UUID, bool) {
-	p, ok := f.projectsByID[b.ProjectID]
-	if !ok {
-		return uuid.Nil, false
-	}
-	return p.OwnerUserID, true
-}
-
-// GetBacklogForOwner mirrors the SQL: a backlog whose project belongs to
-// someone else is reported as missing, never as a distinct "forbidden"
-// outcome.
+// GetBacklogForOwner mirrors the SQL: viewer-minimum (any project_members
+// role) on the backlog's project.
 func (f *FakeQuerier) GetBacklogForOwner(_ context.Context, arg db.GetBacklogForOwnerParams) (db.Backlog, error) {
 	b, ok := f.backlogsByID[arg.ID]
-	if !ok {
-		return db.Backlog{}, pgx.ErrNoRows
-	}
-	owner, ok := f.backlogOwner(b)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasMembership(b.ProjectID, arg.OwnerUserID) {
 		return db.Backlog{}, pgx.ErrNoRows
 	}
 	return b, nil
@@ -590,13 +611,10 @@ func (f *FakeQuerier) GetBacklogProjectID(_ context.Context, id uuid.UUID) (uuid
 	return b.ProjectID, nil
 }
 
+// UpdateBacklogForOwner mirrors the SQL: member-minimum.
 func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBacklogForOwnerParams) (db.Backlog, error) {
 	existing, ok := f.backlogsByID[arg.ID]
-	if !ok {
-		return db.Backlog{}, pgx.ErrNoRows
-	}
-	owner, ok := f.backlogOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
 		return db.Backlog{}, pgx.ErrNoRows
 	}
 
@@ -649,11 +667,7 @@ func (f *FakeQuerier) ReorderBacklogs(_ context.Context, arg db.ReorderBacklogsP
 // tell "deleted" from "not yours / not there" exactly as Postgres does.
 func (f *FakeQuerier) DeleteBacklogForOwner(_ context.Context, arg db.DeleteBacklogForOwnerParams) (int64, error) {
 	b, ok := f.backlogsByID[arg.ID]
-	if !ok {
-		return 0, nil
-	}
-	owner, ok := f.backlogOwner(b)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasRoleAtLeast(b.ProjectID, arg.OwnerUserID, "member") {
 		return 0, nil
 	}
 	delete(f.backlogsByID, b.ID)
@@ -888,16 +902,15 @@ func dueOnEqual(a, b pgtype.Date) bool {
 // convention — then sorted and capped. See the real query's doc comment
 // (internal/database/queries/tasks.sql) for why the ORDER BY tiers apply
 // unconditionally rather than branching per sort value.
-func (f *FakeQuerier) ListTasksForOwner(_ context.Context, arg db.ListTasksForOwnerParams) ([]db.ListTasksForOwnerRow, error) {
+func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForMemberParams) ([]db.ListTasksForMemberRow, error) {
 	allowed := map[uuid.UUID]bool{}
 	for _, id := range arg.ProjectIds {
 		allowed[id] = true
 	}
 
-	items := []db.ListTasksForOwnerRow{}
+	items := []db.ListTasksForMemberRow{}
 	for _, t := range f.tasks {
-		owner, ok := f.taskOwner(t)
-		if !ok || owner != arg.OwnerUserID {
+		if !f.hasMembership(t.ProjectID, arg.OwnerUserID) {
 			continue
 		}
 		if arg.Status != "" && t.Status != arg.Status {
@@ -921,7 +934,7 @@ func (f *FakeQuerier) ListTasksForOwner(_ context.Context, arg db.ListTasksForOw
 		if len(allowed) > 0 && !allowed[t.ProjectID] {
 			continue
 		}
-		items = append(items, db.ListTasksForOwnerRow{
+		items = append(items, db.ListTasksForMemberRow{
 			ID:                     t.ID,
 			ProjectID:              t.ProjectID,
 			BacklogID:              t.BacklogID,
@@ -974,25 +987,11 @@ func (f *FakeQuerier) ListTasksForOwner(_ context.Context, arg db.ListTasksForOw
 	return items, nil
 }
 
-// taskOwner returns the owner_user_id of the project a task belongs to,
-// mirroring the JOIN the real query performs.
-func (f *FakeQuerier) taskOwner(t db.Task) (uuid.UUID, bool) {
-	p, ok := f.projectsByID[t.ProjectID]
-	if !ok {
-		return uuid.Nil, false
-	}
-	return p.OwnerUserID, true
-}
-
-// GetTaskForOwner mirrors the SQL: a task whose project belongs to someone
-// else is reported as missing, never as a distinct "forbidden" outcome.
+// GetTaskForOwner mirrors the SQL: viewer-minimum (any project_members
+// role) on the task's project.
 func (f *FakeQuerier) GetTaskForOwner(_ context.Context, arg db.GetTaskForOwnerParams) (db.Task, error) {
 	t, ok := f.tasksByID[arg.ID]
-	if !ok {
-		return db.Task{}, pgx.ErrNoRows
-	}
-	owner, ok := f.taskOwner(t)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasMembership(t.ProjectID, arg.OwnerUserID) {
 		return db.Task{}, pgx.ErrNoRows
 	}
 	return t, nil
@@ -1023,8 +1022,7 @@ func (f *FakeQuerier) GetTaskProjectID(_ context.Context, id uuid.UUID) (uuid.UU
 // from task_gitlab_links when a link exists or from its most recent sync_jobs
 // row (necessarily issue.create) when it doesn't.
 func (f *FakeQuerier) CountFailedSyncTasksByProjectForOwner(_ context.Context, arg db.CountFailedSyncTasksByProjectForOwnerParams) (int64, error) {
-	p, ok := f.projectsByID[arg.ProjectID]
-	if !ok || p.OwnerUserID != arg.OwnerUserID {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
 		return 0, nil
 	}
 	return f.countFailedSyncTasks(arg.ProjectID), nil
@@ -1056,19 +1054,20 @@ func (f *FakeQuerier) countFailedSyncTasks(projectID uuid.UUID) int64 {
 	return count
 }
 
-// ListFailedSyncProjectsByOwner mirrors the SQL: every project ownerUserID
-// owns with a non-zero failed-sync task count, ordered by updated_at DESC.
-func (f *FakeQuerier) ListFailedSyncProjectsByOwner(_ context.Context, ownerUserID uuid.UUID) ([]db.ListFailedSyncProjectsByOwnerRow, error) {
-	items := []db.ListFailedSyncProjectsByOwnerRow{}
+// ListFailedSyncProjectsByMember mirrors the SQL: every project userID is a
+// member of (any role) with a non-zero failed-sync task count, ordered by
+// updated_at DESC.
+func (f *FakeQuerier) ListFailedSyncProjectsByMember(_ context.Context, userID uuid.UUID) ([]db.ListFailedSyncProjectsByMemberRow, error) {
+	items := []db.ListFailedSyncProjectsByMemberRow{}
 	for _, p := range f.projects {
-		if p.OwnerUserID != ownerUserID {
+		if !f.hasMembership(p.ID, userID) {
 			continue
 		}
 		count := f.countFailedSyncTasks(p.ID)
 		if count == 0 {
 			continue
 		}
-		items = append(items, db.ListFailedSyncProjectsByOwnerRow{
+		items = append(items, db.ListFailedSyncProjectsByMemberRow{
 			ID:                  p.ID,
 			OwnerUserID:         p.OwnerUserID,
 			Name:                p.Name,
@@ -1089,8 +1088,7 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	if !ok {
 		return db.Task{}, pgx.ErrNoRows
 	}
-	owner, ok := f.taskOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	if !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
 		return db.Task{}, pgx.ErrNoRows
 	}
 
@@ -1116,8 +1114,7 @@ func (f *FakeQuerier) AssignTaskBacklogForOwner(_ context.Context, arg db.Assign
 	if !ok {
 		return db.Task{}, pgx.ErrNoRows
 	}
-	owner, ok := f.taskOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	if !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
 		return db.Task{}, pgx.ErrNoRows
 	}
 	existing.BacklogID = arg.BacklogID
@@ -1154,8 +1151,7 @@ func (f *FakeQuerier) CloseTaskForOwner(_ context.Context, arg db.CloseTaskForOw
 	if !ok {
 		return db.Task{}, pgx.ErrNoRows
 	}
-	owner, ok := f.taskOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	if !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
 		return db.Task{}, pgx.ErrNoRows
 	}
 	existing.Status = "closed"
@@ -1170,8 +1166,7 @@ func (f *FakeQuerier) ReopenTaskForOwner(_ context.Context, arg db.ReopenTaskFor
 	if !ok {
 		return db.Task{}, pgx.ErrNoRows
 	}
-	owner, ok := f.taskOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	if !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
 		return db.Task{}, pgx.ErrNoRows
 	}
 	existing.Status = "open"
@@ -1188,8 +1183,7 @@ func (f *FakeQuerier) DeleteTaskForOwner(_ context.Context, arg db.DeleteTaskFor
 	if !ok {
 		return 0, nil
 	}
-	owner, ok := f.taskOwner(t)
-	if !ok || owner != arg.OwnerUserID {
+	if !f.hasRoleAtLeast(t.ProjectID, arg.OwnerUserID, "member") {
 		return 0, nil
 	}
 	delete(f.tasksByID, t.ID)
@@ -1285,8 +1279,7 @@ func (f *FakeQuerier) DeleteTaskDependencyForOwner(_ context.Context, arg db.Del
 	if !ok {
 		return 0, nil
 	}
-	owner, ok := f.taskOwner(t)
-	if !ok || owner != arg.OwnerUserID {
+	if !f.hasRoleAtLeast(t.ProjectID, arg.OwnerUserID, "member") {
 		return 0, nil
 	}
 	delete(f.taskDependenciesByID, d.ID)
@@ -1297,16 +1290,6 @@ func (f *FakeQuerier) DeleteTaskDependencyForOwner(_ context.Context, arg db.Del
 		}
 	}
 	return 1, nil
-}
-
-// gitlabConnectionOwner returns the owner_user_id of the project a GitLab
-// connection belongs to, mirroring the JOIN the real query performs.
-func (f *FakeQuerier) gitlabConnectionOwner(c db.GitlabConnection) (uuid.UUID, bool) {
-	p, ok := f.projectsByID[c.ProjectID]
-	if !ok {
-		return uuid.Nil, false
-	}
-	return p.OwnerUserID, true
 }
 
 // UpsertGitlabConnection mirrors the SQL's ON CONFLICT (project_id) DO
@@ -1340,11 +1323,7 @@ func (f *FakeQuerier) UpsertGitlabConnection(_ context.Context, arg db.UpsertGit
 // "forbidden" outcome.
 func (f *FakeQuerier) GetGitlabConnectionForOwner(_ context.Context, arg db.GetGitlabConnectionForOwnerParams) (db.GitlabConnection, error) {
 	c, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
-	if !ok {
-		return db.GitlabConnection{}, pgx.ErrNoRows
-	}
-	owner, ok := f.gitlabConnectionOwner(c)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasMembership(c.ProjectID, arg.OwnerUserID) {
 		return db.GitlabConnection{}, pgx.ErrNoRows
 	}
 	return c, nil
@@ -1354,11 +1333,7 @@ func (f *FakeQuerier) GetGitlabConnectionForOwner(_ context.Context, arg db.GetG
 // GetGitlabConnectionForOwner, but keyed by the connection's own ID.
 func (f *FakeQuerier) GetGitlabConnectionByIDForOwner(_ context.Context, arg db.GetGitlabConnectionByIDForOwnerParams) (db.GitlabConnection, error) {
 	c, ok := f.gitlabConnectionsByID[arg.ID]
-	if !ok {
-		return db.GitlabConnection{}, pgx.ErrNoRows
-	}
-	owner, ok := f.gitlabConnectionOwner(c)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasMembership(c.ProjectID, arg.OwnerUserID) {
 		return db.GitlabConnection{}, pgx.ErrNoRows
 	}
 	return c, nil
@@ -1376,11 +1351,7 @@ func (f *FakeQuerier) GetGitlabConnectionByID(_ context.Context, id uuid.UUID) (
 
 func (f *FakeQuerier) UpdateGitlabConnectionVerificationForOwner(_ context.Context, arg db.UpdateGitlabConnectionVerificationForOwnerParams) (db.GitlabConnection, error) {
 	existing, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
-	if !ok {
-		return db.GitlabConnection{}, pgx.ErrNoRows
-	}
-	owner, ok := f.gitlabConnectionOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "owner") {
 		return db.GitlabConnection{}, pgx.ErrNoRows
 	}
 
@@ -1400,11 +1371,7 @@ func (f *FakeQuerier) UpdateGitlabConnectionVerificationForOwner(_ context.Conte
 // Postgres does.
 func (f *FakeQuerier) DeleteGitlabConnectionForOwner(_ context.Context, arg db.DeleteGitlabConnectionForOwnerParams) (int64, error) {
 	c, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
-	if !ok {
-		return 0, nil
-	}
-	owner, ok := f.gitlabConnectionOwner(c)
-	if !ok || owner != arg.OwnerUserID {
+	if !ok || !f.hasRoleAtLeast(c.ProjectID, arg.OwnerUserID, "owner") {
 		return 0, nil
 	}
 	delete(f.gitlabConnectionsByProjectID, arg.ProjectID)
@@ -1431,19 +1398,18 @@ func (f *FakeQuerier) SeedGitlabConnection(projectID uuid.UUID, encryptedToken [
 	return c
 }
 
-// linkedProjectOwner returns the owner_user_id of the project a linked
-// GitLab project belongs to (through its connection), mirroring the JOIN
-// chain the real queries perform.
-func (f *FakeQuerier) linkedProjectOwner(l db.LinkedGitlabProject) (uuid.UUID, bool) {
+// linkedProjectProjectID returns the project ID a linked GitLab project
+// belongs to (through its connection), mirroring the JOIN chain the real
+// queries perform.
+func (f *FakeQuerier) linkedProjectProjectID(l db.LinkedGitlabProject) (uuid.UUID, bool) {
 	conn, ok := f.gitlabConnectionsByID[l.GitlabConnectionID]
 	if !ok {
 		return uuid.Nil, false
 	}
-	p, ok := f.projectsByID[conn.ProjectID]
-	if !ok {
+	if _, ok := f.projectsByID[conn.ProjectID]; !ok {
 		return uuid.Nil, false
 	}
-	return p.OwnerUserID, true
+	return conn.ProjectID, true
 }
 
 // storeLinkedGitlabProject inserts l if it is new, or overwrites the
@@ -1497,11 +1463,10 @@ func (f *FakeQuerier) ListLinkedGitlabProjectsForOwner(_ context.Context, arg db
 	items := []db.LinkedGitlabProject{}
 	for _, l := range f.linkedGitlabProjects {
 		conn, ok := f.gitlabConnectionsByID[l.GitlabConnectionID]
-		if !ok || conn.ProjectID != arg.ID {
+		if !ok || conn.ProjectID != arg.ProjectID {
 			continue
 		}
-		p, ok := f.projectsByID[conn.ProjectID]
-		if !ok || p.OwnerUserID != arg.OwnerUserID {
+		if !f.hasMembership(conn.ProjectID, arg.OwnerUserID) {
 			continue
 		}
 		items = append(items, l)
@@ -1509,16 +1474,15 @@ func (f *FakeQuerier) ListLinkedGitlabProjectsForOwner(_ context.Context, arg db
 	return items, nil
 }
 
-// GetLinkedGitlabProjectForOwner mirrors the SQL: a link whose project
-// belongs to someone else is reported as missing, never as a distinct
-// "forbidden" outcome.
+// GetLinkedGitlabProjectForOwner mirrors the SQL: viewer-minimum (any
+// project_members role) on the link's project.
 func (f *FakeQuerier) GetLinkedGitlabProjectForOwner(_ context.Context, arg db.GetLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
 	l, ok := f.linkedGitlabProjectsByID[arg.ID]
 	if !ok {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
-	owner, ok := f.linkedProjectOwner(l)
-	if !ok || owner != arg.OwnerUserID {
+	projectID, ok := f.linkedProjectProjectID(l)
+	if !ok || !f.hasMembership(projectID, arg.OwnerUserID) {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	return l, nil
@@ -1559,11 +1523,10 @@ func (f *FakeQuerier) GetDefaultLinkedGitlabProjectForOwner(_ context.Context, a
 			continue
 		}
 		conn, ok := f.gitlabConnectionsByID[l.GitlabConnectionID]
-		if !ok || conn.ProjectID != arg.ID {
+		if !ok || conn.ProjectID != arg.ProjectID {
 			continue
 		}
-		p, ok := f.projectsByID[conn.ProjectID]
-		if !ok || p.OwnerUserID != arg.OwnerUserID {
+		if !f.hasMembership(conn.ProjectID, arg.OwnerUserID) {
 			continue
 		}
 		return l, nil
@@ -1576,8 +1539,8 @@ func (f *FakeQuerier) UpdateLinkedGitlabProjectSyncScopeForOwner(_ context.Conte
 	if !ok {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
-	owner, ok := f.linkedProjectOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	projectID, ok := f.linkedProjectProjectID(existing)
+	if !ok || !f.hasRoleAtLeast(projectID, arg.OwnerUserID, "member") {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	existing.SyncScope = arg.SyncScope
@@ -1594,8 +1557,8 @@ func (f *FakeQuerier) ClearDefaultLinkedGitlabProjectsForOwner(_ context.Context
 	if !ok {
 		return nil
 	}
-	owner, ok := f.linkedProjectOwner(target)
-	if !ok || owner != arg.OwnerUserID {
+	projectID, ok := f.linkedProjectProjectID(target)
+	if !ok || !f.hasRoleAtLeast(projectID, arg.OwnerUserID, "member") {
 		return nil
 	}
 	for _, l := range f.linkedGitlabProjects {
@@ -1613,8 +1576,8 @@ func (f *FakeQuerier) SetDefaultLinkedGitlabProjectForOwner(_ context.Context, a
 	if !ok {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
-	owner, ok := f.linkedProjectOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	projectID, ok := f.linkedProjectProjectID(existing)
+	if !ok || !f.hasRoleAtLeast(projectID, arg.OwnerUserID, "member") {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	existing.IsDefault = true
@@ -1630,8 +1593,8 @@ func (f *FakeQuerier) DeleteLinkedGitlabProjectForOwner(_ context.Context, arg d
 	if !ok {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
-	owner, ok := f.linkedProjectOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	projectID, ok := f.linkedProjectProjectID(existing)
+	if !ok || !f.hasRoleAtLeast(projectID, arg.OwnerUserID, "member") {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	delete(f.linkedGitlabProjectsByID, existing.ID)
@@ -1674,8 +1637,8 @@ func (f *FakeQuerier) SetLinkedGitlabProjectWebhookForOwner(_ context.Context, a
 	if !ok {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
-	owner, ok := f.linkedProjectOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	projectID, ok := f.linkedProjectProjectID(existing)
+	if !ok || !f.hasRoleAtLeast(projectID, arg.OwnerUserID, "member") {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	existing.WebhookID = arg.WebhookID
@@ -1695,8 +1658,8 @@ func (f *FakeQuerier) SetLinkedGitlabProjectWebhookErrorForOwner(_ context.Conte
 	if !ok {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
-	owner, ok := f.linkedProjectOwner(existing)
-	if !ok || owner != arg.OwnerUserID {
+	projectID, ok := f.linkedProjectProjectID(existing)
+	if !ok || !f.hasRoleAtLeast(projectID, arg.OwnerUserID, "member") {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	existing.WebhookRegistrationError = arg.WebhookRegistrationError
@@ -2026,8 +1989,7 @@ func (f *FakeQuerier) SyncJobsForTask(taskID uuid.UUID) []db.SyncJob {
 // projects: a projectID that doesn't exist or belongs to another owner
 // simply matches no rows, newest first.
 func (f *FakeQuerier) ListFailedSyncJobsByProjectForOwner(_ context.Context, arg db.ListFailedSyncJobsByProjectForOwnerParams) ([]db.SyncJob, error) {
-	p, ok := f.projectsByID[arg.ProjectID]
-	if !ok || p.OwnerUserID != arg.OwnerUserID {
+	if _, ok := f.projectsByID[arg.ProjectID]; !ok || !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
 		return []db.SyncJob{}, nil
 	}
 	out := []db.SyncJob{}
@@ -2048,8 +2010,7 @@ func (f *FakeQuerier) GetSyncJobForOwner(_ context.Context, arg db.GetSyncJobFor
 	if !ok {
 		return db.SyncJob{}, pgx.ErrNoRows
 	}
-	p, ok := f.projectsByID[j.ProjectID]
-	if !ok || p.OwnerUserID != arg.OwnerUserID {
+	if _, ok := f.projectsByID[j.ProjectID]; !ok || !f.hasMembership(j.ProjectID, arg.OwnerUserID) {
 		return db.SyncJob{}, pgx.ErrNoRows
 	}
 	return j, nil
@@ -2539,6 +2500,16 @@ func (f *FakeQuerier) ListGitlabSyncRunsByLinkedGitlabProjectID(_ context.Contex
 		return items[i].CreatedAt.Time.After(items[j].CreatedAt.Time)
 	})
 	return items, nil
+}
+
+// SeedProjectMember inserts a ready-made project_members row directly,
+// bypassing project.Service. Use it in tests that need a specific
+// non-owner role (viewer/member) on a project; an owner-role row is already
+// seeded automatically by SeedProject. Returns the stored row.
+func (f *FakeQuerier) SeedProjectMember(projectID, userID uuid.UUID, role string) db.ProjectMember {
+	m := db.ProjectMember{ProjectID: projectID, UserID: userID, Role: role, CreatedAt: now()}
+	f.projectMembers[projectMemberKey{projectID, userID}] = m
+	return m
 }
 
 // AddProjectMember mirrors the SQL.

@@ -126,6 +126,23 @@ func TestHandleListBacklogs_ForeignProjectGets404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+// TestHandleCreateBacklog_ViewerRoleGets403 covers issue #99: a viewer can
+// read the project's backlogs but gets 403, not 404, trying to create one.
+func TestHandleCreateBacklog_ViewerRoleGets403(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	viewerID, viewerToken := loginSession(t, s, q)
+	q.SeedProjectMember(p.ID, viewerID, "viewer")
+
+	listRec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs", nil, viewerToken)
+	require.Equal(t, http.StatusOK, listRec.Code)
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Sprint 1"}, viewerToken)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
 func TestHandleCreateBacklog(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

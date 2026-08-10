@@ -143,6 +143,10 @@ func newEnv(t *testing.T) *env {
 
 	appProject, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: user.ID, Name: "synce2e-project"})
 	require.NoError(t, err)
+	// CreateProject alone leaves no project_members row; project.Service.Create
+	// adds one, but this test exercises the raw db.Queries layer directly.
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: appProject.ID, UserID: user.ID, Role: "owner"})
+	require.NoError(t, err)
 
 	encryptedToken, err := cipher.Encrypt("glpat-test-token")
 	require.NoError(t, err)
@@ -176,7 +180,7 @@ func newEnv(t *testing.T) *env {
 	tasks := task.NewService(q, txRunner, projects, backlogs)
 
 	issuesyncSvc := issuesync.NewService(q, cipher, factory)
-	projSyncSvc := projectsync.NewService(q, txRunner, cipher, factory)
+	projSyncSvc := projectsync.NewService(q, txRunner, projects, cipher, factory)
 
 	registry := syncpkg.NewRegistry()
 	registry.Register(issuesync.KindIssueCreate, issuesyncSvc.HandleIssueCreate)

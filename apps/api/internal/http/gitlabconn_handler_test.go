@@ -34,6 +34,23 @@ func TestHandlePutGitlabConnection_SavesAndNeverReturnsTheToken(t *testing.T) {
 	assert.Equal(t, true, body["verified"])
 }
 
+// TestHandlePutGitlabConnection_MemberRoleGets403 covers issue #99's other
+// named completion criterion: a member (below owner) gets 403 on the GitLab
+// connection endpoint — the credential itself stays owner-only even though
+// a member can use an already-connected project to link/sync.
+func TestHandlePutGitlabConnection_MemberRoleGets403(t *testing.T) {
+	fake := &gitlab.FakeClient{AuthenticatedUser: &gitlab.User{ID: 7, Username: "octocat"}}
+	s, q := newTestServerWithGitlabClient(t, fake)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	memberID, memberToken := loginSession(t, s, q)
+	q.SeedProjectMember(p.ID, memberID, "member")
+
+	rec := doRequest(t, s, http.MethodPut, "/api/v1/projects/"+p.ID.String()+"/gitlab-connection",
+		putGitlabConnectionRequest{BaseURL: "https://gitlab.example.com/", Token: testToken}, memberToken)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
 func TestHandlePutGitlabConnection_RejectsInvalidBaseURL(t *testing.T) {
 	s, q := newTestServerWithGitlabClient(t, &gitlab.FakeClient{})
 	ownerID, token := loginSession(t, s, q)

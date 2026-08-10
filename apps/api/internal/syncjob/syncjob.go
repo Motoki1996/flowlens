@@ -25,6 +25,9 @@ var (
 	// belongs to another user's project — the two are never distinguished,
 	// the same as every other project-scoped resource.
 	ErrNotFound = errors.New("syncjob: not found")
+	// ErrForbidden means the caller has a project_members row but with too
+	// low a role for the action (issue #99).
+	ErrForbidden = errors.New("syncjob: forbidden")
 	// ErrNotFailed is returned by Retry when jobID is not currently 'failed'
 	// (already pending/running/succeeded, or a concurrent retry already
 	// moved it).
@@ -75,15 +78,28 @@ func NewService(q db.Querier, projects *project.Service) *Service {
 	return &Service{q: q, projects: projects}
 }
 
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("syncjob: authorize: %w", err)
+	}
+}
+
 // ListFailed returns every permanently-failed sync job for projectID, newest
 // first, scoped to ownerID. It returns ErrNotFound if projectID does not
 // exist or belongs to another user.
 func (s *Service) ListFailed(ctx context.Context, ownerID, projectID uuid.UUID) ([]Job, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("syncjob: list failed: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.q.ListFailedSyncJobsByProjectForOwner(ctx, db.ListFailedSyncJobsByProjectForOwnerParams{
@@ -112,6 +128,9 @@ func (s *Service) Retry(ctx context.Context, ownerID, jobID uuid.UUID) (Job, err
 			return Job{}, ErrNotFound
 		}
 		return Job{}, fmt.Errorf("syncjob: retry: %w", err)
+	}
+	if err := s.authorize(ctx, ownerID, existing.ProjectID, project.RoleMember); err != nil {
+		return Job{}, err
 	}
 	if existing.Status != "failed" {
 		return Job{}, ErrNotFailed

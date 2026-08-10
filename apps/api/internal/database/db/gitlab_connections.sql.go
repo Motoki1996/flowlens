@@ -14,8 +14,11 @@ import (
 
 const deleteGitlabConnectionForOwner = `-- name: DeleteGitlabConnectionForOwner :execrows
 DELETE FROM gitlab_connections gc
-USING projects p
-WHERE gc.project_id = $1 AND gc.project_id = p.id AND p.owner_user_id = $2
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $2 AND pm.role = 'owner'
+  )
 `
 
 type DeleteGitlabConnectionForOwnerParams struct {
@@ -60,8 +63,11 @@ const getGitlabConnectionByIDForOwner = `-- name: GetGitlabConnectionByIDForOwne
 SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at
 FROM gitlab_connections gc
-JOIN projects p ON p.id = gc.project_id
-WHERE gc.id = $1 AND p.owner_user_id = $2
+WHERE gc.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $2
+  )
 `
 
 type GetGitlabConnectionByIDForOwnerParams struct {
@@ -93,11 +99,15 @@ func (q *Queries) GetGitlabConnectionByIDForOwner(ctx context.Context, arg GetGi
 }
 
 const getGitlabConnectionForOwner = `-- name: GetGitlabConnectionForOwner :one
+
 SELECT gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at
 FROM gitlab_connections gc
-JOIN projects p ON p.id = gc.project_id
-WHERE gc.project_id = $1 AND p.owner_user_id = $2
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $2
+  )
 `
 
 type GetGitlabConnectionForOwnerParams struct {
@@ -105,6 +115,18 @@ type GetGitlabConnectionForOwnerParams struct {
 	OwnerUserID uuid.UUID `json:"owner_user_id"`
 }
 
+// GetGitlabConnectionForOwner/GetGitlabConnectionByIDForOwner only check
+// membership exists (any role), not a specific role: they back both
+// gitlabconn.Service's own owner-only HTTP-facing methods (Get/Test, via
+// getRow) *and* Dial/DialByConnectionID, which internal/linkedproject calls
+// on behalf of a member performing a member-level linked-project action
+// (Create/RegisterWebhook/...). The role-specific check
+// ("is ownerID actually allowed to do *this*") is enforced once, by the
+// caller: gitlabconn.Service.{Save,Get,Test,Delete} call
+// project.Service.Authorize(..., RoleOwner) themselves before touching the
+// row; internal/linkedproject authorizes its own member-minimum before ever
+// calling Dial/DialByConnectionID. Update/Delete below stay owner-only in
+// SQL directly, since nothing else reuses them.
 func (q *Queries) GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlabConnectionForOwnerParams) (GitlabConnection, error) {
 	row := q.db.QueryRow(ctx, getGitlabConnectionForOwner, arg.ProjectID, arg.OwnerUserID)
 	var i GitlabConnection
@@ -125,34 +147,37 @@ func (q *Queries) GetGitlabConnectionForOwner(ctx context.Context, arg GetGitlab
 
 const updateGitlabConnectionVerificationForOwner = `-- name: UpdateGitlabConnectionVerificationForOwner :one
 UPDATE gitlab_connections gc
-SET token_gitlab_user_id = $3,
-    token_gitlab_username = $4,
-    last_verified_at = $5,
-    last_verify_error = $6,
+SET token_gitlab_user_id = $2,
+    token_gitlab_username = $3,
+    last_verified_at = $4,
+    last_verify_error = $5,
     updated_at = now()
-FROM projects p
-WHERE gc.project_id = $1 AND gc.project_id = p.id AND p.owner_user_id = $2
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $6 AND pm.role = 'owner'
+  )
 RETURNING gc.id, gc.project_id, gc.base_url, gc.encrypted_token, gc.token_gitlab_user_id,
     gc.token_gitlab_username, gc.last_verified_at, gc.last_verify_error, gc.created_at, gc.updated_at
 `
 
 type UpdateGitlabConnectionVerificationForOwnerParams struct {
 	ProjectID           uuid.UUID          `json:"project_id"`
-	OwnerUserID         uuid.UUID          `json:"owner_user_id"`
 	TokenGitlabUserID   pgtype.Int8        `json:"token_gitlab_user_id"`
 	TokenGitlabUsername string             `json:"token_gitlab_username"`
 	LastVerifiedAt      pgtype.Timestamptz `json:"last_verified_at"`
 	LastVerifyError     string             `json:"last_verify_error"`
+	OwnerUserID         uuid.UUID          `json:"owner_user_id"`
 }
 
 func (q *Queries) UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error) {
 	row := q.db.QueryRow(ctx, updateGitlabConnectionVerificationForOwner,
 		arg.ProjectID,
-		arg.OwnerUserID,
 		arg.TokenGitlabUserID,
 		arg.TokenGitlabUsername,
 		arg.LastVerifiedAt,
 		arg.LastVerifyError,
+		arg.OwnerUserID,
 	)
 	var i GitlabConnection
 	err := row.Scan(

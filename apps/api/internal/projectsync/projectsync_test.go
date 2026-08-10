@@ -10,6 +10,7 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/gitlab"
+	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -43,7 +44,7 @@ func newFixture(t *testing.T, fake *gitlab.FakeClient) fixture {
 	require.NoError(t, err)
 	txRunner := dbtest.FakeTxRunner{Q: q}
 
-	svc := projectsync.NewService(q, txRunner, cipher, func(string) gitlab.Client { return fake })
+	svc := projectsync.NewService(q, txRunner, project.NewService(q), cipher, func(string) gitlab.Client { return fake })
 
 	owner := q.SeedUser("octocat", "octocat@example.com")
 	p := q.SeedProject(owner.ID, "Alpha")

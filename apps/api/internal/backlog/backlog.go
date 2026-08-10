@@ -34,6 +34,7 @@ var (
 	ErrInvalidPriority    = errors.New("backlog: priority must be one of low, medium, high, urgent")
 	ErrInvalidProgress    = errors.New("backlog: progress must be one of not_started, in_progress, on_hold, done")
 	ErrNotFound           = errors.New("backlog: not found")
+	ErrForbidden          = errors.New("backlog: forbidden")
 	ErrBacklogIDsMismatch = errors.New("backlog: backlogIds must exactly match the project's current backlogs")
 )
 
@@ -161,9 +162,25 @@ type Service struct {
 }
 
 // NewService constructs a backlog Service. projects is used to verify
-// project ownership before any project-scoped operation.
+// project access before any project-scoped operation.
 func NewService(q db.Querier, projects *project.Service) *Service {
 	return &Service{q: q, projects: projects}
+}
+
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("backlog: authorize: %w", err)
+	}
 }
 
 // normalizeName trims raw and enforces the 1-100 character rule.
@@ -193,11 +210,8 @@ type CreateParams struct {
 // backlog order. It returns ErrNotFound if projectID does not exist or
 // belongs to another user.
 func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p CreateParams) (Backlog, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return Backlog{}, ErrNotFound
-		}
-		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return Backlog{}, err
 	}
 
 	normalized, err := normalizeName(p.Name)
@@ -245,11 +259,8 @@ type ListFilter struct {
 // by priority when filter.Sort is SortPriority). It returns ErrNotFound if
 // projectID does not exist or belongs to another user.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Backlog, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("backlog: list: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{
@@ -332,10 +343,15 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 	}
 
 	// The UPDATE writes every column, so absent dates have to be resolved
-	// against the stored row first. Get is owner-scoped, so a foreign backlog
-	// stops here with ErrNotFound before anything is written.
+	// against the stored row first. Get is viewer-scoped, so a foreign
+	// backlog stops here with ErrNotFound before anything is written; the
+	// member-minimum write check itself happens right after, once
+	// current.ProjectID is known.
 	current, err := s.Get(ctx, ownerID, backlogID)
 	if err != nil {
+		return Backlog{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
 		return Backlog{}, err
 	}
 	startDate := p.StartDate.Or(current.StartDate)
@@ -380,11 +396,8 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 // guard internal/task.Service.Reorder applies to a backlog's tasks (issue
 // #79).
 func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, backlogIDs []uuid.UUID) ([]Backlog, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("backlog: reorder: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return nil, err
 	}
 
 	current, err := s.q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{ProjectID: projectID})
@@ -431,6 +444,13 @@ func sameBacklogIDSet(current []db.Backlog, backlogIDs []uuid.UUID) bool {
 // are not deleted: the schema's ON DELETE SET NULL drops them to
 // unfiled (backlog_id = NULL).
 func (s *Service) Delete(ctx context.Context, ownerID, backlogID uuid.UUID) error {
+	current, err := s.Get(ctx, ownerID, backlogID)
+	if err != nil {
+		return err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return err
+	}
 	affected, err := s.q.DeleteBacklogForOwner(ctx, db.DeleteBacklogForOwnerParams{
 		ID:          backlogID,
 		OwnerUserID: ownerID,

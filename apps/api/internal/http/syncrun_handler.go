@@ -66,6 +66,8 @@ func writeSyncRunError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, projectsync.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "linked gitlab project not found")
+	case errors.Is(err, projectsync.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	case errors.Is(err, projectsync.ErrRunInProgress):
 		writeError(w, http.StatusConflict, "sync_run_in_progress", "a sync run is already in progress for this linked project")
 	default:

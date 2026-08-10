@@ -271,6 +271,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "backlog_ids_mismatch", "backlogIds must exactly match the project's current backlogs")
 	case errors.Is(err, backlog.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "backlog not found")
+	case errors.Is(err, backlog.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
 	default:
 		slog.Error("backlog request", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")

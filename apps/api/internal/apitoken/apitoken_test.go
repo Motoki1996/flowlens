@@ -230,6 +230,40 @@ func TestService_Authenticate_ReturnsOwnerAndScopes(t *testing.T) {
 	assert.True(t, auth.HasScope(apitoken.ScopeWrite))
 }
 
+// TestService_Authenticate_ResolvesOwnerWithMultipleProjectMembers covers
+// issue #99's point about ADR-0009: a token still authenticates correctly
+// (resolving to the project's single designated owner_user_id) once other
+// users have been added to the project as member/viewer, and that resolved
+// owner's role-based checks all pass as owner — a bearer request "acts as"
+// the project's owner regardless of how many other members exist.
+func TestService_Authenticate_ResolvesOwnerWithMultipleProjectMembers(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	projects := project.NewService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	ctx := context.Background()
+
+	member := q.SeedUser("member", "member@example.com").ID
+	viewer := q.SeedUser("viewer", "viewer@example.com").ID
+	q.SeedProjectMember(p.ID, member, "member")
+	q.SeedProjectMember(p.ID, viewer, "viewer")
+
+	_, raw, err := svc.Create(ctx, owner, p.ID, "CI bot", []string{apitoken.ScopeWrite}, nil)
+	require.NoError(t, err)
+
+	auth, err := svc.Authenticate(ctx, raw)
+	require.NoError(t, err)
+	assert.Equal(t, p.ID, auth.ProjectID)
+	assert.Equal(t, owner, auth.OwnerUserID, "a bearer request always acts as the project's single designated owner, not any other member")
+
+	// The resolved owner's role-based checks all pass as owner.
+	role, err := projects.Role(ctx, auth.OwnerUserID, auth.ProjectID)
+	require.NoError(t, err)
+	assert.Equal(t, project.RoleOwner, role)
+	assert.NoError(t, projects.Authorize(ctx, auth.OwnerUserID, auth.ProjectID, project.RoleOwner))
+}
+
 func TestService_Authenticate_RefreshesLastUsedAt(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

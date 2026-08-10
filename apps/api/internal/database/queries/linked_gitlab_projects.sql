@@ -20,16 +20,22 @@ RETURNING *;
 SELECT lgp.*
 FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
-JOIN projects p ON p.id = gc.project_id
-WHERE p.id = $1 AND p.owner_user_id = $2
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  )
 ORDER BY lgp.created_at;
 
 -- name: GetLinkedGitlabProjectForOwner :one
 SELECT lgp.*
 FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
-JOIN projects p ON p.id = gc.project_id
-WHERE lgp.id = $1 AND p.owner_user_id = $2;
+WHERE lgp.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
 
 -- name: GetLinkedGitlabProjectByID :one
 -- Unscoped: the outbox worker (internal/issuesync) has no acting user. The
@@ -56,17 +62,28 @@ WHERE lgp.id = $1;
 SELECT lgp.*
 FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
-JOIN projects p ON p.id = gc.project_id
-WHERE p.id = $1 AND p.owner_user_id = $2 AND lgp.is_default = true;
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  )
+  AND lgp.is_default = true;
+
+-- Everything below is member-minimum (issue #99): using an already-connected
+-- project to link/sync is a member-level action, distinct from managing the
+-- connection's credential itself (owner-only, gitlab_connections.sql).
 
 -- name: UpdateLinkedGitlabProjectSyncScopeForOwner :one
 UPDATE linked_gitlab_projects lgp
-SET sync_scope = $3,
-    sync_labels = $4,
+SET sync_scope = $2,
+    sync_labels = $3,
     updated_at = now()
-FROM gitlab_connections gc, projects p
-WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
-    AND p.owner_user_id = $2
+FROM gitlab_connections gc
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id
+    AND EXISTS (
+      SELECT 1 FROM project_members pm
+      WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+    )
 RETURNING lgp.*;
 
 -- name: ClearDefaultLinkedGitlabProjectsForOwner :exec
@@ -75,9 +92,12 @@ RETURNING lgp.*;
 UPDATE linked_gitlab_projects lgp
 SET is_default = false,
     updated_at = now()
-FROM gitlab_connections gc, projects p
-WHERE lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
-    AND p.owner_user_id = $2
+FROM gitlab_connections gc
+WHERE lgp.gitlab_connection_id = gc.id
+    AND EXISTS (
+      SELECT 1 FROM project_members pm
+      WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+    )
     AND lgp.gitlab_connection_id = (
         SELECT orig.gitlab_connection_id FROM linked_gitlab_projects orig WHERE orig.id = $1
     )
@@ -87,9 +107,12 @@ WHERE lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
 UPDATE linked_gitlab_projects lgp
 SET is_default = true,
     updated_at = now()
-FROM gitlab_connections gc, projects p
-WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
-    AND p.owner_user_id = $2
+FROM gitlab_connections gc
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id
+    AND EXISTS (
+      SELECT 1 FROM project_members pm
+      WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+    )
 RETURNING lgp.*;
 
 -- name: DeleteLinkedGitlabProjectForOwner :one
@@ -97,9 +120,12 @@ RETURNING lgp.*;
 -- service can tell whether it removed the default link and needs to
 -- promote another one.
 DELETE FROM linked_gitlab_projects lgp
-USING gitlab_connections gc, projects p
-WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
-    AND p.owner_user_id = $2
+USING gitlab_connections gc
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id
+    AND EXISTS (
+      SELECT 1 FROM project_members pm
+      WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+    )
 RETURNING lgp.*;
 
 -- name: PromoteOldestLinkedGitlabProjectAsDefault :exec
@@ -118,14 +144,17 @@ WHERE id = (
 -- Records a successful webhook registration or rotation (issue #18) and
 -- clears any earlier registration error.
 UPDATE linked_gitlab_projects lgp
-SET webhook_id = $3,
-    encrypted_webhook_secret = $4,
+SET webhook_id = $2,
+    encrypted_webhook_secret = $3,
     webhook_registered_at = now(),
     webhook_registration_error = '',
     updated_at = now()
-FROM gitlab_connections gc, projects p
-WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
-    AND p.owner_user_id = $2
+FROM gitlab_connections gc
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id
+    AND EXISTS (
+      SELECT 1 FROM project_members pm
+      WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+    )
 RETURNING lgp.*;
 
 -- name: SetLinkedGitlabProjectWebhookErrorForOwner :one
@@ -133,11 +162,14 @@ RETURNING lgp.*;
 -- insufficient GitLab permissions) without touching any existing
 -- webhook_id, so the link stays usable via manual sync.
 UPDATE linked_gitlab_projects lgp
-SET webhook_registration_error = $3,
+SET webhook_registration_error = $2,
     updated_at = now()
-FROM gitlab_connections gc, projects p
-WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id AND gc.project_id = p.id
-    AND p.owner_user_id = $2
+FROM gitlab_connections gc
+WHERE lgp.id = $1 AND lgp.gitlab_connection_id = gc.id
+    AND EXISTS (
+      SELECT 1 FROM project_members pm
+      WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+    )
 RETURNING lgp.*;
 
 -- name: UpdateLinkedGitlabProjectLastSyncedAt :one

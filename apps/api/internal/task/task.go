@@ -41,6 +41,7 @@ var (
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
 	ErrSyncNotFailed         = errors.New("task: gitlab sync is not currently failed")
 	ErrTaskIDsMismatch       = errors.New("task: taskIds must exactly match the current tasks in that backlog")
+	ErrForbidden             = errors.New("task: forbidden")
 )
 
 // maxAIContextFieldLength bounds each of the four task_ai_contexts fields.
@@ -430,6 +431,22 @@ func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Serv
 	return &Service{q: q, txRunner: txRunner, projects: projects, backlogs: backlogs}
 }
 
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("task: authorize: %w", err)
+	}
+}
+
 // normalizeTitle trims raw and enforces the 1-255 character rule.
 func normalizeTitle(raw string) (string, error) {
 	title := strings.TrimSpace(raw)
@@ -509,11 +526,8 @@ func normalizeLabels(labels []string) []string {
 // (ADR-0008), so that token's account stands in for "the creator's GitLab
 // account".
 func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, params CreateParams) (Task, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return Task{}, ErrNotFound
-		}
-		return Task{}, fmt.Errorf("task: create: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return Task{}, err
 	}
 
 	title, err := normalizeTitle(params.Title)
@@ -600,7 +614,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 // a purely local one.
 func getDefaultLinkedGitlabProject(ctx context.Context, q db.Querier, ownerID, projectID uuid.UUID) (db.LinkedGitlabProject, bool, error) {
 	link, err := q.GetDefaultLinkedGitlabProjectForOwner(ctx, db.GetDefaultLinkedGitlabProjectForOwnerParams{
-		ID:          projectID,
+		ProjectID:   projectID,
 		OwnerUserID: ownerID,
 	})
 	if err != nil {
@@ -656,11 +670,8 @@ type ListFilter struct {
 // returns ErrNotFound if projectID does not exist or belongs to another
 // user.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Task, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("task: list: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
@@ -764,7 +775,7 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 		projectIDs = []uuid.UUID{}
 	}
 
-	rows, err := s.q.ListTasksForOwner(ctx, db.ListTasksForOwnerParams{
+	rows, err := s.q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
 		OwnerUserID:   ownerID,
 		Status:        filter.Status,
 		Priority:      filter.Priority,
@@ -786,11 +797,11 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 	return out, nil
 }
 
-// fromCrossProjectRow maps a ListTasksForOwner row to TaskWithProject. It is
-// separate from fromRow because db.ListTasksForOwnerRow is its own sqlc type
+// fromCrossProjectRow maps a ListTasksForMember row to TaskWithProject. It is
+// separate from fromRow because db.ListTasksForMemberRow is its own sqlc type
 // (the joined project_name column keeps it from matching db.Task), not
 // because the two ever disagree about a shared field.
-func fromCrossProjectRow(row db.ListTasksForOwnerRow) TaskWithProject {
+func fromCrossProjectRow(row db.ListTasksForMemberRow) TaskWithProject {
 	return TaskWithProject{
 		Task: fromRow(db.Task{
 			ID:                     row.ID,
@@ -949,7 +960,11 @@ func (s *Service) gitlabContextForTask(ctx context.Context, taskID uuid.UUID) (*
 // immediately, and its job is reset to run again with a fresh attempt
 // budget, so the outbox worker picks it up on its next poll.
 func (s *Service) RetrySync(ctx context.Context, ownerID, taskID uuid.UUID) (Task, error) {
-	if _, err := s.Get(ctx, ownerID, taskID); err != nil {
+	current, err := s.Get(ctx, ownerID, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
 		return Task{}, err
 	}
 	info, err := s.gitlabInfoForTask(ctx, taskID)
@@ -990,6 +1005,9 @@ func (s *Service) RetrySync(ctx context.Context, ownerID, taskID uuid.UUID) (Tas
 func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params UpdateParams) (Task, error) {
 	current, err := s.Get(ctx, ownerID, taskID)
 	if err != nil {
+		return Task{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
 		return Task{}, err
 	}
 
@@ -1126,6 +1144,9 @@ func (s *Service) AssignBacklog(ctx context.Context, ownerID, taskID uuid.UUID, 
 	if err != nil {
 		return Task{}, err
 	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Task{}, err
+	}
 	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, backlogID); err != nil {
 		return Task{}, err
 	}
@@ -1156,11 +1177,8 @@ func (s *Service) AssignBacklog(ctx context.Context, ownerID, taskID uuid.UUID, 
 // (AssignBacklog or Update's BacklogID), done before calling Reorder for the
 // destination bucket — this method never changes backlog_id itself.
 func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, backlogID *uuid.UUID, taskIDs []uuid.UUID) ([]Task, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("task: reorder: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return nil, err
 	}
 	if err := s.validateBacklog(ctx, ownerID, projectID, backlogID); err != nil {
 		return nil, err
@@ -1226,6 +1244,9 @@ func (s *Service) Close(ctx context.Context, ownerID, taskID uuid.UUID) (Task, e
 	if err != nil {
 		return Task{}, err
 	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Task{}, err
+	}
 	if current.Status == StatusClosed {
 		return current, nil
 	}
@@ -1256,6 +1277,9 @@ func (s *Service) Reopen(ctx context.Context, ownerID, taskID uuid.UUID) (Task, 
 	if err != nil {
 		return Task{}, err
 	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Task{}, err
+	}
 	if current.Status == StatusOpen {
 		return current, nil
 	}
@@ -1284,6 +1308,13 @@ func (s *Service) Reopen(ctx context.Context, ownerID, taskID uuid.UUID) (Task, 
 // docs/plans/issue-sync.md. Ownership is enforced by the query, so a
 // non-owner gets ErrNotFound and nothing is deleted.
 func (s *Service) Delete(ctx context.Context, ownerID, taskID uuid.UUID) error {
+	current, err := s.Get(ctx, ownerID, taskID)
+	if err != nil {
+		return err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return err
+	}
 	affected, err := s.q.DeleteTaskForOwner(ctx, db.DeleteTaskForOwnerParams{ID: taskID, OwnerUserID: ownerID})
 	if err != nil {
 		return fmt.Errorf("task: delete: %w", err)
@@ -1301,7 +1332,11 @@ func (s *Service) Delete(ctx context.Context, ownerID, taskID uuid.UUID) error {
 // Ownership is enforced via Get, so a non-owner gets ErrNotFound and nothing
 // is written.
 func (s *Service) UpsertAIContext(ctx context.Context, ownerID, taskID uuid.UUID, params AIContextParams) (AIContext, error) {
-	if _, err := s.Get(ctx, ownerID, taskID); err != nil {
+	current, err := s.Get(ctx, ownerID, taskID)
+	if err != nil {
+		return AIContext{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
 		return AIContext{}, err
 	}
 	if err := validateAIContextParams(params); err != nil {
@@ -1481,11 +1516,8 @@ type ContextPage struct {
 // owner like List. It returns ErrNotFound if projectID does not exist or
 // belongs to another user.
 func (s *Service) ListContext(ctx context.Context, ownerID, projectID uuid.UUID, filter ContextListFilter) (ContextPage, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return ContextPage{}, ErrNotFound
-		}
-		return ContextPage{}, fmt.Errorf("task: list context: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return ContextPage{}, err
 	}
 	return s.listContext(ctx, projectID, filter)
 }

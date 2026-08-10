@@ -72,8 +72,11 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 
 const deleteBacklogForOwner = `-- name: DeleteBacklogForOwner :execrows
 DELETE FROM backlogs b
-USING projects p
-WHERE b.id = $1 AND b.project_id = p.id AND p.owner_user_id = $2
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
 `
 
 type DeleteBacklogForOwnerParams struct {
@@ -92,8 +95,11 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
 SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress
 FROM backlogs b
-JOIN projects p ON p.id = b.project_id
-WHERE b.id = $1 AND p.owner_user_id = $2
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2
+  )
 `
 
 type GetBacklogForOwnerParams struct {
@@ -236,15 +242,17 @@ func (q *Queries) ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams
 
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, progress = $9, updated_at = now()
-FROM projects p
-WHERE b.id = $1 AND b.project_id = p.id AND p.owner_user_id = $2
+SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, updated_at = now()
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $9 AND pm.role IN ('member', 'owner')
+  )
 RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress
 `
 
 type UpdateBacklogForOwnerParams struct {
 	ID          uuid.UUID   `json:"id"`
-	OwnerUserID uuid.UUID   `json:"owner_user_id"`
 	Name        string      `json:"name"`
 	Description string      `json:"description"`
 	Position    int32       `json:"position"`
@@ -252,6 +260,7 @@ type UpdateBacklogForOwnerParams struct {
 	DueOn       pgtype.Date `json:"due_on"`
 	Priority    string      `json:"priority"`
 	Progress    string      `json:"progress"`
+	OwnerUserID uuid.UUID   `json:"owner_user_id"`
 }
 
 // UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
@@ -260,7 +269,6 @@ type UpdateBacklogForOwnerParams struct {
 func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error) {
 	row := q.db.QueryRow(ctx, updateBacklogForOwner,
 		arg.ID,
-		arg.OwnerUserID,
 		arg.Name,
 		arg.Description,
 		arg.Position,
@@ -268,6 +276,7 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		arg.DueOn,
 		arg.Priority,
 		arg.Progress,
+		arg.OwnerUserID,
 	)
 	var i Backlog
 	err := row.Scan(

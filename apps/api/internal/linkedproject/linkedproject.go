@@ -45,6 +45,7 @@ const (
 // existence to non-owners.
 var (
 	ErrNotFound                 = errors.New("linkedproject: not found")
+	ErrForbidden                = errors.New("linkedproject: forbidden")
 	ErrInvalidSyncScope         = errors.New(`linkedproject: sync_scope must be "all" or "labels"`)
 	ErrSyncLabelsRequired       = errors.New(`linkedproject: sync_labels must have at least one label when sync_scope is "labels"`)
 	ErrAlreadyLinked            = errors.New("linkedproject: gitlab project is already linked")
@@ -217,10 +218,29 @@ func mapConnErr(err error) error {
 	return fmt.Errorf("linkedproject: %w", err)
 }
 
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("linkedproject: authorize: %w", err)
+	}
+}
+
 // ListAvailable lists the GitLab projects the connection's token's user is
 // a member of, for picking one to link. It calls the GitLab API directly;
 // nothing here is read from or written to the database.
 func (s *Service) ListAvailable(ctx context.Context, ownerID, projectID uuid.UUID, params AvailableProjectsParams) ([]gitlab.Project, gitlab.PageInfo, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return nil, gitlab.PageInfo{}, err
+	}
 	client, token, _, err := s.gitlabConns.Dial(ctx, ownerID, projectID)
 	if err != nil {
 		return nil, gitlab.PageInfo{}, mapConnErr(err)
@@ -249,6 +269,13 @@ func (s *Service) ListMembers(ctx context.Context, ownerID, linkID uuid.UUID, pa
 			return nil, gitlab.PageInfo{}, ErrNotFound
 		}
 		return nil, gitlab.PageInfo{}, fmt.Errorf("linkedproject: list members: %w", err)
+	}
+	linkProjectID, err := s.ProjectID(ctx, linkID)
+	if err != nil {
+		return nil, gitlab.PageInfo{}, fmt.Errorf("linkedproject: list members: %w", err)
+	}
+	if err := s.authorize(ctx, ownerID, linkProjectID, project.RoleViewer); err != nil {
+		return nil, gitlab.PageInfo{}, err
 	}
 
 	client, token, err := s.gitlabConns.DialByConnectionID(ctx, ownerID, link.GitlabConnectionID)
@@ -280,6 +307,13 @@ func (s *Service) ListLabels(ctx context.Context, ownerID, linkID uuid.UUID) ([]
 		}
 		return nil, fmt.Errorf("linkedproject: list labels: %w", err)
 	}
+	linkProjectID, err := s.ProjectID(ctx, linkID)
+	if err != nil {
+		return nil, fmt.Errorf("linkedproject: list labels: %w", err)
+	}
+	if err := s.authorize(ctx, ownerID, linkProjectID, project.RoleViewer); err != nil {
+		return nil, err
+	}
 
 	client, token, err := s.gitlabConns.DialByConnectionID(ctx, ownerID, link.GitlabConnectionID)
 	if err != nil {
@@ -299,6 +333,9 @@ func (s *Service) ListLabels(ctx context.Context, ownerID, linkID uuid.UUID) ([]
 // becomes its default automatically (see UpdateParams.SetDefault to change
 // it later).
 func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, params CreateParams) (LinkedProject, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return LinkedProject{}, err
+	}
 	labels, err := validateSyncScope(params.SyncScope, params.SyncLabels)
 	if err != nil {
 		return LinkedProject{}, err
@@ -362,6 +399,9 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 // project_id column of its own, only a path through gitlab_connections (see
 // the queries file).
 func (s *Service) Get(ctx context.Context, ownerID, projectID, linkID uuid.UUID) (LinkedProject, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return LinkedProject{}, err
+	}
 	row, err := s.q.GetLinkedGitlabProjectForOwner(ctx, db.GetLinkedGitlabProjectForOwnerParams{
 		ID:          linkID,
 		OwnerUserID: ownerID,
@@ -387,15 +427,12 @@ func (s *Service) Get(ctx context.Context, ownerID, projectID, linkID uuid.UUID)
 // oldest first. It returns ErrNotFound if projectID does not exist or
 // belongs to another user.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID) ([]LinkedProject, error) {
-	if _, err := s.projects.Get(ctx, ownerID, projectID); err != nil {
-		if errors.Is(err, project.ErrNotFound) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("linkedproject: list: %w", err)
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.q.ListLinkedGitlabProjectsForOwner(ctx, db.ListLinkedGitlabProjectsForOwnerParams{
-		ID:          projectID,
+		ProjectID:   projectID,
 		OwnerUserID: ownerID,
 	})
 	if err != nil {
@@ -429,6 +466,13 @@ func (s *Service) ProjectID(ctx context.Context, linkID uuid.UUID) (uuid.UUID, e
 // its connection's default link. Ownership is enforced by the query, so a
 // non-owner gets ErrNotFound and nothing is written.
 func (s *Service) Update(ctx context.Context, ownerID, linkID uuid.UUID, params UpdateParams) (LinkedProject, error) {
+	linkProjectID, err := s.ProjectID(ctx, linkID)
+	if err != nil {
+		return LinkedProject{}, fmt.Errorf("linkedproject: update: %w", err)
+	}
+	if err := s.authorize(ctx, ownerID, linkProjectID, project.RoleMember); err != nil {
+		return LinkedProject{}, err
+	}
 	labels, err := validateSyncScope(params.SyncScope, params.SyncLabels)
 	if err != nil {
 		return LinkedProject{}, err
@@ -477,6 +521,13 @@ func (s *Service) Update(ctx context.Context, ownerID, linkID uuid.UUID, params 
 // enforced by the query, so a non-owner gets ErrNotFound and nothing is
 // deleted.
 func (s *Service) Delete(ctx context.Context, ownerID, linkID uuid.UUID) error {
+	linkProjectID, err := s.ProjectID(ctx, linkID)
+	if err != nil {
+		return fmt.Errorf("linkedproject: delete: %w", err)
+	}
+	if err := s.authorize(ctx, ownerID, linkProjectID, project.RoleMember); err != nil {
+		return err
+	}
 	deleted, err := s.q.DeleteLinkedGitlabProjectForOwner(ctx, db.DeleteLinkedGitlabProjectForOwnerParams{
 		ID:          linkID,
 		OwnerUserID: ownerID,
@@ -511,6 +562,13 @@ func (s *Service) RegisterWebhook(ctx context.Context, ownerID, linkID uuid.UUID
 			return LinkedProject{}, ErrNotFound
 		}
 		return LinkedProject{}, fmt.Errorf("linkedproject: register webhook: %w", err)
+	}
+	linkProjectID, err := s.ProjectID(ctx, linkID)
+	if err != nil {
+		return LinkedProject{}, fmt.Errorf("linkedproject: register webhook: %w", err)
+	}
+	if err := s.authorize(ctx, ownerID, linkProjectID, project.RoleMember); err != nil {
+		return LinkedProject{}, err
 	}
 	if s.appPublicURL == "" {
 		return fromRow(link), nil

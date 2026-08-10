@@ -94,14 +94,15 @@ func isValidProgress(v string) bool {
 }
 
 // parseTaskListFilter reads the ?backlog_id=, ?status=, ?priority=,
-// ?progress=, ?sort= and ?assignee= query parameters. backlog_id accepts a
-// UUID or the literal "unassigned"; status accepts "open" or "closed" (the
-// GitLab issue state); priority accepts "low", "medium", "high" or "urgent";
-// progress accepts "not_started", "in_progress", "on_hold" or "done"
-// (FlowLens's own work state, independent of status); sort accepts
-// "priority" or "progress" to rank by either instead of the default
-// manual/position order; assignee accepts only the literal "me" (issue
-// #102). Any may be omitted to mean "no filter"/"default order".
+// ?progress=, ?sort=, ?assignee= and ?q= query parameters. backlog_id
+// accepts a UUID or the literal "unassigned"; status accepts "open" or
+// "closed" (the GitLab issue state); priority accepts "low", "medium",
+// "high" or "urgent"; progress accepts "not_started", "in_progress",
+// "on_hold" or "done" (FlowLens's own work state, independent of status);
+// sort accepts "priority" or "progress" to rank by either instead of the
+// default manual/position order; assignee accepts only the literal "me"
+// (issue #102); q free-text matches a task's title or description (issue
+// #106). Any may be omitted to mean "no filter"/"default order".
 func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 	var filter task.ListFilter
 
@@ -155,6 +156,8 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 		}
 		filter.AssigneeMe = true
 	}
+
+	filter.Query = r.URL.Query().Get("q")
 
 	return filter, nil
 }
@@ -241,8 +244,9 @@ func isValidCrossProjectSort(v string) bool {
 // /api/v1/tasks accepts (issue #76): ?status=, ?priority=, ?progress=, ?dueBefore=,
 // ?dueAfter=, ?startedBefore= (all YYYY-MM-DD), ?projectId= (repeatable —
 // still scoped to the caller's own projects, never a way to reach someone
-// else's), ?sort=, ?limit= and ?assignee= (only the literal "me", issue
-// #102). Every filter may be omitted; sort and limit
+// else's), ?sort=, ?limit=, ?assignee= (only the literal "me", issue #102)
+// and ?q= (free-text, matching a task's title or description, issue #106).
+// Every filter may be omitted; sort and limit
 // are defaulted by task.Service.ListForOwner itself, not here.
 func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, error) {
 	var filter task.CrossProjectFilter
@@ -309,6 +313,8 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 		}
 		filter.AssigneeMe = true
 	}
+
+	filter.Query = r.URL.Query().Get("q")
 
 	return filter, nil
 }

@@ -5,6 +5,7 @@ package dbtest
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/flowlens/api/internal/database/db"
@@ -808,6 +809,19 @@ func (f *FakeQuerier) ApplyWebhookTaskFields(_ context.Context, arg db.ApplyWebh
 	return existing, nil
 }
 
+// matchesTaskQuery is ListTasksByProject/ListTasksForMember's q filter,
+// approximated as a case-insensitive substring match on title/description —
+// good enough for domain-layer tests, which don't have a real Postgres to
+// run search_vector @@ websearch_to_tsquery against (that's covered at the
+// integration layer, internal/database).
+func matchesTaskQuery(title, description, q string) bool {
+	if q == "" {
+		return true
+	}
+	q = strings.ToLower(q)
+	return strings.Contains(strings.ToLower(title), q) || strings.Contains(strings.ToLower(description), q)
+}
+
 func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByProjectParams) ([]db.Task, error) {
 	items := []db.Task{}
 	for _, t := range f.tasks {
@@ -830,6 +844,9 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 			continue
 		}
 		if arg.AssigneeMe && !f.matchesAssigneeMe(t.AssigneeGitlabUserID, arg.OwnerUserID, t.ProjectID) {
+			continue
+		}
+		if !matchesTaskQuery(t.Title, t.Description, arg.Q) {
 			continue
 		}
 		items = append(items, t)
@@ -952,6 +969,9 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 			continue
 		}
 		if arg.AssigneeMe && !f.matchesAssigneeMe(t.AssigneeGitlabUserID, arg.OwnerUserID, t.ProjectID) {
+			continue
+		}
+		if !matchesTaskQuery(t.Title, t.Description, arg.Q) {
 			continue
 		}
 		items = append(items, db.ListTasksForMemberRow{

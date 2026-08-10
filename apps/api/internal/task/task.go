@@ -669,11 +669,21 @@ type ListFilter struct {
 	// caller with no registered identity (internal/gitlabidentity), or a
 	// project with no GitLab connection, matches nothing rather than erroring.
 	AssigneeMe bool
+	// Query, when non-empty, only returns tasks whose title or description
+	// matches (issue #106) — see List's doc comment for how.
+	Query string
 }
 
 // List returns projectID's tasks matching filter, ordered by position. It
 // returns ErrNotFound if projectID does not exist or belongs to another
 // user.
+//
+// filter.Query matches against title/description via search_vector, the
+// 'simple'-config tsvector generated column (the 000016 migration,
+// docs/decisions and the query's own doc comment in
+// internal/database/queries/tasks.sql): no stemming, so it works for
+// Japanese as long as the query matches a whole tokenized run, same as any
+// other text.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Task, error) {
 	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
 		return nil, err
@@ -688,6 +698,7 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		Priority:       filter.Priority,
 		Progress:       filter.Progress,
 		AssigneeMe:     filter.AssigneeMe,
+		Q:              filter.Query,
 		SortByPriority: filter.Sort == SortPriority,
 		SortByProgress: filter.Sort == SortProgress,
 	})
@@ -761,6 +772,9 @@ type CrossProjectFilter struct {
 	// GitLab identity for that task's own project's GitLab connection (issue
 	// #102), the same per-project matching ListFilter.AssigneeMe uses.
 	AssigneeMe bool
+	// Query, when non-empty, only returns tasks whose title or description
+	// matches, the same search_vector match ListFilter.Query uses (issue #106).
+	Query string
 }
 
 // ListForOwner returns every task across every project ownerID owns, per
@@ -796,6 +810,7 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 		StartedBefore: toDate(filter.StartedBefore),
 		ProjectIds:    projectIDs,
 		AssigneeMe:    filter.AssigneeMe,
+		Q:             filter.Query,
 		Sort:          sortBy,
 		LimitCount:    int32(limit),
 	})

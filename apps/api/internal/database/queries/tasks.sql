@@ -18,7 +18,7 @@ VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
     COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1 AND backlog_id IS NOT DISTINCT FROM $2), 0)
 )
-RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress;
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector;
 
 -- ListTasksByProject's priority and progress filters and sorts follow the same
 -- "empty/false disables it" convention as the other three filters. Sorting by
@@ -36,8 +36,12 @@ RETURNING id, project_id, backlog_id, title, description, status, closed_at, ass
 -- registered identity, or a project with no GitLab connection, joins to
 -- NULL, and NULL never equals assignee_gitlab_user_id, so the filter
 -- correctly yields zero rows instead of erroring.
+-- ListTasksByProject's q filter (issue #106) matches tasks.search_vector
+-- (the 'simple'-config tsvector generated column, see the 000016
+-- migration) against websearch_to_tsquery, GIN-indexed; an empty q disables
+-- it the same way every other filter here does.
 -- name: ListTasksByProject :many
-SELECT tasks.id, tasks.project_id, tasks.backlog_id, tasks.title, tasks.description, tasks.status, tasks.closed_at, tasks.assignee_gitlab_user_id, tasks.assignee_gitlab_username, tasks.labels, tasks.due_on, tasks.position, tasks.created_by_user_id, tasks.created_at, tasks.updated_at, tasks.start_date, tasks.priority, tasks.progress
+SELECT tasks.id, tasks.project_id, tasks.backlog_id, tasks.title, tasks.description, tasks.status, tasks.closed_at, tasks.assignee_gitlab_user_id, tasks.assignee_gitlab_username, tasks.labels, tasks.due_on, tasks.position, tasks.created_by_user_id, tasks.created_at, tasks.updated_at, tasks.start_date, tasks.priority, tasks.progress, tasks.search_vector
 FROM tasks
 LEFT JOIN gitlab_connections gc ON gc.project_id = tasks.project_id
 LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = sqlc.arg(owner_user_id)
@@ -48,6 +52,7 @@ WHERE tasks.project_id = sqlc.arg(project_id)
   AND (sqlc.arg(priority)::text = '' OR tasks.priority = sqlc.arg(priority))
   AND (sqlc.arg(progress)::text = '' OR tasks.progress = sqlc.arg(progress))
   AND (NOT sqlc.arg(assignee_me)::boolean OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (sqlc.arg(q)::text = '' OR tasks.search_vector @@ websearch_to_tsquery('simple', sqlc.arg(q)::text))
 ORDER BY
   (CASE WHEN sqlc.arg(sort_by_priority)::boolean THEN
      CASE tasks.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
@@ -67,7 +72,7 @@ ORDER BY
 -- use for it yet, unlike the board view ListTasksByProject serves.
 
 -- name: ListTasksByProjectPaged :many
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector
 FROM tasks
 WHERE project_id = sqlc.arg(project_id)
   AND (sqlc.narg(backlog_id)::uuid IS NULL OR backlog_id = sqlc.narg(backlog_id))
@@ -99,6 +104,8 @@ LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
 -- gitlab_connections/user_gitlab_identities join ListTasksByProject uses
 -- (issue #102), joined per-project since the cross-project list spans
 -- however many projects and GitLab connections the caller belongs to.
+-- ListTasksForMember's q filter is the same search_vector match
+-- ListTasksByProject's is (issue #106).
 -- name: ListTasksForMember :many
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress,
        p.name AS project_name
@@ -116,6 +123,7 @@ WHERE pm.user_id = sqlc.arg(owner_user_id)
   AND (sqlc.narg(started_before)::date IS NULL OR t.start_date <= sqlc.narg(started_before))
   AND (cardinality(sqlc.arg(project_ids)::uuid[]) = 0 OR t.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
   AND (NOT sqlc.arg(assignee_me)::boolean OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (sqlc.arg(q)::text = '' OR t.search_vector @@ websearch_to_tsquery('simple', sqlc.arg(q)::text))
 ORDER BY
   (CASE WHEN sqlc.arg(sort)::text = 'priority' THEN
      CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
@@ -129,7 +137,7 @@ ORDER BY
 LIMIT sqlc.arg(limit_count);
 
 -- name: GetTaskForOwner :one
-SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress
+SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector
 FROM tasks t
 WHERE t.id = $1
   AND EXISTS (
@@ -143,7 +151,7 @@ WHERE t.id = $1
 -- for (internal/apitoken), so there is no owner to join against.
 
 -- name: GetTaskForProject :one
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector
 FROM tasks
 WHERE id = $1 AND project_id = $2;
 
@@ -189,7 +197,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector;
 
 -- name: AssignTaskBacklogForOwner :one
 UPDATE tasks t
@@ -199,7 +207,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector;
 
 -- name: CloseTaskForOwner :one
 UPDATE tasks t
@@ -209,7 +217,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector;
 
 -- name: ReopenTaskForOwner :one
 UPDATE tasks t
@@ -219,7 +227,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress;
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector;
 
 -- name: DeleteTaskForOwner :execrows
 DELETE FROM tasks t
@@ -261,7 +269,7 @@ SET title = $2,
     closed_at = CASE WHEN $8 = 'closed' THEN COALESCE(closed_at, now()) ELSE NULL END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress;
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector;
 
 -- name: CountFailedSyncTasksByProjectForOwner :one
 SELECT COUNT(*) FROM tasks t

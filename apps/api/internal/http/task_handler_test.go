@@ -169,6 +169,27 @@ func TestHandleListTasks_FiltersAndSortsByPriorityQuery(t *testing.T) {
 	assert.Equal(t, "Low", sorted[1]["title"])
 }
 
+// TestHandleListTasks_FiltersByQQuery covers issue #106's wire contract:
+// ?q= narrows to tasks whose title or description matches. Which rows
+// search_vector actually matches is the domain/integration layer's case.
+func TestHandleListTasks_FiltersByQQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Fix login bug"}, token)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Unrelated task"}, token)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?q=login", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var filtered []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	require.Len(t, filtered, 1)
+	assert.Equal(t, "Fix login bug", filtered[0]["title"])
+}
+
 // The wire contract for ?sort=: the project-scoped list takes the same three
 // values as GET /api/v1/tasks, and rejects anything else. Which order each
 // value produces is the domain layer's case (TestService_List_*).
@@ -294,6 +315,24 @@ func TestHandleListAllTasks_FiltersByStatusQuery(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Len(t, body, 1)
 	assert.Equal(t, "Open task", body[0]["title"])
+}
+
+func TestHandleListAllTasks_FiltersByQQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Fix login bug"}, token)
+	doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		createTaskRequest{Title: "Unrelated task"}, token)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks?q=login", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, "Fix login bug", body[0]["title"])
 }
 
 // TestHandleListAllTasks_FiltersByAssigneeMeQuery is

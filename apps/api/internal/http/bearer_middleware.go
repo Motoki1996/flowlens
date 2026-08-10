@@ -37,6 +37,7 @@ const (
 // requireTokenProjectMatch/requireTokenResourceProject) add the second,
 // project-boundary check a session request never needs.
 type tokenScope struct {
+	TokenID   uuid.UUID
 	ProjectID uuid.UUID
 	Scopes    []string
 }
@@ -135,7 +136,7 @@ func (s *Server) requireBearerAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), userContextKey, owner)
-		ctx = context.WithValue(ctx, tokenScopeContextKey, tokenScope{ProjectID: tokenAuth.ProjectID, Scopes: tokenAuth.Scopes})
+		ctx = context.WithValue(ctx, tokenScopeContextKey, tokenScope{TokenID: tokenAuth.TokenID, ProjectID: tokenAuth.ProjectID, Scopes: tokenAuth.Scopes})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

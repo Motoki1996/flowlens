@@ -224,6 +224,17 @@ type TaskAiContext struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
+type TaskComment struct {
+	ID            uuid.UUID          `json:"id"`
+	TaskID        uuid.UUID          `json:"task_id"`
+	AuthorUserID  pgtype.UUID        `json:"author_user_id"`
+	AuthorTokenID pgtype.UUID        `json:"author_token_id"`
+	AuthorKind    string             `json:"author_kind"`
+	Body          string             `json:"body"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type TaskDependency struct {
 	ID                uuid.UUID          `json:"id"`
 	PredecessorTaskID uuid.UUID          `json:"predecessor_task_id"`

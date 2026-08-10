@@ -116,6 +116,7 @@ type Querier interface {
 	// serves the unfiltered, single-backlog, unassigned-only and status-scoped
 	// list views: passing false/NULL/'' for a filter disables it.
 	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
+	CreateTaskComment(ctx context.Context, arg CreateTaskCommentParams) (TaskComment, error)
 	// task_dependencies has no project_id/owner column of its own; ownership is
 	// always checked through its tasks, the same way task_gitlab_links is never
 	// queried through a project/owner join directly. CreateTaskDependency and
@@ -166,6 +167,7 @@ type Querier interface {
 	// membership table alone invites (docs/decisions/0010-why-project-membership.md).
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
+	DeleteTaskCommentByID(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteTaskDependencyForOwner(ctx context.Context, arg DeleteTaskDependencyForOwnerParams) (int64, error)
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
 	// The outbox worker (internal/sync, docs/plans/issue-sync.md "Sync engine").
@@ -266,6 +268,13 @@ type Querier interface {
 	// so it can distinguish ErrForbidden from ErrNotFound.
 	GetSyncJobForOwner(ctx context.Context, arg GetSyncJobForOwnerParams) (SyncJob, error)
 	GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskAiContext, error)
+	GetTaskCommentByID(ctx context.Context, id uuid.UUID) (TaskComment, error)
+	// GetTaskCommentProjectID is the lightweight project lookup
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+	// bearer token's project boundary on a single-comment URL, resolved through
+	// the comment's task, the same way GetTaskDependencyProjectID resolves
+	// through a dependency's predecessor task.
+	GetTaskCommentProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	// GetTaskDependencyProjectID is the lightweight project lookup
 	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
 	// bearer token's project boundary on a single-dependency URL: resolved
@@ -340,6 +349,7 @@ type Querier interface {
 	// carries it (issue #100's "avoid user enumeration via email").
 	ListProjectMembersWithUser(ctx context.Context, projectID uuid.UUID) ([]ListProjectMembersWithUserRow, error)
 	ListProjectsByMember(ctx context.Context, userID uuid.UUID) ([]Project, error)
+	ListTaskCommentsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskComment, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
 	// ListTasksByProject's priority and progress filters and sorts follow the same
 	// "empty/false disables it" convention as the other three filters. Sorting by

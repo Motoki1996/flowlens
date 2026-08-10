@@ -920,6 +920,28 @@ no new frontend dependency was available to add when this shipped; swapping
 in a library like `@dnd-kit` later is a UI-only change, since it would still
 call the same `.../order` endpoints.
 
+### GitLab user identity
+
+`user_gitlab_identities` maps the authenticated user to their GitLab user
+ID/username on one GitLab CE instance, keyed by `(user_id, gitlab_base_url)`
+since GitLab CE is self-hosted and a team may run more than one instance.
+It carries no access token — that stays a distinct, still-unbuilt feature
+scoped per project ([ADR-0008](docs/decisions/0008-why-per-project-gitlab-connection.md))
+— only the identifiers the `assignee=me` filter above needs to match against
+a task's own `assigneeGitlabUserId`.
+
+- `GET /api/v1/me/gitlab-identities` returns every identity the caller has
+  registered.
+- `PUT /api/v1/me/gitlab-identities` registers or replaces the identity for
+  one `gitlabBaseUrl`, given `gitlabUserId` (numeric) and `gitlabUsername`.
+  Both session-only, since only the logged-in web user manages their own
+  identity. The web app exposes this as a form on `/settings`.
+- `assigneeMe` matching is computed entirely in SQL: the task's own
+  project's `gitlab_connections.base_url` is joined against the caller's
+  registered identity for that same base URL. A project with no GitLab
+  connection, or a caller with no registered identity, simply matches
+  nothing — never an error.
+
 ### Cross-project task collection
 
 `GET /api/v1/tasks` returns every task across every project the authenticated
@@ -932,10 +954,14 @@ owner has.
 - Query parameters, all optional and independent: `status=open|closed`,
   `priority=low|medium|high|urgent`, `dueBefore=`/`dueAfter=`/`startedBefore=`
   (`YYYY-MM-DD`, inclusive), `projectId=` (repeatable — narrows within the
-  caller's own projects, never a way to reach someone else's), and
+  caller's own projects, never a way to reach someone else's),
   `sort=dueOn|priority|updatedAt` (default `dueOn`, ascending, tasks with no
-  due date last). `limit=` caps the result count (default 50, max 200); there
-  is no cursor/offset pagination yet.
+  due date last), and `assignee=me` (only tasks assigned to the caller's own
+  registered GitLab identity — see [GitLab user identity](#gitlab-user-identity)
+  below; a caller with no registered identity gets an empty list, not an
+  error). `limit=` caps the result count (default 50, max 200); there is no
+  cursor/offset pagination yet. The same `assignee=me` filter is also
+  accepted on the per-project `GET .../tasks` list.
 - Each task in the response carries a `projectName` field alongside every
   field `GET .../tasks/{taskID}` returns, so a cross-project list is readable
   without a second look-up per row. It never resolves GitLab sync state,
@@ -970,6 +996,10 @@ to the Task or Project collection it's a filtered view of
 - **High priority** — open tasks with `priority` `urgent` or `high`, read off
   the same `GET /api/v1/tasks?sort=priority` ranking `?sort=priority` itself
   uses.
+- **Assigned to me** — open tasks matching `GET /api/v1/tasks?assignee=me`
+  (see [GitLab user identity](#gitlab-user-identity) above). Empty, not an
+  error, for a user who hasn't registered their GitLab identity yet; the
+  empty state points at `/settings`.
 - **Sync failures** — projects with at least one task whose GitLab sync
   failed. `GET /api/v1/projects?failedSync=true` narrows to just those and
   populates `failedSyncTaskCount` for each — the plain (unfiltered) project

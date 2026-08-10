@@ -60,11 +60,18 @@ type FakeQuerier struct {
 	gitlabSyncRunsByID map[uuid.UUID]db.GitlabSyncRun
 
 	projectMembers map[projectMemberKey]db.ProjectMember // key: project_id + user_id
+
+	userGitlabIdentities map[userGitlabIdentityKey]db.UserGitlabIdentity // key: user_id + gitlab_base_url
 }
 
 type projectMemberKey struct {
 	projectID uuid.UUID
 	userID    uuid.UUID
+}
+
+type userGitlabIdentityKey struct {
+	userID  uuid.UUID
+	baseURL string
 }
 
 // New returns an empty FakeQuerier.
@@ -103,6 +110,8 @@ func New() *FakeQuerier {
 		gitlabSyncRunsByID: map[uuid.UUID]db.GitlabSyncRun{},
 
 		projectMembers: map[projectMemberKey]db.ProjectMember{},
+
+		userGitlabIdentities: map[userGitlabIdentityKey]db.UserGitlabIdentity{},
 	}
 }
 
@@ -815,6 +824,9 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.Progress != "" && t.Progress != arg.Progress {
 			continue
 		}
+		if arg.AssigneeMe && !f.matchesAssigneeMe(t.AssigneeGitlabUserID, arg.OwnerUserID, t.ProjectID) {
+			continue
+		}
 		items = append(items, t)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -932,6 +944,9 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 			continue
 		}
 		if len(allowed) > 0 && !allowed[t.ProjectID] {
+			continue
+		}
+		if arg.AssigneeMe && !f.matchesAssigneeMe(t.AssigneeGitlabUserID, arg.OwnerUserID, t.ProjectID) {
 			continue
 		}
 		items = append(items, db.ListTasksForMemberRow{
@@ -1396,6 +1411,76 @@ func (f *FakeQuerier) SeedGitlabConnection(projectID uuid.UUID, encryptedToken [
 	f.gitlabConnectionsByProjectID[projectID] = c
 	f.gitlabConnectionsByID[c.ID] = c
 	return c
+}
+
+// matchesAssigneeMe mirrors the SQL's gitlab_connections/user_gitlab_identities
+// join for ?assignee=me (issue #102): userID's registered identity for
+// projectID's own GitLab connection base URL must match assigneeGitlabUserID
+// exactly. A project with no connection, or a user with no registered
+// identity for that connection's base URL, never matches.
+func (f *FakeQuerier) matchesAssigneeMe(assigneeGitlabUserID pgtype.Int8, userID, projectID uuid.UUID) bool {
+	if !assigneeGitlabUserID.Valid {
+		return false
+	}
+	conn, ok := f.gitlabConnectionsByProjectID[projectID]
+	if !ok {
+		return false
+	}
+	identity, ok := f.userGitlabIdentities[userGitlabIdentityKey{userID: userID, baseURL: conn.BaseUrl}]
+	if !ok {
+		return false
+	}
+	return identity.GitlabUserID == assigneeGitlabUserID.Int64
+}
+
+// UpsertUserGitlabIdentity mirrors the SQL's ON CONFLICT (user_id,
+// gitlab_base_url) DO UPDATE.
+func (f *FakeQuerier) UpsertUserGitlabIdentity(_ context.Context, arg db.UpsertUserGitlabIdentityParams) (db.UserGitlabIdentity, error) {
+	key := userGitlabIdentityKey{userID: arg.UserID, baseURL: arg.GitlabBaseUrl}
+	existing, ok := f.userGitlabIdentities[key]
+	id := uuid.New()
+	createdAt := now()
+	if ok {
+		id = existing.ID
+		createdAt = existing.CreatedAt
+	}
+	i := db.UserGitlabIdentity{
+		ID:             id,
+		UserID:         arg.UserID,
+		GitlabBaseUrl:  arg.GitlabBaseUrl,
+		GitlabUserID:   arg.GitlabUserID,
+		GitlabUsername: arg.GitlabUsername,
+		CreatedAt:      createdAt,
+		UpdatedAt:      now(),
+	}
+	f.userGitlabIdentities[key] = i
+	return i, nil
+}
+
+// ListUserGitlabIdentitiesByUser mirrors the SQL: every identity userID has
+// registered, ordered by base URL.
+func (f *FakeQuerier) ListUserGitlabIdentitiesByUser(_ context.Context, userID uuid.UUID) ([]db.UserGitlabIdentity, error) {
+	items := []db.UserGitlabIdentity{}
+	for key, i := range f.userGitlabIdentities {
+		if key.userID == userID {
+			items = append(items, i)
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].GitlabBaseUrl < items[j].GitlabBaseUrl })
+	return items, nil
+}
+
+// SeedUserGitlabIdentity registers a ready-made GitLab identity directly,
+// bypassing gitlabidentity.Service, for tests that need one to already exist
+// (e.g. an ?assignee=me filter test).
+func (f *FakeQuerier) SeedUserGitlabIdentity(userID uuid.UUID, baseURL string, gitlabUserID int64, gitlabUsername string) db.UserGitlabIdentity {
+	i, _ := f.UpsertUserGitlabIdentity(context.Background(), db.UpsertUserGitlabIdentityParams{
+		UserID:         userID,
+		GitlabBaseUrl:  baseURL,
+		GitlabUserID:   gitlabUserID,
+		GitlabUsername: gitlabUsername,
+	})
+	return i
 }
 
 // linkedProjectProjectID returns the project ID a linked GitLab project

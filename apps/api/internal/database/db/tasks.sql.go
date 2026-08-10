@@ -407,31 +407,36 @@ func (q *Queries) GetTaskProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID
 }
 
 const listTasksByProject = `-- name: ListTasksByProject :many
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress
+SELECT tasks.id, tasks.project_id, tasks.backlog_id, tasks.title, tasks.description, tasks.status, tasks.closed_at, tasks.assignee_gitlab_user_id, tasks.assignee_gitlab_username, tasks.labels, tasks.due_on, tasks.position, tasks.created_by_user_id, tasks.created_at, tasks.updated_at, tasks.start_date, tasks.priority, tasks.progress
 FROM tasks
-WHERE project_id = $1
-  AND (NOT $2::boolean OR backlog_id IS NULL)
-  AND ($3::uuid IS NULL OR backlog_id = $3)
-  AND ($4::text = '' OR status = $4)
-  AND ($5::text = '' OR priority = $5)
-  AND ($6::text = '' OR progress = $6)
+LEFT JOIN gitlab_connections gc ON gc.project_id = tasks.project_id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = $1
+WHERE tasks.project_id = $2
+  AND (NOT $3::boolean OR tasks.backlog_id IS NULL)
+  AND ($4::uuid IS NULL OR tasks.backlog_id = $4)
+  AND ($5::text = '' OR tasks.status = $5)
+  AND ($6::text = '' OR tasks.priority = $6)
+  AND ($7::text = '' OR tasks.progress = $7)
+  AND (NOT $8::boolean OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
 ORDER BY
-  (CASE WHEN $7::boolean THEN
-     CASE priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
+  (CASE WHEN $9::boolean THEN
+     CASE tasks.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
-  (CASE WHEN $8::boolean THEN
-     CASE progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
+  (CASE WHEN $10::boolean THEN
+     CASE tasks.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  position ASC, created_at ASC
+  tasks.position ASC, tasks.created_at ASC
 `
 
 type ListTasksByProjectParams struct {
+	OwnerUserID    uuid.UUID   `json:"owner_user_id"`
 	ProjectID      uuid.UUID   `json:"project_id"`
 	Unassigned     bool        `json:"unassigned"`
 	BacklogID      pgtype.UUID `json:"backlog_id"`
 	Status         string      `json:"status"`
 	Priority       string      `json:"priority"`
 	Progress       string      `json:"progress"`
+	AssigneeMe     bool        `json:"assignee_me"`
 	SortByPriority bool        `json:"sort_by_priority"`
 	SortByProgress bool        `json:"sort_by_progress"`
 }
@@ -446,14 +451,22 @@ type ListTasksByProjectParams struct {
 // its CASE always evaluates to 0, leaving the original position/created_at
 // order untouched. The two flags are mutually exclusive in practice —
 // internal/task sets at most one from a single ?sort=.
+// ListTasksByProject's assignee_me filter joins the project's own GitLab
+// connection (if any) to the caller's registered identity for that same
+// base_url (internal/gitlabidentity, issue #102): a caller with no
+// registered identity, or a project with no GitLab connection, joins to
+// NULL, and NULL never equals assignee_gitlab_user_id, so the filter
+// correctly yields zero rows instead of erroring.
 func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error) {
 	rows, err := q.db.Query(ctx, listTasksByProject,
+		arg.OwnerUserID,
 		arg.ProjectID,
 		arg.Unassigned,
 		arg.BacklogID,
 		arg.Status,
 		arg.Priority,
 		arg.Progress,
+		arg.AssigneeMe,
 		arg.SortByPriority,
 		arg.SortByProgress,
 	)
@@ -576,6 +589,8 @@ SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.clo
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
 JOIN project_members pm ON pm.project_id = p.id
+LEFT JOIN gitlab_connections gc ON gc.project_id = p.id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = pm.user_id
 WHERE pm.user_id = $1
   AND ($2::text = '' OR t.status = $2)
   AND ($3::text = '' OR t.priority = $3)
@@ -584,17 +599,18 @@ WHERE pm.user_id = $1
   AND ($6::date IS NULL OR t.due_on >= $6)
   AND ($7::date IS NULL OR t.start_date <= $7)
   AND (cardinality($8::uuid[]) = 0 OR t.project_id = ANY($8::uuid[]))
+  AND (NOT $9::boolean OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
 ORDER BY
-  (CASE WHEN $9::text = 'priority' THEN
+  (CASE WHEN $10::text = 'priority' THEN
      CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    END) DESC,
-  (CASE WHEN $9::text = 'progress' THEN
+  (CASE WHEN $10::text = 'progress' THEN
      CASE t.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    END) ASC,
-  (CASE WHEN $9::text = 'updatedAt' THEN t.updated_at END) DESC,
+  (CASE WHEN $10::text = 'updatedAt' THEN t.updated_at END) DESC,
   t.due_on ASC,
   t.position ASC, t.created_at ASC
-LIMIT $10
+LIMIT $11
 `
 
 type ListTasksForMemberParams struct {
@@ -606,6 +622,7 @@ type ListTasksForMemberParams struct {
 	DueAfter      pgtype.Date `json:"due_after"`
 	StartedBefore pgtype.Date `json:"started_before"`
 	ProjectIds    []uuid.UUID `json:"project_ids"`
+	AssigneeMe    bool        `json:"assignee_me"`
 	Sort          string      `json:"sort"`
 	LimitCount    int32       `json:"limit_count"`
 }
@@ -650,6 +667,10 @@ type ListTasksForMemberRow struct {
 // sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
 // sink to the bottom", so it works unguarded both as sort=dueOn's primary
 // key and as every other sort's final tiebreak.
+// ListTasksForMember's assignee_me filter follows the same
+// gitlab_connections/user_gitlab_identities join ListTasksByProject uses
+// (issue #102), joined per-project since the cross-project list spans
+// however many projects and GitLab connections the caller belongs to.
 func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error) {
 	rows, err := q.db.Query(ctx, listTasksForMember,
 		arg.OwnerUserID,
@@ -660,6 +681,7 @@ func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMember
 		arg.DueAfter,
 		arg.StartedBefore,
 		arg.ProjectIds,
+		arg.AssigneeMe,
 		arg.Sort,
 		arg.LimitCount,
 	)

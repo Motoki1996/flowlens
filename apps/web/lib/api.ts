@@ -13,6 +13,7 @@ import type {
   ApiToken,
   Backlog,
   GitlabConnection,
+  GitlabIdentity,
   GitlabLabelOption,
   GitlabMemberOption,
   LinkedGitlabProject,
@@ -99,6 +100,23 @@ export const getFailedSyncProjects = cache(async (): Promise<Project[]> => {
 });
 
 /**
+ * getMyGitlabIdentities returns every GitLab identity the current user has
+ * registered, one per GitLab base URL (issue #102) — /settings' identity
+ * registration form. Callers must already know the request is authenticated.
+ */
+export const getMyGitlabIdentities = cache(async (): Promise<GitlabIdentity[]> => {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/me/gitlab-identities`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load GitLab identities: ${res.status}`);
+  }
+  return (await res.json()) as GitlabIdentity[];
+});
+
+/**
  * getProject returns one project, or null when it doesn't exist or isn't
  * owned by the current user (the API reports both cases as 404).
  */
@@ -179,6 +197,9 @@ export type AllTasksFilter = {
   projectIds?: string[];
   sort?: "dueOn" | "priority" | "updatedAt";
   limit?: number;
+  // "me": only tasks assigned to the caller's own registered GitLab identity
+  // for that task's project (issue #102). Omitted means no filter.
+  assignee?: "me";
 };
 
 /**
@@ -196,6 +217,7 @@ export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TaskWith
   if (filter.startedBefore) params.set("startedBefore", filter.startedBefore);
   if (filter.sort) params.set("sort", filter.sort);
   if (filter.limit) params.set("limit", String(filter.limit));
+  if (filter.assignee) params.set("assignee", filter.assignee);
   for (const id of filter.projectIds ?? []) params.append("projectId", id);
   const query = params.toString();
 

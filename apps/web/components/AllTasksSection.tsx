@@ -46,6 +46,7 @@ export function AllTasksSection({
   status,
   priority,
   sort,
+  assigneeMe = false,
   error = false,
 }: {
   tasks: TaskWithProject[];
@@ -53,6 +54,10 @@ export function AllTasksSection({
   status: "all" | TaskStatus;
   priority?: Priority;
   sort: SortValue;
+  // True when ?assignee=me is set (issue #102): only tasks assigned to the
+  // caller's own registered GitLab identity. Held in the URL like the other
+  // filters above, not local state, so it survives navigation/refresh.
+  assigneeMe?: boolean;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -145,6 +150,15 @@ export function AllTasksSection({
                 className="border-input h-4 w-4 rounded"
               />
               Only with a due date
+            </label>
+            <label className="text-muted-foreground flex items-center gap-1.5 text-sm">
+              <input
+                type="checkbox"
+                checked={assigneeMe}
+                onChange={(e) => updateQuery({ assignee: e.target.checked ? "me" : undefined })}
+                className="border-input h-4 w-4 rounded"
+              />
+              Assigned to me
             </label>
           </div>
         </div>

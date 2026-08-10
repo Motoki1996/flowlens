@@ -16,6 +16,7 @@ import (
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
+	"github.com/flowlens/api/internal/gitlabidentity"
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectmember"
@@ -80,6 +81,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(q, projects, tasks),
 		gitlabConns:      gitlabConns,
+		gitlabIdentities: gitlabidentity.NewService(q),
 		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),
 		projectSync:      projectsync.NewService(q, txRunner, projects, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(q, cipher),

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/api";
+import { getCurrentUser, getMyGitlabIdentities } from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
+import { GitlabIdentitySection } from "@/components/GitlabIdentitySection";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function SettingsPage() {
@@ -10,6 +11,8 @@ export default async function SettingsPage() {
   // is present but expired/invalid.
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+
+  const identities = await getMyGitlabIdentities();
 
   return (
     <>
@@ -38,6 +41,10 @@ export default async function SettingsPage() {
             </dl>
           </CardContent>
         </Card>
+
+        <div className="mt-6">
+          <GitlabIdentitySection identities={identities} />
+        </div>
       </main>
     </>
   );

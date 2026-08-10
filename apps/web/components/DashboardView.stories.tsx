@@ -59,6 +59,7 @@ const baseArgs = {
   dueSoonHref: "/tasks?status=open&sort=dueOn&dueAfter=2026-08-03&dueBefore=2026-08-09",
   waitingHref: "/tasks?status=open&sort=dueOn&startedBefore=2026-08-03",
   priorityHref: "/tasks?status=open&sort=priority",
+  assignedToMeHref: "/tasks?status=open&sort=dueOn&assignee=me",
 };
 
 export const Default: Story = {
@@ -72,6 +73,7 @@ export const Default: Story = {
       makeTask({ id: "t3", title: "Kick off Q3 migration", startDate: "2026-08-01" }),
     ],
     priorityTasks: [makeTask({ id: "t4", title: "Fix checkout crash", priority: "urgent" })],
+    assignedToMeTasks: [makeTask({ id: "t5", title: "Review payments PR", dueOn: "2026-08-04" })],
     failedSyncProjects: [{ ...project, failedSyncTaskCount: 3 }],
     recentProjects: [project, { ...project, id: "p2", name: "Onboarding" }],
   },
@@ -84,6 +86,7 @@ export const Empty: Story = {
     dueSoonTasks: [],
     waitingTasks: [],
     priorityTasks: [],
+    assignedToMeTasks: [],
     failedSyncProjects: [],
     recentProjects: [project],
   },
@@ -99,6 +102,7 @@ export const NoDueDates: Story = {
     dueSoonTasks: [],
     waitingTasks: [],
     priorityTasks: [],
+    assignedToMeTasks: [],
     failedSyncProjects: [],
     recentProjects: [project],
   },
@@ -112,6 +116,7 @@ export const NoProjects: Story = {
     dueSoonTasks: [],
     waitingTasks: [],
     priorityTasks: [],
+    assignedToMeTasks: [],
     failedSyncProjects: [],
     recentProjects: [],
   },
@@ -125,6 +130,7 @@ export const Error: Story = {
     dueSoonTasks: [],
     waitingTasks: [],
     priorityTasks: [],
+    assignedToMeTasks: [],
     failedSyncProjects: [],
     recentProjects: [],
   },

@@ -664,6 +664,11 @@ type ListFilter struct {
 	// two lists don't disagree on what a sort value means. Each keeps the
 	// manual order as its tiebreak.
 	Sort string
+	// AssigneeMe, when true, only returns tasks assigned to the caller's own
+	// GitLab identity for this project's GitLab connection (issue #102). A
+	// caller with no registered identity (internal/gitlabidentity), or a
+	// project with no GitLab connection, matches nothing rather than erroring.
+	AssigneeMe bool
 }
 
 // List returns projectID's tasks matching filter, ordered by position. It
@@ -675,12 +680,14 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	}
 
 	rows, err := s.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
+		OwnerUserID:    ownerID,
 		ProjectID:      projectID,
 		Unassigned:     filter.Unassigned,
 		BacklogID:      toUUID(filter.BacklogID),
 		Status:         filter.Status,
 		Priority:       filter.Priority,
 		Progress:       filter.Progress,
+		AssigneeMe:     filter.AssigneeMe,
 		SortByPriority: filter.Sort == SortPriority,
 		SortByProgress: filter.Sort == SortProgress,
 	})
@@ -750,6 +757,10 @@ type CrossProjectFilter struct {
 	// DefaultCrossProjectLimit, and anything above MaxCrossProjectLimit is
 	// capped to it.
 	Limit int
+	// AssigneeMe, when true, only returns tasks assigned to the caller's own
+	// GitLab identity for that task's own project's GitLab connection (issue
+	// #102), the same per-project matching ListFilter.AssigneeMe uses.
+	AssigneeMe bool
 }
 
 // ListForOwner returns every task across every project ownerID owns, per
@@ -784,6 +795,7 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 		DueAfter:      toDate(filter.DueAfter),
 		StartedBefore: toDate(filter.StartedBefore),
 		ProjectIds:    projectIDs,
+		AssigneeMe:    filter.AssigneeMe,
 		Sort:          sortBy,
 		LimitCount:    int32(limit),
 	})

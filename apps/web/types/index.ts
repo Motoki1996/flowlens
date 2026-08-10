@@ -271,3 +271,14 @@ export interface ProjectMember {
   role: ProjectMemberRole;
   createdAt: string;
 }
+
+/** GitlabIdentity maps the caller to their GitLab user ID/username on one
+ *  GitLab CE base URL (issue #102), so ?assignee=me on the task collections
+ *  can match tasks assigned to them. No access token here — that is a
+ *  distinct, still-unbuilt feature (ADR-0008). */
+export interface GitlabIdentity {
+  id: string;
+  gitlabBaseUrl: string;
+  gitlabUserId: number;
+  gitlabUsername: string;
+}

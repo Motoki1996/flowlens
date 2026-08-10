@@ -351,6 +351,12 @@ type Querier interface {
 	// its CASE always evaluates to 0, leaving the original position/created_at
 	// order untouched. The two flags are mutually exclusive in practice —
 	// internal/task sets at most one from a single ?sort=.
+	// ListTasksByProject's assignee_me filter joins the project's own GitLab
+	// connection (if any) to the caller's registered identity for that same
+	// base_url (internal/gitlabidentity, issue #102): a caller with no
+	// registered identity, or a project with no GitLab connection, joins to
+	// NULL, and NULL never equals assignee_gitlab_user_id, so the filter
+	// correctly yields zero rows instead of erroring.
 	ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error)
 	// ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
 	// /api/v1/projects/{projectID}/tasks/context, docs/plans/issue-sync.md
@@ -379,7 +385,12 @@ type Querier interface {
 	// sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
 	// sink to the bottom", so it works unguarded both as sort=dueOn's primary
 	// key and as every other sort's final tiebreak.
+	// ListTasksForMember's assignee_me filter follows the same
+	// gitlab_connections/user_gitlab_identities join ListTasksByProject uses
+	// (issue #102), joined per-project since the cross-project list spans
+	// however many projects and GitLab connections the caller belongs to.
 	ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error)
+	ListUserGitlabIdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]UserGitlabIdentity, error)
 	// The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID
 	// and GetWebhookEventByLinkedGitlabProjectIDAndID are scoped by
 	// linked_gitlab_project_id only, not owner — internal/webhookevent.Service
@@ -503,6 +514,12 @@ type Querier interface {
 	// is verified by the caller via task.Service.Get before either query runs,
 	// the same way CreateTask trusts an already-verified project.
 	UpsertTaskAIContext(ctx context.Context, arg UpsertTaskAIContextParams) (TaskAiContext, error)
+	// user_gitlab_identities maps a FlowLens user to their GitLab user ID/username
+	// on one GitLab CE instance (gitlab_base_url), so ?assignee=me on the task
+	// collections (internal/task) can match against tasks.assignee_gitlab_user_id.
+	// UpsertUserGitlabIdentity is the only write: a user re-registering the same
+	// base_url replaces the previous mapping rather than erroring.
+	UpsertUserGitlabIdentity(ctx context.Context, arg UpsertUserGitlabIdentityParams) (UserGitlabIdentity, error)
 }
 
 var _ Querier = (*Queries)(nil)

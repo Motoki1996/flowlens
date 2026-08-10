@@ -66,6 +66,14 @@ type FakeQuerier struct {
 	projectMembers map[projectMemberKey]db.ProjectMember // key: project_id + user_id
 
 	userGitlabIdentities map[userGitlabIdentityKey]db.UserGitlabIdentity // key: user_id + gitlab_base_url
+
+	notificationSettingsByProjectID map[uuid.UUID]db.NotificationSetting
+	notificationDigests             map[notificationDigestKey]db.NotificationDigest
+}
+
+type notificationDigestKey struct {
+	projectID  uuid.UUID
+	digestDate string // date-only, YYYY-MM-DD
 }
 
 type projectMemberKey struct {
@@ -118,6 +126,9 @@ func New() *FakeQuerier {
 		projectMembers: map[projectMemberKey]db.ProjectMember{},
 
 		userGitlabIdentities: map[userGitlabIdentityKey]db.UserGitlabIdentity{},
+
+		notificationSettingsByProjectID: map[uuid.UUID]db.NotificationSetting{},
+		notificationDigests:             map[notificationDigestKey]db.NotificationDigest{},
 	}
 }
 
@@ -2543,6 +2554,14 @@ func (f *FakeQuerier) GetWebhookEvent(id uuid.UUID) (db.WebhookEvent, bool) {
 	return e, ok
 }
 
+// SetTaskForTest overwrites an already-seeded tasks row in place, for tests
+// that need to set fields SeedTask doesn't take (e.g. due_on/status for
+// internal/notification's digest queries) without exercising a full
+// create-then-update round trip.
+func (f *FakeQuerier) SetTaskForTest(t db.Task) {
+	f.storeTask(t)
+}
+
 // SetWebhookEventForTest overwrites an already-seeded webhook_events row in
 // place, for tests that need to set status/processed_at directly (e.g. to
 // exercise the list/retry/cleanup read side) rather than going through
@@ -2815,4 +2834,134 @@ func (f *FakeQuerier) RemoveProjectMember(_ context.Context, arg db.RemoveProjec
 	}
 	delete(f.projectMembers, key)
 	return 1, nil
+}
+
+// UpsertNotificationSettings mirrors the SQL's ON CONFLICT (project_id) DO
+// UPDATE.
+func (f *FakeQuerier) UpsertNotificationSettings(_ context.Context, arg db.UpsertNotificationSettingsParams) (db.NotificationSetting, error) {
+	existing, ok := f.notificationSettingsByProjectID[arg.ProjectID]
+	s := db.NotificationSetting{
+		ProjectID:  arg.ProjectID,
+		WebhookUrl: arg.WebhookUrl,
+		Enabled:    arg.Enabled,
+		SendHour:   arg.SendHour,
+		CreatedAt:  now(),
+		UpdatedAt:  now(),
+	}
+	if ok {
+		s.CreatedAt = existing.CreatedAt
+	}
+	f.notificationSettingsByProjectID[arg.ProjectID] = s
+	return s, nil
+}
+
+// GetNotificationSettingsForOwner mirrors the SQL: a project with no
+// settings row, or one belonging to a non-owner, is reported as
+// pgx.ErrNoRows.
+func (f *FakeQuerier) GetNotificationSettingsForOwner(_ context.Context, arg db.GetNotificationSettingsForOwnerParams) (db.NotificationSetting, error) {
+	s, ok := f.notificationSettingsByProjectID[arg.ProjectID]
+	if !ok || !f.hasRoleAtLeast(arg.ProjectID, arg.OwnerUserID, "owner") {
+		return db.NotificationSetting{}, pgx.ErrNoRows
+	}
+	return s, nil
+}
+
+// ListEnabledNotificationSettings mirrors the SQL's unscoped scan.
+func (f *FakeQuerier) ListEnabledNotificationSettings(_ context.Context) ([]db.NotificationSetting, error) {
+	out := []db.NotificationSetting{}
+	for _, s := range f.notificationSettingsByProjectID {
+		if s.Enabled {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// InsertNotificationDigestLog mirrors the SQL's ON CONFLICT (project_id,
+// digest_date) DO NOTHING RETURNING: a colliding row reports pgx.ErrNoRows,
+// the dedupe signal the worker checks for.
+func (f *FakeQuerier) InsertNotificationDigestLog(_ context.Context, arg db.InsertNotificationDigestLogParams) (db.NotificationDigest, error) {
+	key := notificationDigestKey{arg.ProjectID, arg.DigestDate.Time.Format("2006-01-02")}
+	if _, ok := f.notificationDigests[key]; ok {
+		return db.NotificationDigest{}, pgx.ErrNoRows
+	}
+	d := db.NotificationDigest{
+		ID:         uuid.New(),
+		ProjectID:  arg.ProjectID,
+		DigestDate: arg.DigestDate,
+		Status:     arg.Status,
+		Error:      arg.Error,
+		SentAt:     now(),
+	}
+	f.notificationDigests[key] = d
+	return d, nil
+}
+
+// MarkNotificationDigestFailed mirrors the SQL.
+func (f *FakeQuerier) MarkNotificationDigestFailed(_ context.Context, arg db.MarkNotificationDigestFailedParams) error {
+	for key, d := range f.notificationDigests {
+		if d.ID == arg.ID {
+			d.Status = "failed"
+			d.Error = arg.Error
+			f.notificationDigests[key] = d
+			return nil
+		}
+	}
+	return nil
+}
+
+// ListOverdueOpenTasksByProject mirrors the SQL: open tasks whose due_on is
+// set and strictly before today.
+func (f *FakeQuerier) ListOverdueOpenTasksByProject(_ context.Context, arg db.ListOverdueOpenTasksByProjectParams) ([]db.Task, error) {
+	out := []db.Task{}
+	for _, t := range f.tasks {
+		if t.ProjectID == arg.ProjectID && t.Status == "open" && t.DueOn.Valid && t.DueOn.Time.Before(arg.Today.Time) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// ListTasksDueSoonByProject mirrors the SQL: open tasks due exactly today.
+func (f *FakeQuerier) ListTasksDueSoonByProject(_ context.Context, arg db.ListTasksDueSoonByProjectParams) ([]db.Task, error) {
+	out := []db.Task{}
+	for _, t := range f.tasks {
+		if t.ProjectID == arg.ProjectID && t.Status == "open" && dueOnEqual(t.DueOn, arg.Today) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// ListFailedSyncJobsByProject mirrors the SQL: every failed job for the
+// project, unscoped by caller.
+func (f *FakeQuerier) ListFailedSyncJobsByProject(_ context.Context, projectID uuid.UUID) ([]db.SyncJob, error) {
+	out := []db.SyncJob{}
+	for _, j := range f.syncJobs {
+		if j.ProjectID == projectID && j.Status == "failed" {
+			out = append(out, j)
+		}
+	}
+	return out, nil
+}
+
+// ListFailedWebhookEventsByProject mirrors the SQL's join through
+// linked_gitlab_projects -> gitlab_connections.
+func (f *FakeQuerier) ListFailedWebhookEventsByProject(_ context.Context, projectID uuid.UUID) ([]db.WebhookEvent, error) {
+	out := []db.WebhookEvent{}
+	for _, e := range f.webhookEvents {
+		if e.Status != "failed" {
+			continue
+		}
+		link, ok := f.linkedGitlabProjectsByID[e.LinkedGitlabProjectID]
+		if !ok {
+			continue
+		}
+		conn, ok := f.gitlabConnectionsByID[link.GitlabConnectionID]
+		if !ok || conn.ProjectID != projectID {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
 }

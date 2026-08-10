@@ -249,6 +249,7 @@ type Querier interface {
 	// gitlab_connections the same way linkedProjectOwner (dbtest) does, since a
 	// linked project has no project_id column of its own.
 	GetLinkedGitlabProjectProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	GetNotificationSettingsForOwner(ctx context.Context, arg GetNotificationSettingsForOwnerParams) (NotificationSetting, error)
 	// GetPendingSyncJobQueueStats backs the worker's queue-depth gauges (issue
 	// #96): how many jobs are waiting, and how long the oldest of them has been
 	// waiting, are what turn "the worker looks busy" into "the worker is stuck".
@@ -321,6 +322,12 @@ type Querier interface {
 	// caller (internal/http keeps the list DTO payload-free to avoid exposing
 	// raw GitLab payloads by default).
 	GetWebhookEventByLinkedGitlabProjectIDAndID(ctx context.Context, arg GetWebhookEventByLinkedGitlabProjectIDAndIDParams) (WebhookEvent, error)
+	// InsertNotificationDigestLog is the dedupe guard itself: the worker calls
+	// this *before* building or sending a digest, so a second attempt for the
+	// same project on the same day (a slow first attempt still in flight, or a
+	// second process) hits the notification_digests unique constraint and
+	// reports pgx.ErrNoRows instead of a duplicate send.
+	InsertNotificationDigestLog(ctx context.Context, arg InsertNotificationDigestLogParams) (NotificationDigest, error)
 	// ListBacklogsByProject's priority and progress filters and sorts follow the
 	// same "empty/false disables it" convention as internal/task's
 	// ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
@@ -330,6 +337,11 @@ type Querier interface {
 	// as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 	// in practice — internal/backlog sets at most one from a single ?sort=.
 	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error)
+	// ListEnabledNotificationSettings backs the digest worker's sweep: every
+	// project with notifications turned on, regardless of caller, since the
+	// worker runs outside any request.
+	ListEnabledNotificationSettings(ctx context.Context) ([]NotificationSetting, error)
+	ListFailedSyncJobsByProject(ctx context.Context, projectID uuid.UUID) ([]SyncJob, error)
 	// ListFailedSyncJobsByProjectForOwner backs GET
 	// /projects/{projectID}/sync-jobs?status=failed (issue #97): every
 	// permanently-failed sync_jobs row for a project, scoped to ownerID through
@@ -344,10 +356,16 @@ type Querier interface {
 	// sync_jobs row otherwise — but joined across every project in one round
 	// trip instead of one query per project.
 	ListFailedSyncProjectsByMember(ctx context.Context, userID uuid.UUID) ([]ListFailedSyncProjectsByMemberRow, error)
+	ListFailedWebhookEventsByProject(ctx context.Context, projectID uuid.UUID) ([]WebhookEvent, error)
 	// Ownership of linkID must already be verified by the caller via
 	// GetLinkedGitlabProjectForOwner before this runs.
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
+	// ListOverdueOpenTasksByProject / ListTasksDueSoonByProject back the digest
+	// content (issue #109's (a)/(b)). due_on is a DATE (no time-of-day), so
+	// "due within 24h" is approximated as "due today" — the finest-grained
+	// distinction the column supports.
+	ListOverdueOpenTasksByProject(ctx context.Context, arg ListOverdueOpenTasksByProjectParams) ([]Task, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
 	ListProjectMembers(ctx context.Context, projectID uuid.UUID) ([]ProjectMember, error)
 	// ListProjectMembersWithUser joins in the username/display name the member
@@ -387,6 +405,7 @@ type Querier interface {
 	// established. It has no "unassigned" filter — the bulk context view has no
 	// use for it yet, unlike the board view ListTasksByProject serves.
 	ListTasksByProjectPaged(ctx context.Context, arg ListTasksByProjectPagedParams) ([]Task, error)
+	ListTasksDueSoonByProject(ctx context.Context, arg ListTasksDueSoonByProjectParams) ([]Task, error)
 	// ListTasksForOwner backs the cross-project task collection (GET
 	// /api/v1/tasks, issue #76): every task across every project ownerID owns,
 	// narrowed by the same status/priority/progress filters as ListTasksByProject plus
@@ -422,6 +441,7 @@ type Querier interface {
 	// come back empty.
 	// status = '' disables the filter, matching ListTasksByProject's convention.
 	ListWebhookEventsByLinkedGitlabProjectID(ctx context.Context, arg ListWebhookEventsByLinkedGitlabProjectIDParams) ([]WebhookEvent, error)
+	MarkNotificationDigestFailed(ctx context.Context, arg MarkNotificationDigestFailedParams) error
 	MarkSyncJobFailed(ctx context.Context, arg MarkSyncJobFailedParams) error
 	MarkSyncJobRetry(ctx context.Context, arg MarkSyncJobRetryParams) error
 	MarkSyncJobSucceeded(ctx context.Context, id uuid.UUID) error
@@ -531,6 +551,12 @@ type Querier interface {
 	// a missing one. The access token is only ever handled encrypted here; see
 	// internal/crypto and internal/gitlabconn.
 	UpsertGitlabConnection(ctx context.Context, arg UpsertGitlabConnectionParams) (GitlabConnection, error)
+	// Daily digest notifications (issue #109). notification_settings has no
+	// owner column of its own; the owner-scoped queries join through
+	// project_members the same way gitlab_connections does. The digest worker
+	// itself has no acting user (like sync.Worker), so ListEnabledNotificationSettings
+	// and the digest-content queries below are unscoped.
+	UpsertNotificationSettings(ctx context.Context, arg UpsertNotificationSettingsParams) (NotificationSetting, error)
 	// task_ai_contexts is app-only: acceptance criteria, AI context, and the
 	// allowed/forbidden change scope must never be sent to GitLab (see "Why the
 	// task is split across three tables" in docs/plans/issue-sync.md). Ownership

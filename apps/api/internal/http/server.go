@@ -16,6 +16,7 @@ import (
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/gitlabidentity"
 	"github.com/flowlens/api/internal/linkedproject"
+	"github.com/flowlens/api/internal/notification"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectmember"
 	"github.com/flowlens/api/internal/projectsync"
@@ -53,6 +54,7 @@ type Server struct {
 	projectSync      *projectsync.Service
 	webhookEvents    *webhookevent.Service
 	syncJobs         *syncjob.Service
+	notifications    *notification.Service
 	webhookLimiter   *simpleRateLimiter
 	tokenLimiter     *simpleRateLimiter
 	authLimiter      *simpleRateLimiter
@@ -93,6 +95,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		projectSync:      projectsync.NewService(queries, txRunner, projects, cipher, clientFactory),
 		webhookEvents:    webhookevent.NewService(queries, cipher),
 		syncJobs:         syncjob.NewService(queries, projects),
+		notifications:    notification.NewService(queries, projects),
 		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
 		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
 		authLimiter:      newSimpleRateLimiter(authRateLimit, authRateLimitWindow),
@@ -167,6 +170,12 @@ func (s *Server) Router() chi.Router {
 				projects.Delete("/{projectID}/gitlab-connection", s.handleDeleteGitlabConnection)
 				projects.Post("/{projectID}/gitlab-connection/test", s.handleTestGitlabConnection)
 				projects.Get("/{projectID}/gitlab-connection/available-projects", s.handleListAvailableGitlabProjects)
+
+				// Daily digest notification settings (issue #109):
+				// owner-only, since webhook_url is an outbound destination a
+				// lesser role should not be able to redirect.
+				projects.Put("/{projectID}/notification-settings", s.handlePutNotificationSettings)
+				projects.Get("/{projectID}/notification-settings", s.handleGetNotificationSettings)
 
 				projects.Get("/{projectID}/linked-gitlab-projects", s.handleListLinkedGitlabProjects)
 				projects.Post("/{projectID}/linked-gitlab-projects", s.handleCreateLinkedGitlabProject)

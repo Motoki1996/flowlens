@@ -18,6 +18,7 @@ import (
 	"github.com/flowlens/api/internal/gitlab"
 	apihttp "github.com/flowlens/api/internal/http"
 	"github.com/flowlens/api/internal/issuesync"
+	"github.com/flowlens/api/internal/notification"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
 	syncpkg "github.com/flowlens/api/internal/sync"
@@ -129,6 +130,20 @@ func run() error {
 		}()
 	}
 
+	// Daily digest notifications (issue #109): sweeps every project with
+	// notifications enabled and sends its digest once past its configured
+	// send_hour. Runs under the same enable flag as the other background
+	// workers for the same reason webhookCleanup does.
+	notificationWorker := notification.NewWorker(database.NewQuerier(pool), notification.NewHTTPSender())
+	if cfg.SyncWorkerEnabled {
+		go func() {
+			slog.Info("notification digest worker starting", "interval", notification.DefaultSweepInterval)
+			if err := notificationWorker.Run(context.Background()); err != nil {
+				slog.Error("notification digest worker stopped", "error", err)
+			}
+		}()
+	}
+
 	// Start serving in a goroutine so we can wait for shutdown signals.
 	errCh := make(chan error, 1)
 	go func() {
@@ -154,6 +169,9 @@ func run() error {
 			}
 			if err := webhookCleanup.Stop(shutdownCtx); err != nil {
 				slog.Warn("webhook event cleanup worker did not stop cleanly", "error", err)
+			}
+			if err := notificationWorker.Stop(shutdownCtx); err != nil {
+				slog.Warn("notification digest worker did not stop cleanly", "error", err)
 			}
 		}
 		return httpServer.Shutdown(shutdownCtx)

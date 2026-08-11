@@ -365,6 +365,82 @@ func (q *Queries) ListMergeRequestsByProject(ctx context.Context, arg ListMergeR
 	return items, nil
 }
 
+const listMergeRequestsForMetrics = `-- name: ListMergeRequestsForMetrics :many
+
+SELECT mr.state, mr.additions, mr.deletions, mr.changed_files, mr.gitlab_created_at, mr.merged_at, mr.first_reviewed_at, mr.pipeline_status
+FROM merge_requests mr
+JOIN repositories r ON r.id = mr.repository_id
+JOIN linked_gitlab_projects lgp ON lgp.id = r.linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $2
+  )
+  AND ($3::timestamptz IS NULL OR mr.gitlab_created_at >= $3)
+  AND ($4::timestamptz IS NULL OR mr.gitlab_created_at <= $4)
+`
+
+type ListMergeRequestsForMetricsParams struct {
+	ProjectID   uuid.UUID          `json:"project_id"`
+	OwnerUserID uuid.UUID          `json:"owner_user_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Until       pgtype.Timestamptz `json:"until"`
+}
+
+type ListMergeRequestsForMetricsRow struct {
+	State           string             `json:"state"`
+	Additions       int32              `json:"additions"`
+	Deletions       int32              `json:"deletions"`
+	ChangedFiles    int32              `json:"changed_files"`
+	GitlabCreatedAt pgtype.Timestamptz `json:"gitlab_created_at"`
+	MergedAt        pgtype.Timestamptz `json:"merged_at"`
+	FirstReviewedAt pgtype.Timestamptz `json:"first_reviewed_at"`
+	PipelineStatus  string             `json:"pipeline_status"`
+}
+
+// ListMergeRequestsForMetrics backs the delivery-metrics aggregation (issue
+// #113): the narrow column set deliverymetrics.Service needs to compute
+// median/p90 durations, size distribution, pipeline success rate and
+// throughput in the application layer, following docs/testing.md's "test
+// aggregation/derivation logic at the domain layer with fakes" guidance.
+// Scoped and filtered exactly like ListMergeRequestsByProject (same
+// project_members check, same since/until bounding gitlab_created_at), minus
+// the state/author/task_id/sort filters that view alone needs.
+func (q *Queries) ListMergeRequestsForMetrics(ctx context.Context, arg ListMergeRequestsForMetricsParams) ([]ListMergeRequestsForMetricsRow, error) {
+	rows, err := q.db.Query(ctx, listMergeRequestsForMetrics,
+		arg.ProjectID,
+		arg.OwnerUserID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMergeRequestsForMetricsRow{}
+	for rows.Next() {
+		var i ListMergeRequestsForMetricsRow
+		if err := rows.Scan(
+			&i.State,
+			&i.Additions,
+			&i.Deletions,
+			&i.ChangedFiles,
+			&i.GitlabCreatedAt,
+			&i.MergedAt,
+			&i.FirstReviewedAt,
+			&i.PipelineStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateMergeRequest = `-- name: UpdateMergeRequest :one
 
 UPDATE merge_requests

@@ -7,6 +7,8 @@ const push = vi.fn();
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, refresh }),
+  usePathname: () => "/projects/1",
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 const project: Project = {

@@ -6,13 +6,22 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
-import type { ApiError, ApiToken, GitlabConnection, Project, ProjectMember, SyncJob } from "@/types";
+import type {
+  ApiError,
+  ApiToken,
+  DeliveryMetrics,
+  GitlabConnection,
+  Project,
+  ProjectMember,
+  SyncJob,
+} from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ApiTokenSection } from "@/components/ApiTokenSection";
+import { DeliveryMetricsSection } from "@/components/DeliveryMetricsSection";
 import { FailedSyncJobSection } from "@/components/FailedSyncJobSection";
 import { ProjectMemberSection } from "@/components/ProjectMemberSection";
 
@@ -213,6 +222,10 @@ export function ProjectDetail({
   apiTokens = [],
   failedSyncJobs = [],
   members = null,
+  metrics = null,
+  metricsError = false,
+  metricsFrom,
+  metricsTo,
 }: {
   project: Project;
   backlogCount?: number;
@@ -226,6 +239,11 @@ export function ProjectDetail({
   failedSyncJobs?: SyncJob[];
   /** null when the caller isn't a project owner (the listing is owner-only). */
   members?: ProjectMember[] | null;
+  /** Delivery-flow metrics (issue #113); null when they failed to load. */
+  metrics?: DeliveryMetrics | null;
+  metricsError?: boolean;
+  metricsFrom?: string;
+  metricsTo?: string;
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -302,6 +320,10 @@ export function ProjectDetail({
           name="GitLab connection"
           summary={gitlabSummary(gitlabConnection, linkedProjectCount)}
         />
+      </div>
+
+      <div className="mt-8">
+        <DeliveryMetricsSection metrics={metrics} from={metricsFrom} to={metricsTo} error={metricsError} />
       </div>
 
       <div className="mt-8">

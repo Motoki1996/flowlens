@@ -3019,6 +3019,39 @@ func (f *FakeQuerier) ListMergeRequestsByProject(_ context.Context, arg db.ListM
 	return items, nil
 }
 
+// ListMergeRequestsForMetrics mirrors the SQL: same project-membership
+// scoping and since/until bounding as ListMergeRequestsByProject, without
+// the state/author/task_id/sort filters that view alone needs.
+func (f *FakeQuerier) ListMergeRequestsForMetrics(_ context.Context, arg db.ListMergeRequestsForMetricsParams) ([]db.ListMergeRequestsForMetricsRow, error) {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return []db.ListMergeRequestsForMetricsRow{}, nil
+	}
+	items := []db.ListMergeRequestsForMetricsRow{}
+	for _, m := range f.mergeRequestsByID {
+		projectID, ok := f.projectIDForRepository(m.RepositoryID)
+		if !ok || projectID != arg.ProjectID {
+			continue
+		}
+		if arg.Since.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.Before(arg.Since.Time)) {
+			continue
+		}
+		if arg.Until.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.After(arg.Until.Time)) {
+			continue
+		}
+		items = append(items, db.ListMergeRequestsForMetricsRow{
+			State:           m.State,
+			Additions:       m.Additions,
+			Deletions:       m.Deletions,
+			ChangedFiles:    m.ChangedFiles,
+			GitlabCreatedAt: m.GitlabCreatedAt,
+			MergedAt:        m.MergedAt,
+			FirstReviewedAt: m.FirstReviewedAt,
+			PipelineStatus:  m.PipelineStatus,
+		})
+	}
+	return items, nil
+}
+
 // GetMergeRequestForOwner mirrors the SQL: same project-membership scoping
 // as ListMergeRequestsByProject, narrowed to a single id.
 func (f *FakeQuerier) GetMergeRequestForOwner(_ context.Context, arg db.GetMergeRequestForOwnerParams) (db.MergeRequest, error) {

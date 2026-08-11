@@ -16,6 +16,7 @@ const getBacklogs = vi.fn();
 const getGitlabConnection = vi.fn();
 const getLinkedGitlabProjects = vi.fn();
 const getFailedSyncJobs = vi.fn();
+const getProjectMetrics = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
@@ -25,9 +26,12 @@ vi.mock("@/lib/api", () => ({
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
   getFailedSyncJobs: (id: string) => getFailedSyncJobs(id),
+  getProjectMetrics: (id: string) => getProjectMetrics(id),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/projects/1",
+  useSearchParams: () => new URLSearchParams(),
   redirect: (url: string) => {
     throw new Error(`REDIRECT:${url}`);
   },
@@ -54,6 +58,7 @@ describe("ProjectPage", () => {
     getGitlabConnection.mockResolvedValue(null);
     getLinkedGitlabProjects.mockResolvedValue([]);
     getFailedSyncJobs.mockResolvedValue([]);
+    getProjectMetrics.mockResolvedValue(null);
   });
 
   it("renders the project's single view", async () => {

@@ -12,6 +12,7 @@ import (
 	"github.com/flowlens/api/internal/config"
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
+	"github.com/flowlens/api/internal/deliverymetrics"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/gitlabidentity"
@@ -50,6 +51,7 @@ type Server struct {
 	taskDependencies *taskdependency.Service
 	taskComments     *taskcomment.Service
 	mergeRequests    *mergerequest.Service
+	deliveryMetrics  *deliverymetrics.Service
 	gitlabConns      *gitlabconn.Service
 	gitlabIdentities *gitlabidentity.Service
 	linkedProjects   *linkedproject.Service
@@ -92,6 +94,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		taskDependencies: taskdependency.NewService(queries, projects, tasks),
 		taskComments:     taskcomment.NewService(queries, txRunner, projects, tasks),
 		mergeRequests:    mergerequest.NewService(queries, projects),
+		deliveryMetrics:  deliverymetrics.NewService(queries, projects),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(queries),
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
@@ -204,6 +207,11 @@ func (s *Server) Router() chi.Router {
 				// database. Session-only, like the rest of this group —
 				// not on the bearer-token route allowlist.
 				projects.Get("/{projectID}/sync-jobs", s.handleListFailedSyncJobs)
+
+				// Delivery-flow metrics (issue #113): a chart for the
+				// Project single view, not an AI-facing read — session-only
+				// like the rest of this group.
+				projects.Get("/{projectID}/metrics", s.handleGetProjectMetrics)
 			})
 
 			protected.Route("/api-tokens", func(tokens chi.Router) {

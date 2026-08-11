@@ -7,6 +7,7 @@ import {
   getProject,
   getProjectApiTokens,
   getProjectMembers,
+  getProjectMetrics,
   getTasks,
 } from "@/lib/api";
 import { ProjectDetail } from "@/components/ProjectDetail";
@@ -15,10 +16,16 @@ import { ProjectDetail } from "@/components/ProjectDetail";
 // page doesn't need its own user object for).
 export default async function ProjectPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams?: Promise<{ from?: string; to?: string }>;
 }) {
   const { projectId } = await params;
+  const resolvedSearchParams = await searchParams;
+  const metricsFrom = resolvedSearchParams?.from;
+  const metricsTo = resolvedSearchParams?.to;
+
   const project = await getProject(projectId);
   if (!project) notFound();
 
@@ -72,6 +79,14 @@ export default async function ProjectPage({
     // Left null; the section renders its read-only state.
   }
 
+  let metrics: Awaited<ReturnType<typeof getProjectMetrics>> | null = null;
+  let metricsError = false;
+  try {
+    metrics = await getProjectMetrics(projectId, { from: metricsFrom, to: metricsTo });
+  } catch {
+    metricsError = true;
+  }
+
   return (
     <ProjectDetail
       project={project}
@@ -84,6 +99,10 @@ export default async function ProjectPage({
       apiTokens={apiTokens}
       failedSyncJobs={failedSyncJobs}
       members={members}
+      metrics={metrics}
+      metricsError={metricsError}
+      metricsFrom={metricsFrom}
+      metricsTo={metricsTo}
     />
   );
 }

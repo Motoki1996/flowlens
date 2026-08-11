@@ -339,3 +339,41 @@ export interface MergeRequest {
   pipelineUpdatedAt: string | null;
   taskId: string | null;
 }
+
+/** DurationStats summarizes a set of durations in hours, median and p90
+ *  (never a mean — lead time is reliably skewed by a handful of slow
+ *  reviews). count/median/p90 are all null-safe: count is 0 and
+ *  median/p90 are null when nothing in range has both timestamps the stat
+ *  needs (see apps/api/internal/deliverymetrics.DurationStats). */
+export interface DurationStats {
+  count: number;
+  medianHours: number | null;
+  p90Hours: number | null;
+}
+
+/** SizeStats is DurationStats' counterpart for a plain numeric measure
+ *  (additions/deletions/changed files), without the "hours" unit. */
+export interface SizeStats {
+  count: number;
+  median: number | null;
+  p90: number | null;
+}
+
+/** DeliveryMetrics is a project's delivery-flow aggregation over the
+ *  optional [from, to] range (issue #113, ADR-0011 §3): review/merge lead
+ *  time, merge-request size distribution, pipeline success rate and
+ *  throughput. See apps/api/internal/deliverymetrics.Metrics. */
+export interface DeliveryMetrics {
+  from: string | null;
+  to: string | null;
+  openToFirstReview: DurationStats;
+  firstReviewToMerge: DurationStats;
+  additions: SizeStats;
+  deletions: SizeStats;
+  changedFiles: SizeStats;
+  /** success / (success + failed) pipelines, 0..1; null when none in range
+   *  have a decided pipeline outcome. */
+  pipelineSuccessRate: number | null;
+  /** Count of merge requests with state "merged" in range. */
+  throughput: number;
+}

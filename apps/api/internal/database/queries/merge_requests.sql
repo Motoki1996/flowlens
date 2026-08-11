@@ -129,6 +129,29 @@ WHERE mr.id = sqlc.arg(id)
     WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
   );
 
+-- ListMergeRequestsForMetrics backs the delivery-metrics aggregation (issue
+-- #113): the narrow column set deliverymetrics.Service needs to compute
+-- median/p90 durations, size distribution, pipeline success rate and
+-- throughput in the application layer, following docs/testing.md's "test
+-- aggregation/derivation logic at the domain layer with fakes" guidance.
+-- Scoped and filtered exactly like ListMergeRequestsByProject (same
+-- project_members check, same since/until bounding gitlab_created_at), minus
+-- the state/author/task_id/sort filters that view alone needs.
+
+-- name: ListMergeRequestsForMetrics :many
+SELECT mr.state, mr.additions, mr.deletions, mr.changed_files, mr.gitlab_created_at, mr.merged_at, mr.first_reviewed_at, mr.pipeline_status
+FROM merge_requests mr
+JOIN repositories r ON r.id = mr.repository_id
+JOIN linked_gitlab_projects lgp ON lgp.id = r.linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE gc.project_id = sqlc.arg(project_id)
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  )
+  AND (sqlc.narg(since)::timestamptz IS NULL OR mr.gitlab_created_at >= sqlc.narg(since))
+  AND (sqlc.narg(until)::timestamptz IS NULL OR mr.gitlab_created_at <= sqlc.narg(until));
+
 -- GetMergeRequestProjectID is the lightweight, unscoped lookup
 -- requireTokenResourceProject (internal/http, issue #66) uses to enforce a
 -- bearer token's project boundary on a single-merge-request URL, the same

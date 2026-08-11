@@ -12,6 +12,7 @@ import { cookies } from "next/headers";
 import type {
   ApiToken,
   Backlog,
+  DeliveryMetrics,
   GitlabConnection,
   GitlabIdentity,
   GitlabLabelOption,
@@ -314,6 +315,41 @@ export async function getMergeRequest(id: string): Promise<MergeRequest | null> 
     throw new Error(`Failed to load merge request: ${res.status}`);
   }
   return (await res.json()) as MergeRequest;
+}
+
+/** ProjectMetricsFilter narrows getProjectMetrics to a date range (issue
+ *  #113); both bounds are optional YYYY-MM-DD strings, unbounded when
+ *  omitted, the same date-only convention MergeRequestFilter's since/until
+ *  use. */
+export type ProjectMetricsFilter = {
+  from?: string;
+  to?: string;
+};
+
+/**
+ * getProjectMetrics returns the project's delivery-flow metrics (issue
+ * #113): review/merge lead time, merge-request size distribution, pipeline
+ * success rate and throughput. Callers must already know the request is
+ * authenticated.
+ */
+export async function getProjectMetrics(
+  projectId: string,
+  filter: ProjectMetricsFilter = {},
+): Promise<DeliveryMetrics> {
+  const cookieStore = await cookies();
+  const params = new URLSearchParams();
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  const query = params.toString();
+
+  const res = await fetch(
+    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/metrics${query ? `?${query}` : ""}`,
+    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load project metrics: ${res.status}`);
+  }
+  return (await res.json()) as DeliveryMetrics;
 }
 
 /**

@@ -420,6 +420,15 @@ type Querier interface {
 	// as the tiebreak, so a merge request with no GitLab timestamp yet still
 	// sorts deterministically.
 	ListMergeRequestsByProject(ctx context.Context, arg ListMergeRequestsByProjectParams) ([]MergeRequest, error)
+	// ListMergeRequestsForMetrics backs the delivery-metrics aggregation (issue
+	// #113): the narrow column set deliverymetrics.Service needs to compute
+	// median/p90 durations, size distribution, pipeline success rate and
+	// throughput in the application layer, following docs/testing.md's "test
+	// aggregation/derivation logic at the domain layer with fakes" guidance.
+	// Scoped and filtered exactly like ListMergeRequestsByProject (same
+	// project_members check, same since/until bounding gitlab_created_at), minus
+	// the state/author/task_id/sort filters that view alone needs.
+	ListMergeRequestsForMetrics(ctx context.Context, arg ListMergeRequestsForMetricsParams) ([]ListMergeRequestsForMetricsRow, error)
 	// ListOverdueOpenTasksByProject / ListTasksDueSoonByProject back the digest
 	// content (issue #109's (a)/(b)). due_on is a DATE (no time-of-day), so
 	// "due within 24h" is approximated as "due today" — the finest-grained

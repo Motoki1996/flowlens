@@ -1202,17 +1202,55 @@ here.
   shows a "Merge requests" card, the reverse link, via the same list endpoint
   filtered by `?taskId=`.
 
+### Delivery metrics (issue #113)
+
+The merge-request / CI delivery-flow metrics [ADR-0011](docs/decisions/0011-why-merge-request-sync.md)
+designed and [#111](#merge-request-sync-issue-111)/[#112](#merge-request-views-issue-112)
+populated, finally aggregated and charted — this is what makes FlowLens live
+up to its name. Read-only, computed on request from `merge_requests` already
+synced; nothing is cached or materialized yet.
+
+- `GET /api/v1/projects/{projectID}/metrics?from=&to=` (`YYYY-MM-DD`, both
+  optional, bounding `gitlab_created_at` the same way the merge-request
+  collection's `?since=`/`?until=` do) returns:
+  - **Open → first review** and **first review → merge** durations, each as
+    a **median and p90** (never a mean — lead time is reliably skewed by a
+    handful of slow reviews, and a mean lets outliers hide behind a falsely
+    comfortable "average"). A merge request missing either timestamp (not
+    yet reviewed, not yet merged) is excluded from that stat rather than
+    counted as zero.
+  - **Merge-request size distribution** (median/p90 of `additions`/
+    `deletions`/`changed_files`) — the columns already exist on
+    `merge_requests`, but `internal/mrsync` doesn't fetch GitLab's diff
+    stats yet, so every merge request's size is 0 today; this aggregation is
+    ready for when a future issue backfills them.
+  - **Pipeline success rate**: `success ÷ (success + failed)` pipelines;
+    `null` when nothing in range has a decided outcome (still
+    running/pending/skipped/canceled/manual/no pipeline don't count toward
+    either side).
+  - **Throughput**: count of merge requests with state `merged` in range.
+  - Session-only, not on the bearer-token allowlist — this is a chart for a
+    human reading the Project view, not an AI-facing read.
+  - Median/p90 use the nearest-rank method (no interpolation) — see
+    `apps/api/internal/deliverymetrics`.
+- Web: a "Delivery metrics" card on the Project single view
+  (`/projects/[projectId]`), with `?from=`/`?to=` date filters held in the
+  URL and a grouped bar chart (median vs. p90) for the two lead-time stages,
+  alongside a stat row for throughput and pipeline success rate. Size
+  distribution isn't charted yet — see above.
+- The aggregation started as a plain query over `merge_requests`, computing
+  median/p90 in the application layer (cheap to unit test with fakes, per
+  [`docs/testing.md`](docs/testing.md)); a materialized view is future work
+  if `EXPLAIN` on real data ever calls for one, not before.
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault
   implementation is not written yet (the interface is in place).
 - Integration tests assume migrations are already applied.
-- The merge-request / CI delivery-flow **dashboard** (aggregated metrics
-  describing a team's review/CI process) described in [Solution](#solution)
-  is not built yet. The list and detail views are — see
-  [Merge request views](#merge-request-views-issue-112) — as is the sync
-  engine that feeds both (see [Merge request sync](#merge-request-sync-issue-111)
-  and [Roadmap](#roadmap)).
+- Merge-request size distribution is always 0 today: `internal/mrsync`
+  doesn't fetch GitLab's diff stats (`additions`/`deletions`/
+  `changed_files`) yet — see [Delivery metrics](#delivery-metrics-issue-113).
 
 ## Roadmap
 
@@ -1235,8 +1273,10 @@ here.
 5. **Merge request views (done):** collection view with filters, single
    view, task ↔ MR reverse link — see
    [Merge request views](#merge-request-views-issue-112).
-6. **Delivery-flow dashboard:** aggregated metrics (review latency, CI pass
-   rate, ...) across a project's merge requests, empty/loading/error states.
+6. **Delivery-flow dashboard (done):** aggregated metrics (review latency
+   median/p90, pipeline success rate, throughput) across a project's merge
+   requests, with empty/loading/error states — see
+   [Delivery metrics](#delivery-metrics-issue-113).
 7. **Automation:** webhooks (with duplicate-delivery handling) and scheduled
    sync via Azure Service Bus.
 8. **Azure deployment:** Container Apps, Azure Database for PostgreSQL, Key

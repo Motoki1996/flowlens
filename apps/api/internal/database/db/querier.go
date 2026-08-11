@@ -277,6 +277,16 @@ type Querier interface {
 	// id — the key a "Pipeline Hook" delivery's merge_request.iid gives
 	// (internal/webhookapply), unlike an MR event's own object_attributes.id.
 	GetMergeRequestByRepositoryAndNumber(ctx context.Context, arg GetMergeRequestByRepositoryAndNumberParams) (MergeRequest, error)
+	// GetMergeRequestForOwner is ListMergeRequestsByProject's single-object
+	// counterpart, backing the merge-request single view. Scoped the same way,
+	// so a merge request belonging to a project the caller isn't a member of is
+	// indistinguishable from one that doesn't exist.
+	GetMergeRequestForOwner(ctx context.Context, arg GetMergeRequestForOwnerParams) (MergeRequest, error)
+	// GetMergeRequestProjectID is the lightweight, unscoped lookup
+	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+	// bearer token's project boundary on a single-merge-request URL, the same
+	// role GetTaskProjectID plays for tasks.
+	GetMergeRequestProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	GetNotificationSettingsForOwner(ctx context.Context, arg GetNotificationSettingsForOwnerParams) (NotificationSetting, error)
 	// GetPendingSyncJobQueueStats backs the worker's queue-depth gauges (issue
 	// #96): how many jobs are waiting, and how long the oldest of them has been
@@ -400,6 +410,16 @@ type Querier interface {
 	// GetLinkedGitlabProjectForOwner before this runs.
 	ListGitlabSyncRunsByLinkedGitlabProjectID(ctx context.Context, linkedGitlabProjectID uuid.UUID) ([]GitlabSyncRun, error)
 	ListLinkedGitlabProjectsForOwner(ctx context.Context, arg ListLinkedGitlabProjectsForOwnerParams) ([]LinkedGitlabProject, error)
+	// ListMergeRequestsByProject backs the merge-request collection view (issue
+	// #112), scoped through repositories -> linked_gitlab_projects ->
+	// gitlab_connections to the app project the caller is a member of, the same
+	// project_members EXISTS check GetTaskForOwner uses. state/author/task_id
+	// follow ListTasksByProject's "empty/NULL disables it" convention;
+	// since/until bound gitlab_created_at. sort_by_updated switches the primary
+	// order from gitlab_created_at to gitlab_updated_at, both DESC with created_at
+	// as the tiebreak, so a merge request with no GitLab timestamp yet still
+	// sorts deterministically.
+	ListMergeRequestsByProject(ctx context.Context, arg ListMergeRequestsByProjectParams) ([]MergeRequest, error)
 	// ListOverdueOpenTasksByProject / ListTasksDueSoonByProject back the digest
 	// content (issue #109's (a)/(b)). due_on is a DATE (no time-of-day), so
 	// "due within 24h" is approximated as "due today" — the finest-grained

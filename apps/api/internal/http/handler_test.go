@@ -18,6 +18,7 @@ import (
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/gitlabidentity"
 	"github.com/flowlens/api/internal/linkedproject"
+	"github.com/flowlens/api/internal/mergerequest"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectmember"
 	"github.com/flowlens/api/internal/projectsync"
@@ -82,6 +83,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(q, projects, tasks),
 		taskComments:     taskcomment.NewService(q, txRunner, projects, tasks),
+		mergeRequests:    mergerequest.NewService(q, projects),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(q),
 		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),

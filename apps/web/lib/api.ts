@@ -17,6 +17,8 @@ import type {
   GitlabLabelOption,
   GitlabMemberOption,
   LinkedGitlabProject,
+  MergeRequest,
+  MergeRequestState,
   Priority,
   Project,
   ProjectMember,
@@ -252,6 +254,66 @@ export async function getTask(id: string): Promise<Task | null> {
     throw new Error(`Failed to load task: ${res.status}`);
   }
   return (await res.json()) as Task;
+}
+
+/** MergeRequestFilter is GET .../merge-requests's query parameters (issue
+ *  #112) — every one is optional, meaning "no filter". since/until are plain
+ *  YYYY-MM-DD strings, the same date-only convention AllTasksFilter's
+ *  dueBefore/dueAfter use. taskId lets the Task single view fetch its own
+ *  related merge requests through this same endpoint. */
+export type MergeRequestFilter = {
+  state?: MergeRequestState;
+  author?: string;
+  taskId?: string;
+  since?: string;
+  until?: string;
+  sort?: "updated";
+};
+
+/**
+ * getMergeRequests returns the project's merge requests matching filter,
+ * newest (by GitLab creation date) first unless filter.sort overrides it.
+ * Callers must already know the request is authenticated.
+ */
+export async function getMergeRequests(
+  projectId: string,
+  filter: MergeRequestFilter = {},
+): Promise<MergeRequest[]> {
+  const cookieStore = await cookies();
+  const params = new URLSearchParams();
+  if (filter.state) params.set("state", filter.state);
+  if (filter.author) params.set("author", filter.author);
+  if (filter.taskId) params.set("taskId", filter.taskId);
+  if (filter.since) params.set("since", filter.since);
+  if (filter.until) params.set("until", filter.until);
+  if (filter.sort) params.set("sort", filter.sort);
+  const query = params.toString();
+
+  const res = await fetch(
+    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/merge-requests${query ? `?${query}` : ""}`,
+    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load merge requests: ${res.status}`);
+  }
+  return (await res.json()) as MergeRequest[];
+}
+
+/**
+ * getMergeRequest returns one merge request, or null when it doesn't exist
+ * or isn't visible to the current user (the API reports both cases as 404).
+ */
+export async function getMergeRequest(id: string): Promise<MergeRequest | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/merge-requests/${id}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load merge request: ${res.status}`);
+  }
+  return (await res.json()) as MergeRequest;
 }
 
 /**

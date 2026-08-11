@@ -43,6 +43,20 @@ export function taskPath(projectId: string, taskId: string) {
   return `/projects/${projectId}/tasks/${taskId}`;
 }
 
+/** The MergeRequest collection (issue #112). `taskId` pre-selects the
+ *  collection's task filter, the same handoff-through-the-URL pattern
+ *  `tasksPath`'s `backlogId` option uses — the Task single view links here
+ *  rather than growing its own MR browsing. */
+export function mergeRequestsPath(projectId: string, options?: { taskId?: string }) {
+  const base = `/projects/${projectId}/merge-requests`;
+  if (!options?.taskId) return base;
+  return `${base}?taskId=${encodeURIComponent(options.taskId)}`;
+}
+
+export function mergeRequestPath(projectId: string, mergeRequestId: string) {
+  return `/projects/${projectId}/merge-requests/${mergeRequestId}`;
+}
+
 /** A project has at most one GitLab connection (ADR-0008), so this is a single
  *  view without a collection above it. */
 export function gitlabConnectionPath(projectId: string) {
@@ -59,7 +73,7 @@ export function linkedGitlabProjectPath(projectId: string, linkId: string) {
  * the section of the collection above it, which is what lets the project
  * switcher keep you on the same section when you change projects.
  */
-export type ProjectSection = "overview" | "backlogs" | "tasks" | "gitlab-connection";
+export type ProjectSection = "overview" | "backlogs" | "tasks" | "merge-requests" | "gitlab-connection";
 
 export function projectSectionPath(projectId: string, section: ProjectSection) {
   switch (section) {
@@ -67,6 +81,8 @@ export function projectSectionPath(projectId: string, section: ProjectSection) {
       return backlogsPath(projectId);
     case "tasks":
       return tasksPath(projectId);
+    case "merge-requests":
+      return mergeRequestsPath(projectId);
     case "gitlab-connection":
       return gitlabConnectionPath(projectId);
     case "overview":
@@ -86,6 +102,8 @@ export function projectSectionOf(pathname: string): ProjectSection {
       return "backlogs";
     case "tasks":
       return "tasks";
+    case "merge-requests":
+      return "merge-requests";
     case "gitlab-connection":
     case "linked-gitlab-projects":
       return "gitlab-connection";

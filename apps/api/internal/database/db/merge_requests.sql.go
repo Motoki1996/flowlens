@@ -189,6 +189,182 @@ func (q *Queries) GetMergeRequestByRepositoryAndNumber(ctx context.Context, arg 
 	return i, err
 }
 
+const getMergeRequestForOwner = `-- name: GetMergeRequestForOwner :one
+
+SELECT mr.id, mr.repository_id, mr.gitlab_merge_request_id, mr.number, mr.title, mr.state, mr.is_draft, mr.author_gitlab_username, mr.author_avatar_url, mr.base_branch, mr.head_branch, mr.additions, mr.deletions, mr.changed_files, mr.gitlab_created_at, mr.gitlab_updated_at, mr.merged_at, mr.closed_at, mr.html_url, mr.created_at, mr.updated_at, mr.first_reviewed_at, mr.pipeline_status, mr.pipeline_id, mr.pipeline_updated_at, mr.task_id
+FROM merge_requests mr
+JOIN repositories r ON r.id = mr.repository_id
+JOIN linked_gitlab_projects lgp ON lgp.id = r.linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE mr.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $2
+  )
+`
+
+type GetMergeRequestForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// GetMergeRequestForOwner is ListMergeRequestsByProject's single-object
+// counterpart, backing the merge-request single view. Scoped the same way,
+// so a merge request belonging to a project the caller isn't a member of is
+// indistinguishable from one that doesn't exist.
+func (q *Queries) GetMergeRequestForOwner(ctx context.Context, arg GetMergeRequestForOwnerParams) (MergeRequest, error) {
+	row := q.db.QueryRow(ctx, getMergeRequestForOwner, arg.ID, arg.OwnerUserID)
+	var i MergeRequest
+	err := row.Scan(
+		&i.ID,
+		&i.RepositoryID,
+		&i.GitlabMergeRequestID,
+		&i.Number,
+		&i.Title,
+		&i.State,
+		&i.IsDraft,
+		&i.AuthorGitlabUsername,
+		&i.AuthorAvatarUrl,
+		&i.BaseBranch,
+		&i.HeadBranch,
+		&i.Additions,
+		&i.Deletions,
+		&i.ChangedFiles,
+		&i.GitlabCreatedAt,
+		&i.GitlabUpdatedAt,
+		&i.MergedAt,
+		&i.ClosedAt,
+		&i.HtmlUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstReviewedAt,
+		&i.PipelineStatus,
+		&i.PipelineID,
+		&i.PipelineUpdatedAt,
+		&i.TaskID,
+	)
+	return i, err
+}
+
+const getMergeRequestProjectID = `-- name: GetMergeRequestProjectID :one
+
+SELECT gc.project_id
+FROM merge_requests mr
+JOIN repositories r ON r.id = mr.repository_id
+JOIN linked_gitlab_projects lgp ON lgp.id = r.linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE mr.id = $1
+`
+
+// GetMergeRequestProjectID is the lightweight, unscoped lookup
+// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
+// bearer token's project boundary on a single-merge-request URL, the same
+// role GetTaskProjectID plays for tasks.
+func (q *Queries) GetMergeRequestProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getMergeRequestProjectID, id)
+	var project_id uuid.UUID
+	err := row.Scan(&project_id)
+	return project_id, err
+}
+
+const listMergeRequestsByProject = `-- name: ListMergeRequestsByProject :many
+
+SELECT mr.id, mr.repository_id, mr.gitlab_merge_request_id, mr.number, mr.title, mr.state, mr.is_draft, mr.author_gitlab_username, mr.author_avatar_url, mr.base_branch, mr.head_branch, mr.additions, mr.deletions, mr.changed_files, mr.gitlab_created_at, mr.gitlab_updated_at, mr.merged_at, mr.closed_at, mr.html_url, mr.created_at, mr.updated_at, mr.first_reviewed_at, mr.pipeline_status, mr.pipeline_id, mr.pipeline_updated_at, mr.task_id
+FROM merge_requests mr
+JOIN repositories r ON r.id = mr.repository_id
+JOIN linked_gitlab_projects lgp ON lgp.id = r.linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $2
+  )
+  AND ($3::text = '' OR mr.state = $3)
+  AND ($4::text = '' OR mr.author_gitlab_username = $4)
+  AND ($5::uuid IS NULL OR mr.task_id = $5)
+  AND ($6::timestamptz IS NULL OR mr.gitlab_created_at >= $6)
+  AND ($7::timestamptz IS NULL OR mr.gitlab_created_at <= $7)
+ORDER BY
+  (CASE WHEN $8::boolean THEN mr.gitlab_updated_at ELSE mr.gitlab_created_at END) DESC NULLS LAST,
+  mr.created_at DESC
+`
+
+type ListMergeRequestsByProjectParams struct {
+	ProjectID     uuid.UUID          `json:"project_id"`
+	OwnerUserID   uuid.UUID          `json:"owner_user_id"`
+	State         string             `json:"state"`
+	Author        string             `json:"author"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	Since         pgtype.Timestamptz `json:"since"`
+	Until         pgtype.Timestamptz `json:"until"`
+	SortByUpdated bool               `json:"sort_by_updated"`
+}
+
+// ListMergeRequestsByProject backs the merge-request collection view (issue
+// #112), scoped through repositories -> linked_gitlab_projects ->
+// gitlab_connections to the app project the caller is a member of, the same
+// project_members EXISTS check GetTaskForOwner uses. state/author/task_id
+// follow ListTasksByProject's "empty/NULL disables it" convention;
+// since/until bound gitlab_created_at. sort_by_updated switches the primary
+// order from gitlab_created_at to gitlab_updated_at, both DESC with created_at
+// as the tiebreak, so a merge request with no GitLab timestamp yet still
+// sorts deterministically.
+func (q *Queries) ListMergeRequestsByProject(ctx context.Context, arg ListMergeRequestsByProjectParams) ([]MergeRequest, error) {
+	rows, err := q.db.Query(ctx, listMergeRequestsByProject,
+		arg.ProjectID,
+		arg.OwnerUserID,
+		arg.State,
+		arg.Author,
+		arg.TaskID,
+		arg.Since,
+		arg.Until,
+		arg.SortByUpdated,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MergeRequest{}
+	for rows.Next() {
+		var i MergeRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepositoryID,
+			&i.GitlabMergeRequestID,
+			&i.Number,
+			&i.Title,
+			&i.State,
+			&i.IsDraft,
+			&i.AuthorGitlabUsername,
+			&i.AuthorAvatarUrl,
+			&i.BaseBranch,
+			&i.HeadBranch,
+			&i.Additions,
+			&i.Deletions,
+			&i.ChangedFiles,
+			&i.GitlabCreatedAt,
+			&i.GitlabUpdatedAt,
+			&i.MergedAt,
+			&i.ClosedAt,
+			&i.HtmlUrl,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.FirstReviewedAt,
+			&i.PipelineStatus,
+			&i.PipelineID,
+			&i.PipelineUpdatedAt,
+			&i.TaskID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateMergeRequest = `-- name: UpdateMergeRequest :one
 
 UPDATE merge_requests

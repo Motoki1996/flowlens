@@ -301,3 +301,41 @@ export interface GitlabIdentity {
   gitlabUserId: number;
   gitlabUsername: string;
 }
+
+/** MergeRequestState is a GitLab CE merge request's own state — FlowLens
+ *  never writes it, only mirrors it (issue #111/#112, ADR-0011). */
+export type MergeRequestState = "opened" | "merged" | "closed" | "locked";
+
+/** MergeRequest mirrors a repository's GitLab merge request, read-only
+ *  (see apps/api/internal/mergerequest.MergeRequest). taskId is set when the
+ *  merge request's description or branch name referenced a task's linked
+ *  GitLab issue (internal/mrsync); pipelineStatus/pipelineId reflect its
+ *  latest known CI pipeline. */
+export interface MergeRequest {
+  id: string;
+  repositoryId: string;
+  gitlabMergeRequestId: number;
+  number: number;
+  title: string;
+  state: MergeRequestState;
+  isDraft: boolean;
+  authorGitlabUsername: string;
+  authorAvatarUrl: string;
+  baseBranch: string;
+  headBranch: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  gitlabCreatedAt: string | null;
+  gitlabUpdatedAt: string | null;
+  mergedAt: string | null;
+  closedAt: string | null;
+  htmlUrl: string;
+  createdAt: string;
+  updatedAt: string;
+  firstReviewedAt: string | null;
+  pipelineStatus: string;
+  pipelineId: number | null;
+  pipelineUpdatedAt: string | null;
+  taskId: string | null;
+}

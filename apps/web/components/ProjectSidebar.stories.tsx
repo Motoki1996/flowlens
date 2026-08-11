@@ -24,7 +24,7 @@ const meta = {
   args: {
     project: projects[0],
     projects,
-    counts: { backlogs: 2, openTasks: 3, totalTasks: 7, gitlab: "1" },
+    counts: { backlogs: 2, openTasks: 3, totalTasks: 7, mergeRequests: 5, gitlab: "1" },
   },
 } satisfies Meta<typeof ProjectSidebar>;
 
@@ -43,10 +43,12 @@ export const OnASingleView: Story = {
 
 /** The connection is configured but failing to verify. */
 export const GitlabConnectionBroken: Story = {
-  args: { counts: { backlogs: 2, openTasks: 3, totalTasks: 7, gitlab: "Error" } },
+  args: { counts: { backlogs: 2, openTasks: 3, totalTasks: 7, mergeRequests: 5, gitlab: "Error" } },
 };
 
 /** Counts unavailable: every link still works, they just carry no summary. */
 export const CountsUnavailable: Story = {
-  args: { counts: { backlogs: null, openTasks: null, totalTasks: null, gitlab: null } },
+  args: {
+    counts: { backlogs: null, openTasks: null, totalTasks: null, mergeRequests: null, gitlab: null },
+  },
 };

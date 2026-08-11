@@ -30,6 +30,7 @@ const counts: ProjectSidebarCounts = {
   backlogs: 2,
   openTasks: 3,
   totalTasks: 7,
+  mergeRequests: 5,
   gitlab: "1",
 };
 
@@ -52,6 +53,7 @@ describe("ProjectSidebar", () => {
       ["Overview", "/projects/p1"],
       ["Backlogs", "/projects/p1/backlogs"],
       ["Tasks", "/projects/p1/tasks"],
+      ["Merge requests", "/projects/p1/merge-requests"],
       ["GitLab connection", "/projects/p1/gitlab-connection"],
     ];
     for (const [name, href] of links) {
@@ -64,12 +66,13 @@ describe("ProjectSidebar", () => {
     const nav = within(screen.getByRole("navigation", { name: "Project sections" }));
     expect(nav.getByRole("link", { name: /^Backlogs/ })).toHaveTextContent("2");
     expect(nav.getByRole("link", { name: /^Tasks/ })).toHaveTextContent("3/7");
+    expect(nav.getByRole("link", { name: /^Merge requests/ })).toHaveTextContent("5");
     expect(nav.getByRole("link", { name: /^GitLab connection/ })).toHaveTextContent("1");
   });
 
   it("drops the summary rather than the link when a count is unavailable", () => {
     renderSidebar({
-      counts: { backlogs: null, openTasks: null, totalTasks: null, gitlab: null },
+      counts: { backlogs: null, openTasks: null, totalTasks: null, mergeRequests: null, gitlab: null },
     });
     const nav = within(screen.getByRole("navigation", { name: "Project sections" }));
     expect(nav.getByRole("link", { name: "Backlogs" })).toHaveAttribute(

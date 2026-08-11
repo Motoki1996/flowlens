@@ -1173,16 +1173,45 @@ unlike issue sync, this is one-way.
   issue's task via the existing `task_gitlab_links` table, giving a
   task → MR → pipeline chain. A merge request that references nothing
   recognizable is simply left unlinked.
-- No API/UI surfaces this data yet — see [Roadmap](#roadmap).
+- See [Merge request views](#merge-request-views-issue-112) for the API/UI
+  that surfaces this data.
+
+### Merge request views (issue #112)
+
+The `MergeRequest` collection/single views the object model in
+[`docs/ui-design.md`](docs/ui-design.md) has anticipated since before either
+existed. Read-only throughout — FlowLens never writes a merge request back to
+GitLab (ADR-0011), so unlike the `Task` screens there is no create/edit/delete
+here.
+
+- `GET /api/v1/projects/{projectID}/merge-requests` lists a project's merge
+  requests, scoped through `repositories` → `linked_gitlab_projects` →
+  `gitlab_connections` to the caller's project membership, the same
+  `project_members` check the task collection uses. Filters: `?state=`
+  (`opened`/`merged`/`closed`/`locked`), `?author=` (GitLab username),
+  `?taskId=` (only the merge request(s) linked to one task), `?since=`/
+  `?until=` (`YYYY-MM-DD`, bounding `gitlab_created_at`), `?sort=updated`
+  (ranks by `gitlab_updated_at` instead of the default `gitlab_created_at`,
+  both descending).
+- `GET /api/v1/merge-requests/{mergeRequestID}` returns a single merge
+  request, scoped the same way.
+- Web: `/projects/[projectId]/merge-requests` (collection) and
+  `/projects/[projectId]/merge-requests/[mrId]` (single, showing review/
+  pipeline status and a link to its linked `Task` if any) — see the screen
+  map in [`docs/ui-design.md`](docs/ui-design.md). The Task single view also
+  shows a "Merge requests" card, the reverse link, via the same list endpoint
+  filtered by `?taskId=`.
 
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault
   implementation is not written yet (the interface is in place).
 - Integration tests assume migrations are already applied.
-- The merge-request / CI delivery-flow **visualization** (dashboard, list,
-  detail views) described in [Solution](#solution) is not built yet — the
-  sync engine that feeds it is (see [Merge request sync](#merge-request-sync-issue-111)
+- The merge-request / CI delivery-flow **dashboard** (aggregated metrics
+  describing a team's review/CI process) described in [Solution](#solution)
+  is not built yet. The list and detail views are — see
+  [Merge request views](#merge-request-views-issue-112) — as is the sync
+  engine that feeds both (see [Merge request sync](#merge-request-sync-issue-111)
   and [Roadmap](#roadmap)).
 
 ## Roadmap
@@ -1203,9 +1232,12 @@ unlike issue sync, this is one-way.
    `pipeline` events) with periodic catch-up, idempotent upserts, and
    task ↔ MR linking — see
    [Merge request sync](#merge-request-sync-issue-111).
-5. **Dashboard & MR views:** metrics, list with filters, detail page,
-   empty/loading/error states.
-6. **Automation:** webhooks (with duplicate-delivery handling) and scheduled
+5. **Merge request views (done):** collection view with filters, single
+   view, task ↔ MR reverse link — see
+   [Merge request views](#merge-request-views-issue-112).
+6. **Delivery-flow dashboard:** aggregated metrics (review latency, CI pass
+   rate, ...) across a project's merge requests, empty/loading/error states.
+7. **Automation:** webhooks (with duplicate-delivery handling) and scheduled
    sync via Azure Service Bus.
-7. **Azure deployment:** Container Apps, Azure Database for PostgreSQL, Key
+8. **Azure deployment:** Container Apps, Azure Database for PostgreSQL, Key
    Vault, Application Insights.

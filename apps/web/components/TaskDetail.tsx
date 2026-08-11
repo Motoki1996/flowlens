@@ -11,6 +11,7 @@ import type {
   Backlog,
   GitlabLabelOption,
   GitlabMemberOption,
+  MergeRequest,
   Task,
   TaskComment,
   TaskDependency,
@@ -24,6 +25,7 @@ import { AIContextSection } from "@/components/AIContextSection";
 import { TaskActivitySection } from "@/components/TaskActivitySection";
 import { TaskDependencySection } from "@/components/TaskDependencySection";
 import { TaskEditForm } from "@/components/TaskEditForm";
+import { TaskMergeRequestsSection } from "@/components/TaskMergeRequestsSection";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
@@ -284,6 +286,7 @@ export function TaskDetail({
   comments = [],
   currentUserId = "",
   apiTokens = [],
+  mergeRequests = [],
 }: {
   task: Task;
   backlogs: Backlog[];
@@ -304,6 +307,10 @@ export function TaskDetail({
   comments?: TaskComment[];
   currentUserId?: string;
   apiTokens?: ApiToken[];
+  // The merge request(s) that reference this task (issue #112's reverse
+  // link, mrsync's task_id resolution) — empty when none do, or when the
+  // project has no merge-request sync at all.
+  mergeRequests?: MergeRequest[];
 }) {
   const [task, setTask] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -426,6 +433,18 @@ export function TaskDetail({
         </CardHeader>
         <CardContent>
           <TaskDependencySection task={task} tasks={tasks} dependencies={dependencies} />
+        </CardContent>
+      </Card>
+
+      <Card className="mt-8">
+        <CardHeader>
+          <CardTitle className="text-base font-medium">Merge requests</CardTitle>
+          <CardDescription>
+            GitLab merge requests whose description or branch name referenced this task.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <TaskMergeRequestsSection projectId={task.projectId} mergeRequests={mergeRequests} />
         </CardContent>
       </Card>
 

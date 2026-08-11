@@ -2926,6 +2926,127 @@ func (f *FakeQuerier) UpdateMergeRequestTaskID(_ context.Context, arg db.UpdateM
 	return m, nil
 }
 
+// SeedMergeRequest inserts a ready-made merge request directly, bypassing
+// CreateMergeRequest's uniqueness plumbing, for tests that need one to
+// already exist. gitlabMergeRequestID must be unique across the test.
+func (f *FakeQuerier) SeedMergeRequest(repositoryID uuid.UUID, gitlabMergeRequestID int64, number int32, title, state string) db.MergeRequest {
+	m := db.MergeRequest{
+		ID:                   uuid.New(),
+		RepositoryID:         repositoryID,
+		GitlabMergeRequestID: gitlabMergeRequestID,
+		Number:               number,
+		Title:                title,
+		State:                state,
+		GitlabCreatedAt:      pgtype.Timestamptz{Time: now().Time, Valid: true},
+		GitlabUpdatedAt:      pgtype.Timestamptz{Time: now().Time, Valid: true},
+		CreatedAt:            now(),
+		UpdatedAt:            now(),
+	}
+	f.storeMergeRequest(m)
+	return m
+}
+
+// projectIDForRepository walks repositories -> linked_gitlab_projects ->
+// gitlab_connections to the app project a repository belongs to, mirroring
+// the join ListMergeRequestsByProject/GetMergeRequestForOwner/
+// GetMergeRequestProjectID's SQL performs.
+func (f *FakeQuerier) projectIDForRepository(repositoryID uuid.UUID) (uuid.UUID, bool) {
+	repo, ok := f.repositoriesByID[repositoryID]
+	if !ok {
+		return uuid.UUID{}, false
+	}
+	link, ok := f.linkedGitlabProjectsByID[repo.LinkedGitlabProjectID]
+	if !ok {
+		return uuid.UUID{}, false
+	}
+	conn, ok := f.gitlabConnectionsByID[link.GitlabConnectionID]
+	if !ok {
+		return uuid.UUID{}, false
+	}
+	return conn.ProjectID, true
+}
+
+// ListMergeRequestsByProject mirrors the SQL: scoped to projectID via
+// repositories/linked_gitlab_projects/gitlab_connections, gated by
+// ownerUserID's project membership, then state/author/task_id/since/until
+// filters, sorted by gitlab_updated_at or gitlab_created_at DESC (created_at
+// as tiebreak).
+func (f *FakeQuerier) ListMergeRequestsByProject(_ context.Context, arg db.ListMergeRequestsByProjectParams) ([]db.MergeRequest, error) {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return []db.MergeRequest{}, nil
+	}
+	items := []db.MergeRequest{}
+	for _, m := range f.mergeRequestsByID {
+		projectID, ok := f.projectIDForRepository(m.RepositoryID)
+		if !ok || projectID != arg.ProjectID {
+			continue
+		}
+		if arg.State != "" && m.State != arg.State {
+			continue
+		}
+		if arg.Author != "" && m.AuthorGitlabUsername != arg.Author {
+			continue
+		}
+		if arg.TaskID.Valid && m.TaskID != arg.TaskID {
+			continue
+		}
+		if arg.Since.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.Before(arg.Since.Time)) {
+			continue
+		}
+		if arg.Until.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.After(arg.Until.Time)) {
+			continue
+		}
+		items = append(items, m)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		primary := func(m db.MergeRequest) pgtype.Timestamptz {
+			if arg.SortByUpdated {
+				return m.GitlabUpdatedAt
+			}
+			return m.GitlabCreatedAt
+		}
+		pa, pb := primary(a), primary(b)
+		switch {
+		case pa.Valid && pb.Valid && !pa.Time.Equal(pb.Time):
+			return pa.Time.After(pb.Time)
+		case pa.Valid != pb.Valid:
+			return pa.Valid
+		default:
+			return a.CreatedAt.Time.After(b.CreatedAt.Time)
+		}
+	})
+	return items, nil
+}
+
+// GetMergeRequestForOwner mirrors the SQL: same project-membership scoping
+// as ListMergeRequestsByProject, narrowed to a single id.
+func (f *FakeQuerier) GetMergeRequestForOwner(_ context.Context, arg db.GetMergeRequestForOwnerParams) (db.MergeRequest, error) {
+	m, ok := f.mergeRequestsByID[arg.ID]
+	if !ok {
+		return db.MergeRequest{}, pgx.ErrNoRows
+	}
+	projectID, ok := f.projectIDForRepository(m.RepositoryID)
+	if !ok || !f.hasMembership(projectID, arg.OwnerUserID) {
+		return db.MergeRequest{}, pgx.ErrNoRows
+	}
+	return m, nil
+}
+
+// GetMergeRequestProjectID mirrors the SQL: unscoped, for
+// requireTokenResourceProject.
+func (f *FakeQuerier) GetMergeRequestProjectID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	m, ok := f.mergeRequestsByID[id]
+	if !ok {
+		return uuid.UUID{}, pgx.ErrNoRows
+	}
+	projectID, ok := f.projectIDForRepository(m.RepositoryID)
+	if !ok {
+		return uuid.UUID{}, pgx.ErrNoRows
+	}
+	return projectID, nil
+}
+
 // storeRepositorySyncRun inserts r if it is new, or overwrites the existing
 // row in place (preserving its position) otherwise.
 func (f *FakeQuerier) storeRepositorySyncRun(r db.RepositorySyncRun) {

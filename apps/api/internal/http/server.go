@@ -16,6 +16,7 @@ import (
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/gitlabidentity"
 	"github.com/flowlens/api/internal/linkedproject"
+	"github.com/flowlens/api/internal/mergerequest"
 	"github.com/flowlens/api/internal/notification"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectmember"
@@ -48,6 +49,7 @@ type Server struct {
 	tasks            *task.Service
 	taskDependencies *taskdependency.Service
 	taskComments     *taskcomment.Service
+	mergeRequests    *mergerequest.Service
 	gitlabConns      *gitlabconn.Service
 	gitlabIdentities *gitlabidentity.Service
 	linkedProjects   *linkedproject.Service
@@ -89,6 +91,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(queries, projects, tasks),
 		taskComments:     taskcomment.NewService(queries, txRunner, projects, tasks),
+		mergeRequests:    mergerequest.NewService(queries, projects),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(queries),
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
@@ -275,6 +278,12 @@ func (s *Server) Router() chi.Router {
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks/context", s.handleListTaskContexts)
 
+			// Read-only, mirroring the issue-sync task collection's route
+			// shape (issue #112): merge_requests is never written back to
+			// GitLab (ADR-0011), so there is no create/update/delete pair
+			// here, only List/Get.
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/merge-requests", s.handleListMergeRequests)
+
 			backlogResource := requireTokenResourceProject("backlogID", backlog.ErrNotFound, s.backlogs.ProjectID)
 			shared.With(backlogResource).Get("/backlogs/{backlogID}", s.handleGetBacklog)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Patch("/backlogs/{backlogID}", s.handleUpdateBacklog)
@@ -310,6 +319,9 @@ func (s *Server) Router() chi.Router {
 
 			linkResource := requireTokenResourceProject("linkID", linkedproject.ErrNotFound, s.linkedProjects.ProjectID)
 			shared.With(linkResource).Get("/linked-gitlab-projects/{linkID}/sync-runs", s.handleListSyncRuns)
+
+			mergeRequestResource := requireTokenResourceProject("mergeRequestID", mergerequest.ErrNotFound, s.mergeRequests.ProjectID)
+			shared.With(mergeRequestResource).Get("/merge-requests/{mergeRequestID}", s.handleGetMergeRequest)
 		})
 	})
 

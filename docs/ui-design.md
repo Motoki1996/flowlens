@@ -50,13 +50,15 @@ The objects the UI is built from, and where they live today:
 Two notes on this table:
 
 - The first eight rows (issue sync / task tracker) are implemented and populated
-  today. `Repository`, `MergeRequest`, and `Reviewer` back the deferred
-  merge-request / CI delivery-flow feature; their tables exist but stay
-  unpopulated until that feature ships (see `CLAUDE.md` and
+  today. `Repository` and `MergeRequest` are also populated, by the read-only
+  merge-request sync in `internal/mrsync` (issue #111); `MergeRequest` also has
+  its own collection/single views (issue #112, see the screen map below).
+  `Repository` deliberately has no view of its own (rule 3's escape hatch,
+  below) and `Reviewer` stays unpopulated — `merge_request_reviewers` exists in
+  the schema but nothing writes to it yet (see `CLAUDE.md` and
   [ADR-0011](decisions/0011-why-merge-request-sync.md)).
 - `Repository` and `LinkedGitLabProject` are both "a GitLab project" but name
-  different things: `Repository` is the not-yet-built merge-request feature's
-  object, one per `LinkedGitLabProject` it tracks; `LinkedGitLabProject` is the
+  different things: `Repository` is the merge-request feature's
   issue-sync feature's object, backed by `linked_gitlab_projects`. `Project`
   used to mean `Repository` before the issue-sync MVP claimed the noun for the
   app-level workspace — see [ADR-0008](decisions/0008-why-per-project-gitlab-connection.md)
@@ -82,6 +84,8 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]/tasks` | `Task` | Collection (List / Board / Timeline view modes, `?backlog=`/`?progress=` filters; the Board's axis is progress) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |
 | `/tasks` | `Task` | Collection, cross-project (`?status=`/`?priority=`/`?progress=`/`?sort=`/`?projectId=` filters) |
+| `/projects/[projectId]/merge-requests` | `MergeRequest` | Collection (`?state=`/`?author=`/`?taskId=`/`?since=`/`?until=`/`?sort=` filters; read-only, no view modes — see rule 5) |
+| `/projects/[projectId]/merge-requests/[mrId]` | `MergeRequest` | Single (read-only: review/pipeline status, and a link to its linked `Task` if any) |
 | `/projects/[projectId]/gitlab-connection` | `GitLabConnection` | Single (+ the `LinkedGitLabProject` collection) |
 | `/projects/[projectId]/linked-gitlab-projects/[linkId]` | `LinkedGitLabProject` | Single (+ its `SyncRun` and `WebhookEvent` history) |
 | `/dashboard` | — | Aggregation of teasers onto `Task` and `Project` (see below) |
@@ -106,7 +110,7 @@ what happened to this one.
 Every screen under `/projects/[projectId]` shares one layout
 (`app/projects/[projectId]/layout.tsx`), which holds the app header and a
 **persistent project sidebar**: a switcher for the project itself, then one
-entry per section (Overview, Backlogs, Tasks, GitLab connection) with the same
+entry per section (Overview, Backlogs, Tasks, Merge requests, GitLab connection) with the same
 count the hub shows. The hub being the only way between sibling collections was
 the original mistake — going from Backlogs to Tasks meant a detour up and back
 down. The sidebar makes that lateral move one click, and the sections are the
@@ -127,7 +131,7 @@ sync failure links to that `Project`'s single view rather than growing a
 retry button here, the same as every other section defers to the single view
 it teases.
 
-Three objects deliberately skip routes of their own (rule 3's escape hatch):
+Four objects deliberately skip routes of their own (rule 3's escape hatch):
 
 - `GitLabConnection` has a single view but **no collection view** — a project
   has at most one connection ([ADR-0008](decisions/0008-why-per-project-gitlab-connection.md)),
@@ -135,6 +139,11 @@ Three objects deliberately skip routes of their own (rule 3's escape hatch):
 - `SyncRun` and `WebhookEvent` are never browsed apart from the link that
   produced them, so they appear only as related collections inside the
   `LinkedGitLabProject` single view.
+- `Repository` has no view of its own either — like `GitLabConnection`, a
+  project has at most one per `LinkedGitLabProject`, and it carries nothing a
+  user would browse independently of the `MergeRequest`s it groups. `Reviewer`
+  would join this list once populated (see the object model note above), the
+  same "nested only" reasoning `SyncRun`/`WebhookEvent` already follow.
 
 ## Rules
 

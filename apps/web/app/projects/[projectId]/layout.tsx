@@ -4,6 +4,7 @@ import {
   getCurrentUser,
   getGitlabConnection,
   getLinkedGitlabProjects,
+  getMergeRequests,
   getProject,
   getProjects,
   getTasks,
@@ -44,6 +45,7 @@ export default async function ProjectLayout({
     backlogs: null,
     openTasks: null,
     totalTasks: null,
+    mergeRequests: null,
     gitlab: null,
   };
   try {
@@ -56,6 +58,12 @@ export default async function ProjectLayout({
     };
   } catch {
     // Counts stay null.
+  }
+
+  try {
+    counts.mergeRequests = (await getMergeRequests(projectId)).length;
+  } catch {
+    // Left null — the section reads as "no summary".
   }
 
   try {

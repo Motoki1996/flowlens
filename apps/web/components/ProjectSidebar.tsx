@@ -17,6 +17,7 @@ export type ProjectSidebarCounts = {
   backlogs: number | null;
   openTasks: number | null;
   totalTasks: number | null;
+  mergeRequests: number | null;
   gitlab: string | null;
 };
 
@@ -24,6 +25,7 @@ const SECTIONS: { section: ProjectSection; label: string }[] = [
   { section: "overview", label: "Overview" },
   { section: "backlogs", label: "Backlogs" },
   { section: "tasks", label: "Tasks" },
+  { section: "merge-requests", label: "Merge requests" },
   { section: "gitlab-connection", label: "GitLab connection" },
 ];
 
@@ -35,6 +37,8 @@ function summaryOf(section: ProjectSection, counts: ProjectSidebarCounts) {
       return counts.openTasks === null || counts.totalTasks === null
         ? null
         : `${counts.openTasks}/${counts.totalTasks}`;
+    case "merge-requests":
+      return counts.mergeRequests === null ? null : String(counts.mergeRequests);
     case "gitlab-connection":
       return counts.gitlab;
     case "overview":

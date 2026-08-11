@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import type { Backlog, Task } from "@/types";
+import type { Backlog, MergeRequest, Task } from "@/types";
 import { TaskDetail } from "./TaskDetail";
 
 const push = vi.fn();
@@ -385,5 +385,54 @@ describe("TaskDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
 
     expect(await screen.findByText("gitlab sync is not currently failed")).toBeInTheDocument();
+  });
+
+  it("says no merge requests reference the task when there are none", () => {
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    expect(screen.getByText(/no merge requests reference this task/i)).toBeInTheDocument();
+  });
+
+  it("lists a merge request that references the task, linking to its single view", () => {
+    const mergeRequest: MergeRequest = {
+      id: "mr1",
+      repositoryId: "r1",
+      gitlabMergeRequestId: 100,
+      number: 12,
+      title: "Fix the bug",
+      state: "opened",
+      isDraft: false,
+      authorGitlabUsername: "octocat",
+      authorAvatarUrl: "",
+      baseBranch: "main",
+      headBranch: "12-fix-the-bug",
+      additions: 10,
+      deletions: 2,
+      changedFiles: 3,
+      gitlabCreatedAt: "2026-01-01T00:00:00Z",
+      gitlabUpdatedAt: "2026-01-02T00:00:00Z",
+      mergedAt: null,
+      closedAt: null,
+      htmlUrl: "https://gitlab.example.com/group/demo/-/merge_requests/12",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-02T00:00:00Z",
+      firstReviewedAt: null,
+      pipelineStatus: "",
+      pipelineId: null,
+      pipelineUpdatedAt: null,
+      taskId: "t1",
+    };
+    render(
+      <TaskDetail
+        task={makeTask({ id: "t1", projectId: "p1" })}
+        backlogs={[backlog]}
+        tasks={[]}
+        dependencies={[]}
+        mergeRequests={[mergeRequest]}
+      />,
+    );
+    expect(screen.getByRole("link", { name: /!12 Fix the bug/ })).toHaveAttribute(
+      "href",
+      "/projects/p1/merge-requests/mr1",
+    );
   });
 });

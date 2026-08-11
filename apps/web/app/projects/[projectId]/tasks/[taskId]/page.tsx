@@ -5,6 +5,7 @@ import {
   getLinkedGitlabProjectLabels,
   getLinkedGitlabProjectMembers,
   getLinkedGitlabProjects,
+  getMergeRequests,
   getProject,
   getProjectApiTokens,
   getTask,
@@ -72,6 +73,16 @@ export default async function TaskPage({
     // without a token name.
   }
 
+  // The merge requests that reference this task (issue #112's reverse
+  // link) — fetched through the same project-scoped endpoint the
+  // MergeRequest collection uses, filtered to this one task.
+  let taskMergeRequests: Awaited<ReturnType<typeof getMergeRequests>> = [];
+  try {
+    taskMergeRequests = await getMergeRequests(projectId, { taskId });
+  } catch {
+    // Left empty; the rest of the task single view still renders.
+  }
+
   return (
     <>
       <Breadcrumbs
@@ -87,6 +98,7 @@ export default async function TaskPage({
         comments={comments}
         currentUserId={user.id}
         apiTokens={apiTokens}
+        mergeRequests={taskMergeRequests}
       />
     </>
   );

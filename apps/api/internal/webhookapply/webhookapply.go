@@ -26,6 +26,7 @@ import (
 	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -135,6 +136,49 @@ type noteWebhookPayload struct {
 	} `json:"issue"`
 }
 
+// mergeRequestWebhookPayload is the subset of a GitLab "Merge Request Hook"
+// delivery this package needs to apply an event to a merge_requests row
+// (issue #111). User is the actor who triggered this particular delivery —
+// for the "open" action it is the MR's author, which is the only signal
+// available without an extra GitLab call (this package, unlike
+// internal/mrsync's periodic import, is deliberately DB-only); a later
+// update event may attribute an unrelated actor to author fields, a known
+// imprecision self-correcting whenever a resync re-imports the MR.
+type mergeRequestWebhookPayload struct {
+	ObjectAttributes struct {
+		ID           int64  `json:"id"`
+		IID          int64  `json:"iid"`
+		Title        string `json:"title"`
+		Description  string `json:"description"`
+		State        string `json:"state"` // "opened" | "closed" | "merged"
+		Draft        bool   `json:"draft"`
+		SourceBranch string `json:"source_branch"`
+		TargetBranch string `json:"target_branch"`
+		URL          string `json:"url"`
+		UpdatedAt    string `json:"updated_at"`
+		CreatedAt    string `json:"created_at"`
+	} `json:"object_attributes"`
+	User struct {
+		Username  string `json:"username"`
+		AvatarURL string `json:"avatar_url"`
+	} `json:"user"`
+}
+
+// pipelineWebhookPayload is the subset of a GitLab "Pipeline Hook" delivery
+// this package needs (issue #111). MergeRequest.IID is present only when the
+// pipeline was triggered for a merge request; a pipeline for a plain branch
+// push has no merge request to attach its status to and is skipped.
+type pipelineWebhookPayload struct {
+	ObjectAttributes struct {
+		ID        int64  `json:"id"`
+		Status    string `json:"status"`
+		UpdatedAt string `json:"updated_at"`
+	} `json:"object_attributes"`
+	MergeRequest struct {
+		IID int64 `json:"iid"`
+	} `json:"merge_request"`
+}
+
 // Service applies pending webhook_events rows. Like internal/issuesync's
 // Service, it runs as the background worker: the linked project a payload
 // names was already authorized when its webhook was registered, so its
@@ -178,8 +222,13 @@ func (s *Service) ProcessNext(ctx context.Context) (bool, error) {
 // outcome is instead recorded through the mark* helpers, which always
 // return nil so the transaction commits.
 func (s *Service) apply(ctx context.Context, q db.Querier, event db.WebhookEvent) error {
-	if event.ObjectKind == "note" {
+	switch event.ObjectKind {
+	case "note":
 		return s.applyNote(ctx, q, event)
+	case "merge_request":
+		return s.applyMergeRequest(ctx, q, event)
+	case "pipeline":
+		return s.applyPipeline(ctx, q, event)
 	}
 
 	var payload issueWebhookPayload
@@ -258,6 +307,141 @@ func (s *Service) applyNote(ctx context.Context, q db.Querier, event db.WebhookE
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("create comment: %w", err))
 	}
 
+	return s.markProcessed(ctx, q, event.ID)
+}
+
+// applyMergeRequest applies a "Merge Request Hook" delivery to its
+// merge_requests row (issue #111), creating it if this is the first event
+// seen for it (an MR opened after the repository's initial import) or
+// updating it otherwise, guarded by the same strict-staleness check issue
+// events use. Unlike issue sync, it never links a task here — task linking
+// (parsing the description/branch for a referenced issue iid) only happens
+// during internal/mrsync's import, which is read-only towards GitLab anyway
+// and can afford the extra GitLab notes call this package deliberately
+// avoids (see mergeRequestWebhookPayload's doc comment).
+func (s *Service) applyMergeRequest(ctx context.Context, q db.Querier, event db.WebhookEvent) error {
+	var payload mergeRequestWebhookPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("decode merge request payload: %w", err))
+	}
+
+	repo, err := q.GetRepositoryByLinkedGitlabProjectID(ctx, event.LinkedGitlabProjectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return s.markSkipped(ctx, q, event.ID, SkipReasonOutOfScope)
+		}
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("get repository: %w", err))
+	}
+
+	updatedAt := parseGitlabTime(payload.ObjectAttributes.UpdatedAt)
+	var mergedAt, closedAt pgtype.Timestamptz
+	switch payload.ObjectAttributes.State {
+	case "merged":
+		mergedAt = toTimestamptz(updatedAt)
+	case "closed":
+		closedAt = toTimestamptz(updatedAt)
+	}
+
+	existing, err := q.GetMergeRequestByGitlabMergeRequestID(ctx, payload.ObjectAttributes.ID)
+	switch {
+	case err == nil:
+		if !updatedAt.IsZero() && existing.GitlabUpdatedAt.Valid && !updatedAt.After(existing.GitlabUpdatedAt.Time) {
+			return s.markSkipped(ctx, q, event.ID, SkipReasonStale)
+		}
+		if _, err := q.UpdateMergeRequest(ctx, db.UpdateMergeRequestParams{
+			GitlabMergeRequestID: payload.ObjectAttributes.ID,
+			Title:                payload.ObjectAttributes.Title,
+			State:                payload.ObjectAttributes.State,
+			IsDraft:              payload.ObjectAttributes.Draft,
+			AuthorGitlabUsername: payload.User.Username,
+			AuthorAvatarUrl:      payload.User.AvatarURL,
+			BaseBranch:           payload.ObjectAttributes.TargetBranch,
+			HeadBranch:           payload.ObjectAttributes.SourceBranch,
+			GitlabUpdatedAt:      toTimestamptz(updatedAt),
+			MergedAt:             mergedAt,
+			ClosedAt:             closedAt,
+			HtmlUrl:              payload.ObjectAttributes.URL,
+			PipelineStatus:       existing.PipelineStatus,
+			PipelineID:           existing.PipelineID,
+			PipelineUpdatedAt:    existing.PipelineUpdatedAt,
+		}); err != nil {
+			return s.markFailed(ctx, q, event.ID, fmt.Errorf("update merge request: %w", err))
+		}
+	case errors.Is(err, pgx.ErrNoRows):
+		if _, err := q.CreateMergeRequest(ctx, db.CreateMergeRequestParams{
+			RepositoryID:         repo.ID,
+			GitlabMergeRequestID: payload.ObjectAttributes.ID,
+			Number:               int32(payload.ObjectAttributes.IID),
+			Title:                payload.ObjectAttributes.Title,
+			State:                payload.ObjectAttributes.State,
+			IsDraft:              payload.ObjectAttributes.Draft,
+			AuthorGitlabUsername: payload.User.Username,
+			AuthorAvatarUrl:      payload.User.AvatarURL,
+			BaseBranch:           payload.ObjectAttributes.TargetBranch,
+			HeadBranch:           payload.ObjectAttributes.SourceBranch,
+			GitlabCreatedAt:      toTimestamptz(parseGitlabTime(payload.ObjectAttributes.CreatedAt)),
+			GitlabUpdatedAt:      toTimestamptz(updatedAt),
+			MergedAt:             mergedAt,
+			ClosedAt:             closedAt,
+			HtmlUrl:              payload.ObjectAttributes.URL,
+		}); err != nil {
+			if isUniqueViolation(err) {
+				// A concurrent import/webhook already created this row — the
+				// same retry-not-fail idiom applyAsNewTask uses for
+				// task_gitlab_links: leave the event pending so the next
+				// poll takes the update path instead.
+				return fmt.Errorf("webhookapply: create merge request: %w", err)
+			}
+			return s.markFailed(ctx, q, event.ID, fmt.Errorf("create merge request: %w", err))
+		}
+	default:
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("get merge request: %w", err))
+	}
+
+	return s.markProcessed(ctx, q, event.ID)
+}
+
+// applyPipeline applies a "Pipeline Hook" delivery's status to the merge
+// request it belongs to (issue #111). A pipeline not associated with any
+// merge request (a plain branch/tag pipeline) or one for an MR this
+// repository hasn't imported yet is skipped — read-only, nothing to attach
+// its status to.
+func (s *Service) applyPipeline(ctx context.Context, q db.Querier, event db.WebhookEvent) error {
+	var payload pipelineWebhookPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("decode pipeline payload: %w", err))
+	}
+	if payload.MergeRequest.IID == 0 {
+		return s.markSkipped(ctx, q, event.ID, SkipReasonOutOfScope)
+	}
+
+	repo, err := q.GetRepositoryByLinkedGitlabProjectID(ctx, event.LinkedGitlabProjectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return s.markSkipped(ctx, q, event.ID, SkipReasonOutOfScope)
+		}
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("get repository: %w", err))
+	}
+
+	mr, err := q.GetMergeRequestByRepositoryAndNumber(ctx, db.GetMergeRequestByRepositoryAndNumberParams{
+		RepositoryID: repo.ID,
+		Number:       int32(payload.MergeRequest.IID),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return s.markSkipped(ctx, q, event.ID, SkipReasonOutOfScope)
+		}
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("get merge request: %w", err))
+	}
+
+	if _, err := q.UpdateMergeRequestPipeline(ctx, db.UpdateMergeRequestPipelineParams{
+		ID:                mr.ID,
+		PipelineStatus:    payload.ObjectAttributes.Status,
+		PipelineID:        pgtype.Int8{Int64: payload.ObjectAttributes.ID, Valid: true},
+		PipelineUpdatedAt: toTimestamptz(parseGitlabTime(payload.ObjectAttributes.UpdatedAt)),
+	}); err != nil {
+		return s.markFailed(ctx, q, event.ID, fmt.Errorf("update pipeline: %w", err))
+	}
 	return s.markProcessed(ctx, q, event.ID)
 }
 
@@ -483,6 +667,13 @@ func parseGitlabDate(s string) *time.Time {
 		return nil
 	}
 	return &t
+}
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint
+// violation.
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 // Default tuning for a Worker.

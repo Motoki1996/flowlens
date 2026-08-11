@@ -13,6 +13,7 @@ import (
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/webhookapply"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -474,4 +475,215 @@ func TestProcessNext_OldestPendingEventClaimedFirst(t *testing.T) {
 	got, ok := f.q.GetWebhookEvent(first.ID)
 	require.True(t, ok)
 	assert.Equal(t, "processed", got.Status, "the oldest pending event must be claimed first")
+}
+
+// seedEvent inserts a webhook_events row of an arbitrary objectKind/eventName
+// (SeedWebhookEvent only builds "Issue Hook"/"issue" rows), for the
+// merge_request/pipeline dispatch tests below (issue #111).
+func (f fixture) seedEvent(t *testing.T, objectKind, eventName string, payload []byte) db.WebhookEvent {
+	t.Helper()
+	event, err := f.q.CreateWebhookEvent(context.Background(), db.CreateWebhookEventParams{
+		LinkedGitlabProjectID: f.link.ID,
+		DeliveryUuid:          uuid.NewString(),
+		EventName:             eventName,
+		ObjectKind:            objectKind,
+		Payload:               payload,
+		Status:                "pending",
+	})
+	require.NoError(t, err)
+	return event
+}
+
+type mrPayloadOpts struct {
+	ID           int64
+	IID          int64
+	Title        string
+	Description  string
+	State        string
+	SourceBranch string
+	TargetBranch string
+	UpdatedAt    time.Time
+	URL          string
+}
+
+func mrPayload(o mrPayloadOpts) []byte {
+	if o.State == "" {
+		o.State = "opened"
+	}
+	if o.UpdatedAt.IsZero() {
+		o.UpdatedAt = time.Now()
+	}
+	if o.ID == 0 {
+		o.ID = o.IID + 1000
+	}
+	body := map[string]any{
+		"object_kind": "merge_request",
+		"object_attributes": map[string]any{
+			"id":            o.ID,
+			"iid":           o.IID,
+			"title":         o.Title,
+			"description":   o.Description,
+			"state":         o.State,
+			"source_branch": o.SourceBranch,
+			"target_branch": o.TargetBranch,
+			"updated_at":    o.UpdatedAt.UTC().Format(time.RFC3339),
+			"created_at":    o.UpdatedAt.UTC().Format(time.RFC3339),
+			"url":           o.URL,
+		},
+		"user": map[string]any{"username": "octocat", "avatar_url": ""},
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func TestProcessNext_UnknownMergeRequest_CreatesRow(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+	_, err := f.q.CreateRepository(ctx, db.CreateRepositoryParams{LinkedGitlabProjectID: f.link.ID, Name: "demo", FullName: "group/demo"})
+	require.NoError(t, err)
+
+	event := f.seedEvent(t, "merge_request", "Merge Request Hook", mrPayload(mrPayloadOpts{
+		IID: 5, Title: "Add feature", SourceBranch: "feature-5", TargetBranch: "main",
+	}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	got, ok := f.q.GetWebhookEvent(event.ID)
+	require.True(t, ok)
+	assert.Equal(t, "processed", got.Status)
+
+	mr, err := f.q.GetMergeRequestByGitlabMergeRequestID(ctx, 1005)
+	require.NoError(t, err)
+	assert.Equal(t, "Add feature", mr.Title)
+	assert.Equal(t, "opened", mr.State)
+}
+
+func TestProcessNext_KnownMergeRequest_Updates(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+	repo, err := f.q.CreateRepository(ctx, db.CreateRepositoryParams{LinkedGitlabProjectID: f.link.ID, Name: "demo", FullName: "group/demo"})
+	require.NoError(t, err)
+	_, err = f.q.CreateMergeRequest(ctx, db.CreateMergeRequestParams{
+		RepositoryID: repo.ID, GitlabMergeRequestID: 1005, Number: 5,
+		Title: "Add feature", State: "opened",
+		GitlabUpdatedAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Hour), Valid: true},
+	})
+	require.NoError(t, err)
+
+	event := f.seedEvent(t, "merge_request", "Merge Request Hook", mrPayload(mrPayloadOpts{
+		IID: 5, Title: "Add feature", State: "merged", SourceBranch: "feature-5", TargetBranch: "main",
+	}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	got, ok := f.q.GetWebhookEvent(event.ID)
+	require.True(t, ok)
+	assert.Equal(t, "processed", got.Status)
+
+	mr, err := f.q.GetMergeRequestByGitlabMergeRequestID(ctx, 1005)
+	require.NoError(t, err)
+	assert.Equal(t, "merged", mr.State)
+}
+
+func TestProcessNext_DuplicateMergeRequestDelivery_IsNoOp(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+	_, err := f.q.CreateRepository(ctx, db.CreateRepositoryParams{LinkedGitlabProjectID: f.link.ID, Name: "demo", FullName: "group/demo"})
+	require.NoError(t, err)
+
+	payload := mrPayload(mrPayloadOpts{IID: 5, Title: "Add feature", SourceBranch: "feature-5", TargetBranch: "main"})
+	deliveryUUID := uuid.NewString()
+	first, err := f.q.CreateWebhookEvent(ctx, db.CreateWebhookEventParams{
+		LinkedGitlabProjectID: f.link.ID, DeliveryUuid: deliveryUUID, EventName: "Merge Request Hook",
+		ObjectKind: "merge_request", Payload: payload, Status: "pending",
+	})
+	require.NoError(t, err)
+	// A redelivery of the exact same event carries the same delivery_uuid;
+	// webhook_events' UNIQUE (linked_gitlab_project_id, delivery_uuid)
+	// constraint means CreateWebhookEvent is itself the no-op (ON CONFLICT
+	// DO NOTHING), so only one row — and hence only one apply — ever exists
+	// to process.
+	_, err = f.q.CreateWebhookEvent(ctx, db.CreateWebhookEventParams{
+		LinkedGitlabProjectID: f.link.ID, DeliveryUuid: deliveryUUID, EventName: "Merge Request Hook",
+		ObjectKind: "merge_request", Payload: payload, Status: "pending",
+	})
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	claimed, err = f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.False(t, claimed, "the redelivery must never have been recorded as a second row")
+
+	got, ok := f.q.GetWebhookEvent(first.ID)
+	require.True(t, ok)
+	assert.Equal(t, "processed", got.Status)
+}
+
+func pipelinePayload(pipelineID int64, status string, mrIID int64) []byte {
+	body := map[string]any{
+		"object_kind": "pipeline",
+		"object_attributes": map[string]any{
+			"id":     pipelineID,
+			"status": status,
+		},
+	}
+	if mrIID != 0 {
+		body["merge_request"] = map[string]any{"iid": mrIID}
+	}
+	b, err := json.Marshal(body)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func TestProcessNext_PipelineForKnownMergeRequest_UpdatesStatus(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+	repo, err := f.q.CreateRepository(ctx, db.CreateRepositoryParams{LinkedGitlabProjectID: f.link.ID, Name: "demo", FullName: "group/demo"})
+	require.NoError(t, err)
+	mr, err := f.q.CreateMergeRequest(ctx, db.CreateMergeRequestParams{
+		RepositoryID: repo.ID, GitlabMergeRequestID: 1005, Number: 5, Title: "Add feature", State: "opened",
+	})
+	require.NoError(t, err)
+
+	event := f.seedEvent(t, "pipeline", "Pipeline Hook", pipelinePayload(900, "success", int64(mr.Number)))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	got, ok := f.q.GetWebhookEvent(event.ID)
+	require.True(t, ok)
+	assert.Equal(t, "processed", got.Status)
+
+	updated, err := f.q.GetMergeRequestByGitlabMergeRequestID(ctx, 1005)
+	require.NoError(t, err)
+	assert.Equal(t, "success", updated.PipelineStatus)
+	assert.EqualValues(t, 900, updated.PipelineID.Int64)
+}
+
+func TestProcessNext_PipelineWithoutMergeRequest_Skipped(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	event := f.seedEvent(t, "pipeline", "Pipeline Hook", pipelinePayload(900, "success", 0))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	got, ok := f.q.GetWebhookEvent(event.ID)
+	require.True(t, ok)
+	assert.Equal(t, "skipped", got.Status)
+	assert.Equal(t, webhookapply.SkipReasonOutOfScope, got.SkipReason)
 }

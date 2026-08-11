@@ -227,3 +227,50 @@ func TestHTTPClient_TokenNeverAppearsInRequestURL(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, strings.Contains(seenPath, token))
 }
+
+func TestHTTPClient_ListMergeRequests_SendsUpdatedAfterAndStateAsQuery(t *testing.T) {
+	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/projects/42/merge_requests", r.URL.Path)
+		q := r.URL.Query()
+		assert.Equal(t, "all", q.Get("state"))
+		assert.NotEmpty(t, q.Get("updated_after"))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"id":1,"iid":1,"project_id":42,"title":"first"},{"id":2,"iid":2,"project_id":42,"title":"second"}]`))
+	})
+
+	after, err := time.Parse(time.RFC3339, "2026-01-01T00:00:00Z")
+	require.NoError(t, err)
+	mrs, _, err := client.ListMergeRequests(context.Background(), "secret-token", 42, gitlab.ListMergeRequestsOptions{
+		State:        "all",
+		UpdatedAfter: &after,
+	})
+	require.NoError(t, err)
+	assert.Len(t, mrs, 2)
+}
+
+func TestHTTPClient_GetMergeRequest_IncludesHeadPipeline(t *testing.T) {
+	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/projects/42/merge_requests/7", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":701,"iid":7,"project_id":42,"title":"fix","head_pipeline":{"id":900,"status":"success","ref":"feature-7"}}`))
+	})
+
+	mr, err := client.GetMergeRequest(context.Background(), "secret-token", 42, 7)
+	require.NoError(t, err)
+	require.NotNil(t, mr.HeadPipeline)
+	assert.Equal(t, int64(900), mr.HeadPipeline.ID)
+	assert.Equal(t, "success", mr.HeadPipeline.Status)
+}
+
+func TestHTTPClient_ListMergeRequestNotes(t *testing.T) {
+	client, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v4/projects/42/merge_requests/7/notes", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`[{"id":1,"body":"looks good","system":false,"author":{"id":2,"username":"reviewer"}}]`))
+	})
+
+	notes, _, err := client.ListMergeRequestNotes(context.Background(), "secret-token", 42, 7, gitlab.ListOptions{})
+	require.NoError(t, err)
+	require.Len(t, notes, 1)
+	assert.Equal(t, "reviewer", notes[0].Author.Username)
+}

@@ -96,6 +96,7 @@ type MergeRequest struct {
 	PipelineStatus       string             `json:"pipeline_status"`
 	PipelineID           pgtype.Int8        `json:"pipeline_id"`
 	PipelineUpdatedAt    pgtype.Timestamptz `json:"pipeline_updated_at"`
+	TaskID               pgtype.UUID        `json:"task_id"`
 }
 
 type MergeRequestReviewer struct {
@@ -173,6 +174,10 @@ type RepositorySyncRun struct {
 	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
 	ErrorMessage string             `json:"error_message"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Kind         string             `json:"kind"`
+	MrsSeen      int32              `json:"mrs_seen"`
+	MrsCreated   int32              `json:"mrs_created"`
+	MrsUpdated   int32              `json:"mrs_updated"`
 }
 
 type Session struct {

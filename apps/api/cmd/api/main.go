@@ -18,6 +18,7 @@ import (
 	"github.com/flowlens/api/internal/gitlab"
 	apihttp "github.com/flowlens/api/internal/http"
 	"github.com/flowlens/api/internal/issuesync"
+	"github.com/flowlens/api/internal/mrsync"
 	"github.com/flowlens/api/internal/notification"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
@@ -89,6 +90,13 @@ func run() error {
 	projectSync := projectsync.NewService(database.NewQuerier(pool), database.NewTxRunner(pool), project.NewService(database.NewQuerier(pool)), cipher, clientFactory)
 	registry.Register(projectsync.KindProjectImport, projectSync.HandleImport)
 	registry.Register(projectsync.KindProjectResync, projectSync.HandleResync)
+
+	// mr.import / mr.resync job handlers (issue #111): read-only merge
+	// request + pipeline sync, auto-enqueued by
+	// internal/linkedproject.Service.Create alongside project.import.
+	mrSync := mrsync.NewService(database.NewQuerier(pool), database.NewTxRunner(pool), cipher, clientFactory)
+	registry.Register(mrsync.KindMRImport, mrSync.HandleImport)
+	registry.Register(mrsync.KindMRResync, mrSync.HandleResync)
 
 	worker := syncpkg.NewWorker(database.NewQuerier(pool), registry, syncpkg.WithPollInterval(cfg.SyncWorkerPollInterval))
 	if cfg.SyncWorkerEnabled {

@@ -61,6 +61,13 @@ const otherBacklog: Backlog = {
   position: 1,
 };
 
+/** The screen opens in Board view, so the List-view specifics — backlog
+ *  grouping, selection checkboxes, manual reordering — need the List toggle
+ *  clicked first. */
+function showListView() {
+  fireEvent.click(screen.getByRole("button", { name: "List" }));
+}
+
 describe("TaskListSection", () => {
   beforeEach(() => {
     refresh.mockClear();
@@ -79,6 +86,7 @@ describe("TaskListSection", () => {
   it("groups tasks with no backlog under Unclassified", () => {
     const tasks = [makeTask({ id: "t1", title: "Unfiled task", backlogId: null })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+    showListView();
     expect(screen.getByText("Unclassified (1)")).toBeInTheDocument();
     expect(screen.getByText("Unfiled task")).toBeInTheDocument();
   });
@@ -89,6 +97,7 @@ describe("TaskListSection", () => {
       makeTask({ id: "t2", title: "Unfiled task", backlogId: null }),
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+    showListView();
     const headings = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
     expect(headings).toEqual(["Sprint 1 (1)", "Unclassified (1)"]);
   });
@@ -153,6 +162,7 @@ describe("TaskListSection", () => {
       }),
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+    showListView();
 
     function titlesInOrder() {
       return screen.getAllByRole("link").map((el) => el.querySelector("span")?.textContent);
@@ -178,6 +188,7 @@ describe("TaskListSection", () => {
       makeTask({ id: "t3", title: "Underway", progress: "in_progress" }),
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+    showListView();
 
     function titlesInOrder() {
       return screen.getAllByRole("link").map((el) => el.querySelector("span")?.textContent);
@@ -248,6 +259,7 @@ describe("TaskListSection", () => {
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
 
+    showListView();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select Unfiled task 1" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Select Unfiled task 2" }));
     expect(screen.getByText("2 selected")).toBeInTheDocument();
@@ -286,6 +298,7 @@ describe("TaskListSection", () => {
     const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
 
+    showListView();
     fireEvent.click(screen.getByRole("checkbox", { name: "Select Filed task" }));
     fireEvent.click(screen.getByRole("combobox", { name: "Backlog to assign" }));
     fireEvent.click(await screen.findByRole("option", { name: "Unclassified" }));
@@ -304,14 +317,12 @@ describe("TaskListSection", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
-  it("switches to the board view mode, showing the same filtered tasks by progress", () => {
+  it("opens in the board view mode, showing the filtered tasks by progress", () => {
     const tasks = [
       makeTask({ id: "t1", title: "Fix login", progress: "in_progress" }),
       makeTask({ id: "t2", title: "Old bug", progress: "done", status: "closed" }),
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Board" }));
 
     const inProgress = screen.getByRole("region", { name: "In progress tasks" });
     expect(within(inProgress).getByRole("link", { name: "Fix login" })).toBeInTheDocument();
@@ -494,6 +505,7 @@ describe("TaskListSection", () => {
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
 
+    showListView();
     fireEvent.click(screen.getByRole("button", { name: "Move First down" }));
 
     // The row order updates immediately, ahead of the API round trip.
@@ -520,6 +532,7 @@ describe("TaskListSection", () => {
     ];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
 
+    showListView();
     fireEvent.click(screen.getByRole("button", { name: "Move First down" }));
 
     expect(await screen.findByText("taskIds must match")).toBeInTheDocument();
@@ -530,6 +543,7 @@ describe("TaskListSection", () => {
   it("hides the drag handle and move buttons while sorted by anything other than the manual order", async () => {
     const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+    showListView();
     expect(screen.getByRole("button", { name: "Move Only task down" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));

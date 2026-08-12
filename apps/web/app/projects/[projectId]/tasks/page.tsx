@@ -3,8 +3,9 @@ import { getBacklogs, getProject, getTaskDependencies, getTasks } from "@/lib/ap
 import { TaskListSection } from "@/components/TaskListSection";
 
 /**
- * The Task collection view of one project — List and Timeline are view modes
- * of this one screen, per docs/ui-design.md rule 5, and `?backlog=` is the
+ * The Task collection view of one project — Board (the default), List and
+ * Timeline are view modes of this one screen, per docs/ui-design.md rule 5,
+ * and `?backlog=` is the
  * backlog filter of that same collection. The backlog screens link here rather
  * than keeping a task list of their own.
  *

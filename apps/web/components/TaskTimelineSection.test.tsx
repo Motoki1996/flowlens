@@ -163,6 +163,20 @@ describe("TaskTimelineSection", () => {
     expect(screen.getByText("After: Design")).toBeInTheDocument();
   });
 
+  // The name column is narrow, so it carries the title plus only what changes
+  // which row you look at first. Priority and progress in full belong to the
+  // bar's tooltip (see GanttChart.test.tsx).
+  it("flags a high or urgent priority beside the name, and stays quiet at the default", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Design", startDate: "2026-08-01", priority: "urgent" }),
+      makeTask({ id: "t2", title: "Build", startDate: "2026-08-04", priority: "medium" }),
+    ];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+    expect(screen.getByText("Urgent")).toBeInTheDocument();
+    expect(screen.queryByText("Medium")).not.toBeInTheDocument();
+    expect(screen.queryByText("Not started")).not.toBeInTheDocument();
+  });
+
   it("lists unscheduled tasks separately, outside the chart", () => {
     const tasks = [
       makeTask({ id: "t1", title: "Design", startDate: "2026-08-01" }),

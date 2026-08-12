@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
+import { PRIORITY_LABELS } from "@/lib/priority";
+import { PROGRESS_LABELS } from "@/lib/progress";
 import {
   computeAxis,
   formatAxisTick,
@@ -19,6 +21,14 @@ import {
  *  so the labels are inside the container rather than clipped by it. */
 export const ROW_HEIGHT = 44;
 export const AXIS_HEIGHT = 28;
+
+/** NAME_COLUMN_CLASS sizes that same sibling column, shared so the Task and the
+ *  Backlog timeline read as one chart. Width is Tailwind classes rather than a
+ *  pixel constant because — unlike the row height, which must match exactly for
+ *  a name to line up with its bar — width only has to be identical between the
+ *  two sections: a narrow viewport can hand the plot more room, and a wide one
+ *  gives titles enough space not to be truncated on sight. */
+export const NAME_COLUMN_CLASS = "w-40 shrink-0 sm:w-64 lg:w-72";
 /** A bar is deliberately shorter than its row: the leftover height is the gap
  *  that keeps neighbouring bars from reading as one block. */
 const BAR_SIZE = 20;
@@ -63,8 +73,10 @@ export function percent(ratio: number): string {
  *  per series: a Gantt row's useful payload is a date *range* plus a status,
  *  not the raw millisecond offsets the stack is built from. The surface styling
  *  is kept identical to the shadcn tooltip so it sits in the same visual family
- *  as the rest of the chart. */
-function GanttTooltip({
+ *  as the rest of the chart. Exported only so it can be asserted on directly:
+ *  recharts decides when a tooltip mounts from pointer geometry an SVG doesn't
+ *  have in jsdom. */
+export function GanttTooltip({
   active,
   payload,
 }: {
@@ -83,6 +95,14 @@ function GanttTooltip({
           style={{ backgroundColor: STATE_COLOR[row.state] }}
         />
         {STATE_LABEL[row.state]}
+      </div>
+      {/* Priority and progress live here rather than in the name column beside
+          the chart: two pills per row crowded the title down to an ellipsis,
+          and neither field is what a timeline is read for. The name column
+          still flags a high or urgent priority, so nothing that changes what
+          you look at first is hover-only. */}
+      <div className="text-muted-foreground">
+        {PRIORITY_LABELS[row.priority]} priority · {PROGRESS_LABELS[row.progress]}
       </div>
       <div className="text-muted-foreground tabular-nums">
         {row.start.getTime() === row.end.getTime()

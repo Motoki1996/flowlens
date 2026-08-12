@@ -12,6 +12,16 @@ export const PRIORITY_COLUMNS: { priority: Priority; label: string }[] = [
   { priority: "urgent", label: "Urgent" },
 ];
 
+/** PRIORITY_LABELS is PRIORITY_COLUMNS keyed by value, for the badge, the
+ *  filter menus and the timeline tooltip, so one priority value reads the same
+ *  wherever it appears. */
+export const PRIORITY_LABELS: Record<Priority, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  urgent: "Urgent",
+};
+
 /**
  * Each column's accent dot, so a card's priority survives being read out of the
  * column header's context and the board never relies on position alone.

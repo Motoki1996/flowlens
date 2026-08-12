@@ -11,16 +11,16 @@ import {
   toBacklogGanttRows,
 } from "@/lib/timeline";
 import { useTimelineViewport } from "@/lib/useTimelineViewport";
-import { AXIS_HEIGHT, GanttChart, percent, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
+import {
+  AXIS_HEIGHT,
+  GanttChart,
+  NAME_COLUMN_CLASS,
+  percent,
+  ROW_HEIGHT,
+  STATE_LABEL,
+} from "@/components/GanttChart";
 import { TimelineControls } from "@/components/TimelineControls";
-import { PriorityBadge } from "@/components/PriorityBadge";
-import { ProgressBadge } from "@/components/ProgressBadge";
-
-/** The name column is a fixed width so every row's bar starts at the same x.
- *  The plot's own width comes from the zoom level (see useTimelineViewport):
- *  past the container it scrolls horizontally rather than compressing the bars.
- *  Both match TaskTimelineSection so the two timelines read as the same chart. */
-const NAME_COLUMN_WIDTH = 200;
+import { PriorityFlag } from "@/components/PriorityBadge";
 
 function formatDate(date: Date) {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -119,7 +119,7 @@ export function BacklogTimelineSection({
       </div>
 
       <div className="flex">
-        <div className="shrink-0" style={{ width: NAME_COLUMN_WIDTH }}>
+        <div className={NAME_COLUMN_CLASS}>
           {/* Spacer keeping the first name aligned with the first bar, not with the date axis. */}
           <div style={{ height: AXIS_HEIGHT }} />
           <ul>
@@ -129,24 +129,26 @@ export function BacklogTimelineSection({
                 className="flex flex-col justify-center pr-3"
                 style={{ height: ROW_HEIGHT }}
               >
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <Link
-                    href={backlogPath(projectId, row.id)}
-                    className="text-foreground truncate text-sm hover:underline"
-                    title={row.title}
-                  >
-                    {row.title}
-                  </Link>
-                  <PriorityBadge priority={row.priority} />
-                  <ProgressBadge progress={row.progress} />
+                {/* The title gets the line to itself — see TaskTimelineSection
+                    for why the priority and progress pills left it unreadable.
+                    Both are on the bar's tooltip instead. */}
+                <Link
+                  href={backlogPath(projectId, row.id)}
+                  className="text-foreground truncate text-sm hover:underline"
+                  title={row.title}
+                >
+                  {row.title}
+                </Link>
+                <div className="flex min-w-0 items-center gap-1.5 text-xs">
+                  <PriorityFlag priority={row.priority} />
+                  {!tasksError && row.completion ? (
+                    <span className="text-muted-foreground truncate tabular-nums">
+                      {row.completion.total === 0
+                        ? "No tasks"
+                        : `${row.completion.closed}/${row.completion.total} closed (${percent(row.completion.ratio)})`}
+                    </span>
+                  ) : null}
                 </div>
-                {!tasksError && row.completion ? (
-                  <span className="text-muted-foreground truncate text-xs tabular-nums">
-                    {row.completion.total === 0
-                      ? "No tasks"
-                      : `${row.completion.closed}/${row.completion.total} closed (${percent(row.completion.ratio)})`}
-                  </span>
-                ) : null}
               </li>
             ))}
           </ul>

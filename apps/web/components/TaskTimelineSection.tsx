@@ -6,15 +6,15 @@ import type { Task, TaskDependency } from "@/types";
 import { taskPath } from "@/lib/routes";
 import { computeTimelineBounds, hasSchedule, toTaskGanttRows } from "@/lib/timeline";
 import { useTimelineViewport } from "@/lib/useTimelineViewport";
-import { AXIS_HEIGHT, GanttChart, ROW_HEIGHT, STATE_LABEL } from "@/components/GanttChart";
+import {
+  AXIS_HEIGHT,
+  GanttChart,
+  NAME_COLUMN_CLASS,
+  ROW_HEIGHT,
+  STATE_LABEL,
+} from "@/components/GanttChart";
 import { TimelineControls } from "@/components/TimelineControls";
-import { PriorityBadge } from "@/components/PriorityBadge";
-import { ProgressBadge } from "@/components/ProgressBadge";
-
-/** The name column is a fixed width so every row's bar starts at the same x.
- *  The plot's own width comes from the zoom level (see useTimelineViewport):
- *  past the container it scrolls horizontally rather than compressing the bars. */
-const NAME_COLUMN_WIDTH = 200;
+import { PriorityFlag } from "@/components/PriorityBadge";
 
 function formatDate(date: Date) {
   return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
@@ -111,7 +111,7 @@ export function TaskTimelineSection({
       </div>
 
       <div className="flex">
-        <div className="shrink-0" style={{ width: NAME_COLUMN_WIDTH }}>
+        <div className={NAME_COLUMN_CLASS}>
           {/* Spacer keeping the first name aligned with the first bar, not with the date axis. */}
           <div style={{ height: AXIS_HEIGHT }} />
           <ul>
@@ -123,22 +123,28 @@ export function TaskTimelineSection({
                   className="flex flex-col justify-center pr-3"
                   style={{ height: ROW_HEIGHT }}
                 >
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <Link
-                      href={taskPath(projectId, row.id)}
-                      className="text-foreground truncate text-sm hover:underline"
-                      title={row.title}
-                    >
-                      {row.title}
-                    </Link>
-                    <PriorityBadge priority={row.priority} />
-                    <ProgressBadge progress={row.progress} />
+                  {/* The title gets the line to itself: sharing it with a
+                      priority and a progress pill left it a few dozen pixels
+                      and every row read as an ellipsis. Both fields are on the
+                      bar's tooltip instead, with high/urgent still flagged
+                      below so a scan doesn't have to hover to find it. */}
+                  <Link
+                    href={taskPath(projectId, row.id)}
+                    className="text-foreground truncate text-sm hover:underline"
+                    title={row.title}
+                  >
+                    {row.title}
+                  </Link>
+                  {/* Empty when the row has neither, and an empty flex row is
+                      zero-height, so a plain task keeps its title centred. */}
+                  <div className="flex min-w-0 items-center gap-1.5 text-xs">
+                    <PriorityFlag priority={row.priority} />
+                    {predecessors ? (
+                      <span className="text-muted-foreground truncate">
+                        After: {predecessors.join(", ")}
+                      </span>
+                    ) : null}
                   </div>
-                  {predecessors ? (
-                    <span className="text-muted-foreground truncate text-xs">
-                      After: {predecessors.join(", ")}
-                    </span>
-                  ) : null}
                 </li>
               );
             })}

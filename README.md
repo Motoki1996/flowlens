@@ -824,6 +824,12 @@ until someone switches to the Timeline:
 - Task names sit in a column beside the plot rather than as axis labels, so each
   one stays a real link to the task's single view; the bars themselves are also
   clickable.
+- That column belongs to the name: the title has the line to itself, and only a
+  **high or urgent** priority appears under it, as the same badge the list rows
+  use. Every priority and a task's progress are stated on the bar's tooltip
+  instead — they are what the Board and List modes are read for, and as two pills
+  *beside* the title they left it a few dozen pixels, so every row read as an
+  ellipsis.
 - A project-wide closed/total progress ratio sits above the chart, and each
   task's predecessors are noted under its name. Tasks with neither a start date
   nor a due date are listed separately below the chart rather than silently
@@ -928,8 +934,10 @@ or edited: the task single view's edit form, the task collection's inline
 on the Backlog collection view, not its single view, per
 [`docs/ui-design.md`](docs/ui-design.md) — the backlog collection's inline
 "New backlog" and per-row "Edit" forms. It is shown as a badge, the same
-component for both tasks and backlogs, in list rows, timeline name columns
-and the task single view. A backlog's priority is independent of its tasks':
+component for both tasks and backlogs, in list rows and the task single view.
+On the timeline the badge sits under the title rather than beside it, and only
+for `high`/`urgent`; the bar's tooltip states every priority — see
+[the Gantt charts above](#task--backlog-scheduling-gantt-charts). A backlog's priority is independent of its tasks':
 creating or editing one never reads or writes the other. Priority is no longer
 the board's axis — see [Task & backlog progress](#task--backlog-progress)
 below — but it stays a badge on every board card.
@@ -966,7 +974,9 @@ both badges are shown wherever either is.
 
 In the web app, progress is selectable everywhere priority is (both create
 forms, both edit forms), and shown as its own badge beside the priority badge
-in list rows, timeline name columns and the single views. A backlog's progress
+in list rows and the single views. On the timeline it is stated on the bar's
+tooltip rather than in the name column, for the same reason as priority above.
+A backlog's progress
 is its own, set by hand — it is *not* derived from its tasks, and is separate
 from the closed/total task ratio the backlog board and timeline also show.
 

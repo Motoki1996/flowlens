@@ -23,3 +23,19 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
       return <Badge variant="outline">Low</Badge>;
   }
 }
+
+/**
+ * PriorityFlag is the same badge, shown selectively — for the Gantt timeline's
+ * name column, where the pill sits on its own line under the title rather than
+ * beside it (beside it, the title was left a few dozen pixels and every row
+ * read as an ellipsis).
+ *
+ * It is deliberately silent below `high`: `medium` is the default and `low` is
+ * not worth interrupting a scan for, so the badge appears only when the
+ * priority is the reason to look at the row. Every priority is still stated on
+ * the bar's tooltip, so nothing is only available here.
+ */
+export function PriorityFlag({ priority }: { priority: Priority }) {
+  if (priority !== "high" && priority !== "urgent") return null;
+  return <PriorityBadge priority={priority} />;
+}

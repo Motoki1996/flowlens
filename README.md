@@ -713,6 +713,29 @@ the project's single designated owner (`projects.owner_user_id`); `role`
 alone cannot identify them, since any number of members may hold the
 `owner` role.
 
+To find someone without knowing their exact identifier, the invite form
+searches candidates as you type:
+
+```bash
+# Owner-only, session-only; q shorter than 2 characters returns []
+curl "$API_BASE_URL/api/v1/projects/$PROJECT_ID/member-candidates?q=octo" \
+  -H "Cookie: flowlens_session=$SESSION_COOKIE"
+```
+
+```jsonc
+// GET /api/v1/projects/{projectID}/member-candidates?q=octo
+[{ "userId": "b7e1...", "username": "octocat", "displayName": "Octo Cat" }]
+```
+
+The candidate set is deliberately narrow: only users the caller **already
+shares some project with**, minus the caller and minus this project's
+existing members, capped at 10 hits. Email is neither matched nor returned.
+FlowLens has no tenant boundary, so a general user-search endpoint would
+hand every signed-up account a directory of every other account — the same
+enumeration risk that keeps email out of the member list. Anyone outside
+that set can still be invited through `POST .../members`, which is
+unchanged: you just have to know their exact username or email.
+
 Three invariants apply to `PATCH`/`DELETE .../members/{userID}`, all
 returning `400`: you cannot change your own role, you cannot remove
 yourself, and the designated owner can neither be demoted nor removed.

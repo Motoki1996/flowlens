@@ -1,12 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
-import type { ProjectMember } from "@/types";
+import type { ProjectMember, ProjectMemberCandidate } from "@/types";
 import { ProjectMemberSection } from "./ProjectMemberSection";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh }),
 }));
+
+/** mockFetch routes by URL so the candidate search and the invite POST can
+ *  answer differently in one test. */
+function mockFetch(routes: {
+  candidates?: () => Response | Promise<Response>;
+  post?: () => Response;
+}) {
+  vi.mocked(fetch).mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("member-candidates")) {
+      return routes.candidates ? routes.candidates() : new Response("[]", { status: 200 });
+    }
+    return routes.post ? routes.post() : new Response(null, { status: 204 });
+  });
+}
+
+function makeCandidate(overrides: Partial<ProjectMemberCandidate> = {}): ProjectMemberCandidate {
+  return { userId: "user-9", username: "hubot", displayName: "Hubot", ...overrides };
+}
 
 function makeMember(overrides: Partial<ProjectMember> = {}): ProjectMember {
   return {
@@ -78,9 +97,10 @@ describe("ProjectMemberSection", () => {
   });
 
   it("adds a member via the form", async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify(makeMember({ username: "newperson" })), { status: 201 }),
-    );
+    mockFetch({
+      post: () =>
+        new Response(JSON.stringify(makeMember({ username: "newperson" })), { status: 201 }),
+    });
     render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Add member" }));
@@ -95,6 +115,76 @@ describe("ProjectMemberSection", () => {
       expect.objectContaining({ method: "POST" }),
     ));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("suggests matching users and fills the field when one is picked", async () => {
+    mockFetch({
+      candidates: () => new Response(JSON.stringify([makeCandidate()]), { status: 200 }),
+    });
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+    const field = screen.getByLabelText("Username or email");
+    fireEvent.change(field, { target: { value: "hub" } });
+
+    const option = await screen.findByRole("option", { name: /Hubot/ });
+    fireEvent.mouseDown(option);
+    expect(field).toHaveValue("hubot");
+    // Picking a suggestion closes the list rather than leaving it over the form.
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("does not search until the term is long enough", async () => {
+    mockFetch({});
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+    fireEvent.change(screen.getByLabelText("Username or email"), { target: { value: "h" } });
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("still submits a typed identifier that matches no suggestion", async () => {
+    mockFetch({
+      post: () =>
+        new Response(JSON.stringify(makeMember({ username: "stranger" })), { status: 201 }),
+    });
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+    const form = screen.getByRole("form", { name: "Add member" });
+    fireEvent.change(within(form).getByLabelText("Username or email"), {
+      target: { value: "stranger@example.com" },
+    });
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+
+    fireEvent.click(within(form).getByRole("button", { name: "Add member" }));
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/projects/p1/members"),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ identifier: "stranger@example.com", role: "member" }),
+        }),
+      ),
+    );
+  });
+
+  it("reports a failed search without blocking the form", async () => {
+    mockFetch({ candidates: () => new Response(null, { status: 500 }) });
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+    fireEvent.change(screen.getByLabelText("Username or email"), { target: { value: "hub" } });
+
+    expect(
+      await screen.findByText(
+        "Couldn't load suggestions — enter an exact username or email instead.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add member" })).toBeEnabled();
   });
 
   it("requires an identifier before adding", () => {

@@ -137,6 +137,36 @@ func TestHandleUpdateProjectMember_ReturnsForbiddenForMemberOrViewer(t *testing.
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+func TestHandleSearchProjectMemberCandidates(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, session := loginSession(t, s, q)
+	pID := q.SeedProject(ownerID, "Alpha").ID
+	// A colleague from another shared project, so a candidate for Alpha.
+	colleague := q.SeedUser("hubot", "hubot@example.com")
+	q.SeedProjectMember(q.SeedProject(ownerID, "Beta").ID, colleague.ID, "member")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+pID.String()+"/member-candidates?q=hub", nil, session)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var candidates []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &candidates))
+	require.Len(t, candidates, 1)
+	assert.Equal(t, "hubot", candidates[0]["username"])
+	assert.NotContains(t, rec.Body.String(), "hubot@example.com", "the response must never carry an email")
+}
+
+func TestHandleSearchProjectMemberCandidates_ReturnsForbiddenForMemberOrViewer(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, _ := loginSession(t, s, q)
+	pID := q.SeedProject(ownerID, "Alpha").ID
+	member := q.SeedUser("member", "member@example.com")
+	q.SeedProjectMember(pID, member.ID, "member")
+	memberSession, err := s.sessions.Create(context.Background(), member.ID)
+	require.NoError(t, err)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+pID.String()+"/member-candidates?q=octo", nil, memberSession)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
 func TestHandleRemoveProjectMember(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, session := loginSession(t, s, q)

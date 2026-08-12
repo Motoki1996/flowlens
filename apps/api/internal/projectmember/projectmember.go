@@ -11,7 +11,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/project"
@@ -55,6 +57,20 @@ type Member struct {
 	IsProjectOwner bool      `json:"isProjectOwner"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
+
+// Candidate is one hit from the invite form's user search: someone the
+// caller could add to the project. Like Member it carries no email, and the
+// set it is drawn from is deliberately narrow — see SearchCandidates.
+type Candidate struct {
+	UserID      uuid.UUID `json:"userId"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"displayName"`
+}
+
+// minCandidateQuery is the shortest search term that returns anything. A
+// one-character term matches most of the table, which would turn the picker
+// into a listing of everyone the caller works with.
+const minCandidateQuery = 2
 
 // Service manages project_members rows for projects owned by a single user.
 type Service struct {
@@ -122,6 +138,53 @@ func (s *Service) List(ctx context.Context, callerID, projectID uuid.UUID) ([]Me
 		}
 	}
 	return out, nil
+}
+
+// SearchCandidates returns users the caller could invite to projectID whose
+// username or display name contains query (issue #140). The candidate set is
+// limited to users the caller already shares a project with, minus themselves
+// and minus projectID's existing members: the invite form needs a way to find
+// a colleague without knowing their exact identifier, but not a searchable
+// directory of every registered account — that would undo the same
+// no-enumeration rule that keeps email out of Member.
+//
+// A query shorter than minCandidateQuery returns no candidates rather than an
+// error; the caller is still typing. Add itself is unchanged, so anyone who
+// knows an exact username or email can still be invited without appearing
+// here.
+func (s *Service) SearchCandidates(ctx context.Context, callerID, projectID uuid.UUID, query string) ([]Candidate, error) {
+	if err := s.authorize(ctx, callerID, projectID); err != nil {
+		return nil, err
+	}
+	trimmed := strings.TrimSpace(query)
+	if utf8.RuneCountInString(trimmed) < minCandidateQuery {
+		return []Candidate{}, nil
+	}
+
+	rows, err := s.q.SearchProjectMemberCandidates(ctx, db.SearchProjectMemberCandidatesParams{
+		CallerUserID: callerID,
+		ProjectID:    projectID,
+		Query:        "%" + escapeLike(trimmed) + "%",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("projectmember: search candidates: %w", err)
+	}
+	out := make([]Candidate, len(rows))
+	for i, row := range rows {
+		out[i] = Candidate{
+			UserID:      row.ID,
+			Username:    row.Username,
+			DisplayName: row.DisplayName,
+		}
+	}
+	return out, nil
+}
+
+// escapeLike neutralises LIKE's wildcards so a term such as "%" searches for
+// a literal percent sign instead of matching every user.
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }
 
 // Add invites an existing user, resolved by username or email, to projectID

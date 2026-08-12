@@ -32,3 +32,27 @@ RETURNING *;
 
 -- name: RemoveProjectMember :execrows
 DELETE FROM project_members WHERE project_id = $1 AND user_id = $2;
+
+-- SearchProjectMemberCandidates finds users an owner could invite to a
+-- project (issue #140): people they already share *some* project with, minus
+-- themselves and minus the project's existing members. The whole user table
+-- is deliberately out of reach — a searchable directory of every registered
+-- account would undo the "no user enumeration" rule the member list follows.
+-- Email is neither matched nor returned, for the same reason.
+-- name: SearchProjectMemberCandidates :many
+SELECT DISTINCT u.id, u.username, u.display_name
+FROM users u
+JOIN project_members pm ON pm.user_id = u.id
+WHERE pm.project_id IN (
+        SELECT shared.project_id FROM project_members shared
+        WHERE shared.user_id = @caller_user_id
+    )
+  AND u.id <> @caller_user_id
+  AND u.id NOT IN (
+        SELECT existing.user_id FROM project_members existing
+        WHERE existing.project_id = @project_id
+    )
+  AND (u.username ILIKE @query OR u.display_name ILIKE @query)
+ORDER BY u.username
+-- A picker, not a listing: enough rows to choose from, never enough to walk.
+LIMIT 10;

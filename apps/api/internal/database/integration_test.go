@@ -784,6 +784,62 @@ func TestProjectMembers_BackfilledOwnerRow(t *testing.T) {
 	})
 }
 
+// The invite form's candidate search (issue #140) is the one membership query
+// whose whole point is what it *excludes*: users the caller shares no project
+// with, the caller themselves, and the target project's existing members. The
+// fake querier can only approximate its DISTINCT/subquery/ILIKE shape, so the
+// scope rule is proven here against real SQL.
+func TestSearchProjectMemberCandidates_ScopeIsSharedProjectsOnly(t *testing.T) {
+	q := testDB(t)
+	ctx := context.Background()
+
+	// Every user in this test shares one token in their username, so the
+	// search term can never match rows other integration tests left behind.
+	token := fmt.Sprintf("cand%d", time.Now().UnixNano())
+	newUser := func(label string) db.User {
+		u, err := q.CreateUser(ctx, db.CreateUserParams{
+			Username:     fmt.Sprintf("integration-%s-%s", token, label),
+			Email:        fmt.Sprintf("integration-%s-%s@example.com", token, label),
+			DisplayName:  "Integration User",
+			PasswordHash: "bcrypt-hash",
+		})
+		require.NoError(t, err)
+		return u
+	}
+	newProject := func(owner db.User, name string) db.Project {
+		p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("%s-%s", name, token)})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+		})
+		_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+		require.NoError(t, err)
+		return p
+	}
+
+	caller := newUser("caller")
+	colleague := newUser("colleague")
+	existing := newUser("existing")
+	stranger := newUser("stranger")
+
+	target := newProject(caller, "Alpha")
+	other := newProject(caller, "Beta")
+	_, err := q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: other.ID, UserID: colleague.ID, Role: "member"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: target.ID, UserID: existing.ID, Role: "viewer"})
+	require.NoError(t, err)
+	newProject(stranger, "Gamma")
+
+	rows, err := q.SearchProjectMemberCandidates(ctx, db.SearchProjectMemberCandidatesParams{
+		CallerUserID: caller.ID,
+		ProjectID:    target.ID,
+		Query:        "%" + token + "%",
+	})
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "only the colleague from a shared project is a candidate")
+	assert.Equal(t, colleague.ID, rows[0].ID)
+}
+
 // A duplicate GitLab webhook delivery — the same linked_gitlab_project_id +
 // delivery_uuid — must be a no-op, not an error, so the receiver
 // (internal/webhookevent) can always respond 200 whether or not this is a

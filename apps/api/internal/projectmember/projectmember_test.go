@@ -87,6 +87,63 @@ func TestService_List_ReturnsNotFoundForForeignOrMissingProject(t *testing.T) {
 	assert.ErrorIs(t, err, projectmember.ErrNotFound)
 }
 
+func TestService_SearchCandidates(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	target := q.SeedProject(owner.ID, "Alpha")
+	// A colleague from another project the owner is also in: the one case
+	// the picker exists for.
+	other := q.SeedProject(owner.ID, "Beta")
+	colleague := q.SeedUser("hubot", "hubot@example.com")
+	q.SeedProjectMember(other.ID, colleague.ID, "member")
+	// Already in the target project, so not a candidate for it.
+	existing := q.SeedUser("hubertus", "hubertus@example.com")
+	q.SeedProjectMember(target.ID, existing.ID, "viewer")
+	// No project in common with the owner at all.
+	stranger := q.SeedUser("hubcap", "hubcap@example.com")
+	q.SeedProjectMember(q.SeedProject(stranger.ID, "Gamma").ID, stranger.ID, "owner")
+	ctx := context.Background()
+
+	tests := []struct {
+		name  string
+		query string
+		want  []string
+	}{
+		{"matches a colleague by username", "hub", []string{"hubot"}},
+		{"matches case-insensitively", "HUB", []string{"hubot"}},
+		{"excludes the caller", "octo", []string{}},
+		{"excludes the target project's members", "hubertus", []string{}},
+		{"excludes users sharing no project", "hubcap", []string{}},
+		{"ignores a query shorter than two characters", "h", []string{}},
+		{"treats a wildcard as a literal", "%", []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.SearchCandidates(ctx, owner.ID, target.ID, tt.query)
+			require.NoError(t, err)
+			usernames := make([]string, len(got))
+			for i, c := range got {
+				usernames[i] = c.Username
+			}
+			assert.Equal(t, tt.want, usernames, "%v", got)
+		})
+	}
+}
+
+func TestService_SearchCandidates_ReturnsForbiddenForNonOwner(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	member := q.SeedUser("member", "member@example.com")
+	q.SeedProjectMember(p.ID, member.ID, "member")
+	ctx := context.Background()
+
+	_, err := svc.SearchCandidates(ctx, member.ID, p.ID, "octo")
+	assert.ErrorIs(t, err, projectmember.ErrForbidden)
+}
+
 func TestService_Add(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

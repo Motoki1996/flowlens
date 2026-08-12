@@ -202,6 +202,13 @@ func (s *Server) Router() chi.Router {
 				projects.Patch("/{projectID}/members/{userID}", s.handleUpdateProjectMember)
 				projects.Delete("/{projectID}/members/{userID}", s.handleRemoveProjectMember)
 
+				// The invite form's user picker (issue #140). Kept under the
+				// project it invites to, not as a global /users/search: the
+				// candidates are only ever people the caller already shares
+				// a project with, so there is no instance-wide user
+				// directory to reach.
+				projects.Get("/{projectID}/member-candidates", s.handleSearchProjectMemberCandidates)
+
 				// Failed sync jobs (issue #97): a permanently-failed
 				// sync_jobs row is otherwise invisible outside the
 				// database. Session-only, like the rest of this group —

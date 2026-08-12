@@ -1,10 +1,15 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
-import type { ApiError, ProjectMember, ProjectMemberRole } from "@/types";
+import type {
+  ApiError,
+  ProjectMember,
+  ProjectMemberCandidate,
+  ProjectMemberRole,
+} from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +44,169 @@ function formatDate(iso: string) {
 async function parseError(res: Response, fallback: string) {
   const body = (await res.json().catch(() => null)) as ApiError | null;
   return body?.error.message ?? fallback;
+}
+
+/** The API ignores anything shorter, so don't spend a request on it. */
+const CANDIDATE_MIN_QUERY = 2;
+/** Long enough that typing a name is one request, not one per keystroke. */
+const CANDIDATE_DEBOUNCE_MS = 250;
+
+/**
+ * useMemberCandidates searches the people the owner could invite as they
+ * type, debounced, with the in-flight request aborted whenever the term
+ * changes. A failure is reported rather than thrown: the field still accepts
+ * an exact username or email, which is the only way to invite someone the
+ * search deliberately cannot see (issue #140).
+ */
+function useMemberCandidates(projectId: string, query: string) {
+  const [candidates, setCandidates] = useState<ProjectMemberCandidate[]>([]);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < CANDIDATE_MIN_QUERY) {
+      setCandidates([]);
+      setFailed(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${API_PUBLIC_URL}/api/v1/projects/${projectId}/member-candidates` +
+            `?q=${encodeURIComponent(term)}`,
+          { credentials: "include", signal: controller.signal },
+        );
+        if (!res.ok) throw new Error(`search failed: ${res.status}`);
+        setCandidates((await res.json()) as ProjectMemberCandidate[]);
+        setFailed(false);
+      } catch {
+        if (controller.signal.aborted) return;
+        setCandidates([]);
+        setFailed(true);
+      }
+    }, CANDIDATE_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [projectId, query]);
+
+  return { candidates, failed };
+}
+
+/**
+ * IdentifierCombobox is the invite form's identifier field: a plain text
+ * input that also suggests matching users below it. It follows the ARIA
+ * combobox-with-listbox pattern by hand rather than reusing ui/combobox,
+ * which selects from a fixed client-side list — here the options arrive
+ * asynchronously and, crucially, typing something no option matches is still
+ * a valid entry.
+ */
+function IdentifierCombobox({
+  projectId,
+  value,
+  onChange,
+  disabled,
+}: {
+  projectId: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  const { candidates, failed } = useMemberCandidates(projectId, value);
+  const [dismissed, setDismissed] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const open = candidates.length > 0 && !dismissed;
+
+  function select(candidate: ProjectMemberCandidate) {
+    onChange(candidate.username);
+    setDismissed(true);
+    setActiveIndex(-1);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape") {
+      setDismissed(true);
+      setActiveIndex(-1);
+      return;
+    }
+    if (!open) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIndex((i) => (i + 1) % candidates.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIndex((i) => (i <= 0 ? candidates.length - 1 : i - 1));
+    } else if (e.key === "Enter" && activeIndex >= 0) {
+      // Only swallow Enter when a suggestion is highlighted; otherwise it
+      // submits the form with whatever was typed, as it always did.
+      e.preventDefault();
+      select(candidates[activeIndex]);
+    }
+  }
+
+  return (
+    <div className="relative">
+      <Input
+        id="member-identifier"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls="member-candidates"
+        aria-autocomplete="list"
+        aria-activedescendant={
+          open && activeIndex >= 0 ? `member-candidate-${activeIndex}` : undefined
+        }
+        autoComplete="off"
+        value={value}
+        disabled={disabled}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setDismissed(false);
+          setActiveIndex(-1);
+        }}
+        onKeyDown={handleKeyDown}
+        className="mt-1"
+      />
+      {open ? (
+        <ul
+          id="member-candidates"
+          role="listbox"
+          aria-label="Matching users"
+          className="bg-popover border-border absolute z-10 mt-1 w-full overflow-hidden rounded-md border shadow-md"
+        >
+          {candidates.map((candidate, index) => (
+            <li
+              key={candidate.userId}
+              id={`member-candidate-${index}`}
+              role="option"
+              aria-selected={index === activeIndex}
+              // mousedown, not click: the input must not lose focus first.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                select(candidate);
+              }}
+              onMouseEnter={() => setActiveIndex(index)}
+              className={`cursor-pointer px-3 py-2 text-sm ${
+                index === activeIndex ? "bg-accent text-accent-foreground" : ""
+              }`}
+            >
+              <span className="font-medium">{candidate.displayName}</span>{" "}
+              <span className="text-muted-foreground">@{candidate.username}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="text-muted-foreground mt-1 text-xs" role={failed ? "status" : undefined}>
+        {failed
+          ? "Couldn't load suggestions — enter an exact username or email instead."
+          : "Suggests people you already share a project with. Anyone else can still be " +
+            "invited by their exact username or email."}
+      </p>
+    </div>
+  );
 }
 
 /**
@@ -96,11 +264,11 @@ function AddMemberForm({
         <label htmlFor="member-identifier" className="text-foreground block text-sm font-medium">
           Username or email
         </label>
-        <Input
-          id="member-identifier"
+        <IdentifierCombobox
+          projectId={projectId}
           value={identifier}
-          onChange={(e) => setIdentifier(e.target.value)}
-          className="mt-1"
+          onChange={setIdentifier}
+          disabled={pending}
         />
       </div>
       <div>

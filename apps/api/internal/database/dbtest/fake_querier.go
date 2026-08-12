@@ -3189,6 +3189,56 @@ func (f *FakeQuerier) ListProjectMembers(_ context.Context, projectID uuid.UUID)
 	return items, nil
 }
 
+// SearchProjectMemberCandidates mirrors the invite form's candidate query:
+// users sharing at least one project with the caller, minus the caller and
+// minus the project's existing members, matched case-insensitively against
+// the LIKE pattern the service builds (approximated as a substring match, the
+// same shortcut matchesTaskQuery takes), username-ordered and capped at 10.
+func (f *FakeQuerier) SearchProjectMemberCandidates(_ context.Context, arg db.SearchProjectMemberCandidatesParams) ([]db.SearchProjectMemberCandidatesRow, error) {
+	shared := map[uuid.UUID]bool{}   // projects the caller belongs to
+	existing := map[uuid.UUID]bool{} // users already in the target project
+	for _, m := range f.projectMembers {
+		if m.UserID == arg.CallerUserID {
+			shared[m.ProjectID] = true
+		}
+		if m.ProjectID == arg.ProjectID {
+			existing[m.UserID] = true
+		}
+	}
+
+	term := strings.ToLower(unescapeLikePattern(arg.Query))
+	seen := map[uuid.UUID]bool{}
+	items := []db.SearchProjectMemberCandidatesRow{}
+	for _, m := range f.projectMembers {
+		if !shared[m.ProjectID] || m.UserID == arg.CallerUserID || existing[m.UserID] || seen[m.UserID] {
+			continue
+		}
+		u := f.usersByID[m.UserID]
+		if !strings.Contains(strings.ToLower(u.Username), term) &&
+			!strings.Contains(strings.ToLower(u.DisplayName), term) {
+			continue
+		}
+		seen[m.UserID] = true
+		items = append(items, db.SearchProjectMemberCandidatesRow{
+			ID:          u.ID,
+			Username:    u.Username,
+			DisplayName: u.DisplayName,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Username < items[j].Username })
+	if len(items) > 10 {
+		items = items[:10]
+	}
+	return items, nil
+}
+
+// unescapeLikePattern turns the "%term%" pattern the service builds back into
+// the term the fake matches on, undoing its wildcard escaping.
+func unescapeLikePattern(pattern string) string {
+	term := strings.TrimSuffix(strings.TrimPrefix(pattern, "%"), "%")
+	return strings.NewReplacer(`\%`, `%`, `\_`, `_`, `\\`, `\`).Replace(term)
+}
+
 // ListProjectMembersWithUser mirrors the SQL's join against users, ordered
 // by created_at ASC.
 func (f *FakeQuerier) ListProjectMembersWithUser(_ context.Context, projectID uuid.UUID) ([]db.ListProjectMembersWithUserRow, error) {

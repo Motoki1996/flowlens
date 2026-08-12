@@ -150,6 +150,63 @@ func (q *Queries) RemoveProjectMember(ctx context.Context, arg RemoveProjectMemb
 	return result.RowsAffected(), nil
 }
 
+const searchProjectMemberCandidates = `-- name: SearchProjectMemberCandidates :many
+SELECT DISTINCT u.id, u.username, u.display_name
+FROM users u
+JOIN project_members pm ON pm.user_id = u.id
+WHERE pm.project_id IN (
+        SELECT shared.project_id FROM project_members shared
+        WHERE shared.user_id = $1
+    )
+  AND u.id <> $1
+  AND u.id NOT IN (
+        SELECT existing.user_id FROM project_members existing
+        WHERE existing.project_id = $2
+    )
+  AND (u.username ILIKE $3 OR u.display_name ILIKE $3)
+ORDER BY u.username
+LIMIT 10
+`
+
+type SearchProjectMemberCandidatesParams struct {
+	CallerUserID uuid.UUID `json:"caller_user_id"`
+	ProjectID    uuid.UUID `json:"project_id"`
+	Query        string    `json:"query"`
+}
+
+type SearchProjectMemberCandidatesRow struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+}
+
+// SearchProjectMemberCandidates finds users an owner could invite to a
+// project (issue #140): people they already share *some* project with, minus
+// themselves and minus the project's existing members. The whole user table
+// is deliberately out of reach — a searchable directory of every registered
+// account would undo the "no user enumeration" rule the member list follows.
+// Email is neither matched nor returned, for the same reason.
+// A picker, not a listing: enough rows to choose from, never enough to walk.
+func (q *Queries) SearchProjectMemberCandidates(ctx context.Context, arg SearchProjectMemberCandidatesParams) ([]SearchProjectMemberCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, searchProjectMemberCandidates, arg.CallerUserID, arg.ProjectID, arg.Query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchProjectMemberCandidatesRow{}
+	for rows.Next() {
+		var i SearchProjectMemberCandidatesRow
+		if err := rows.Scan(&i.ID, &i.Username, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateProjectMemberRole = `-- name: UpdateProjectMemberRole :one
 UPDATE project_members
 SET role = $3

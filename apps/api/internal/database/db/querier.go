@@ -578,6 +578,14 @@ type Querier interface {
 	// first, so a zero-row result here is only the rare race where another
 	// request already retried it; that maps to the same ErrNotFailed.
 	RetryWebhookEvent(ctx context.Context, id uuid.UUID) (WebhookEvent, error)
+	// SearchProjectMemberCandidates finds users an owner could invite to a
+	// project (issue #140): people they already share *some* project with, minus
+	// themselves and minus the project's existing members. The whole user table
+	// is deliberately out of reach — a searchable directory of every registered
+	// account would undo the "no user enumeration" rule the member list follows.
+	// Email is neither matched nor returned, for the same reason.
+	// A picker, not a listing: enough rows to choose from, never enough to walk.
+	SearchProjectMemberCandidates(ctx context.Context, arg SearchProjectMemberCandidatesParams) ([]SearchProjectMemberCandidatesRow, error)
 	SetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg SetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// Records why registering or repairing a webhook failed (most commonly
 	// insufficient GitLab permissions) without touching any existing

@@ -3,7 +3,7 @@ import { expect, screen, userEvent, within } from "storybook/test";
 import { http, HttpResponse } from "msw";
 import { ProjectMemberSection } from "./ProjectMemberSection";
 import { API_PUBLIC_URL } from "@/lib/config";
-import type { ProjectMember } from "@/types";
+import type { ProjectMember, ProjectMemberCandidate } from "@/types";
 
 const owner: ProjectMember = {
   userId: "user-owner",
@@ -78,12 +78,29 @@ export const Empty: Story = {
   args: { projectId: "p1", currentUserId: owner.userId, members: [] },
 };
 
+/** candidateHandler answers the invite form's user search with `candidates`,
+ *  or fails with `status` when one is given. */
+function candidateHandler(candidates: ProjectMemberCandidate[], status = 200) {
+  return http.get(`${API_PUBLIC_URL}/api/v1/projects/:projectId/member-candidates`, () =>
+    status === 200
+      ? HttpResponse.json(candidates)
+      : new HttpResponse(null, { status }),
+  );
+}
+
+const candidate: ProjectMemberCandidate = {
+  userId: "user-new",
+  username: "newperson",
+  displayName: "New Person",
+};
+
 /** AddMember: an owner invites an existing user by username or email. */
 export const AddMember: Story = {
   args: { projectId: "p1", currentUserId: owner.userId, members: [owner] },
   parameters: {
     msw: {
       handlers: [
+        candidateHandler([]),
         http.post(`${API_PUBLIC_URL}/api/v1/projects/:projectId/members`, () =>
           HttpResponse.json(
             {
@@ -107,5 +124,50 @@ export const AddMember: Story = {
     const form = canvas.getByRole("form", { name: "Add member" });
     await userEvent.click(within(form).getByRole("button", { name: "Add member" }));
     await expect(await screen.findByText("Alice Owner")).toBeInTheDocument();
+  },
+};
+
+/** AddMemberWithSuggestions: typing narrows the list of people the owner
+ *  already shares a project with; picking one fills the field. */
+export const AddMemberWithSuggestions: Story = {
+  args: { projectId: "p1", currentUserId: owner.userId, members: [owner] },
+  parameters: { msw: { handlers: [candidateHandler([candidate])] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Add member" }));
+    await userEvent.type(canvas.getByLabelText("Username or email"), "new");
+    const option = await canvas.findByRole("option", { name: /New Person/ });
+    await userEvent.click(option);
+    await expect(canvas.getByLabelText("Username or email")).toHaveValue("newperson");
+  },
+};
+
+/** AddMemberNoSuggestions: nobody matches — someone outside the owner's
+ *  shared projects is still invitable by exact username or email. */
+export const AddMemberNoSuggestions: Story = {
+  args: { projectId: "p1", currentUserId: owner.userId, members: [owner] },
+  parameters: { msw: { handlers: [candidateHandler([])] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Add member" }));
+    await userEvent.type(canvas.getByLabelText("Username or email"), "stranger@example.com");
+    await expect(canvas.queryByRole("listbox")).not.toBeInTheDocument();
+  },
+};
+
+/** AddMemberSearchFails: the search request fails; the field keeps working as
+ *  the plain identifier input it has always been. */
+export const AddMemberSearchFails: Story = {
+  args: { projectId: "p1", currentUserId: owner.userId, members: [owner] },
+  parameters: { msw: { handlers: [candidateHandler([], 500)] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "Add member" }));
+    await userEvent.type(canvas.getByLabelText("Username or email"), "new");
+    await expect(
+      await canvas.findByText(
+        "Couldn't load suggestions — enter an exact username or email instead.",
+      ),
+    ).toBeInTheDocument();
   },
 };

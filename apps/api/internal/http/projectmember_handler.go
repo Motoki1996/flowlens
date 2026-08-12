@@ -47,6 +47,27 @@ func (s *Server) handleListProjectMembers(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, members)
 }
 
+// handleSearchProjectMemberCandidates backs the invite form's user picker
+// (issue #140), owner-only. It is deliberately project-scoped rather than a
+// general /users/search: the candidate set is defined relative to a project
+// the caller owns, and mounting it here means the owner check is the same one
+// every other membership route performs.
+func (s *Server) handleSearchProjectMemberCandidates(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	projectID, ok := projectIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+
+	candidates, err := s.projectMembers.SearchCandidates(r.Context(), u.ID, projectID, r.URL.Query().Get("q"))
+	if err != nil {
+		writeProjectMemberError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, candidates)
+}
+
 // handleAddProjectMember adds an existing user (by username or email) to the
 // project, owner-only.
 func (s *Server) handleAddProjectMember(w http.ResponseWriter, r *http.Request) {

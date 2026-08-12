@@ -276,6 +276,16 @@ export interface ProjectMember {
   createdAt: string;
 }
 
+/** ProjectMemberCandidate is one hit from the invite form's user search
+ *  (see projectmember.Candidate). The candidates are only ever people the
+ *  caller already shares a project with, minus this project's members — the
+ *  API exposes no instance-wide user directory, and no email here either. */
+export interface ProjectMemberCandidate {
+  userId: string;
+  username: string;
+  displayName: string;
+}
+
 /** TaskCommentAuthorKind distinguishes who posted a task's activity-log
  *  entry: a logged-in human ("user"), a project API token ("agent"), or a
  *  GitLab discussion mirrored in by the inbound webhook ("gitlab"). */

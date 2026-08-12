@@ -232,27 +232,41 @@ function RoleSelect({ projectId, member }: { projectId: string; member: ProjectM
   );
 }
 
-/** MemberRow is one member's summary, with role-change and remove controls
- *  shown only when the section is editable (i.e. the caller is an owner). */
+/** MemberRow is one member's summary. The role-change and remove controls are
+ *  shown only when the section is editable (i.e. the caller is an owner) *and*
+ *  the row is one the API would actually let them act on: never their own row
+ *  and never the project's designated owner's (issue #139). Both of those are
+ *  rejected server-side, so offering the control would only ever produce an
+ *  error after the fact. */
 function MemberRow({
   projectId,
   member,
   editable,
+  isSelf,
 }: {
   projectId: string;
   member: ProjectMember;
   editable: boolean;
+  isSelf: boolean;
 }) {
+  const actionable = editable && !isSelf && !member.isProjectOwner;
   return (
     <li className="border-border rounded-md border px-3 py-2 text-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-foreground font-medium">{member.displayName}</p>
+          <p className="text-foreground font-medium">
+            {member.displayName}
+            {isSelf ? (
+              <Badge variant="outline" className="ml-2 align-middle">
+                You
+              </Badge>
+            ) : null}
+          </p>
           <p className="text-muted-foreground text-xs">
             @{member.username} · Member since {formatDate(member.createdAt)}
           </p>
         </div>
-        {editable ? (
+        {actionable ? (
           <div className="flex items-start gap-2">
             <RoleSelect projectId={projectId} member={member} />
             <RemoveMemberButton projectId={projectId} userId={member.userId} />
@@ -274,13 +288,18 @@ function MemberRow({
  * owner-only (issue #100): `members` is `null` when the caller isn't an
  * owner (the listing endpoint itself 403s them), in which case the section
  * renders read-only with no way to tell who the members are.
+ *
+ * currentUserId identifies the viewer's own row, which carries no controls —
+ * this section manages *other* people's access (issue #139).
  */
 export function ProjectMemberSection({
   projectId,
   members,
+  currentUserId,
 }: {
   projectId: string;
   members: ProjectMember[] | null;
+  currentUserId: string;
 }) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
@@ -325,6 +344,7 @@ export function ProjectMemberSection({
                     projectId={projectId}
                     member={member}
                     editable={editable}
+                    isSelf={member.userId === currentUserId}
                   />
                 ))}
               </ul>

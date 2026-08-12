@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import {
   getBacklogs,
+  getCurrentUser,
   getFailedSyncJobs,
   getGitlabConnection,
   getLinkedGitlabProjects,
@@ -28,6 +29,10 @@ export default async function ProjectPage({
 
   const project = await getProject(projectId);
   if (!project) notFound();
+
+  // Auth itself is the layout's job; this read (memoised per request) only
+  // tells the members section which row is the viewer's own.
+  const currentUser = await getCurrentUser();
 
   // Tasks and backlogs have screens of their own; this view only needs enough
   // of them to show a count next to each link.
@@ -99,6 +104,7 @@ export default async function ProjectPage({
       apiTokens={apiTokens}
       failedSyncJobs={failedSyncJobs}
       members={members}
+      currentUserId={currentUser?.id ?? ""}
       metrics={metrics}
       metricsError={metricsError}
       metricsFrom={metricsFrom}

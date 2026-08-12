@@ -36,6 +36,24 @@ func TestService_List_ReturnsMembersOldestFirst(t *testing.T) {
 	assert.Equal(t, "member", members[1].Role)
 }
 
+func TestService_List_MarksOnlyTheDesignatedOwner(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	coOwner := q.SeedUser("coowner", "coowner@example.com")
+	q.SeedProjectMember(p.ID, coOwner.ID, "owner")
+	ctx := context.Background()
+
+	members, err := svc.List(ctx, owner.ID, p.ID)
+	require.NoError(t, err)
+	require.Len(t, members, 2)
+	assert.True(t, members[0].IsProjectOwner)
+	// Holding the "owner" role is not the same as being the designated owner.
+	assert.Equal(t, "owner", members[1].Role)
+	assert.False(t, members[1].IsProjectOwner)
+}
+
 func TestService_List_ReturnsForbiddenForNonOwner(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
@@ -246,6 +264,24 @@ func TestService_Remove(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Equal(t, owner.ID, members[0].UserID)
+}
+
+func TestService_Remove_ReturnsSelfRemoveForOwnMembership(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	// A co-owner, i.e. someone ErrLastOwner would not stop.
+	coOwner := q.SeedUser("coowner", "coowner@example.com")
+	q.SeedProjectMember(p.ID, coOwner.ID, "owner")
+	ctx := context.Background()
+
+	err := svc.Remove(ctx, coOwner.ID, p.ID, coOwner.ID)
+	assert.ErrorIs(t, err, projectmember.ErrSelfRemove)
+
+	members, listErr := svc.List(ctx, coOwner.ID, p.ID)
+	require.NoError(t, listErr)
+	assert.Len(t, members, 2)
 }
 
 func TestService_Remove_ReturnsLastOwnerForTheDesignatedOwner(t *testing.T) {

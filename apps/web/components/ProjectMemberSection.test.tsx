@@ -14,6 +14,7 @@ function makeMember(overrides: Partial<ProjectMember> = {}): ProjectMember {
     username: "hubot",
     displayName: "Hubot",
     role: "member",
+    isProjectOwner: false,
     createdAt: "2026-01-01T00:00:00Z",
     ...overrides,
   };
@@ -26,7 +27,7 @@ describe("ProjectMemberSection", () => {
   });
 
   it("renders a read-only explanation when members is null (not an owner)", () => {
-    render(<ProjectMemberSection projectId="p1" members={null} />);
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={null} />);
     expect(screen.getByText("Members")).toBeInTheDocument();
     expect(
       screen.getByText("Only the project's owners can view and manage its members."),
@@ -35,24 +36,52 @@ describe("ProjectMemberSection", () => {
   });
 
   it("shows an empty state when there are no members", () => {
-    render(<ProjectMemberSection projectId="p1" members={[]} />);
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
     expect(screen.getByText("No members yet.")).toBeInTheDocument();
   });
 
   it("lists a member's name, username, role and join date with owner-only controls", () => {
     const member = makeMember({ role: "viewer" });
-    render(<ProjectMemberSection projectId="p1" members={[member]} />);
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[member]} />);
     expect(screen.getByText("Hubot")).toBeInTheDocument();
     expect(screen.getByText(/@hubot/)).toBeInTheDocument();
     expect(screen.getByLabelText("Role for hubot")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
   });
 
+  it("shows the viewer's own row as a role badge with no controls", () => {
+    render(
+      <ProjectMemberSection
+        currentUserId="user-1"
+        projectId="p1"
+        members={[makeMember({ role: "owner" })]}
+      />,
+    );
+    expect(screen.getByText("You")).toBeInTheDocument();
+    expect(screen.getByText("Owner")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Role for hubot")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
+
+  it("shows the designated owner's row as a role badge with no controls", () => {
+    render(
+      <ProjectMemberSection
+        currentUserId="me"
+        projectId="p1"
+        members={[makeMember({ role: "owner", isProjectOwner: true })]}
+      />,
+    );
+    expect(screen.queryByText("You")).not.toBeInTheDocument();
+    expect(screen.getByText("Owner")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Role for hubot")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+  });
+
   it("adds a member via the form", async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify(makeMember({ username: "newperson" })), { status: 201 }),
     );
-    render(<ProjectMemberSection projectId="p1" members={[]} />);
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Add member" }));
     const form = screen.getByRole("form", { name: "Add member" });
@@ -69,7 +98,7 @@ describe("ProjectMemberSection", () => {
   });
 
   it("requires an identifier before adding", () => {
-    render(<ProjectMemberSection projectId="p1" members={[]} />);
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "Add member" }));
     const form = screen.getByRole("form", { name: "Add member" });
     fireEvent.click(within(form).getByRole("button", { name: "Add member" }));
@@ -79,7 +108,7 @@ describe("ProjectMemberSection", () => {
 
   it("requires a confirmation step before removing", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
-    render(<ProjectMemberSection projectId="p1" members={[makeMember()]} />);
+    render(<ProjectMemberSection currentUserId="me" projectId="p1" members={[makeMember()]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(fetch).not.toHaveBeenCalled();
@@ -93,7 +122,7 @@ describe("ProjectMemberSection", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
   });
 
-  it("shows an inline error when removing the last owner fails", async () => {
+  it("shows an inline error when the server rejects a removal", async () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -102,7 +131,13 @@ describe("ProjectMemberSection", () => {
         { status: 400 },
       ),
     );
-    render(<ProjectMemberSection projectId="p1" members={[makeMember({ role: "owner" })]} />);
+    render(
+      <ProjectMemberSection
+        currentUserId="me"
+        projectId="p1"
+        members={[makeMember({ role: "owner" })]}
+      />,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm remove" }));

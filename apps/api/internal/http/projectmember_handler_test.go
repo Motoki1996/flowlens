@@ -154,6 +154,19 @@ func TestHandleRemoveProjectMember(t *testing.T) {
 	require.Len(t, members, 1)
 }
 
+func TestHandleRemoveProjectMember_RejectsRemovingYourself(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, _ := loginSession(t, s, q)
+	pID := q.SeedProject(ownerID, "Alpha").ID
+	coOwner := q.SeedUser("coowner", "coowner@example.com")
+	q.SeedProjectMember(pID, coOwner.ID, "owner")
+	coOwnerSession, err := s.sessions.Create(context.Background(), coOwner.ID)
+	require.NoError(t, err)
+
+	rec := doRequest(t, s, http.MethodDelete, "/api/v1/projects/"+pID.String()+"/members/"+coOwner.ID.String(), nil, coOwnerSession)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestHandleRemoveProjectMember_RejectsRemovingTheDesignatedOwner(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, _ := loginSession(t, s, q)

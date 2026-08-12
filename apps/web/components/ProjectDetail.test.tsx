@@ -41,7 +41,7 @@ describe("ProjectDetail", () => {
   });
 
   it("shows identity and attributes in order, with edit and delete actions", () => {
-    render(<ProjectDetail project={project} />);
+    render(<ProjectDetail currentUserId="me" project={project} />);
     expect(screen.getByRole("heading", { name: "Alpha" })).toBeInTheDocument();
     expect(screen.getByText("The first project")).toBeInTheDocument();
     expect(screen.getByText("Created")).toBeInTheDocument();
@@ -51,7 +51,15 @@ describe("ProjectDetail", () => {
   });
 
   it("links to its backlog and task collections with their counts", () => {
-    render(<ProjectDetail project={project} backlogCount={2} taskCount={5} openTaskCount={3} />);
+    render(
+      <ProjectDetail
+        currentUserId="me"
+        project={project}
+        backlogCount={2}
+        taskCount={5}
+        openTaskCount={3}
+      />,
+    );
     expect(screen.getByRole("link", { name: /Backlogs/ })).toHaveAttribute(
       "href",
       "/projects/1/backlogs",
@@ -62,18 +70,26 @@ describe("ProjectDetail", () => {
   });
 
   it("summarises the GitLab connection's state on its link", () => {
-    const { rerender } = render(<ProjectDetail project={project} />);
+    const { rerender } = render(<ProjectDetail currentUserId="me" project={project} />);
     expect(screen.getByRole("link", { name: /GitLab connection/ })).toHaveAttribute(
       "href",
       "/projects/1/gitlab-connection",
     );
     expect(screen.getByText("Not connected")).toBeInTheDocument();
 
-    rerender(<ProjectDetail project={project} gitlabConnection={connection} linkedProjectCount={2} />);
+    rerender(
+      <ProjectDetail
+        currentUserId="me"
+        project={project}
+        gitlabConnection={connection}
+        linkedProjectCount={2}
+      />,
+    );
     expect(screen.getByText("2 linked projects")).toBeInTheDocument();
 
     rerender(
       <ProjectDetail
+        currentUserId="me"
         project={project}
         gitlabConnection={{ ...connection, verified: false, lastVerifyError: "token rejected" }}
       />,
@@ -82,24 +98,26 @@ describe("ProjectDetail", () => {
   });
 
   it("still links to the collections when their counts fail to load", () => {
-    render(<ProjectDetail project={project} countsError />);
+    render(<ProjectDetail currentUserId="me" project={project} countsError />);
     expect(screen.getByRole("link", { name: /Tasks/ })).toHaveAttribute("href", "/projects/1/tasks");
     expect(screen.getAllByText("Count unavailable")).toHaveLength(2);
   });
 
   it("shows no sync warning when no tasks have failed to sync", () => {
-    render(<ProjectDetail project={project} />);
+    render(<ProjectDetail currentUserId="me" project={project} />);
     expect(screen.queryByText(/failed to sync with GitLab/)).not.toBeInTheDocument();
   });
 
   it("warns when tasks have failed to sync with GitLab", () => {
-    render(<ProjectDetail project={{ ...project, failedSyncTaskCount: 2 }} />);
+    render(
+      <ProjectDetail currentUserId="me" project={{ ...project, failedSyncTaskCount: 2 }} />,
+    );
     expect(screen.getByText("2 tasks failed to sync with GitLab. Open a task from Tasks to see the error and retry.")).toBeInTheDocument();
   });
 
   it("requires a confirmation step before deleting", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
-    render(<ProjectDetail project={project} />);
+    render(<ProjectDetail currentUserId="me" project={project} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     expect(fetch).not.toHaveBeenCalled();
@@ -113,7 +131,7 @@ describe("ProjectDetail", () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ ...project, name: "Renamed" }), { status: 200 }),
     );
-    render(<ProjectDetail project={project} />);
+    render(<ProjectDetail currentUserId="me" project={project} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     const editForm = screen.getByRole("form", { name: "Edit project" });

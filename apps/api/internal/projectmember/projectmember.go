@@ -34,18 +34,26 @@ var (
 	ErrInvalidRole   = errors.New("projectmember: role must be owner, member, or viewer")
 	ErrLastOwner     = errors.New("projectmember: cannot demote or remove the project's owner")
 	ErrSelfRole      = errors.New("projectmember: cannot change your own role")
+	ErrSelfRemove    = errors.New("projectmember: cannot remove yourself from the project")
 )
 
 // Member is the API-facing representation of a project_members row, joined
 // with the user it belongs to. Email is deliberately absent: issue #100
 // requires the response never reveal it, to avoid using this endpoint to
 // enumerate registered email addresses.
+//
+// IsProjectOwner marks the row belonging to the project's single designated
+// owner (projects.owner_user_id), which Role alone cannot identify — any
+// number of members may hold the "owner" role. It is what lets a client hide
+// the demote/remove controls that would only ever come back as ErrLastOwner
+// (issue #139).
 type Member struct {
-	UserID      uuid.UUID `json:"userId"`
-	Username    string    `json:"username"`
-	DisplayName string    `json:"displayName"`
-	Role        string    `json:"role"`
-	CreatedAt   time.Time `json:"createdAt"`
+	UserID         uuid.UUID `json:"userId"`
+	Username       string    `json:"username"`
+	DisplayName    string    `json:"displayName"`
+	Role           string    `json:"role"`
+	IsProjectOwner bool      `json:"isProjectOwner"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // Service manages project_members rows for projects owned by a single user.
@@ -98,14 +106,19 @@ func (s *Service) List(ctx context.Context, callerID, projectID uuid.UUID) ([]Me
 	if err != nil {
 		return nil, fmt.Errorf("projectmember: list: %w", err)
 	}
+	ownerUserID, err := s.projects.OwnerUserID(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("projectmember: list: %w", err)
+	}
 	out := make([]Member, len(rows))
 	for i, row := range rows {
 		out[i] = Member{
-			UserID:      row.UserID,
-			Username:    row.Username,
-			DisplayName: row.DisplayName,
-			Role:        row.Role,
-			CreatedAt:   row.CreatedAt.Time,
+			UserID:         row.UserID,
+			Username:       row.Username,
+			DisplayName:    row.DisplayName,
+			Role:           row.Role,
+			IsProjectOwner: row.UserID == ownerUserID,
+			CreatedAt:      row.CreatedAt.Time,
 		}
 	}
 	return out, nil
@@ -144,6 +157,9 @@ func (s *Service) Add(ctx context.Context, callerID, projectID uuid.UUID, identi
 		}
 		return Member{}, fmt.Errorf("projectmember: add: %w", err)
 	}
+	// IsProjectOwner is always false here: the designated owner is given a
+	// project_members row when the project is created (project.Service.Create),
+	// so inviting them again can only ever return ErrAlreadyMember above.
 	return Member{
 		UserID:      target.ID,
 		Username:    target.Username,
@@ -195,21 +211,29 @@ func (s *Service) UpdateRole(ctx context.Context, callerID, projectID, userID uu
 		return Member{}, fmt.Errorf("projectmember: update role: %w", err)
 	}
 	return Member{
-		UserID:      userID,
-		Username:    target.Username,
-		DisplayName: target.DisplayName,
-		Role:        row.Role,
-		CreatedAt:   row.CreatedAt.Time,
+		UserID:         userID,
+		Username:       target.Username,
+		DisplayName:    target.DisplayName,
+		Role:           row.Role,
+		IsProjectOwner: userID == ownerUserID,
+		CreatedAt:      row.CreatedAt.Time,
 	}, nil
 }
 
-// Remove deletes a member's project_members row. It returns ErrLastOwner if
-// userID is projectID's designated owner (see UpdateRole's doc comment) —
-// removing them would leave the project with no owner_user_id row in
-// project_members at all.
+// Remove deletes a member's project_members row. It returns ErrSelfRemove if
+// callerID and userID are the same — this endpoint manages *other* people's
+// access, and a co-owner removing themselves would silently lock themselves
+// out of a project they cannot get back into (issue #139); leaving a project
+// on purpose would be its own action. It returns ErrLastOwner if userID is
+// projectID's designated owner (see UpdateRole's doc comment) — removing them
+// would leave the project with no owner_user_id row in project_members at
+// all.
 func (s *Service) Remove(ctx context.Context, callerID, projectID, userID uuid.UUID) error {
 	if err := s.authorize(ctx, callerID, projectID); err != nil {
 		return err
+	}
+	if userID == callerID {
+		return ErrSelfRemove
 	}
 
 	ownerUserID, err := s.projects.OwnerUserID(ctx, projectID)

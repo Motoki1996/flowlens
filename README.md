@@ -700,6 +700,7 @@ curl "$API_BASE_URL/api/v1/projects/$PROJECT_ID/members" \
     "username": "octocat",
     "displayName": "Octo Cat",
     "role": "member",
+    "isProjectOwner": false,
     "createdAt": "2026-08-02T00:00:00Z"
   }
 ]
@@ -707,12 +708,21 @@ curl "$API_BASE_URL/api/v1/projects/$PROJECT_ID/members" \
 
 The response never includes email — this endpoint accepts a username or
 email to invite, but returning one back would let an owner use it to
-enumerate registered accounts.
+enumerate registered accounts. `isProjectOwner` marks the row belonging to
+the project's single designated owner (`projects.owner_user_id`); `role`
+alone cannot identify them, since any number of members may hold the
+`owner` role.
 
-Two invariants apply to `PATCH`/`DELETE .../members/{userID}`: you cannot
-change your own role (use another owner's session), and the project's
-single designated owner (`projects.owner_user_id`) can neither be demoted
-nor removed — both return `400`.
+Three invariants apply to `PATCH`/`DELETE .../members/{userID}`, all
+returning `400`: you cannot change your own role, you cannot remove
+yourself, and the designated owner can neither be demoted nor removed.
+These routes manage *other* people's access — without the self-removal
+rule a co-owner could delete their own membership and lock themselves out
+of a project they have no way back into. There is deliberately no "leave
+project" action yet; if one is added it will be its own endpoint. The web
+app applies the same rules ahead of time: in the Project view's Members
+section, your own row and the designated owner's render as a plain role
+badge with no controls.
 
 ### Task & backlog scheduling, Gantt charts
 

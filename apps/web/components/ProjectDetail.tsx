@@ -222,6 +222,7 @@ export function ProjectDetail({
   apiTokens = [],
   failedSyncJobs = [],
   members = null,
+  currentUserId,
   metrics = null,
   metricsError = false,
   metricsFrom,
@@ -239,6 +240,8 @@ export function ProjectDetail({
   failedSyncJobs?: SyncJob[];
   /** null when the caller isn't a project owner (the listing is owner-only). */
   members?: ProjectMember[] | null;
+  /** The viewer's own user ID, so their member row can hide its controls. */
+  currentUserId: string;
   /** Delivery-flow metrics (issue #113); null when they failed to load. */
   metrics?: DeliveryMetrics | null;
   metricsError?: boolean;
@@ -331,7 +334,11 @@ export function ProjectDetail({
       </div>
 
       <div className="mt-8">
-        <ProjectMemberSection projectId={project.id} members={members} />
+        <ProjectMemberSection
+          projectId={project.id}
+          members={members}
+          currentUserId={currentUserId}
+        />
       </div>
 
       <div className="mt-8">

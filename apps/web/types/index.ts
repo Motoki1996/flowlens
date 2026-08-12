@@ -269,6 +269,10 @@ export interface ProjectMember {
   username: string;
   displayName: string;
   role: ProjectMemberRole;
+  // True for the project's single designated owner (projects.owner_user_id),
+  // who can be neither demoted nor removed. `role` alone cannot identify
+  // them — any number of members may hold the "owner" role.
+  isProjectOwner: boolean;
   createdAt: string;
 }
 

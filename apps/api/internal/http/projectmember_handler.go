@@ -128,6 +128,8 @@ func writeProjectMemberError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_role", "role must be owner, member, or viewer")
 	case errors.Is(err, projectmember.ErrSelfRole):
 		writeError(w, http.StatusBadRequest, "self_role_change", "you cannot change your own role")
+	case errors.Is(err, projectmember.ErrSelfRemove):
+		writeError(w, http.StatusBadRequest, "self_remove", "you cannot remove yourself from the project")
 	case errors.Is(err, projectmember.ErrLastOwner):
 		writeError(w, http.StatusBadRequest, "last_owner", "the project's owner cannot be demoted or removed")
 	case errors.Is(err, projectmember.ErrAlreadyMember):

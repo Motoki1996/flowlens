@@ -792,7 +792,7 @@ edit screen, since editing is an action on the Task object (see
 [`docs/ui-design.md`](docs/ui-design.md), rule 4). Predecessors and successors
 are added and removed from a "Dependencies" section on the same screen; a
 rejected cycle is reported there. The same collection has a
-"Timeline" view mode (alongside the default "List" mode, per the OOUI rule that
+"Timeline" view mode (alongside "List" and the default "Board" mode, per the OOUI rule that
 a collection is one dataset presented several ways) that lays out scheduled
 tasks as a Gantt chart. It is built on the shadcn `chart` component (Recharts)
 so it inherits the same tokens and tooltip styling as the rest of the UI, and is
@@ -984,8 +984,8 @@ the axis points.
   *default* mode): each card shows the backlog's planned period, its priority
   badge, and its closed/total task ratio, with the ratio drawn as a fill and
   stated as text.
-- **Task board** (`/projects/{projectId}/tasks`, alongside the default List
-  mode): each card names the task's backlog (or Unclassified), its due date
+- **Task board** (`/projects/{projectId}/tasks`, the *default* mode here too):
+  each card names the task's backlog (or Unclassified), its due date
   and assignee, its labels, and its priority, status and sync badges — the
   board's axis is progress, so neither a closed task nor an urgent one may be
   read off the column it sits in. It renders the same filtered and sorted set

@@ -313,10 +313,10 @@ function NewTaskForm({
 }
 
 /**
- * TaskListSection is the List view mode of the Task collection at
- * /projects/[projectId]/tasks (no standalone "unclassified" screen). Tasks are
- * grouped by backlog, with a trailing Unclassified group for tasks that have no
- * backlog. Filters narrow which tasks appear within those groups.
+ * TaskListSection is the Task collection at /projects/[projectId]/tasks (no
+ * standalone "unclassified" screen), opening in the Board view mode. In its
+ * List mode tasks are grouped by backlog, with a trailing Unclassified group
+ * for tasks that have no backlog. Filters narrow every mode alike.
  */
 export function TaskListSection({
   projectId,
@@ -352,7 +352,9 @@ export function TaskListSection({
   error?: boolean;
 }) {
   const router = useRouter();
-  const [view, setView] = useState<ViewMode>("list");
+  // Board is the default: progress is the axis people scan the collection by
+  // day to day, so the screen opens there and List/Timeline are one click away.
+  const [view, setView] = useState<ViewMode>("board");
   const [creating, setCreating] = useState(false);
   const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>(
     initialStatusFilter === "all" || initialStatusFilter === "closed" ? initialStatusFilter : "open",

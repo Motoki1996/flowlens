@@ -81,7 +81,7 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]` | `Project` | Single |
 | `/projects/[projectId]/backlogs` | `Backlog` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress) |
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single |
-| `/projects/[projectId]/tasks` | `Task` | Collection (List / Board / Timeline view modes, `?backlog=`/`?progress=` filters; the Board's axis is progress) |
+| `/projects/[projectId]/tasks` | `Task` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress; `?backlog=`/`?progress=` filters) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |
 | `/tasks` | `Task` | Collection, cross-project (`?status=`/`?priority=`/`?progress=`/`?sort=`/`?projectId=` filters) |
 | `/projects/[projectId]/merge-requests` | `MergeRequest` | Collection (`?state=`/`?author=`/`?taskId=`/`?since=`/`?until=`/`?sort=` filters; read-only, no view modes — see rule 5) |

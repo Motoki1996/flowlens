@@ -3,8 +3,9 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import type { DeliveryMetrics } from "@/types";
+import { fromDateParam, toDateParam } from "@/lib/dates";
+import { DateField } from "@/components/DateField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import {
   ChartContainer,
   ChartLegend,
@@ -100,19 +101,23 @@ export function DeliveryMetricsSection({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base font-medium">Delivery metrics</CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            <Input
-              aria-label="From"
-              type="date"
-              defaultValue={from ?? ""}
-              className="h-8 w-36"
-              onChange={(e) => updateQuery({ from: e.target.value || undefined })}
+            <DateField
+              id="delivery-metrics-from"
+              label="From"
+              placeholder="From"
+              hideLabel
+              className="h-8 w-40"
+              value={fromDateParam(from)}
+              onChange={(date) => updateQuery({ from: date ? toDateParam(date) : undefined })}
             />
-            <Input
-              aria-label="To"
-              type="date"
-              defaultValue={to ?? ""}
-              className="h-8 w-36"
-              onChange={(e) => updateQuery({ to: e.target.value || undefined })}
+            <DateField
+              id="delivery-metrics-to"
+              label="To"
+              placeholder="To"
+              hideLabel
+              className="h-8 w-40"
+              value={fromDateParam(to)}
+              onChange={(date) => updateQuery({ to: date ? toDateParam(date) : undefined })}
             />
           </div>
         </div>

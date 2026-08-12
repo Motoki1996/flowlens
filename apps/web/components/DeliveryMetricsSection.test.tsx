@@ -72,9 +72,26 @@ describe("DeliveryMetricsSection", () => {
     expect(screen.getByText("75%")).toBeInTheDocument();
   });
 
-  it("updates the URL's from/to query params on date filter change", () => {
-    render(<DeliveryMetricsSection metrics={makeMetrics({})} />);
-    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-01-01" } });
+  it("updates the URL's from query param when a day is picked from the calendar", async () => {
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} from="2026-01-05" />);
+
+    // The calendar opens on the picked date's month, so January 1st is one
+    // click away. Day buttons are named by react-day-picker's own aria-label.
+    fireEvent.click(screen.getByRole("button", { name: "From" }));
+    fireEvent.click(await screen.findByRole("button", { name: /January 1st, 2026/ }));
+
     expect(push).toHaveBeenCalledWith("/projects/p1?from=2026-01-01");
+  });
+
+  it("shows the current range on the triggers and clears a date when its own day is re-picked", async () => {
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} from="2026-01-05" to="2026-02-10" />);
+
+    expect(screen.getByRole("button", { name: "From" })).toHaveTextContent("Jan 5, 2026");
+    expect(screen.getByRole("button", { name: "To" })).toHaveTextContent("Feb 10, 2026");
+
+    fireEvent.click(screen.getByRole("button", { name: "To" }));
+    fireEvent.click(await screen.findByRole("button", { name: /February 10th, 2026/ }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1");
   });
 });

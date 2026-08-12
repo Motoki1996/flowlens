@@ -43,3 +43,18 @@ export function toDateParam(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${month}-${day}`;
 }
+
+/**
+ * fromDateParam parses a bare YYYY-MM-DD query param back into a Calendar
+ * value, the inverse of toDateParam. It builds the Date from the parts rather
+ * than via `new Date(param)`, which reads the string as UTC midnight and so
+ * renders the previous day for anyone west of UTC. Returns undefined for an
+ * absent or malformed param, which every caller treats as "no filter".
+ */
+export function fromDateParam(param: string | undefined): Date | undefined {
+  if (!param) return undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(param);
+  if (!m) return undefined;
+  const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}

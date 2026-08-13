@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import type { Backlog, Task } from "@/types";
+import type { Backlog } from "@/types";
 import { BacklogTimelineSection } from "./BacklogTimelineSection";
 
 const push = vi.fn();
@@ -26,49 +26,17 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     dueOn: null,
     priority: "medium",
     progress: "not_started",
+    taskCount: 0,
+    closedTaskCount: 0,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
-    ...overrides,
-  };
-}
-
-function makeTask(overrides: Partial<Task>): Task {
-  return {
-    id: "t1",
-    projectId: "p1",
-    backlogId: "b1",
-    title: "Task",
-    description: "",
-    status: "open",
-    closedAt: null,
-    assigneeGitlabUserId: null,
-    assigneeGitlabUsername: "",
-    labels: [],
-    dueOn: null,
-    startDate: null,
-    priority: "medium",
-    progress: "not_started",
-    position: 0,
-    createdByUserId: "u1",
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
-    gitlab: null,
-    aiContext: {
-      acceptanceCriteria: "",
-      aiContext: "",
-      allowedScope: "",
-      forbiddenScope: "",
-      updatedAt: null,
-    },
     ...overrides,
   };
 }
 
 describe("BacklogTimelineSection", () => {
   it("shows a guidance message when no backlog has a schedule", () => {
-    render(
-      <BacklogTimelineSection projectId="p1" backlogs={[makeBacklog({})]} tasks={[]} now={NOW} />,
-    );
+    render(<BacklogTimelineSection projectId="p1" backlogs={[makeBacklog({})]} now={NOW} />);
     expect(
       screen.getByText(
         "No scheduled backlogs yet. Set a start date or due date on a backlog to see it on the timeline.",
@@ -81,7 +49,7 @@ describe("BacklogTimelineSection", () => {
       makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-07" }),
       makeBacklog({ id: "b2", name: "Sprint 2", startDate: "2026-08-08", dueOn: "2026-08-14" }),
     ];
-    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} now={NOW} />);
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
     expect(screen.getByRole("link", { name: "Sprint 1" })).toHaveAttribute(
       "href",
       "/projects/p1/backlogs/b1",
@@ -95,34 +63,38 @@ describe("BacklogTimelineSection", () => {
   // The fill is a second reading of the ratio, never the only one.
   it("states each backlog's completion as text beside its bar", () => {
     const backlogs = [
-      makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-07" }),
+      makeBacklog({
+        id: "b1",
+        name: "Sprint 1",
+        startDate: "2026-08-01",
+        dueOn: "2026-08-07",
+        taskCount: 4,
+        closedTaskCount: 2,
+      }),
     ];
-    const tasks = [
-      makeTask({ id: "t1", backlogId: "b1", status: "closed" }),
-      makeTask({ id: "t2", backlogId: "b1", status: "closed" }),
-      makeTask({ id: "t3", backlogId: "b1", status: "open" }),
-      makeTask({ id: "t4", backlogId: "b1", status: "open" }),
-    ];
-    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={tasks} now={NOW} />);
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
     expect(screen.getByText("2/4 closed (50%)")).toBeInTheDocument();
   });
 
   it("says so when a backlog has no tasks rather than reading as 0% done", () => {
     const backlogs = [makeBacklog({ id: "b1", name: "Sprint 1", dueOn: "2026-08-07" })];
-    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} now={NOW} />);
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
     expect(screen.getByText("No tasks")).toBeInTheDocument();
   });
 
   it("splits a part-done bar into a filled and a faded segment", () => {
     const backlogs = [
-      makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-07" }),
-    ];
-    const tasks = [
-      makeTask({ id: "t1", backlogId: "b1", status: "closed" }),
-      makeTask({ id: "t2", backlogId: "b1", status: "open" }),
+      makeBacklog({
+        id: "b1",
+        name: "Sprint 1",
+        startDate: "2026-08-01",
+        dueOn: "2026-08-07",
+        taskCount: 2,
+        closedTaskCount: 1,
+      }),
     ];
     const { container } = render(
-      <BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={tasks} now={NOW} />,
+      <BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />,
     );
     // Three rectangles per row: the transparent leading offset, the done
     // segment and the remaining one.
@@ -134,7 +106,7 @@ describe("BacklogTimelineSection", () => {
       makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-07" }),
     ];
     const inRange = render(
-      <BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} now={NOW} />,
+      <BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />,
     );
     expect(inRange.container.querySelectorAll(".recharts-reference-line")).toHaveLength(1);
 
@@ -142,7 +114,6 @@ describe("BacklogTimelineSection", () => {
       <BacklogTimelineSection
         projectId="p1"
         backlogs={backlogs}
-        tasks={[]}
         now={new Date("2027-01-01T00:00:00Z")}
       />,
     );
@@ -151,7 +122,7 @@ describe("BacklogTimelineSection", () => {
 
   it("names every bar colour in a legend, so status is never colour-only", () => {
     const backlogs = [makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01" })];
-    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} now={NOW} />);
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
     const legend = within(screen.getByRole("list", { name: "Bar colours" }));
     for (const label of ["Open", "Overdue", "Closed", "Remaining"]) {
       expect(legend.getByText(label)).toBeInTheDocument();
@@ -165,7 +136,7 @@ describe("BacklogTimelineSection", () => {
     const backlogs = [
       makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-10" }),
     ];
-    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} now={NOW} />);
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
     const zoom = within(screen.getByRole("group", { name: "Zoom" }));
     expect(zoom.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Today" })).toBeEnabled();
@@ -176,23 +147,8 @@ describe("BacklogTimelineSection", () => {
       makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01" }),
       makeBacklog({ id: "b2", name: "Someday" }),
     ];
-    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} now={NOW} />);
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
     expect(screen.queryByRole("link", { name: "Someday" })).not.toBeInTheDocument();
     expect(screen.getByText(/Someday/)).toBeInTheDocument();
-  });
-
-  // Progress is unknowable when the task fetch failed, so it must not be
-  // reported as zero.
-  it("reports an unavailable closed-task ratio instead of 0% when tasks failed to load", () => {
-    const backlogs = [
-      makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01", dueOn: "2026-08-07" }),
-    ];
-    render(
-      <BacklogTimelineSection projectId="p1" backlogs={backlogs} tasks={[]} tasksError now={NOW} />,
-    );
-    expect(
-      screen.getByText("Failed to load tasks — the closed-task ratio is unavailable."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("No tasks")).not.toBeInTheDocument();
   });
 });

@@ -80,11 +80,22 @@ type Backlog struct {
 	DueOn       *time.Time `json:"dueOn"`
 	Priority    string     `json:"priority"`
 	Progress    string     `json:"progress"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	// TaskCount and ClosedTaskCount are the backlog's total and closed task
+	// counts, computed by ListBacklogsByProject's LEFT JOIN aggregate (issue
+	// #144) so the Backlog collection screen doesn't need to fetch every task
+	// in the project just to show a count and a completion ratio. Populated
+	// only by List (and Reorder, which returns List's result) — zero on every
+	// other Backlog response (Create/Get/Update), which don't compute the
+	// join, mirroring internal/project's FailedSyncTaskCount.
+	TaskCount       int64     `json:"taskCount"`
+	ClosedTaskCount int64     `json:"closedTaskCount"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
-// fromRow maps a database row to the domain model.
+// fromRow maps a database row to the domain model. TaskCount and
+// ClosedTaskCount are left zero: db.Backlog carries no join, unlike
+// db.ListBacklogsByProjectRow (see fromListRow).
 func fromRow(row db.Backlog) Backlog {
 	return Backlog{
 		ID:          row.ID,
@@ -98,6 +109,26 @@ func fromRow(row db.Backlog) Backlog {
 		Progress:    row.Progress,
 		CreatedAt:   row.CreatedAt.Time,
 		UpdatedAt:   row.UpdatedAt.Time,
+	}
+}
+
+// fromListRow maps a ListBacklogsByProject row, which additionally carries
+// the LEFT JOIN's task counts, to the domain model.
+func fromListRow(row db.ListBacklogsByProjectRow) Backlog {
+	return Backlog{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		Name:            row.Name,
+		Description:     row.Description,
+		Position:        row.Position,
+		StartDate:       datePtr(row.StartDate),
+		DueOn:           datePtr(row.DueOn),
+		Priority:        row.Priority,
+		Progress:        row.Progress,
+		TaskCount:       row.TaskCount,
+		ClosedTaskCount: row.ClosedTaskCount,
+		CreatedAt:       row.CreatedAt.Time,
+		UpdatedAt:       row.UpdatedAt.Time,
 	}
 }
 
@@ -275,7 +306,7 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	}
 	out := make([]Backlog, len(rows))
 	for i, row := range rows {
-		out[i] = fromRow(row)
+		out[i] = fromListRow(row)
 	}
 	return out, nil
 }
@@ -420,7 +451,7 @@ func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, bac
 
 // sameBacklogIDSet reports whether backlogIDs is exactly current's IDs, in
 // any order: same length, no duplicates, nothing missing or foreign.
-func sameBacklogIDSet(current []db.Backlog, backlogIDs []uuid.UUID) bool {
+func sameBacklogIDSet(current []db.ListBacklogsByProjectRow, backlogIDs []uuid.UUID) bool {
 	if len(current) != len(backlogIDs) {
 		return false
 	}

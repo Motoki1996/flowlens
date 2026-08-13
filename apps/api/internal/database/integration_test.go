@@ -249,6 +249,52 @@ func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// ListBacklogsByProject's task counts (issue #144) are a LEFT JOIN aggregate
+// the fake querier can only approximate, so this exercises the real GROUP BY
+// against Postgres: an empty backlog reports zero rather than being dropped
+// by the join, and closed_task_count only counts tasks whose status is
+// 'closed'.
+func TestListBacklogsByProject_ComputesTaskCounts(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	sprint, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium", Progress: "not_started"})
+	require.NoError(t, err)
+	empty, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Empty", Priority: "medium", Progress: "not_started"})
+	require.NoError(t, err)
+
+	insertTask := func(status string) uuid.UUID {
+		var taskID uuid.UUID
+		require.NoError(t, pool.QueryRow(ctx,
+			`INSERT INTO tasks (project_id, backlog_id, title, status, created_by_user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+			p.ID, sprint.ID, "Task", status, owner.ID,
+		).Scan(&taskID))
+		return taskID
+	}
+	openTaskID := insertTask("open")
+	closedTaskID := insertTask("closed")
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM tasks WHERE id = ANY($1)`, []uuid.UUID{openTaskID, closedTaskID})
+	})
+
+	rows, err := q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{ProjectID: p.ID})
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+
+	byID := map[uuid.UUID]db.ListBacklogsByProjectRow{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	assert.Equal(t, int64(2), byID[sprint.ID].TaskCount)
+	assert.Equal(t, int64(1), byID[sprint.ID].ClosedTaskCount)
+	assert.Equal(t, int64(0), byID[empty.ID].TaskCount)
+	assert.Equal(t, int64(0), byID[empty.ID].ClosedTaskCount)
+}
+
 // The GitLab access token must never reach the database in plaintext (see
 // the Security section of docs/plans/issue-sync.md and internal/crypto).
 // This drives the real encrypted_token BYTEA column, not the fake querier's

@@ -844,8 +844,16 @@ the same hue at low opacity, so plan and progress are read in one place. The
 ratio is also stated as text (`3/8 closed (38%)`) beside the bar, in the
 tooltip, and on the backlog's single view — the fill is a second reading of it,
 never the only one. A backlog with no tasks reads "No tasks" and stays unfilled
-rather than appearing complete, and when the task fetch itself fails the chart
-says progress is unavailable instead of showing everything at 0%.
+rather than appearing complete. Unlike the Task collection's Timeline, none of
+this reads a task list: `GET .../backlogs` (issue #144) returns each backlog's
+own `taskCount`/`closedTaskCount`, computed by a `LEFT JOIN` aggregate in the
+same query, so the List row count, the Board card's ratio and the Timeline
+bar's fill all come straight off the backlog object the collection already
+fetched — the screen never has to fetch every task in the project just to
+derive them. The backlog's single view is the exception: it already fetches
+that one backlog's own tasks to list them, and derives its completion ratio
+from that list instead, so a failed fetch there still reports the ratio as
+unavailable rather than 0%.
 
 The date math lives in `apps/web/lib/timeline.ts`, separate from the components
 so it is unit-testable without rendering a chart; the zoom level and scroll

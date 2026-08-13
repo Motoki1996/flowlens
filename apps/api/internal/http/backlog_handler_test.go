@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/flowlens/api/internal/database/db"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,6 +35,27 @@ func TestHandleListBacklogs_ScopesToProjectAndOwner(t *testing.T) {
 	var body []map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Len(t, body, 2)
+}
+
+// Task counts are computed server-side (issue #144) so the web app's Backlog
+// collection screen never has to fetch every task itself.
+func TestHandleListBacklogs_IncludesTaskCounts(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, ownerToken := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Open task")
+	closed := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Closed task")
+	_, err := q.CloseTaskForOwner(context.Background(), db.CloseTaskForOwnerParams{ID: closed.ID, OwnerUserID: ownerID})
+	require.NoError(t, err)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs", nil, ownerToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body []map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body, 1)
+	assert.Equal(t, float64(2), body[0]["taskCount"])
+	assert.Equal(t, float64(1), body[0]["closedTaskCount"])
 }
 
 func TestHandleListBacklogs_RejectsInvalidPriorityQuery(t *testing.T) {

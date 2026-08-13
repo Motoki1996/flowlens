@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import type { Backlog, Task } from "@/types";
+import type { Backlog } from "@/types";
 import { BacklogListSection } from "./BacklogListSection";
 
 const refresh = vi.fn();
@@ -18,6 +18,8 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  taskCount: 0,
+  closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -42,28 +44,27 @@ describe("BacklogListSection", () => {
   });
 
   it("shows an empty state with zero backlogs", () => {
-    render(<BacklogListSection projectId="p1" backlogs={[]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[]} />);
     expect(screen.getByText("No backlogs yet.")).toBeInTheDocument();
   });
 
   it("lists backlogs with their task count and a link to the single view", () => {
-    const tasks: Task[] = [];
-    render(<BacklogListSection projectId="p1" backlogs={[backlog]} tasks={tasks} />);
+    render(<BacklogListSection projectId="p1" backlogs={[{ ...backlog, taskCount: 3 }]} />);
     showList();
     const link = screen.getByRole("link", { name: /Sprint 1/ });
     expect(link).toHaveAttribute("href", "/projects/p1/backlogs/b1");
-    expect(link).toHaveTextContent("(0)");
+    expect(link).toHaveTextContent("(3)");
   });
 
   it("shows the Board view mode by default, grouped by progress", () => {
-    render(<BacklogListSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
     const notStarted = screen.getByRole("region", { name: "Not started backlogs" });
     expect(within(notStarted).getByRole("link", { name: "Sprint 1" })).toBeInTheDocument();
   });
 
   it("creates a new backlog", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ...backlog, id: "b2" }), { status: 201 }));
-    render(<BacklogListSection projectId="p1" backlogs={[]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "New backlog" }));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Sprint 2" } });
@@ -78,7 +79,7 @@ describe("BacklogListSection", () => {
 
   it("renames a backlog", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ...backlog, name: "Renamed" }), { status: 200 }));
-    render(<BacklogListSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
     showList();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -95,7 +96,7 @@ describe("BacklogListSection", () => {
   it("sends the edited schedule with the rest of the backlog", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(backlog), { status: 200 }));
     const scheduled = { ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" };
-    render(<BacklogListSection projectId="p1" backlogs={[scheduled]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[scheduled]} />);
     showList();
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -112,14 +113,14 @@ describe("BacklogListSection", () => {
 
   it("shows a backlog's planned period in the list row", () => {
     const scheduled = { ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" };
-    render(<BacklogListSection projectId="p1" backlogs={[scheduled]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[scheduled]} />);
     showList();
     expect(screen.getByText(/Aug 1, 2026\s*–\s*Aug 31, 2026/)).toBeInTheDocument();
   });
 
   it("switches to the timeline view mode and back", async () => {
     const scheduled = { ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" };
-    render(<BacklogListSection projectId="p1" backlogs={[scheduled]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[scheduled]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
     // The timeline is loaded on demand, so the legend only appears once its
@@ -135,7 +136,7 @@ describe("BacklogListSection", () => {
 
   it("requires a confirmation step before deleting, and explains where tasks go", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }));
-    render(<BacklogListSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
     showList();
 
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -154,7 +155,7 @@ describe("BacklogListSection", () => {
 
   it("moves a backlog down with the move-down button, updating the display order optimistically", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
-    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
     showList();
 
     fireEvent.click(screen.getByRole("button", { name: "Move Sprint 1 down" }));
@@ -178,7 +179,7 @@ describe("BacklogListSection", () => {
         status: 400,
       }),
     );
-    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
     showList();
 
     fireEvent.click(screen.getByRole("button", { name: "Move Sprint 1 down" }));
@@ -191,7 +192,7 @@ describe("BacklogListSection", () => {
   });
 
   it("disables the move buttons at the ends of the list", () => {
-    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} tasks={[]} />);
+    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
     showList();
     expect(screen.getByRole("button", { name: "Move Sprint 1 up" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Move Icebox down" })).toBeDisabled();

@@ -13,6 +13,8 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  taskCount: 0,
+  closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -26,7 +28,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const Empty: Story = {
-  args: { projectId: "p1", backlogs: [], tasks: [] },
+  args: { projectId: "p1", backlogs: [] },
 };
 
 /** The default view mode: one column per priority, cards stacked inside it. */
@@ -38,14 +40,13 @@ export const Default: Story = {
       { ...backlog, id: "b2", name: "Hotfixes", priority: "urgent", position: 1 },
       { ...backlog, id: "b3", name: "Icebox", priority: "low", position: 2 },
     ],
-    tasks: [],
   },
 };
 
 /** The List view mode, where a backlog is created, edited, deleted and
  *  manually reordered. */
 export const List: Story = {
-  args: { projectId: "p1", backlogs: [backlog], tasks: [] },
+  args: { projectId: "p1", backlogs: [backlog] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: "List" }));
@@ -60,7 +61,6 @@ export const Timeline: Story = {
   args: {
     projectId: "p1",
     backlogs: [{ ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" }],
-    tasks: [],
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
@@ -70,7 +70,7 @@ export const Timeline: Story = {
 };
 
 export const DeleteConfirm: Story = {
-  args: { projectId: "p1", backlogs: [backlog], tasks: [] },
+  args: { projectId: "p1", backlogs: [backlog] },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: "List" }));

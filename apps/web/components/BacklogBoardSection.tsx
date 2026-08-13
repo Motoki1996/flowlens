@@ -8,9 +8,9 @@ import { csrfHeaders } from "@/lib/csrf";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { backlogScheduleLabel } from "@/lib/backlogs";
 import { isCardBackgroundClick } from "@/lib/cards";
-import { backlogCompletion } from "@/lib/timeline";
+import { backlogTaskCompletion } from "@/lib/timeline";
 import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
-import type { ApiError, Backlog, Progress, Task } from "@/types";
+import type { ApiError, Backlog, Progress } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PriorityBadge } from "@/components/PriorityBadge";
 
@@ -25,21 +25,15 @@ import { PriorityBadge } from "@/components/PriorityBadge";
  * axis.
  *
  * A backlog's progress is its own, set here by hand — distinct from the
- * closed/total task ratio each card also shows, which is derived from its tasks
- * and stays read-only.
+ * closed/total task ratio each card also shows, which is read off the
+ * backlog's own taskCount/closedTaskCount (issue #144) and stays read-only.
  */
 export function BacklogBoardSection({
   projectId,
   backlogs,
-  tasks = [],
-  tasksError = false,
 }: {
   projectId: string;
   backlogs: Backlog[];
-  tasks?: Task[];
-  /** The closed-task ratio comes from tasks, so a failed fetch has to be
-   *  visible rather than showing every backlog as having no tasks. */
-  tasksError?: boolean;
 }) {
   const router = useRouter();
 
@@ -102,12 +96,6 @@ export function BacklogBoardSection({
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
-      {tasksError ? (
-        <p className="text-destructive text-xs">
-          Failed to load tasks — the closed-task ratio is unavailable.
-        </p>
-      ) : null}
-
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {PROGRESS_COLUMNS.map((column) => {
           const cards = items.filter((b) => b.progress === column.progress);
@@ -142,7 +130,7 @@ export function BacklogBoardSection({
               ) : (
                 <ul className="space-y-2">
                   {cards.map((backlog) => {
-                    const completion = backlogCompletion(tasks, backlog.id);
+                    const completion = backlogTaskCompletion(backlog);
                     const schedule = backlogScheduleLabel(backlog);
                     return (
                       <li
@@ -178,25 +166,23 @@ export function BacklogBoardSection({
                           <p className="text-muted-foreground truncate text-xs">{schedule}</p>
                         ) : null}
 
-                        {!tasksError ? (
-                          <div className="space-y-1">
-                            {/* The fill is a second reading of the ratio stated
-                                beside it, never the only one — same rule the
-                                timeline's bars follow. */}
-                            <div className="bg-muted h-1 w-full overflow-hidden rounded-full">
-                              <div
-                                aria-hidden
-                                className="bg-primary h-full"
-                                style={{ width: `${Math.round(completion.ratio * 100)}%` }}
-                              />
-                            </div>
-                            <p className="text-muted-foreground text-xs tabular-nums">
-                              {completion.total === 0
-                                ? "No tasks"
-                                : `${completion.closed}/${completion.total} closed`}
-                            </p>
+                        <div className="space-y-1">
+                          {/* The fill is a second reading of the ratio stated
+                              beside it, never the only one — same rule the
+                              timeline's bars follow. */}
+                          <div className="bg-muted h-1 w-full overflow-hidden rounded-full">
+                            <div
+                              aria-hidden
+                              className="bg-primary h-full"
+                              style={{ width: `${Math.round(completion.ratio * 100)}%` }}
+                            />
                           </div>
-                        ) : null}
+                          <p className="text-muted-foreground text-xs tabular-nums">
+                            {completion.total === 0
+                              ? "No tasks"
+                              : `${completion.closed}/${completion.total} closed`}
+                          </p>
+                        </div>
 
                         <div className="flex flex-wrap items-center gap-2">
                           <Link

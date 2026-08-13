@@ -28,6 +28,8 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  taskCount: 0,
+  closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -35,13 +37,11 @@ const backlog: Backlog = {
 const getCurrentUser = vi.fn();
 const getProject = vi.fn();
 const getBacklogs = vi.fn();
-const getTasks = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
   getProject: (id: string) => getProject(id),
   getBacklogs: (id: string) => getBacklogs(id),
-  getTasks: (id: string) => getTasks(id),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -60,7 +60,6 @@ describe("BacklogsPage", () => {
     getCurrentUser.mockResolvedValue(user);
     getProject.mockResolvedValue(project);
     getBacklogs.mockResolvedValue([backlog]);
-    getTasks.mockResolvedValue([]);
   });
 
   it("renders the backlog collection", async () => {
@@ -69,27 +68,6 @@ describe("BacklogsPage", () => {
       "href",
       "/projects/p1/backlogs/b1",
     );
-  });
-
-  // Task counts and timeline progress both come from tasks, so a failed fetch
-  // has to reach the collection rather than reading as "no tasks".
-  it("reports a failed task fetch instead of showing every backlog as empty", async () => {
-    getBacklogs.mockResolvedValue([
-      { ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" },
-    ]);
-    getTasks.mockRejectedValue(new Error("boom"));
-    render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
-
-    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
-    // The timeline is loaded on demand, so its message only appears once that
-    // chunk resolves.
-    expect(
-      await screen.findByText(
-        "Failed to load tasks — the closed-task ratio is unavailable.",
-        undefined,
-        { timeout: 15000 },
-      ),
-    ).toBeInTheDocument();
   });
 
   it("links each backlog to the task collection filtered to it", async () => {
@@ -107,11 +85,14 @@ describe("BacklogsPage", () => {
     ).rejects.toThrow("NOT_FOUND");
   });
 
-  it("falls back to zero task counts when tasks fail to load", async () => {
-    getTasks.mockRejectedValue(new Error("boom"));
+  // The per-backlog count is aggregated server-side onto the backlog itself
+  // (issue #144), so the collection renders it straight from getBacklogs
+  // without a separate task fetch.
+  it("shows each backlog's task count in the List view mode", async () => {
+    getBacklogs.mockResolvedValue([{ ...backlog, taskCount: 3 }]);
     render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
     // The per-backlog count lives in the List view mode; Board is the default.
     fireEvent.click(screen.getByRole("button", { name: "List" }));
-    expect(screen.getByRole("link", { name: /Sprint 1/ })).toHaveTextContent("(0)");
+    expect(screen.getByRole("link", { name: /Sprint 1/ })).toHaveTextContent("(3)");
   });
 });

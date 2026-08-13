@@ -2,10 +2,10 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
-import type { Backlog, Task } from "@/types";
+import type { Backlog } from "@/types";
 import { backlogPath } from "@/lib/routes";
 import {
-  backlogCompletion,
+  backlogTaskCompletion,
   computeTimelineBounds,
   hasSchedule,
   toBacklogGanttRows,
@@ -47,16 +47,10 @@ const LEGEND_SWATCH: Record<(typeof LEGEND_STATES)[number], string> = {
 export function BacklogTimelineSection({
   projectId,
   backlogs,
-  tasks,
-  tasksError = false,
   now,
 }: {
   projectId: string;
   backlogs: Backlog[];
-  tasks: Task[];
-  /** Progress is unknowable when the task fetch failed, so the chart says so
-   *  instead of drawing every backlog as 0% done. */
-  tasksError?: boolean;
   /** Injectable so stories and tests pin "today" instead of drifting with the clock. */
   now?: Date;
 }) {
@@ -66,8 +60,8 @@ export function BacklogTimelineSection({
   const today = useMemo(() => now ?? new Date(), [now]);
   const bounds = useMemo(() => computeTimelineBounds(backlogs), [backlogs]);
   const rows = useMemo(
-    () => (bounds ? toBacklogGanttRows(backlogs.filter(hasSchedule), tasks, bounds, today) : []),
-    [backlogs, tasks, bounds, today],
+    () => (bounds ? toBacklogGanttRows(backlogs.filter(hasSchedule), bounds, today) : []),
+    [backlogs, bounds, today],
   );
   const unscheduled = backlogs.filter((b) => !hasSchedule(b));
   const viewport = useTimelineViewport(bounds, today);
@@ -76,12 +70,12 @@ export function BacklogTimelineSection({
     const scheduled = backlogs.filter(hasSchedule);
     return scheduled.reduce(
       (acc, b) => {
-        const p = backlogCompletion(tasks, b.id);
+        const p = backlogTaskCompletion(b);
         return { closed: acc.closed + p.closed, total: acc.total + p.total };
       },
       { closed: 0, total: 0 },
     );
-  }, [backlogs, tasks]);
+  }, [backlogs]);
 
   if (!bounds || rows.length === 0) {
     return (
@@ -99,16 +93,10 @@ export function BacklogTimelineSection({
           <span>
             {formatDate(bounds.start)} – {formatDate(bounds.end)}
           </span>
-          {tasksError ? (
-            <span className="text-destructive">
-              Failed to load tasks — the closed-task ratio is unavailable.
-            </span>
-          ) : (
-            <span>
-              {overall.closed}/{overall.total} tasks closed
-              {overall.total > 0 ? ` (${percent(overall.closed / overall.total)})` : ""}
-            </span>
-          )}
+          <span>
+            {overall.closed}/{overall.total} tasks closed
+            {overall.total > 0 ? ` (${percent(overall.closed / overall.total)})` : ""}
+          </span>
         </div>
         <TimelineControls
           zoom={viewport.zoom}
@@ -141,7 +129,7 @@ export function BacklogTimelineSection({
                 </Link>
                 <div className="flex min-w-0 items-center gap-1.5 text-xs">
                   <PriorityFlag priority={row.priority} />
-                  {!tasksError && row.completion ? (
+                  {row.completion ? (
                     <span className="text-muted-foreground truncate tabular-nums">
                       {row.completion.total === 0
                         ? "No tasks"

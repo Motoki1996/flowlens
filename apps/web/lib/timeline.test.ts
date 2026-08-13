@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   backlogCompletion,
+  backlogTaskCompletion,
   computeAxis,
   computeTimelineBounds,
   defaultZoom,
@@ -286,6 +287,8 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     dueOn: null,
     priority: "medium",
     progress: "not_started",
+    taskCount: 0,
+    closedTaskCount: 0,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -314,20 +317,47 @@ describe("backlogCompletion", () => {
   });
 });
 
+describe("backlogTaskCompletion", () => {
+  it("reads the ratio off the backlog's own counts", () => {
+    expect(backlogTaskCompletion({ taskCount: 2, closedTaskCount: 1 })).toEqual({
+      closed: 1,
+      total: 2,
+      ratio: 0.5,
+    });
+  });
+
+  // An empty backlog has not been finished, so it must not read as complete.
+  it("reports 0/0 at ratio 0 for a backlog with no tasks", () => {
+    expect(backlogTaskCompletion({ taskCount: 0, closedTaskCount: 0 })).toEqual({
+      closed: 0,
+      total: 0,
+      ratio: 0,
+    });
+  });
+
+  it("reports a fully closed backlog at ratio 1", () => {
+    expect(backlogTaskCompletion({ taskCount: 2, closedTaskCount: 2 }).ratio).toBe(1);
+  });
+});
+
 describe("toBacklogGanttRows", () => {
   const bounds = { start: startOfDay(new Date("2026-08-01")), end: startOfDay(new Date("2026-08-21")) };
   const now = new Date("2026-08-10T09:00:00Z");
 
   it("drops backlogs with no schedule", () => {
-    expect(toBacklogGanttRows([makeBacklog({})], [], bounds, now)).toEqual([]);
+    expect(toBacklogGanttRows([makeBacklog({})], bounds, now)).toEqual([]);
   });
 
   it("carries the completion ratio onto the row", () => {
     const [row] = toBacklogGanttRows(
-      [makeBacklog({ id: "b1", startDate: "2026-08-03", dueOn: "2026-08-05" })],
       [
-        makeTask({ id: "t1", backlogId: "b1", status: "closed" }),
-        makeTask({ id: "t2", backlogId: "b1", status: "open" }),
+        makeBacklog({
+          id: "b1",
+          startDate: "2026-08-03",
+          dueOn: "2026-08-05",
+          taskCount: 2,
+          closedTaskCount: 1,
+        }),
       ],
       bounds,
       now,
@@ -338,7 +368,7 @@ describe("toBacklogGanttRows", () => {
   });
 
   it("titles the row with the backlog's name", () => {
-    const [row] = toBacklogGanttRows([makeBacklog({ name: "Sprint 1", dueOn: "2026-08-05" })], [], bounds, now);
+    const [row] = toBacklogGanttRows([makeBacklog({ name: "Sprint 1", dueOn: "2026-08-05" })], bounds, now);
     expect(row.title).toBe("Sprint 1");
   });
 
@@ -346,30 +376,30 @@ describe("toBacklogGanttRows", () => {
     {
       name: "closed once every task is closed",
       dueOn: "2026-08-04",
-      statuses: ["closed", "closed"],
+      taskCount: 2,
+      closedTaskCount: 2,
       expected: "closed",
     },
     {
       name: "overdue while unfinished work sits past the due date",
       dueOn: "2026-08-04",
-      statuses: ["closed", "open"],
+      taskCount: 2,
+      closedTaskCount: 1,
       expected: "overdue",
     },
     {
       name: "open when the due date is still ahead",
       dueOn: "2026-08-15",
-      statuses: ["open"],
+      taskCount: 1,
+      closedTaskCount: 0,
       expected: "open",
     },
     // No tasks means nothing has been finished, overdue or not.
-    { name: "overdue when empty and past due", dueOn: "2026-08-04", statuses: [], expected: "overdue" },
-    { name: "open when empty and not yet due", dueOn: "2026-08-15", statuses: [], expected: "open" },
-  ])("marks a backlog $name", ({ dueOn, statuses, expected }) => {
+    { name: "overdue when empty and past due", dueOn: "2026-08-04", taskCount: 0, closedTaskCount: 0, expected: "overdue" },
+    { name: "open when empty and not yet due", dueOn: "2026-08-15", taskCount: 0, closedTaskCount: 0, expected: "open" },
+  ])("marks a backlog $name", ({ dueOn, taskCount, closedTaskCount, expected }) => {
     const [row] = toBacklogGanttRows(
-      [makeBacklog({ id: "b1", startDate: "2026-08-02", dueOn })],
-      statuses.map((status, i) =>
-        makeTask({ id: `t${i}`, backlogId: "b1", status: status as Task["status"] }),
-      ),
+      [makeBacklog({ id: "b1", startDate: "2026-08-02", dueOn, taskCount, closedTaskCount })],
       bounds,
       now,
     );
@@ -382,7 +412,6 @@ describe("toBacklogGanttRows", () => {
         makeBacklog({ id: "late", name: "Late", startDate: "2026-08-09" }),
         makeBacklog({ id: "early", name: "Early", startDate: "2026-08-02" }),
       ],
-      [],
       bounds,
       now,
     );

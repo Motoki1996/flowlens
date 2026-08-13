@@ -385,7 +385,12 @@ type Querier interface {
 	// left-to-right axis). Both fall back to the usual position/created_at order
 	// as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 	// in practice — internal/backlog sets at most one from a single ?sort=.
-	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error)
+	//
+	// The LEFT JOIN to tasks (issue #144) computes each backlog's task_count and
+	// closed_task_count in the same query, so the Backlog collection screen (its
+	// List row count, Board card ratio and Timeline bar fill) doesn't need to
+	// fetch every task in the project just to derive them.
+	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]ListBacklogsByProjectRow, error)
 	// ListEnabledNotificationSettings backs the digest worker's sweep: every
 	// project with notifications turned on, regardless of caller, since the
 	// worker runs outside any request.

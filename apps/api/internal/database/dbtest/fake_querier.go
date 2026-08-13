@@ -604,8 +604,11 @@ func progressRank(progress string) int {
 	}
 }
 
-func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklogsByProjectParams) ([]db.Backlog, error) {
-	items := []db.Backlog{}
+// ListBacklogsByProject mirrors the SQL's LEFT JOIN aggregate (issue #144):
+// TaskCount/ClosedTaskCount are computed from f.tasks the same way
+// countFailedSyncTasks derives its own count.
+func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklogsByProjectParams) ([]db.ListBacklogsByProjectRow, error) {
+	items := []db.ListBacklogsByProjectRow{}
 	for _, b := range f.backlogs {
 		if b.ProjectID != arg.ProjectID {
 			continue
@@ -616,7 +619,22 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 		if arg.Progress != "" && b.Progress != arg.Progress {
 			continue
 		}
-		items = append(items, b)
+		taskCount, closedTaskCount := f.backlogTaskCounts(b.ID)
+		items = append(items, db.ListBacklogsByProjectRow{
+			ID:              b.ID,
+			ProjectID:       b.ProjectID,
+			Name:            b.Name,
+			Description:     b.Description,
+			Position:        b.Position,
+			CreatedAt:       b.CreatedAt,
+			UpdatedAt:       b.UpdatedAt,
+			StartDate:       b.StartDate,
+			DueOn:           b.DueOn,
+			Priority:        b.Priority,
+			Progress:        b.Progress,
+			TaskCount:       taskCount,
+			ClosedTaskCount: closedTaskCount,
+		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
 		if arg.SortByPriority {
@@ -632,6 +650,21 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 		return items[i].Position < items[j].Position
 	})
 	return items, nil
+}
+
+// backlogTaskCounts mirrors ListBacklogsByProject's LEFT JOIN aggregate:
+// backlogID's total task count and how many of those are closed.
+func (f *FakeQuerier) backlogTaskCounts(backlogID uuid.UUID) (taskCount, closedTaskCount int64) {
+	for _, t := range f.tasks {
+		if !t.BacklogID.Valid || t.BacklogID.Bytes != backlogID {
+			continue
+		}
+		taskCount++
+		if t.Status == "closed" {
+			closedTaskCount++
+		}
+	}
+	return taskCount, closedTaskCount
 }
 
 // GetBacklogForOwner mirrors the SQL: viewer-minimum (any project_members

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
@@ -60,34 +60,6 @@ type TaskSort = "manual" | "dueOn" | "priority" | "progress" | "updatedAt";
 
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
-
-const PRIORITY_RANK: Record<Priority, number> = { urgent: 4, high: 3, medium: 2, low: 1 };
-
-// Progress ranks the other way from priority — not_started first through done,
-// matching `?sort=progress` on the API and the Board view's left-to-right axis,
-// so the work reads as advancing.
-const PROGRESS_RANK: Record<Progress, number> = {
-  not_started: 1,
-  in_progress: 2,
-  on_hold: 3,
-  done: 4,
-};
-
-/** isProgress narrows a raw `?progress=` value; anything else falls back to
- *  "all" rather than erroring, the same way an unknown `?sort=` does. */
-function isProgress(value: string | undefined): value is Progress {
-  return value !== undefined && value in PROGRESS_RANK;
-}
-
-// dueOn/updatedAt are RFC3339 strings, so a plain string compare already
-// sorts chronologically. A missing dueOn always sorts last, matching the
-// cross-project collection's `?sort=dueOn` default.
-function compareByDueOn(a: Task, b: Task): number {
-  if (!a.dueOn && !b.dueOn) return 0;
-  if (!a.dueOn) return 1;
-  if (!b.dueOn) return -1;
-  return a.dueOn.localeCompare(b.dueOn);
-}
 
 /** moveItem returns a copy of list with the item at fromIndex relocated to
  *  toIndex, used by both drag-and-drop and the up/down move buttons so the
@@ -317,63 +289,55 @@ function NewTaskForm({
  * standalone "unclassified" screen), opening in the Board view mode. In its
  * List mode tasks are grouped by backlog, with a trailing Unclassified group
  * for tasks that have no backlog. Filters narrow every mode alike.
+ *
+ * The filters themselves are the URL, not local state (issue #143): `tasks`
+ * arrives already narrowed and ordered by the API, and changing a filter
+ * pushes a new query string for the server component above to re-fetch with
+ * — the same round trip the cross-project collection (AllTasksSection)
+ * makes. Only the view mode and the optimistic drag order stay client-side.
  */
 export function TaskListSection({
   projectId,
   tasks,
   backlogs,
   dependencies = [],
-  initialBacklogFilter,
-  initialSearch,
-  initialStatusFilter,
-  initialSort,
-  initialProgressFilter,
+  backlogFilter = "all",
+  search = "",
+  statusFilter = "open",
+  sort = "manual",
+  progressFilter,
   error = false,
 }: {
   projectId: string;
+  /** The project's tasks matching the filters below — the API applied them,
+   *  so this is what every view mode renders as-is. */
   tasks: Task[];
   backlogs: Backlog[];
   dependencies?: TaskDependency[];
-  /** The `?backlog=` the screen was opened with, if any — how the backlog
-   *  screens hand off to this collection. */
-  initialBacklogFilter?: string;
-  /** The `?q=` the screen was opened with, if any. */
-  initialSearch?: string;
-  /** The `?status=` the screen was opened with. Defaults to "open" so closed
-   *  tasks don't fill the list — anything other than "all"/"closed" falls
-   *  back to that default rather than erroring. */
-  initialStatusFilter?: string;
-  /** The `?sort=` the screen was opened with. Falls back to "manual" (the
-   *  API's own position order) for anything not one of the known values. */
-  initialSort?: string;
-  /** The `?progress=` the screen was opened with. Defaults to "all": unlike
-   *  status, no progress stage is noise worth hiding by default. */
-  initialProgressFilter?: string;
+  /** The applied `?backlog=`: a backlog id, UNCLASSIFIED_BACKLOG, or "all" —
+   *  how the backlog screens hand off to this collection. */
+  backlogFilter?: string;
+  /** The applied `?q=`, if any. Matched server-side against a task's title
+   *  and description (`websearch_to_tsquery`), so it matches whole words
+   *  rather than any substring. */
+  search?: string;
+  /** The applied `?status=`. Defaults to "open" so closed tasks don't fill
+   *  the list. */
+  statusFilter?: "all" | TaskStatus;
+  /** The applied `?sort=`, or "manual" for the API's own position order. */
+  sort?: TaskSort;
+  /** The applied `?progress=`; undefined means all of them — unlike status,
+   *  no progress stage is noise worth hiding by default. */
+  progressFilter?: Progress;
   error?: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   // Board is the default: progress is the axis people scan the collection by
   // day to day, so the screen opens there and List/Timeline are one click away.
   const [view, setView] = useState<ViewMode>("board");
   const [creating, setCreating] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<"all" | TaskStatus>(
-    initialStatusFilter === "all" || initialStatusFilter === "closed" ? initialStatusFilter : "open",
-  );
-  const [backlogFilter, setBacklogFilter] = useState<"all" | string>(
-    initialBacklogFilter ?? "all",
-  );
-  const [search, setSearch] = useState(initialSearch ?? "");
-  const [sort, setSort] = useState<TaskSort>(
-    initialSort === "dueOn" ||
-      initialSort === "priority" ||
-      initialSort === "progress" ||
-      initialSort === "updatedAt"
-      ? initialSort
-      : "manual",
-  );
-  const [progressFilter, setProgressFilter] = useState<"all" | Progress>(
-    isProgress(initialProgressFilter) ? initialProgressFilter : "all",
-  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [targetBacklogId, setTargetBacklogId] = useState("");
   const [assigning, setAssigning] = useState(false);
@@ -411,46 +375,9 @@ export function TaskListSection({
     [backlogs],
   );
 
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    return localTasks.filter((t) => {
-      if (statusFilter !== "all" && t.status !== statusFilter) return false;
-      if (progressFilter !== "all" && t.progress !== progressFilter) return false;
-      if (backlogFilter !== "all") {
-        const key = t.backlogId ?? UNCLASSIFIED;
-        if (key !== backlogFilter) return false;
-      }
-      if (query) {
-        const haystack = `${t.title}\n${t.description}`.toLowerCase();
-        if (!haystack.includes(query)) return false;
-      }
-      return true;
-    });
-  }, [localTasks, statusFilter, progressFilter, backlogFilter, search]);
-
-  // "manual" is the API's own order (filtered inherits it from `tasks`), so
-  // there's nothing to re-sort. The rest re-sort a copy — sorting is a
-  // display order for this screen only, same as the API's own `?sort=`
-  // never rewrites `position` (see the "Task & backlog priority" section in
-  // README.md).
-  const sorted = useMemo(() => {
-    if (sort === "manual") return filtered;
-    const list = [...filtered];
-    if (sort === "dueOn") {
-      list.sort(compareByDueOn);
-    } else if (sort === "priority") {
-      list.sort((a, b) => PRIORITY_RANK[b.priority] - PRIORITY_RANK[a.priority]);
-    } else if (sort === "progress") {
-      list.sort((a, b) => PROGRESS_RANK[a.progress] - PROGRESS_RANK[b.progress]);
-    } else {
-      list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-    }
-    return list;
-  }, [filtered, sort]);
-
   const groups = useMemo(() => {
     const byBacklog = new Map<string, Task[]>();
-    for (const t of sorted) {
+    for (const t of localTasks) {
       const key = t.backlogId ?? UNCLASSIFIED;
       const list = byBacklog.get(key) ?? [];
       list.push(t);
@@ -466,53 +393,52 @@ export function TaskListSection({
       ordered.push({ key: UNCLASSIFIED, name: UNCLASSIFIED_LABEL, tasks: unclassified });
     }
     return ordered;
-  }, [sorted, backlogs]);
+  }, [localTasks, backlogs]);
 
   /**
-   * Every filter/sort choice belongs in the URL: the screen stays shareable
-   * and the browser's back button walks the filter history.replaceState
-   * keeps that a client-side edit — router.replace would re-render the whole
-   * tree just to change a filter the client already applied.
+   * Every filter/sort choice belongs in the URL: the screen stays shareable,
+   * the browser's back button walks the filter history, and — since the API
+   * is what applies them (issue #143) — the push is also what re-fetches the
+   * list. A value equal to that filter's default drops out of the query
+   * string rather than being spelled out.
    */
-  function updateQueryParam(key: string, value: string | undefined) {
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    if (!value) {
-      url.searchParams.delete(key);
-    } else {
-      url.searchParams.set(key, value);
+  function updateQuery(next: Record<string, string | undefined>) {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(next)) {
+      params.delete(key);
+      if (value) params.set(key, value);
     }
-    window.history.replaceState(null, "", url);
+    const query = params.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
   }
 
   function changeBacklogFilter(value: string) {
-    setBacklogFilter(value);
-    updateQueryParam("backlog", value === "all" ? undefined : value);
+    updateQuery({ backlog: value === "all" ? undefined : value });
   }
 
   function changeStatusFilter(value: "all" | TaskStatus) {
-    setStatusFilter(value);
-    updateQueryParam("status", value === "open" ? undefined : value);
+    updateQuery({ status: value === "open" ? undefined : value });
   }
 
   function changeProgressFilter(value: "all" | Progress) {
-    setProgressFilter(value);
-    updateQueryParam("progress", value === "all" ? undefined : value);
+    updateQuery({ progress: value === "all" ? undefined : value });
   }
 
   function changeSearch(value: string) {
-    setSearch(value);
-    updateQueryParam("q", value.trim() === "" ? undefined : value);
+    updateQuery({ q: value.trim() === "" ? undefined : value });
   }
 
   function changeSort(value: TaskSort) {
-    setSort(value);
-    updateQueryParam("sort", value === "manual" ? undefined : value);
+    updateQuery({ sort: value === "manual" ? undefined : value });
   }
 
-  // Distinguishes *why* the filtered list is empty — a bare "no matches"
-  // reads the same whether it's the search term, the status default hiding
-  // every closed task, or the backlog picker, so each gets its own wording.
+  // Distinguishes *why* the list came back empty — a bare "no matches" reads
+  // the same whether it's the search term, the status default hiding every
+  // closed task, or the backlog picker, so each gets its own wording. The
+  // status filter is always on (defaulting to open), so this also stands in
+  // for the old "No tasks yet.": with the filtering server-side there is no
+  // second, unfiltered list to tell an empty project apart from an empty
+  // result — and "No open tasks." is true of both.
   function emptyFilterMessage(): string {
     const query = search.trim();
     if (query) {
@@ -526,7 +452,7 @@ export function TaskListSection({
     if (statusFilter !== "all") {
       return `No ${statusFilter} tasks.`;
     }
-    if (progressFilter !== "all") {
+    if (progressFilter) {
       return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} tasks.`;
     }
     return "No tasks match the current filters.";
@@ -695,11 +621,11 @@ export function TaskListSection({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base font-medium">Tasks</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              {/* The view modes only make sense once tasks exist, but "New task"
-                  must stay reachable on an empty project. */}
-              {!error && tasks.length > 0 ? (
-                <ViewModeToggle value={view} onChange={setView} />
-              ) : null}
+              {/* The view toggle stays put whatever the filters return, for the
+                  same reason the filter row below does — a view mode is not
+                  something to be stuck in because the current filter came back
+                  empty. "New task" stays reachable even on a load error. */}
+              {!error ? <ViewModeToggle value={view} onChange={setView} /> : null}
               {!creating ? (
                 <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
                   <Plus className="size-4" aria-hidden />
@@ -716,8 +642,12 @@ export function TaskListSection({
               had just clicked them.
 
               Status is a short fixed list, so it stays a Select; backlogs grow
-              with the project and get the searchable Combobox. */}
-          {!error && tasks.length > 0 ? (
+              with the project and get the searchable Combobox.
+
+              They stay mounted whatever comes back, too: now that they narrow
+              the API request itself, hiding them on an empty result would be
+              hiding the only way back out of the filter that emptied it. */}
+          {!error ? (
             <div className="flex flex-wrap items-center gap-2">
               <TaskSearchBox value={search} onChange={changeSearch} />
               <Select
@@ -734,7 +664,7 @@ export function TaskListSection({
                 </SelectContent>
               </Select>
               <Select
-                value={progressFilter}
+                value={progressFilter ?? "all"}
                 onValueChange={(value) => changeProgressFilter(value as "all" | Progress)}
               >
                 <SelectTrigger size="sm" aria-label="Progress" className="w-36">
@@ -787,19 +717,16 @@ export function TaskListSection({
         ) : null}
         {error ? (
           <p className="text-destructive text-sm">Failed to load tasks. Try refreshing the page.</p>
-        ) : tasks.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No tasks yet.</p>
-        ) : filtered.length === 0 ? (
+        ) : localTasks.length === 0 ? (
           // Checked before the view branch so the timeline doesn't answer an
           // empty filter result with its own "set a start or due date" hint.
           <p className="text-muted-foreground text-sm">{emptyFilterMessage()}</p>
         ) : view === "board" ? (
-          <TaskBoardSection projectId={projectId} tasks={sorted} backlogs={backlogs} />
+          <TaskBoardSection projectId={projectId} tasks={localTasks} backlogs={backlogs} />
         ) : view === "timeline" ? (
           <TaskTimelineSection
             projectId={projectId}
-            tasks={sorted}
-            allTasks={tasks}
+            tasks={localTasks}
             dependencies={dependencies}
           />
         ) : (

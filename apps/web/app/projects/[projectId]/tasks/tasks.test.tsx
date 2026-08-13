@@ -27,12 +27,14 @@ const getTaskDependencies = vi.fn();
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
   getProject: (id: string) => getProject(id),
-  getTasks: (id: string) => getTasks(id),
+  getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
   getBacklogs: (id: string) => getBacklogs(id),
   getTaskDependencies: (id: string) => getTaskDependencies(id),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/projects/p1/tasks",
+  useSearchParams: () => new URLSearchParams(),
   redirect: (url: string) => {
     throw new Error(`REDIRECT:${url}`);
   },
@@ -52,14 +54,22 @@ describe("TasksPage", () => {
     getTaskDependencies.mockResolvedValue([]);
   });
 
-  it("renders the task collection", async () => {
+  it("renders the task collection, asking the API for open tasks by default", async () => {
     render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
     expect(screen.getByText("Tasks")).toBeInTheDocument();
-    expect(getTasks).toHaveBeenCalledWith("p1");
+    // Only status is sent: every other filter is off, and the absent sort is
+    // the API's own manual/position order.
+    expect(getTasks).toHaveBeenCalledWith("p1", {
+      backlogId: undefined,
+      status: "open",
+      progress: undefined,
+      sort: undefined,
+      q: undefined,
+    });
     expect(getBacklogs).toHaveBeenCalledWith("p1");
   });
 
-  it("pre-selects the backlog filter from ?backlog=", async () => {
+  it("passes the URL query to the API as the request's filter (issue #143)", async () => {
     getBacklogs.mockResolvedValue([
       { id: "b1", projectId: "p1", name: "Sprint 1", description: "", position: 0 },
     ]);
@@ -72,28 +82,70 @@ describe("TasksPage", () => {
         status: "open",
         labels: [],
         priority: "medium",
-        progress: "not_started",
-      },
-      {
-        id: "t2",
-        projectId: "p1",
-        backlogId: null,
-        title: "Loose end",
-        status: "open",
-        labels: [],
-        priority: "medium",
-        progress: "not_started",
+        progress: "in_progress",
       },
     ]);
     render(
       await TasksPage({
         params: Promise.resolve({ projectId: "p1" }),
-        searchParams: Promise.resolve({ backlog: "b1" }),
+        searchParams: Promise.resolve({
+          backlog: "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21",
+          status: "all",
+          progress: "in_progress",
+          sort: "priority",
+          q: "sprint",
+        }),
+      }),
+    );
+
+    expect(getTasks).toHaveBeenCalledWith("p1", {
+      backlogId: "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21",
+      status: undefined,
+      progress: "in_progress",
+      sort: "priority",
+      q: "sprint",
+    });
+    expect(screen.getByText("In sprint 1")).toBeInTheDocument();
+  });
+
+  it("sends the Unclassified group as the API's backlog_id=unassigned", async () => {
+    render(
+      await TasksPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ backlog: "unclassified" }),
+      }),
+    );
+    expect(getTasks).toHaveBeenCalledWith("p1", expect.objectContaining({ backlogId: "unassigned" }));
+  });
+
+  it("falls back to the defaults for query values the API would reject", async () => {
+    render(
+      await TasksPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ backlog: "not-a-uuid", status: "banana", sort: "sideways" }),
+      }),
+    );
+    expect(getTasks).toHaveBeenCalledWith("p1", {
+      backlogId: undefined,
+      status: "open",
+      progress: undefined,
+      sort: undefined,
+      q: undefined,
+    });
+  });
+
+  it("pre-selects the backlog filter from ?backlog=", async () => {
+    const backlogId = "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21";
+    getBacklogs.mockResolvedValue([
+      { id: backlogId, projectId: "p1", name: "Sprint 1", description: "", position: 0 },
+    ]);
+    render(
+      await TasksPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ backlog: backlogId }),
       }),
     );
     expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 1");
-    expect(screen.getByText("In sprint 1")).toBeInTheDocument();
-    expect(screen.queryByText("Loose end")).not.toBeInTheDocument();
   });
 
   it("renders not-found when the project doesn't exist", async () => {

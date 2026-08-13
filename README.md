@@ -860,20 +860,30 @@ of the same filtered set (`docs/ui-design.md` rule 5):
 
 - A free-text box (`TaskSearchBox`, debounced 300ms and shared with the
   cross-project collection's own box below) matches a task's title or
-  description, case-insensitively.
+  description.
 - The status filter (All / Open / Closed) defaults to **Open**, so closed
-  tasks don't fill the list; the backlog filter (unchanged) narrows further.
+  tasks don't fill the list; the backlog filter (unchanged) narrows further,
+  and a progress filter narrows by FlowLens's own work state.
 - Sort offers **Manual** (the API's own `position` order — the default),
-  **Due date**, **Priority** and **Recently updated**, the same three
-  non-manual values the cross-project Task collection's `?sort=` accepts
+  **Due date**, **Priority**, **Progress** and **Recently updated**, the same
+  four non-manual values the cross-project Task collection's `?sort=` accepts
   (below), so the two screens agree on what each one means. Sorting is a
   display order only; it never rewrites `position`.
-- All of this stays client-side — this screen already has every one of the
-  project's tasks in hand (unlike the cross-project collection, which
-  re-fetches from the API per filter change) — and is held in the URL
-  (`?q=`, `?status=`, `?sort=`, alongside the existing `?backlog=`) the same
-  way the backlog filter already was, so a reload or the browser's back
-  button restores it.
+- **The API applies all of it** (issue #143), not the browser: the filters
+  are held in the URL (`?q=`, `?status=`, `?progress=`, `?sort=`, alongside
+  the existing `?backlog=`), and changing one pushes a new query string that
+  the server component turns into `GET
+  /api/v1/projects/{projectID}/tasks?…` — the same round trip the
+  cross-project collection makes. A reload, a shared link and the browser's
+  back button all land on the same filtered list, and List, Board and
+  Timeline are three presentations of that one response rather than three
+  filters over a full one. Note this makes `?q=` the API's full-text match
+  (below) rather than a substring match: "logi" no longer finds "login".
+- There is deliberately **no pagination**: the matching tasks come back
+  whole, which is what lets the List view group them by backlog and lets a
+  bucket be reordered by drag-and-drop, since `PATCH .../tasks/order` wants
+  that bucket's entire task ID list. Capping the response is the follow-up
+  to make if a project ever grows past what one response should carry.
 
 ### Task full-text search
 
@@ -889,10 +899,9 @@ deliberately, to avoid the extra dependency a real Japanese tokenizer
 (pg_bigm/pgroonga) would add — so a query matches as long as it lines up with
 a whole run of characters the parser tokenizes as one lexeme; there is no
 "contains this substring anywhere" guarantee for CJK text the way there is
-for space-separated words. `?q=` is unrelated to the project-scoped Task
-collection's own `?q=` free-text box described above, which stays a
-client-side, case-insensitive substring match — that screen already has every
-task in hand, so it never round-trips to the API per keystroke.
+for space-separated words. Both Task collection screens' search boxes are
+this same match: the project-scoped one stopped matching substrings
+client-side when its filtering moved to the API (issue #143, above).
 
 ### Task & backlog priority
 
@@ -1110,11 +1119,12 @@ In the web app, `/tasks` is the cross-project Task collection (see
 [`docs/ui-design.md`](docs/ui-design.md)): the default view is open tasks
 with a due date, sorted soonest-first; each row links to that task's
 canonical single view under its own project. Its search box is debounced and
-held in `?q=`, the same as its other filters — unlike the project-scoped
-Task collection's own search box (see [Task collection search, filters and
-sort](#task-collection-search-filters-and-sort) above), typing here
-round-trips to `GET /api/v1/tasks?q=` rather than matching client-side, since
-this screen already re-fetches from the API on every other filter change.
+held in `?q=`, the same as its other filters: typing round-trips to `GET
+/api/v1/tasks?q=`, exactly as the project-scoped Task collection's own box
+does (see [Task collection search, filters and
+sort](#task-collection-search-filters-and-sort) above). `?progress=` and
+`?sort=progress` are accepted here too, deep-linkable though the screen has
+no progress control of its own.
 
 ### Dashboard
 

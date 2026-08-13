@@ -6,12 +6,12 @@ import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { taskPath } from "@/lib/routes";
-import { formatDate } from "@/lib/dates";
 import { isCardBackgroundClick } from "@/lib/cards";
 import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
 import type { ApiError, Backlog, Progress, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
@@ -38,6 +38,7 @@ export function TaskBoardSection({
   backlogs = [],
   activeLabel,
   onLabelClick,
+  now = new Date(),
 }: {
   projectId: string;
   tasks: Task[];
@@ -49,6 +50,13 @@ export function TaskBoardSection({
   /** Toggles `?label=` for the clicked label. Left as a no-op when the
    *  caller doesn't care (e.g. a card with no labels never needs it). */
   onLabelClick?: (label: string) => void;
+  /** "Today", for each card's DueDateLabel (issue #148) — threaded down from
+   *  TaskListSection rather than computed here, so a card and its List-mode
+   *  row never disagree on what's overdue. Defaults to the current instant,
+   *  which is fine for a component that only ever renders client-side after
+   *  mount; TaskListSection itself gets its own value from a server-rendered
+   *  prop instead, to stay hydration-safe (see its own `today` prop). */
+  now?: Date;
 }) {
   const router = useRouter();
 
@@ -175,7 +183,12 @@ export function TaskBoardSection({
                         {task.backlogId
                           ? (backlogNames.get(task.backlogId) ?? UNCLASSIFIED_LABEL)
                           : UNCLASSIFIED_LABEL}
-                        {task.dueOn ? ` · Due ${formatDate(task.dueOn)}` : ""}
+                        {task.dueOn ? (
+                          <>
+                            {" · "}
+                            <DueDateLabel dueOn={task.dueOn} now={now} />
+                          </>
+                        ) : null}
                         {task.assigneeGitlabUsername ? ` · ${task.assigneeGitlabUsername}` : ""}
                       </p>
 

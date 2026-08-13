@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { Project, User } from "@/types";
 
@@ -178,6 +178,36 @@ describe("TasksPage", () => {
     getTasks.mockRejectedValue(new Error("boom"));
     render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
     expect(screen.getByText("Failed to load tasks. Try refreshing the page.")).toBeInTheDocument();
+  });
+
+  describe("Due date state (issue #148)", () => {
+    // The page computes "today" itself (rather than the client component
+    // doing it with `new Date()`) so a task's Overdue state can't disagree
+    // between the server render and the browser hydrating it — see
+    // TaskListSection's `today` prop doc comment.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("marks a task due before the page's own current date as Overdue", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 7, 5, 12, 0, 0));
+      getTasks.mockResolvedValue([
+        {
+          id: "t1",
+          projectId: "p1",
+          backlogId: null,
+          title: "Late task",
+          status: "open",
+          labels: [],
+          priority: "medium",
+          progress: "not_started",
+          dueOn: "2026-08-04",
+        },
+      ]);
+      render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
+      expect(screen.getByText("Overdue Aug 4, 2026")).toBeInTheDocument();
+    });
   });
 
   describe("My tasks availability (issue #146)", () => {

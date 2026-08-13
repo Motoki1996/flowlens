@@ -8,6 +8,7 @@ import {
   getTasks,
 } from "@/lib/api";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
+import { toDateParam } from "@/lib/dates";
 import { TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
 import type { Priority, Progress, TaskStatus } from "@/types";
 
@@ -87,6 +88,11 @@ export default async function TasksPage({
     : undefined;
   const sortParam = resolvedSearchParams?.sort;
   const sort: Sort = SORTS.includes(sortParam as NamedSort) ? (sortParam as NamedSort) : "manual";
+  // The "today" cutoff the `?due=` filter and each row's/card's Overdue
+  // badge classify against (issue #148), computed once here rather than in
+  // the client component below — see TaskListSection's `today` prop doc
+  // comment for why.
+  const today = toDateParam(new Date());
   const project = await getProject(projectId);
   if (!project) notFound();
 
@@ -159,6 +165,7 @@ export default async function TasksPage({
       assigneeMe={assigneeMe}
       assigneeAvailability={assigneeAvailability}
       sort={sort}
+      today={today}
       error={tasksError}
     />
   );

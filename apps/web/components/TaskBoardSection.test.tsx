@@ -165,4 +165,37 @@ describe("TaskBoardSection", () => {
     expect(within(card("Fix login")).getByText("Closed")).toBeInTheDocument();
     expect(within(card("Fix login")).getByText("Urgent")).toBeInTheDocument();
   });
+
+  describe("Label filter (issue #147)", () => {
+    it("calls onLabelClick when a label badge is clicked, without opening the task", () => {
+      const onLabelClick = vi.fn();
+      render(
+        <TaskBoardSection
+          projectId="p1"
+          tasks={[{ ...task, labels: ["bug"] }]}
+          backlogs={[backlog]}
+          onLabelClick={onLabelClick}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "bug" }));
+
+      expect(onLabelClick).toHaveBeenCalledWith("bug");
+      expect(push).not.toHaveBeenCalled();
+    });
+
+    it("marks the active label's badge as pressed", () => {
+      render(
+        <TaskBoardSection
+          projectId="p1"
+          tasks={[{ ...task, labels: ["bug", "docs"] }]}
+          backlogs={[backlog]}
+          activeLabel="bug"
+        />,
+      );
+
+      expect(screen.getByRole("button", { name: "bug" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByRole("button", { name: "docs" })).toHaveAttribute("aria-pressed", "false");
+    });
+  });
 });

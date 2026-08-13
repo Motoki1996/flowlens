@@ -349,6 +349,76 @@ describe("TaskListSection", () => {
     });
   });
 
+  describe("Label filter (issue #147)", () => {
+    it("pushes ?label= when a label badge is clicked, without navigating to the task", () => {
+      const tasks = [makeTask({ id: "t1", title: "Buggy task", labels: ["bug"] })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+
+      fireEvent.click(screen.getByRole("button", { name: "bug" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?label=bug");
+      expect(push).not.toHaveBeenCalledWith("/projects/p1/tasks/t1");
+    });
+
+    it("clears the label filter when the same badge is clicked again", () => {
+      currentSearchParams = new URLSearchParams("label=bug");
+      const tasks = [makeTask({ id: "t1", title: "Buggy task", labels: ["bug"] })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+
+      fireEvent.click(screen.getByRole("button", { name: "bug" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+    });
+
+    it("shows only the tasks carrying the active label, alongside a clear chip", () => {
+      currentSearchParams = new URLSearchParams("label=bug");
+      const tasks = [
+        makeTask({ id: "t1", title: "Buggy task", labels: ["bug"] }),
+        makeTask({ id: "t2", title: "Feature task", labels: ["feature"] }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+
+      expect(screen.getByText("Buggy task")).toBeInTheDocument();
+      expect(screen.queryByText("Feature task")).not.toBeInTheDocument();
+      expect(screen.getByText("Label: bug")).toBeInTheDocument();
+    });
+
+    it("clears the label filter from the chip's clear button", () => {
+      currentSearchParams = new URLSearchParams("label=bug");
+      const tasks = [makeTask({ id: "t1", title: "Buggy task", labels: ["bug"] })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Clear label filter: bug" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+    });
+
+    it("reports an empty result from the label filter", () => {
+      currentSearchParams = new URLSearchParams("label=bug");
+      const tasks = [makeTask({ id: "t1", title: "Feature task", labels: ["feature"] })];
+      render(
+        <TaskListSection projectId="p1" tasks={tasks} backlogs={[]} statusFilter="all" />,
+      );
+
+      expect(screen.getByText('No tasks labeled "bug".')).toBeInTheDocument();
+    });
+
+    it("filters the board view by the same label", () => {
+      currentSearchParams = new URLSearchParams("label=bug");
+      const tasks = [
+        makeTask({ id: "t1", title: "Buggy task", labels: ["bug"] }),
+        makeTask({ id: "t2", title: "Feature task", labels: ["feature"] }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} statusFilter="all" />);
+
+      expect(screen.getByRole("link", { name: "Buggy task" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Feature task" })).not.toBeInTheDocument();
+    });
+  });
+
   it("assigns selected unclassified tasks to a backlog in bulk", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
     const tasks = [

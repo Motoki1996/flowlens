@@ -184,6 +184,10 @@ export type ProjectTasksFilter = {
   priority?: Priority;
   progress?: Progress;
   sort?: "dueOn" | "priority" | "progress" | "updatedAt";
+  // "me": only tasks assigned to the caller's own registered GitLab identity
+  // for this project's GitLab connection (issue #102, extended to this
+  // screen by issue #146). Omitted means no filter.
+  assignee?: "me";
   q?: string;
 };
 
@@ -203,6 +207,7 @@ export const getTasks = cache(
     if (filter.priority) params.set("priority", filter.priority);
     if (filter.progress) params.set("progress", filter.progress);
     if (filter.sort) params.set("sort", filter.sort);
+    if (filter.assignee) params.set("assignee", filter.assignee);
     if (filter.q) params.set("q", filter.q);
     const query = params.toString();
 

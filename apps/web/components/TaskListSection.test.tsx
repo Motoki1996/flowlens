@@ -283,6 +283,72 @@ describe("TaskListSection", () => {
     expect(screen.getByText("Failed to load tasks. Try refreshing the page.")).toBeInTheDocument();
   });
 
+  describe("My tasks filter (issue #146)", () => {
+    it("pushes ?assignee=me alongside the other filters when checked", () => {
+      currentSearchParams = new URLSearchParams("status=all");
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" />);
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "My tasks" }));
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?status=all&assignee=me");
+    });
+
+    it("drops ?assignee=me back out of the query string when unchecked", () => {
+      currentSearchParams = new URLSearchParams("status=all&assignee=me");
+      render(
+        <TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" assigneeMe />,
+      );
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "My tasks" }));
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?status=all");
+    });
+
+    it("reflects ?assignee=me from the URL as checked", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} assigneeMe />);
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).toBeChecked();
+    });
+
+    it("reports an empty result from the My tasks filter", () => {
+      render(
+        <TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" assigneeMe />,
+      );
+      expect(screen.getByText("No tasks are assigned to you.")).toBeInTheDocument();
+    });
+
+    it("disables the checkbox and links to the GitLab connection when the project has none", () => {
+      render(
+        <TaskListSection
+          projectId="p1"
+          tasks={[]}
+          backlogs={[]}
+          assigneeAvailability="no-connection"
+        />,
+      );
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).toBeDisabled();
+      expect(screen.getByRole("link", { name: "Connect GitLab" })).toHaveAttribute(
+        "href",
+        "/projects/p1/gitlab-connection",
+      );
+    });
+
+    it("disables the checkbox and links to Settings when the caller has no matching identity", () => {
+      render(
+        <TaskListSection projectId="p1" tasks={[]} backlogs={[]} assigneeAvailability="no-identity" />,
+      );
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).toBeDisabled();
+      expect(screen.getByRole("link", { name: "Register GitLab identity" })).toHaveAttribute(
+        "href",
+        "/settings",
+      );
+    });
+
+    it("leaves the checkbox enabled with no reason link once a matching identity is registered", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).not.toBeDisabled();
+      expect(screen.queryByRole("link", { name: "Connect GitLab" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Register GitLab identity" })).not.toBeInTheDocument();
+    });
+  });
+
   it("assigns selected unclassified tasks to a backlog in bulk", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
     const tasks = [
@@ -343,9 +409,13 @@ describe("TaskListSection", () => {
   });
 
   it("does not offer selection when the project has no backlogs to move tasks into", () => {
+    // Scoped to the row-selection checkboxes ("Select <task>") rather than
+    // any checkbox: the "My tasks" filter checkbox (issue #146) is always in
+    // the filter row regardless of backlogs.
     const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: null })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    showListView();
+    expect(screen.queryByRole("checkbox", { name: "Select Only task" })).not.toBeInTheDocument();
   });
 
   it("opens in the board view mode, showing the tasks the API returned by progress", () => {

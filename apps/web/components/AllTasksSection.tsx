@@ -19,7 +19,7 @@ import {
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 
-type SortValue = "dueOn" | "priority" | "updatedAt";
+type SortValue = "dueOn" | "priority" | "progress" | "updatedAt";
 
 function StatusBadge({ status }: { status: TaskStatus }) {
   return (
@@ -35,11 +35,11 @@ function StatusBadge({ status }: { status: TaskStatus }) {
  * owns, in one list, each still linking to its canonical single view under
  * its own project. Status/priority/sort/project are held in the URL —
  * changing one pushes a new query string, so the server component above
- * re-fetches GET /api/v1/tasks with it — unlike the project-scoped
- * TaskListSection, which already has every one of its project's tasks in
- * hand and filters client-side. "Only tasks with a due date" is the one
- * purely client-side filter: the API has no such parameter, and the default
- * view's whole point is hiding the undated backlog noise.
+ * re-fetches GET /api/v1/tasks with it, the same round trip the
+ * project-scoped TaskListSection makes for its own filters (issue #143).
+ * "Only tasks with a due date" is the one purely client-side filter: the API
+ * has no such parameter, and the default view's whole point is hiding the
+ * undated backlog noise.
  */
 export function AllTasksSection({
   tasks,
@@ -61,9 +61,8 @@ export function AllTasksSection({
   // filters above, not local state, so it survives navigation/refresh.
   assigneeMe?: boolean;
   // The `?q=` the screen was opened with, if any (issue #107) — matched
-  // server-side, unlike the project-scoped TaskListSection's client-side
-  // search, since this screen already round-trips to the API for every
-  // other filter.
+  // server-side by `websearch_to_tsquery`, the same match the project-scoped
+  // TaskListSection's own search box now makes (issue #143).
   search?: string;
   error?: boolean;
 }) {
@@ -139,6 +138,7 @@ export function AllTasksSection({
               <SelectContent>
                 <SelectItem value="dueOn">Due date</SelectItem>
                 <SelectItem value="priority">Priority</SelectItem>
+                <SelectItem value="progress">Progress</SelectItem>
                 <SelectItem value="updatedAt">Recently updated</SelectItem>
               </SelectContent>
             </Select>

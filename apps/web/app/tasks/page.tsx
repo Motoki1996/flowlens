@@ -2,15 +2,17 @@ import { redirect } from "next/navigation";
 import { getAllTasks, getCurrentUser, getProjects } from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
 import { AllTasksSection } from "@/components/AllTasksSection";
-import type { Priority, TaskStatus } from "@/types";
+import type { Priority, Progress, TaskStatus } from "@/types";
 
-const SORTS = ["dueOn", "priority", "updatedAt"] as const;
+const SORTS = ["dueOn", "priority", "progress", "updatedAt"] as const;
 type Sort = (typeof SORTS)[number];
 
 const STATUSES = ["all", "open", "closed"] as const;
 type StatusFilter = (typeof STATUSES)[number];
 
 const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
+
+const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
 
 function firstParam(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -47,6 +49,13 @@ export default async function AllTasksPage({
   const priority = PRIORITIES.includes(priorityParam as Priority)
     ? (priorityParam as Priority)
     : undefined;
+  // Progress has no control of its own on this screen — it is here so the
+  // filter set matches what GET /api/v1/tasks accepts, deep-linkable the same
+  // way dueBefore/dueAfter below already are.
+  const progressParam = firstParam(params.progress);
+  const progress = PROGRESSES.includes(progressParam as Progress)
+    ? (progressParam as Progress)
+    : undefined;
   const projectIds = (Array.isArray(params.projectId) ? params.projectId : [params.projectId]).filter(
     (v): v is string => Boolean(v),
   );
@@ -69,6 +78,7 @@ export default async function AllTasksPage({
       getAllTasks({
         status: status === "all" ? undefined : (status as TaskStatus),
         priority,
+        progress,
         sort,
         projectIds: projectIds.length > 0 ? projectIds : undefined,
         dueBefore,

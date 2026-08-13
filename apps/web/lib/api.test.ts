@@ -84,6 +84,30 @@ describe("getTasks", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
     await expect(getTasks("p1")).rejects.toThrow("Failed to load tasks: 500");
   });
+
+  it("sends only the filters it was given, as the API's own parameter names", async () => {
+    const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getTasks("p1", { backlogId: "unassigned", status: "open", q: "login" });
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    // backlog_id is the one snake_case query parameter in the API, and an
+    // omitted filter is absent rather than empty.
+    expect(url).toBe(
+      "http://localhost:8080/api/v1/projects/p1/tasks?backlog_id=unassigned&status=open&q=login",
+    );
+  });
+
+  it("requests the unfiltered list when given no filter", async () => {
+    const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getTasks("p2");
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toBe("http://localhost:8080/api/v1/projects/p2/tasks");
+  });
 });
 
 describe("getBacklogs", () => {

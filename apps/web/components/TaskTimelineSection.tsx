@@ -41,16 +41,15 @@ const LEGEND_SWATCH: Record<(typeof LEGEND_STATES)[number], string> = {
 export function TaskTimelineSection({
   projectId,
   tasks,
-  allTasks,
   dependencies,
   now,
 }: {
   projectId: string;
+  /** The collection's tasks as filtered by the API (issue #143). A
+   *  predecessor that the current filter excludes is therefore not nameable
+   *  here, and drops out of the "After: …" line rather than being listed
+   *  without a title. */
   tasks: Task[];
-  /** Every task in the collection, filters included — `tasks` may be a filtered
-   *  subset, and a predecessor filtered out of view still has to be nameable in
-   *  the "After: …" line. Defaults to `tasks` when nothing is filtered out. */
-  allTasks?: Task[];
   dependencies: TaskDependency[];
   /** Injectable so stories and tests pin "today" instead of drifting with the clock. */
   now?: Date;
@@ -68,7 +67,7 @@ export function TaskTimelineSection({
   const viewport = useTimelineViewport(bounds, today);
 
   const predecessorsByTask = useMemo(() => {
-    const titleById = new Map((allTasks ?? tasks).map((t) => [t.id, t.title]));
+    const titleById = new Map(tasks.map((t) => [t.id, t.title]));
     const byTask = new Map<string, string[]>();
     for (const d of dependencies) {
       const predecessorTitle = titleById.get(d.predecessorTaskId);
@@ -78,7 +77,7 @@ export function TaskTimelineSection({
       byTask.set(d.successorTaskId, list);
     }
     return byTask;
-  }, [tasks, allTasks, dependencies]);
+  }, [tasks, dependencies]);
 
   const closedCount = tasks.filter((t) => t.status === "closed").length;
   const progressPercent = tasks.length > 0 ? Math.round((closedCount / tasks.length) * 100) : 0;

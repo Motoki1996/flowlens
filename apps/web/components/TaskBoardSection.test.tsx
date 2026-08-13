@@ -166,6 +166,41 @@ describe("TaskBoardSection", () => {
     expect(within(card("Fix login")).getByText("Urgent")).toBeInTheDocument();
   });
 
+  describe("Due date state (issue #148)", () => {
+    // Wednesday 2026-08-05, matching lib/dashboard.test.ts's dueStatus fixture.
+    const now = new Date(2026, 7, 5, 12, 0, 0);
+
+    it("marks a card's due date Overdue, in destructive text, for a task due before today", () => {
+      render(
+        <TaskBoardSection
+          projectId="p1"
+          tasks={[{ ...task, dueOn: "2026-08-04" }]}
+          backlogs={[backlog]}
+          now={now}
+        />,
+      );
+
+      expect(within(card("Fix login")).getByText("Overdue Aug 4, 2026")).toHaveClass(
+        "text-destructive",
+      );
+    });
+
+    it("shows a card's due date as Due, not Overdue, for a task due today or later", () => {
+      render(
+        <TaskBoardSection
+          projectId="p1"
+          tasks={[{ ...task, dueOn: "2026-08-05" }]}
+          backlogs={[backlog]}
+          now={now}
+        />,
+      );
+
+      expect(within(card("Fix login")).getByText("Due Aug 5, 2026")).not.toHaveClass(
+        "text-destructive",
+      );
+    });
+  });
+
   describe("Label filter (issue #147)", () => {
     it("calls onLabelClick when a label badge is clicked, without opening the task", () => {
       const onLabelClick = vi.fn();

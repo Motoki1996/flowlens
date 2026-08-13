@@ -419,6 +419,99 @@ describe("TaskListSection", () => {
     });
   });
 
+  describe("Due date filter and state (issue #148)", () => {
+    // Wednesday 2026-08-05, so the week runs through Sunday 2026-08-09 — the
+    // same fixture lib/dashboard.test.ts's dueStatus tests use.
+    const today = "2026-08-05";
+
+    it("marks a task due before today as Overdue, in destructive text", () => {
+      const tasks = [makeTask({ id: "t1", title: "Late task", dueOn: "2026-08-04" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} today={today} />);
+      showListView();
+
+      expect(screen.getByText("Overdue Aug 4, 2026")).toHaveClass("text-destructive");
+    });
+
+    it("shows a task due today as Due, not Overdue", () => {
+      const tasks = [makeTask({ id: "t1", title: "Due today", dueOn: "2026-08-05" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} today={today} />);
+      showListView();
+
+      expect(screen.getByText("Due Aug 5, 2026")).not.toHaveClass("text-destructive");
+    });
+
+    it("shows the same Overdue state in the board view", () => {
+      const tasks = [makeTask({ id: "t1", title: "Late task", dueOn: "2026-08-04" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} today={today} />);
+
+      expect(screen.getByText("Overdue Aug 4, 2026")).toBeInTheDocument();
+    });
+
+    it("pushes ?due= when the due date filter changes", async () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} today={today} />);
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Due date" }));
+      fireEvent.click(await screen.findByRole("option", { name: "Overdue" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?due=overdue");
+    });
+
+    it("drops ?due= back out of the query string when it returns to All due dates", async () => {
+      currentSearchParams = new URLSearchParams("due=overdue");
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} today={today} />);
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Due date" }));
+      fireEvent.click(await screen.findByRole("option", { name: "All due dates" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+    });
+
+    it("narrows to overdue tasks when ?due=overdue is set", () => {
+      currentSearchParams = new URLSearchParams("due=overdue");
+      const tasks = [
+        makeTask({ id: "t1", title: "Late task", dueOn: "2026-08-04" }),
+        makeTask({ id: "t2", title: "Future task", dueOn: "2026-08-10" }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} today={today} />);
+
+      expect(screen.getByRole("link", { name: "Late task" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Future task" })).not.toBeInTheDocument();
+    });
+
+    it("narrows to tasks due through the end of this week when ?due=dueSoon is set", () => {
+      currentSearchParams = new URLSearchParams("due=dueSoon");
+      const tasks = [
+        makeTask({ id: "t1", title: "End of week", dueOn: "2026-08-09" }),
+        makeTask({ id: "t2", title: "Next week", dueOn: "2026-08-10" }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} today={today} />);
+
+      expect(screen.getByRole("link", { name: "End of week" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Next week" })).not.toBeInTheDocument();
+    });
+
+    it("narrows to tasks without a due date when ?due=undated is set", () => {
+      currentSearchParams = new URLSearchParams("due=undated");
+      const tasks = [
+        makeTask({ id: "t1", title: "No due date", dueOn: null }),
+        makeTask({ id: "t2", title: "Has due date", dueOn: "2026-08-10" }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} today={today} />);
+
+      expect(screen.getByRole("link", { name: "No due date" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Has due date" })).not.toBeInTheDocument();
+    });
+
+    it("reports an empty result from the due date filter", () => {
+      currentSearchParams = new URLSearchParams("due=overdue");
+      render(
+        <TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" today={today} />,
+      );
+
+      expect(screen.getByText("No overdue tasks.")).toBeInTheDocument();
+    });
+  });
+
   it("assigns selected unclassified tasks to a backlog in bulk", async () => {
     vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
     const tasks = [

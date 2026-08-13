@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyDueTasks, endOfWeek } from "./dashboard";
+import { classifyDueTasks, dueStatus, endOfWeek } from "./dashboard";
 import type { TaskWithProject } from "@/types";
 
 function makeTask(overrides: Partial<TaskWithProject>): TaskWithProject {
@@ -91,5 +91,31 @@ describe("classifyDueTasks", () => {
     const { overdue, dueSoon } = classifyDueTasks([task], now);
     expect(overdue).toEqual([]);
     expect(dueSoon).toEqual([]);
+  });
+});
+
+describe("dueStatus", () => {
+  // "Now" is Wednesday 2026-08-05; the week runs through Sunday 2026-08-09,
+  // the same fixture classifyDueTasks uses above (issue #148).
+  const now = new Date(2026, 7, 5, 12, 0, 0);
+
+  it("returns undated for no due date", () => {
+    expect(dueStatus(null, now)).toBe("undated");
+  });
+
+  it("returns overdue for yesterday", () => {
+    expect(dueStatus("2026-08-04", now)).toBe("overdue");
+  });
+
+  it("returns dueSoon for today", () => {
+    expect(dueStatus("2026-08-05", now)).toBe("dueSoon");
+  });
+
+  it("returns dueSoon for the last day of this week", () => {
+    expect(dueStatus("2026-08-09", now)).toBe("dueSoon");
+  });
+
+  it("returns later for a date after this week", () => {
+    expect(dueStatus("2026-08-10", now)).toBe("later");
   });
 });

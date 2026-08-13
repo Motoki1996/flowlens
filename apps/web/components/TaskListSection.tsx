@@ -8,7 +8,8 @@ import { ChevronDown, ChevronUp, GripVertical, Plus, X } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { gitlabConnectionPath, taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
-import { formatDate, toApiDate } from "@/lib/dates";
+import { fromDateParam, toApiDate } from "@/lib/dates";
+import { dueStatus } from "@/lib/dashboard";
 import type {
   ApiError,
   Backlog,
@@ -35,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
+import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
@@ -59,6 +61,15 @@ const TaskTimelineSection = dynamic(
 // AllTasksSection) so the two screens don't disagree on what "sort by
 // priority" means.
 type TaskSort = "manual" | "dueOn" | "priority" | "progress" | "updatedAt";
+
+/** The `?due=` values (issue #148): a task's dueStatus (lib/dashboard.ts)
+ *  narrowed to the three a person would filter by — "later" isn't offered
+ *  its own option since it reads the same as no filter at all. */
+type DueFilterValue = "overdue" | "dueSoon" | "undated";
+
+function isDueFilterValue(value: string | null): value is DueFilterValue {
+  return value === "overdue" || value === "dueSoon" || value === "undated";
+}
 
 /** Whether the "My tasks" filter (issue #146) can actually match anything:
  *  "available" once both a GitLab connection and a matching identity exist,
@@ -308,12 +319,17 @@ function NewTaskForm({
  * makes. Only the view mode, the optimistic drag order, and the label filter
  * stay client-side.
  *
- * `?label=` (issue #147) is the one filter the API doesn't apply: the task
- * list is already fetched in full, so narrowing by label costs nothing to do
- * client-side, and `tasks.labels` being a `text[]` would need a schema-aware
- * query to filter server-side. It still lives in the URL for shareability and
- * reload, read straight from `useSearchParams` rather than threaded through
- * page.tsx as a prop, since nothing server-side ever needs to know it.
+ * `?label=` (issue #147) and `?due=` (issue #148) are the two filters the API
+ * doesn't apply: the task list is already fetched in full, so narrowing by
+ * either costs nothing to do client-side — labels because `tasks.labels`
+ * being a `text[]` would need a schema-aware query to filter server-side, due
+ * date because the classification itself (`lib/dashboard.ts`'s `dueStatus`)
+ * is app-only reasoning the API has no reason to know. Both still live in the
+ * URL for shareability and reload, read straight from `useSearchParams`
+ * rather than threaded through page.tsx as a prop, since nothing server-side
+ * ever needs to know either value — `today` (below) is the one date input
+ * that *does* come from page.tsx, since the classification's "today" cutoff
+ * itself has to be.
  */
 export function TaskListSection({
   projectId,
@@ -328,6 +344,7 @@ export function TaskListSection({
   priorityFilter,
   assigneeMe = false,
   assigneeAvailability = "available",
+  today,
   error = false,
 }: {
   projectId: string;
@@ -362,6 +379,17 @@ export function TaskListSection({
    *  AssigneeAvailability. Defaults to "available" so callers that don't
    *  care about this (most tests) get a plain, enabled checkbox. */
   assigneeAvailability?: AssigneeAvailability;
+  /** The server's current date as `YYYY-MM-DD` (`toDateParam(new Date())`,
+   *  page.tsx) — the "today" cutoff the `?due=` filter and each row's/card's
+   *  DueDateLabel classify against (issue #148). Passed down rather than
+   *  computed here with `new Date()`: this is a client component, so its
+   *  initial render also runs server-side, and computing "now" independently
+   *  there and again during hydration risks disagreeing under a server/
+   *  browser timezone difference — which React reports as a hydration
+   *  mismatch. Falls back to the browser's own `new Date()` when absent
+   *  (every real caller passes it; only tests that don't care rely on the
+   *  fallback). */
+  today?: string;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -387,13 +415,23 @@ export function TaskListSection({
   const [reorderError, setReorderError] = useState<string | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
 
-  // See the class doc comment: unlike every other filter, `?label=` narrows
-  // `localTasks` here rather than the API request.
+  // See the class doc comment: unlike every other filter, `?label=` and
+  // `?due=` narrow `localTasks` here rather than the API request.
   const labelFilter = searchParams.get("label") ?? undefined;
-  const visibleTasks = useMemo(
-    () => (labelFilter ? localTasks.filter((t) => t.labels.includes(labelFilter)) : localTasks),
-    [localTasks, labelFilter],
-  );
+  const dueParam = searchParams.get("due");
+  const dueFilter = isDueFilterValue(dueParam) ? dueParam : undefined;
+  // See the `today` prop doc comment for why this isn't `new Date()` here.
+  // Memoized on `today` (a stable string) rather than left to run fresh every
+  // render, since a bare `new Date()` fallback would otherwise change
+  // identity each time and defeat visibleTasks's own memoization below.
+  const now = useMemo(() => fromDateParam(today) ?? new Date(), [today]);
+  const visibleTasks = useMemo(() => {
+    let result = labelFilter ? localTasks.filter((t) => t.labels.includes(labelFilter)) : localTasks;
+    if (dueFilter) {
+      result = result.filter((t) => dueStatus(t.dueOn, now) === dueFilter);
+    }
+    return result;
+  }, [localTasks, labelFilter, dueFilter, now]);
 
   // The filter offers every backlog plus the two groupings that aren't
   // backlogs: "all" and the trailing Unclassified group.
@@ -473,6 +511,10 @@ export function TaskListSection({
     updateQuery({ assignee: checked ? "me" : undefined });
   }
 
+  function changeDueFilter(value: string) {
+    updateQuery({ due: value === "all" ? undefined : value });
+  }
+
   function changeSearch(value: string) {
     updateQuery({ q: value.trim() === "" ? undefined : value });
   }
@@ -510,6 +552,15 @@ export function TaskListSection({
     }
     if (priorityFilter) {
       return `No ${PRIORITY_LABELS[priorityFilter].toLowerCase()} priority tasks.`;
+    }
+    if (dueFilter === "overdue") {
+      return "No overdue tasks.";
+    }
+    if (dueFilter === "dueSoon") {
+      return "No tasks due this week.";
+    }
+    if (dueFilter === "undated") {
+      return "No tasks without a due date.";
     }
     if (assigneeMe) {
       return "No tasks are assigned to you.";
@@ -757,6 +808,17 @@ export function TaskListSection({
                   ))}
                 </SelectContent>
               </Select>
+              <Select value={dueFilter ?? "all"} onValueChange={changeDueFilter}>
+                <SelectTrigger size="sm" aria-label="Due date" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All due dates</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                  <SelectItem value="dueSoon">Due this week</SelectItem>
+                  <SelectItem value="undated">No due date</SelectItem>
+                </SelectContent>
+              </Select>
               <Combobox
                 aria-label="Backlog"
                 options={filterOptions}
@@ -853,6 +915,7 @@ export function TaskListSection({
             backlogs={backlogs}
             activeLabel={labelFilter}
             onLabelClick={toggleLabelFilter}
+            now={now}
           />
         ) : view === "timeline" ? (
           <TaskTimelineSection
@@ -989,7 +1052,7 @@ export function TaskListSection({
                               {task.assigneeGitlabUsername ? (
                                 <span>{task.assigneeGitlabUsername}</span>
                               ) : null}
-                              {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
+                              {task.dueOn ? <DueDateLabel dueOn={task.dueOn} now={now} /> : null}
                               <PriorityBadge priority={task.priority} />
                               <ProgressBadge progress={task.progress} />
                               <StatusBadge status={task.status} />

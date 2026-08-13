@@ -7,7 +7,7 @@ import Link from "next/link";
 import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
-import { taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
+import { gitlabConnectionPath, taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { formatDate, toApiDate } from "@/lib/dates";
 import type {
   ApiError,
@@ -58,6 +58,14 @@ const TaskTimelineSection = dynamic(
 // AllTasksSection) so the two screens don't disagree on what "sort by
 // priority" means.
 type TaskSort = "manual" | "dueOn" | "priority" | "progress" | "updatedAt";
+
+/** Whether the "My tasks" filter (issue #146) can actually match anything:
+ *  "available" once both a GitLab connection and a matching identity exist,
+ *  "no-connection"/"no-identity" name whichever of the two is missing, so
+ *  the checkbox can disable itself and point at the fix instead of quietly
+ *  returning zero results (?assignee=me matches nothing server-side rather
+ *  than erroring — see ListFilter.AssigneeMe, internal/task/task.go). */
+export type AssigneeAvailability = "available" | "no-connection" | "no-identity";
 
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
@@ -309,6 +317,8 @@ export function TaskListSection({
   sort = "manual",
   progressFilter,
   priorityFilter,
+  assigneeMe = false,
+  assigneeAvailability = "available",
   error = false,
 }: {
   projectId: string;
@@ -334,6 +344,15 @@ export function TaskListSection({
   progressFilter?: Progress;
   /** The applied `?priority=`; undefined means all of them, same as progress. */
   priorityFilter?: Priority;
+  /** True when `?assignee=me` is set (issue #146, extending issue #102's
+   *  cross-project toggle to this project-scoped collection): only tasks
+   *  assigned to the caller's own registered GitLab identity. Held in the
+   *  URL like the other filters above. */
+  assigneeMe?: boolean;
+  /** Whether "My tasks" can match anything for this project/caller — see
+   *  AssigneeAvailability. Defaults to "available" so callers that don't
+   *  care about this (most tests) get a plain, enabled checkbox. */
+  assigneeAvailability?: AssigneeAvailability;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -433,6 +452,10 @@ export function TaskListSection({
     updateQuery({ priority: value === "all" ? undefined : value });
   }
 
+  function changeAssigneeMe(checked: boolean) {
+    updateQuery({ assignee: checked ? "me" : undefined });
+  }
+
   function changeSearch(value: string) {
     updateQuery({ q: value.trim() === "" ? undefined : value });
   }
@@ -466,6 +489,9 @@ export function TaskListSection({
     }
     if (priorityFilter) {
       return `No ${PRIORITY_LABELS[priorityFilter].toLowerCase()} priority tasks.`;
+    }
+    if (assigneeMe) {
+      return "No tasks are assigned to you.";
     }
     return "No tasks match the current filters.";
   }
@@ -729,6 +755,37 @@ export function TaskListSection({
                   <SelectItem value="updatedAt">Recently updated</SelectItem>
                 </SelectContent>
               </Select>
+              <label
+                className="text-muted-foreground flex items-center gap-1.5 text-sm"
+                title={
+                  assigneeAvailability === "no-connection"
+                    ? "Connect this project to GitLab to filter by assignee."
+                    : assigneeAvailability === "no-identity"
+                      ? "Register your GitLab identity to filter by assignee."
+                      : undefined
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={assigneeMe}
+                  disabled={assigneeAvailability !== "available"}
+                  onChange={(e) => changeAssigneeMe(e.target.checked)}
+                  className="border-input h-4 w-4 rounded disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                My tasks
+              </label>
+              {assigneeAvailability === "no-connection" ? (
+                <Link
+                  href={gitlabConnectionPath(projectId)}
+                  className="text-muted-foreground hover:text-foreground text-xs underline"
+                >
+                  Connect GitLab
+                </Link>
+              ) : assigneeAvailability === "no-identity" ? (
+                <Link href="/settings" className="text-muted-foreground hover:text-foreground text-xs underline">
+                  Register GitLab identity
+                </Link>
+              ) : null}
             </div>
           ) : null}
         </div>

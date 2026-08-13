@@ -99,6 +99,16 @@ describe("getTasks", () => {
     );
   });
 
+  it("sends ?assignee=me (issue #146)", async () => {
+    const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await getTasks("p1", { assignee: "me" });
+
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url).toBe("http://localhost:8080/api/v1/projects/p1/tasks?assignee=me");
+  });
+
   it("requests the unfiltered list when given no filter", async () => {
     const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

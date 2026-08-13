@@ -1,7 +1,14 @@
 import { notFound } from "next/navigation";
-import { getBacklogs, getProject, getTaskDependencies, getTasks } from "@/lib/api";
+import {
+  getBacklogs,
+  getGitlabConnection,
+  getMyGitlabIdentities,
+  getProject,
+  getTaskDependencies,
+  getTasks,
+} from "@/lib/api";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
-import { TaskListSection } from "@/components/TaskListSection";
+import { TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
 import type { Priority, Progress, TaskStatus } from "@/types";
 
 const STATUSES = ["all", "open", "closed"] as const;
@@ -57,6 +64,7 @@ export default async function TasksPage({
     status?: string;
     progress?: string;
     priority?: string;
+    assignee?: string;
     sort?: string;
   }>;
 }) {
@@ -64,6 +72,7 @@ export default async function TasksPage({
   const resolvedSearchParams = await searchParams;
   const backlogFilter = normalizeBacklogFilter(resolvedSearchParams?.backlog);
   const search = resolvedSearchParams?.q;
+  const assigneeMe = resolvedSearchParams?.assignee === "me";
   const statusParam = resolvedSearchParams?.status;
   const status: StatusFilter = STATUSES.includes(statusParam as StatusFilter)
     ? (statusParam as StatusFilter)
@@ -99,6 +108,7 @@ export default async function TasksPage({
         progress,
         priority,
         sort: sort === "manual" ? undefined : sort,
+        assignee: assigneeMe ? "me" : undefined,
         q: search,
       }),
       getBacklogs(projectId),
@@ -115,6 +125,26 @@ export default async function TasksPage({
     // dependency lines.
   }
 
+  // "My tasks" matches nothing server-side (rather than erroring) when the
+  // project has no GitLab connection or the caller has no identity
+  // registered for it (issue #146, building on issue #102's ?assignee=me) —
+  // that would read as a silent, unexplained empty list, so the checkbox
+  // below disables itself and says which of the two is missing instead.
+  // Left at its safe "no-connection" default on a lookup failure, same as
+  // taskDependencies above.
+  let assigneeAvailability: AssigneeAvailability = "no-connection";
+  try {
+    const connection = await getGitlabConnection(projectId);
+    if (connection) {
+      const identities = await getMyGitlabIdentities();
+      assigneeAvailability = identities.some((identity) => identity.gitlabBaseUrl === connection.baseUrl)
+        ? "available"
+        : "no-identity";
+    }
+  } catch {
+    // Left at "no-connection".
+  }
+
   return (
     <TaskListSection
       projectId={project.id}
@@ -126,6 +156,8 @@ export default async function TasksPage({
       statusFilter={status}
       progressFilter={progress}
       priorityFilter={priority}
+      assigneeMe={assigneeMe}
+      assigneeAvailability={assigneeAvailability}
       sort={sort}
       error={tasksError}
     />

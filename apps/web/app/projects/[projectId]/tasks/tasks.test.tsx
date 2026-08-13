@@ -23,6 +23,8 @@ const getProject = vi.fn();
 const getTasks = vi.fn();
 const getBacklogs = vi.fn();
 const getTaskDependencies = vi.fn();
+const getGitlabConnection = vi.fn();
+const getMyGitlabIdentities = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
@@ -30,6 +32,8 @@ vi.mock("@/lib/api", () => ({
   getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
   getBacklogs: (id: string) => getBacklogs(id),
   getTaskDependencies: (id: string) => getTaskDependencies(id),
+  getGitlabConnection: (id: string) => getGitlabConnection(id),
+  getMyGitlabIdentities: () => getMyGitlabIdentities(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -52,6 +56,8 @@ describe("TasksPage", () => {
     getTasks.mockResolvedValue([]);
     getBacklogs.mockResolvedValue([]);
     getTaskDependencies.mockResolvedValue([]);
+    getGitlabConnection.mockResolvedValue(null);
+    getMyGitlabIdentities.mockResolvedValue([]);
   });
 
   it("renders the task collection, asking the API for open tasks by default", async () => {
@@ -64,6 +70,7 @@ describe("TasksPage", () => {
       status: "open",
       progress: undefined,
       priority: undefined,
+      assignee: undefined,
       sort: undefined,
       q: undefined,
     });
@@ -94,6 +101,7 @@ describe("TasksPage", () => {
           status: "all",
           progress: "in_progress",
           priority: "high",
+          assignee: "me",
           sort: "priority",
           q: "sprint",
         }),
@@ -105,6 +113,7 @@ describe("TasksPage", () => {
       status: undefined,
       progress: "in_progress",
       priority: "high",
+      assignee: "me",
       sort: "priority",
       q: "sprint",
     });
@@ -138,6 +147,7 @@ describe("TasksPage", () => {
       status: "open",
       progress: undefined,
       priority: undefined,
+      assignee: undefined,
       sort: undefined,
       q: undefined,
     });
@@ -168,5 +178,76 @@ describe("TasksPage", () => {
     getTasks.mockRejectedValue(new Error("boom"));
     render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
     expect(screen.getByText("Failed to load tasks. Try refreshing the page.")).toBeInTheDocument();
+  });
+
+  describe("My tasks availability (issue #146)", () => {
+    it("disables the checkbox and points at the GitLab connection when the project has none", async () => {
+      getGitlabConnection.mockResolvedValue(null);
+      render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).toBeDisabled();
+      expect(screen.getByRole("link", { name: "Connect GitLab" })).toHaveAttribute(
+        "href",
+        "/projects/p1/gitlab-connection",
+      );
+      // A connectionless project has no identity to match either, so the
+      // caller's own identities aren't even worth fetching.
+      expect(getMyGitlabIdentities).not.toHaveBeenCalled();
+    });
+
+    it("disables the checkbox and points at Settings when the caller has no matching identity", async () => {
+      getGitlabConnection.mockResolvedValue({
+        projectId: "p1",
+        baseUrl: "https://gitlab.example.com",
+        tokenLastFour: "abcd",
+        tokenGitlabUserId: null,
+        tokenGitlabUsername: "",
+        verified: true,
+        lastVerifiedAt: null,
+        lastVerifyError: "",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      });
+      getMyGitlabIdentities.mockResolvedValue([
+        { id: "i1", gitlabBaseUrl: "https://other.example.com", gitlabUserId: 1, gitlabUsername: "me" },
+      ]);
+      render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).toBeDisabled();
+      expect(screen.getByRole("link", { name: "Register GitLab identity" })).toHaveAttribute(
+        "href",
+        "/settings",
+      );
+    });
+
+    it("enables the checkbox once the caller has an identity matching the project's GitLab connection", async () => {
+      getGitlabConnection.mockResolvedValue({
+        projectId: "p1",
+        baseUrl: "https://gitlab.example.com",
+        tokenLastFour: "abcd",
+        tokenGitlabUserId: null,
+        tokenGitlabUsername: "",
+        verified: true,
+        lastVerifiedAt: null,
+        lastVerifyError: "",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      });
+      getMyGitlabIdentities.mockResolvedValue([
+        {
+          id: "i1",
+          gitlabBaseUrl: "https://gitlab.example.com",
+          gitlabUserId: 1,
+          gitlabUsername: "me",
+        },
+      ]);
+      render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).not.toBeDisabled();
+    });
+
+    it("leaves the checkbox disabled rather than failing the page when the lookup errors", async () => {
+      getGitlabConnection.mockRejectedValue(new Error("boom"));
+      render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
+      expect(screen.getByText("Tasks")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "My tasks" })).toBeDisabled();
+    });
   });
 });

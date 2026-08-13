@@ -234,13 +234,48 @@ describe("TaskListSection", () => {
         statusFilter="all"
         sort="priority"
         progressFilter="on_hold"
+        priorityFilter="high"
       />,
     );
 
     expect(screen.getByRole("textbox", { name: "Search tasks" })).toHaveValue("urgent");
     expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("All statuses");
     expect(screen.getByRole("combobox", { name: "Progress" })).toHaveTextContent("On hold");
+    expect(screen.getByRole("combobox", { name: "Priority" })).toHaveTextContent("High");
     expect(screen.getByRole("combobox", { name: "Sort" })).toHaveTextContent("Priority");
+  });
+
+  it("pushes ?priority= alongside the other filters rather than replacing them", async () => {
+    currentSearchParams = new URLSearchParams("status=all");
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Priority" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Urgent" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/tasks?status=all&priority=urgent");
+  });
+
+  it("drops ?priority= back out of the query string when it returns to All priorities", async () => {
+    currentSearchParams = new URLSearchParams("priority=urgent");
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} priorityFilter="urgent" />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Priority" }));
+    fireEvent.click(await screen.findByRole("option", { name: "All priorities" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+  });
+
+  it("reports an empty result from the priority filter", () => {
+    render(
+      <TaskListSection
+        projectId="p1"
+        tasks={[]}
+        backlogs={[]}
+        statusFilter="all"
+        priorityFilter="urgent"
+      />,
+    );
+    expect(screen.getByText("No urgent priority tasks.")).toBeInTheDocument();
   });
 
   it("shows a load error", () => {

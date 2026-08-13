@@ -2,12 +2,14 @@ import { notFound } from "next/navigation";
 import { getBacklogs, getProject, getTaskDependencies, getTasks } from "@/lib/api";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { TaskListSection } from "@/components/TaskListSection";
-import type { Progress, TaskStatus } from "@/types";
+import type { Priority, Progress, TaskStatus } from "@/types";
 
 const STATUSES = ["all", "open", "closed"] as const;
 type StatusFilter = (typeof STATUSES)[number];
 
 const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
+
+const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 
 // "manual" is the API's own position order, which it expresses by the absence
 // of ?sort= rather than a named value; the other four are the ones both Task
@@ -54,6 +56,7 @@ export default async function TasksPage({
     q?: string;
     status?: string;
     progress?: string;
+    priority?: string;
     sort?: string;
   }>;
 }) {
@@ -68,6 +71,10 @@ export default async function TasksPage({
   const progressParam = resolvedSearchParams?.progress;
   const progress = PROGRESSES.includes(progressParam as Progress)
     ? (progressParam as Progress)
+    : undefined;
+  const priorityParam = resolvedSearchParams?.priority;
+  const priority = PRIORITIES.includes(priorityParam as Priority)
+    ? (priorityParam as Priority)
     : undefined;
   const sortParam = resolvedSearchParams?.sort;
   const sort: Sort = SORTS.includes(sortParam as NamedSort) ? (sortParam as NamedSort) : "manual";
@@ -90,6 +97,7 @@ export default async function TasksPage({
               : backlogFilter,
         status: status === "all" ? undefined : (status as TaskStatus),
         progress,
+        priority,
         sort: sort === "manual" ? undefined : sort,
         q: search,
       }),
@@ -117,6 +125,7 @@ export default async function TasksPage({
       search={search}
       statusFilter={status}
       progressFilter={progress}
+      priorityFilter={priority}
       sort={sort}
       error={tasksError}
     />

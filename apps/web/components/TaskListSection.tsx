@@ -19,6 +19,7 @@ import type {
   TaskStatus,
 } from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
+import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -248,10 +249,11 @@ function NewTaskForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="urgent">Urgent</SelectItem>
+            {PRIORITY_COLUMNS.map((option) => (
+              <SelectItem key={option.priority} value={option.priority}>
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -306,6 +308,7 @@ export function TaskListSection({
   statusFilter = "open",
   sort = "manual",
   progressFilter,
+  priorityFilter,
   error = false,
 }: {
   projectId: string;
@@ -329,6 +332,8 @@ export function TaskListSection({
   /** The applied `?progress=`; undefined means all of them — unlike status,
    *  no progress stage is noise worth hiding by default. */
   progressFilter?: Progress;
+  /** The applied `?priority=`; undefined means all of them, same as progress. */
+  priorityFilter?: Priority;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -424,6 +429,10 @@ export function TaskListSection({
     updateQuery({ progress: value === "all" ? undefined : value });
   }
 
+  function changePriorityFilter(value: "all" | Priority) {
+    updateQuery({ priority: value === "all" ? undefined : value });
+  }
+
   function changeSearch(value: string) {
     updateQuery({ q: value.trim() === "" ? undefined : value });
   }
@@ -454,6 +463,9 @@ export function TaskListSection({
     }
     if (progressFilter) {
       return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} tasks.`;
+    }
+    if (priorityFilter) {
+      return `No ${PRIORITY_LABELS[priorityFilter].toLowerCase()} priority tasks.`;
     }
     return "No tasks match the current filters.";
   }
@@ -674,6 +686,22 @@ export function TaskListSection({
                   <SelectItem value="all">All progress</SelectItem>
                   {PROGRESS_COLUMNS.map((option) => (
                     <SelectItem key={option.progress} value={option.progress}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={priorityFilter ?? "all"}
+                onValueChange={(value) => changePriorityFilter(value as "all" | Priority)}
+              >
+                <SelectTrigger size="sm" aria-label="Priority" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All priorities</SelectItem>
+                  {PRIORITY_COLUMNS.map((option) => (
+                    <SelectItem key={option.priority} value={option.priority}>
                       {option.label}
                     </SelectItem>
                   ))}

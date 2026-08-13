@@ -12,6 +12,7 @@ import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
 import type { ApiError, Backlog, Progress, Task } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { LabelBadge } from "@/components/LabelBadge";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 
@@ -35,11 +36,19 @@ export function TaskBoardSection({
   projectId,
   tasks,
   backlogs = [],
+  activeLabel,
+  onLabelClick,
 }: {
   projectId: string;
   tasks: Task[];
   /** Names the backlog on each card; the board never changes it. */
   backlogs?: Backlog[];
+  /** The Task collection's `?label=` (issue #147), so a card's matching
+   *  label badge can show as selected. */
+  activeLabel?: string;
+  /** Toggles `?label=` for the clicked label. Left as a no-op when the
+   *  caller doesn't care (e.g. a card with no labels never needs it). */
+  onLabelClick?: (label: string) => void;
 }) {
   const router = useRouter();
 
@@ -173,9 +182,12 @@ export function TaskBoardSection({
                       {task.labels.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {task.labels.map((label) => (
-                            <Badge key={label} variant="outline">
-                              {label}
-                            </Badge>
+                            <LabelBadge
+                              key={label}
+                              label={label}
+                              active={label === activeLabel}
+                              onToggle={(l) => onLabelClick?.(l)}
+                            />
                           ))}
                         </div>
                       ) : null}

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
+import { ChevronDown, ChevronUp, GripVertical, Plus, X } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { gitlabConnectionPath, taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
@@ -35,6 +35,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
+import { LabelBadge } from "@/components/LabelBadge";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
@@ -304,7 +305,15 @@ function NewTaskForm({
  * arrives already narrowed and ordered by the API, and changing a filter
  * pushes a new query string for the server component above to re-fetch with
  * — the same round trip the cross-project collection (AllTasksSection)
- * makes. Only the view mode and the optimistic drag order stay client-side.
+ * makes. Only the view mode, the optimistic drag order, and the label filter
+ * stay client-side.
+ *
+ * `?label=` (issue #147) is the one filter the API doesn't apply: the task
+ * list is already fetched in full, so narrowing by label costs nothing to do
+ * client-side, and `tasks.labels` being a `text[]` would need a schema-aware
+ * query to filter server-side. It still lives in the URL for shareability and
+ * reload, read straight from `useSearchParams` rather than threaded through
+ * page.tsx as a prop, since nothing server-side ever needs to know it.
  */
 export function TaskListSection({
   projectId,
@@ -378,6 +387,14 @@ export function TaskListSection({
   const [reorderError, setReorderError] = useState<string | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
 
+  // See the class doc comment: unlike every other filter, `?label=` narrows
+  // `localTasks` here rather than the API request.
+  const labelFilter = searchParams.get("label") ?? undefined;
+  const visibleTasks = useMemo(
+    () => (labelFilter ? localTasks.filter((t) => t.labels.includes(labelFilter)) : localTasks),
+    [localTasks, labelFilter],
+  );
+
   // The filter offers every backlog plus the two groupings that aren't
   // backlogs: "all" and the trailing Unclassified group.
   const filterOptions = useMemo(
@@ -401,7 +418,7 @@ export function TaskListSection({
 
   const groups = useMemo(() => {
     const byBacklog = new Map<string, Task[]>();
-    for (const t of localTasks) {
+    for (const t of visibleTasks) {
       const key = t.backlogId ?? UNCLASSIFIED;
       const list = byBacklog.get(key) ?? [];
       list.push(t);
@@ -417,7 +434,7 @@ export function TaskListSection({
       ordered.push({ key: UNCLASSIFIED, name: UNCLASSIFIED_LABEL, tasks: unclassified });
     }
     return ordered;
-  }, [localTasks, backlogs]);
+  }, [visibleTasks, backlogs]);
 
   /**
    * Every filter/sort choice belongs in the URL: the screen stays shareable,
@@ -464,6 +481,10 @@ export function TaskListSection({
     updateQuery({ sort: value === "manual" ? undefined : value });
   }
 
+  function toggleLabelFilter(label: string) {
+    updateQuery({ label: labelFilter === label ? undefined : label });
+  }
+
   // Distinguishes *why* the list came back empty — a bare "no matches" reads
   // the same whether it's the search term, the status default hiding every
   // closed task, or the backlog picker, so each gets its own wording. The
@@ -492,6 +513,9 @@ export function TaskListSection({
     }
     if (assigneeMe) {
       return "No tasks are assigned to you.";
+    }
+    if (labelFilter) {
+      return `No tasks labeled "${labelFilter}".`;
     }
     return "No tasks match the current filters.";
   }
@@ -786,6 +810,22 @@ export function TaskListSection({
                   Register GitLab identity
                 </Link>
               ) : null}
+              {/* The only visible sign a label filter is active — clicking a
+                  label badge sets it, but has nowhere else to show it's on,
+                  or a way to turn it back off (issue #147). */}
+              {labelFilter ? (
+                <span className="border-border bg-muted/40 text-muted-foreground flex items-center gap-1 rounded-full border py-0.5 pr-1 pl-2 text-xs">
+                  {`Label: ${labelFilter}`}
+                  <button
+                    type="button"
+                    aria-label={`Clear label filter: ${labelFilter}`}
+                    onClick={() => toggleLabelFilter(labelFilter)}
+                    className="hover:text-foreground rounded-full p-0.5"
+                  >
+                    <X className="size-3" aria-hidden />
+                  </button>
+                </span>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -802,16 +842,22 @@ export function TaskListSection({
         ) : null}
         {error ? (
           <p className="text-destructive text-sm">Failed to load tasks. Try refreshing the page.</p>
-        ) : localTasks.length === 0 ? (
+        ) : visibleTasks.length === 0 ? (
           // Checked before the view branch so the timeline doesn't answer an
           // empty filter result with its own "set a start or due date" hint.
           <p className="text-muted-foreground text-sm">{emptyFilterMessage()}</p>
         ) : view === "board" ? (
-          <TaskBoardSection projectId={projectId} tasks={localTasks} backlogs={backlogs} />
+          <TaskBoardSection
+            projectId={projectId}
+            tasks={visibleTasks}
+            backlogs={backlogs}
+            activeLabel={labelFilter}
+            onLabelClick={toggleLabelFilter}
+          />
         ) : view === "timeline" ? (
           <TaskTimelineSection
             projectId={projectId}
-            tasks={localTasks}
+            tasks={visibleTasks}
             dependencies={dependencies}
           />
         ) : (
@@ -929,9 +975,12 @@ export function TaskListSection({
                               {task.labels.length > 0 ? (
                                 <span className="flex shrink-0 flex-wrap gap-1">
                                   {task.labels.map((label) => (
-                                    <Badge key={label} variant="outline">
-                                      {label}
-                                    </Badge>
+                                    <LabelBadge
+                                      key={label}
+                                      label={label}
+                                      active={label === labelFilter}
+                                      onToggle={toggleLabelFilter}
+                                    />
                                   ))}
                                 </span>
                               ) : null}

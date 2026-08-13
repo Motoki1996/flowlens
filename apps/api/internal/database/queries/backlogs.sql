@@ -26,19 +26,31 @@ RETURNING *;
 -- left-to-right axis). Both fall back to the usual position/created_at order
 -- as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 -- in practice — internal/backlog sets at most one from a single ?sort=.
+--
+-- The LEFT JOIN to tasks (issue #144) computes each backlog's task_count and
+-- closed_task_count in the same query, so the Backlog collection screen (its
+-- List row count, Board card ratio and Timeline bar fill) doesn't need to
+-- fetch every task in the project just to derive them.
 -- name: ListBacklogsByProject :many
-SELECT * FROM backlogs
-WHERE project_id = $1
-  AND (sqlc.arg(priority)::text = '' OR priority = sqlc.arg(priority))
-  AND (sqlc.arg(progress)::text = '' OR progress = sqlc.arg(progress))
+SELECT
+  b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
+  b.start_date, b.due_on, b.priority, b.progress,
+  COUNT(t.id) AS task_count,
+  COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
+FROM backlogs b
+LEFT JOIN tasks t ON t.backlog_id = b.id
+WHERE b.project_id = $1
+  AND (sqlc.arg(priority)::text = '' OR b.priority = sqlc.arg(priority))
+  AND (sqlc.arg(progress)::text = '' OR b.progress = sqlc.arg(progress))
+GROUP BY b.id
 ORDER BY
   (CASE WHEN sqlc.arg(sort_by_priority)::boolean THEN
-     CASE priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
+     CASE b.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
   (CASE WHEN sqlc.arg(sort_by_progress)::boolean THEN
-     CASE progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
+     CASE b.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  position ASC, created_at ASC;
+  b.position ASC, b.created_at ASC;
 
 -- name: GetBacklogForOwner :one
 SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress

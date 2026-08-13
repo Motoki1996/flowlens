@@ -144,18 +144,25 @@ func (q *Queries) GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.U
 }
 
 const listBacklogsByProject = `-- name: ListBacklogsByProject :many
-SELECT id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress FROM backlogs
-WHERE project_id = $1
-  AND ($2::text = '' OR priority = $2)
-  AND ($3::text = '' OR progress = $3)
+SELECT
+  b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
+  b.start_date, b.due_on, b.priority, b.progress,
+  COUNT(t.id) AS task_count,
+  COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
+FROM backlogs b
+LEFT JOIN tasks t ON t.backlog_id = b.id
+WHERE b.project_id = $1
+  AND ($2::text = '' OR b.priority = $2)
+  AND ($3::text = '' OR b.progress = $3)
+GROUP BY b.id
 ORDER BY
   (CASE WHEN $4::boolean THEN
-     CASE priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
+     CASE b.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
   (CASE WHEN $5::boolean THEN
-     CASE progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
+     CASE b.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  position ASC, created_at ASC
+  b.position ASC, b.created_at ASC
 `
 
 type ListBacklogsByProjectParams struct {
@@ -166,6 +173,22 @@ type ListBacklogsByProjectParams struct {
 	SortByProgress bool      `json:"sort_by_progress"`
 }
 
+type ListBacklogsByProjectRow struct {
+	ID              uuid.UUID          `json:"id"`
+	ProjectID       uuid.UUID          `json:"project_id"`
+	Name            string             `json:"name"`
+	Description     string             `json:"description"`
+	Position        int32              `json:"position"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	StartDate       pgtype.Date        `json:"start_date"`
+	DueOn           pgtype.Date        `json:"due_on"`
+	Priority        string             `json:"priority"`
+	Progress        string             `json:"progress"`
+	TaskCount       int64              `json:"task_count"`
+	ClosedTaskCount int64              `json:"closed_task_count"`
+}
+
 // ListBacklogsByProject's priority and progress filters and sorts follow the
 // same "empty/false disables it" convention as internal/task's
 // ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
@@ -174,7 +197,12 @@ type ListBacklogsByProjectParams struct {
 // left-to-right axis). Both fall back to the usual position/created_at order
 // as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 // in practice — internal/backlog sets at most one from a single ?sort=.
-func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]Backlog, error) {
+//
+// The LEFT JOIN to tasks (issue #144) computes each backlog's task_count and
+// closed_task_count in the same query, so the Backlog collection screen (its
+// List row count, Board card ratio and Timeline bar fill) doesn't need to
+// fetch every task in the project just to derive them.
+func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]ListBacklogsByProjectRow, error) {
 	rows, err := q.db.Query(ctx, listBacklogsByProject,
 		arg.ProjectID,
 		arg.Priority,
@@ -186,9 +214,9 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Backlog{}
+	items := []ListBacklogsByProjectRow{}
 	for rows.Next() {
-		var i Backlog
+		var i ListBacklogsByProjectRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.ProjectID,
@@ -201,6 +229,8 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 			&i.DueOn,
 			&i.Priority,
 			&i.Progress,
+			&i.TaskCount,
+			&i.ClosedTaskCount,
 		); err != nil {
 			return nil, err
 		}

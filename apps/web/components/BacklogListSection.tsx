@@ -10,7 +10,7 @@ import { csrfHeaders } from "@/lib/csrf";
 import { backlogPath, tasksPath } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
-import type { ApiError, Backlog, Priority, Progress, Task } from "@/types";
+import type { ApiError, Backlog, Priority, Progress } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -40,10 +40,6 @@ const BacklogTimelineSection = dynamic(
   () => import("@/components/BacklogTimelineSection").then((m) => m.BacklogTimelineSection),
   { loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p> },
 );
-
-function taskCount(tasks: Task[], backlogId: string) {
-  return tasks.filter((t) => t.backlogId === backlogId).length;
-}
 
 /** moveItem returns a copy of list with the item at fromIndex relocated to
  *  toIndex, used by both drag-and-drop and the up/down move buttons so the
@@ -412,15 +408,9 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
 export function BacklogListSection({
   projectId,
   backlogs,
-  tasks = [],
-  tasksError = false,
 }: {
   projectId: string;
   backlogs: Backlog[];
-  tasks?: Task[];
-  /** Task counts and timeline progress both come from tasks, so a failed fetch
-   *  has to be visible rather than showing every backlog as empty. */
-  tasksError?: boolean;
 }) {
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -504,19 +494,9 @@ export function BacklogListSection({
         {backlogs.length === 0 ? (
           <p className="text-muted-foreground text-sm">No backlogs yet.</p>
         ) : view === "board" ? (
-          <BacklogBoardSection
-            projectId={projectId}
-            backlogs={order}
-            tasks={tasks}
-            tasksError={tasksError}
-          />
+          <BacklogBoardSection projectId={projectId} backlogs={order} />
         ) : view === "timeline" ? (
-          <BacklogTimelineSection
-            projectId={projectId}
-            backlogs={backlogs}
-            tasks={tasks}
-            tasksError={tasksError}
-          />
+          <BacklogTimelineSection projectId={projectId} backlogs={backlogs} />
         ) : (
           <div className="space-y-2">
             {reorderError ? (
@@ -579,9 +559,7 @@ export function BacklogListSection({
                           className="text-foreground text-sm hover:underline"
                         >
                           {backlog.name}{" "}
-                          <span className="text-muted-foreground text-xs">
-                            ({taskCount(tasks, backlog.id)})
-                          </span>
+                          <span className="text-muted-foreground text-xs">({backlog.taskCount})</span>
                         </Link>
                         <PriorityBadge priority={backlog.priority} />
                         <ProgressBadge progress={backlog.progress} />

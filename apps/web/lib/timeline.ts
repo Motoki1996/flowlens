@@ -279,20 +279,35 @@ export function backlogCompletion(tasks: Task[], backlogId: string): TaskComplet
 }
 
 /**
- * toBacklogGanttRows converts scheduled backlogs into stacked-bar rows carrying
- * their completion. A backlog's state comes from its tasks, not from a status
- * column it doesn't have: it is "closed" once every task in it is closed, and
- * "overdue" while unfinished work sits past its due date.
+ * backlogTaskCompletion reads a backlog's own taskCount/closedTaskCount,
+ * aggregated server-side (issue #144), rather than filtering a full task
+ * list the way backlogCompletion does. The Backlog collection's Board and
+ * Timeline modes use this so they don't need to fetch every task in the
+ * project just to show a ratio; the Backlog single view still has its own
+ * (already backlog-scoped) task list and uses backlogCompletion instead.
  */
-export function toBacklogGanttRows(
-  backlogs: Backlog[],
-  tasks: Task[],
-  bounds: DateRange,
-  now: Date,
-): GanttRow[] {
+export function backlogTaskCompletion(backlog: {
+  taskCount: number;
+  closedTaskCount: number;
+}): TaskCompletion {
+  return {
+    closed: backlog.closedTaskCount,
+    total: backlog.taskCount,
+    ratio: backlog.taskCount === 0 ? 0 : backlog.closedTaskCount / backlog.taskCount,
+  };
+}
+
+/**
+ * toBacklogGanttRows converts scheduled backlogs into stacked-bar rows carrying
+ * their completion, read off each backlog's own taskCount/closedTaskCount
+ * (see backlogTaskCompletion). A backlog's state comes from that ratio, not
+ * from a status column it doesn't have: it is "closed" once every task in it
+ * is closed, and "overdue" while unfinished work sits past its due date.
+ */
+export function toBacklogGanttRows(backlogs: Backlog[], bounds: DateRange, now: Date): GanttRow[] {
   return backlogs
     .map((backlog) => {
-      const progress = backlogCompletion(tasks, backlog.id);
+      const progress = backlogTaskCompletion(backlog);
       const complete = progress.total > 0 && progress.closed === progress.total;
       const state: ScheduleState = complete
         ? "closed"

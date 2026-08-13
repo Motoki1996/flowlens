@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
-import type { Backlog, Task } from "@/types";
+import type { Backlog } from "@/types";
 import { BacklogBoardSection } from "./BacklogBoardSection";
 
 const refresh = vi.fn();
@@ -19,6 +19,8 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  taskCount: 0,
+  closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -38,7 +40,7 @@ describe("BacklogBoardSection", () => {
   });
 
   it("puts each backlog in its progress's column", () => {
-    render(<BacklogBoardSection projectId="p1" backlogs={[backlog, heldBacklog]} tasks={[]} />);
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog, heldBacklog]} />);
 
     const onHold = screen.getByRole("region", { name: "On hold backlogs" });
     expect(within(onHold).getByRole("link", { name: "Hotfixes" })).toHaveAttribute(
@@ -54,13 +56,20 @@ describe("BacklogBoardSection", () => {
     ).toBeInTheDocument();
   });
 
+  it("says so when a backlog has no tasks rather than reading as 0% done", () => {
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} />);
+    expect(within(card("Sprint 1")).getByText("No tasks")).toBeInTheDocument();
+  });
+
   it("shows a card's closed-task ratio and planned period", () => {
-    const tasks = [
-      { id: "t1", backlogId: "b1", status: "closed" },
-      { id: "t2", backlogId: "b1", status: "open" },
-    ] as Task[];
-    const scheduled = { ...backlog, startDate: "2026-08-01T00:00:00Z", dueOn: "2026-08-31T00:00:00Z" };
-    render(<BacklogBoardSection projectId="p1" backlogs={[scheduled]} tasks={tasks} />);
+    const scheduled = {
+      ...backlog,
+      startDate: "2026-08-01T00:00:00Z",
+      dueOn: "2026-08-31T00:00:00Z",
+      taskCount: 2,
+      closedTaskCount: 1,
+    };
+    render(<BacklogBoardSection projectId="p1" backlogs={[scheduled]} />);
 
     expect(within(card("Sprint 1")).getByText("1/2 closed")).toBeInTheDocument();
     expect(within(card("Sprint 1")).getByText(/Aug 1, 2026\s*–\s*Aug 31, 2026/)).toBeInTheDocument();
@@ -70,7 +79,7 @@ describe("BacklogBoardSection", () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(JSON.stringify({ ...backlog, progress: "in_progress" }), { status: 200 }),
     );
-    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} />);
 
     fireEvent.dragStart(card("Sprint 1"));
     fireEvent.drop(screen.getByRole("region", { name: "In progress backlogs" }));
@@ -99,7 +108,7 @@ describe("BacklogBoardSection", () => {
         status: 400,
       }),
     );
-    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} />);
 
     fireEvent.dragStart(card("Sprint 1"));
     fireEvent.drop(screen.getByRole("region", { name: "Done backlogs" }));
@@ -113,7 +122,7 @@ describe("BacklogBoardSection", () => {
   });
 
   it("does nothing when a card is dropped on the column it came from", () => {
-    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} />);
 
     fireEvent.dragStart(card("Sprint 1"));
     fireEvent.drop(screen.getByRole("region", { name: "Not started backlogs" }));
@@ -122,7 +131,7 @@ describe("BacklogBoardSection", () => {
   });
 
   it("opens the backlog when the card itself is clicked, but not when one of its controls is", () => {
-    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} />);
+    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} />);
 
     fireEvent.click(card("Sprint 1"));
     expect(push).toHaveBeenCalledWith("/projects/p1/backlogs/b1");
@@ -132,14 +141,5 @@ describe("BacklogBoardSection", () => {
     // card's own navigation.
     fireEvent.click(screen.getByRole("link", { name: "View tasks" }));
     expect(push).not.toHaveBeenCalled();
-  });
-
-  it("says so instead of showing every backlog as taskless when tasks failed to load", () => {
-    render(<BacklogBoardSection projectId="p1" backlogs={[backlog]} tasks={[]} tasksError />);
-
-    expect(
-      screen.getByText("Failed to load tasks — the closed-task ratio is unavailable."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("No tasks")).not.toBeInTheDocument();
   });
 });

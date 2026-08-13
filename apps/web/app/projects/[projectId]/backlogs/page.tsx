@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getBacklogs, getProject, getTasks } from "@/lib/api";
+import { getBacklogs, getProject } from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
 
 /** The Backlog collection view of one project. Auth is guarded by the parent
@@ -13,25 +13,10 @@ export default async function BacklogsPage({
   const project = await getProject(projectId);
   if (!project) notFound();
 
+  // taskCount/closedTaskCount are aggregated server-side onto each backlog
+  // (issue #144), so the collection no longer needs every task in the
+  // project just to show a count and a completion ratio.
   const backlogs = await getBacklogs(projectId);
 
-  // Tasks feed the per-backlog count and the Timeline view's completion bars,
-  // so a failure leaves the collection rendering and is reported there rather
-  // than failing the whole screen.
-  let tasks: Awaited<ReturnType<typeof getTasks>> = [];
-  let tasksError = false;
-  try {
-    tasks = await getTasks(projectId);
-  } catch {
-    tasksError = true;
-  }
-
-  return (
-    <BacklogListSection
-      projectId={project.id}
-      backlogs={backlogs}
-      tasks={tasks}
-      tasksError={tasksError}
-    />
-  );
+  return <BacklogListSection projectId={project.id} backlogs={backlogs} />;
 }

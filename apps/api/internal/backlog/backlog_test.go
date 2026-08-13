@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/backlog"
+	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/optional"
 	"github.com/flowlens/api/internal/project"
@@ -252,6 +253,38 @@ func TestService_List_ScopesToProjectAndOrdersByPosition(t *testing.T) {
 	require.Len(t, backlogs, 2)
 	assert.Equal(t, "Sprint 1", backlogs[0].Name)
 	assert.Equal(t, "Sprint 2", backlogs[1].Name)
+}
+
+// List's task counts come from ListBacklogsByProject's LEFT JOIN aggregate
+// (issue #144): a backlog's own row reports its total and closed task counts,
+// an empty backlog reports zero, and an unfiled task (backlog_id NULL) is not
+// counted against anyone.
+func TestService_List_ReturnsTaskCounts(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	ctx := context.Background()
+
+	sprint, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1"})
+	require.NoError(t, err)
+	empty, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Empty"})
+	require.NoError(t, err)
+
+	q.SeedTaskInBacklog(p.ID, sprint.ID, owner, "Open task")
+	closed := q.SeedTaskInBacklog(p.ID, sprint.ID, owner, "Closed task")
+	_, err = q.CloseTaskForOwner(ctx, db.CloseTaskForOwnerParams{ID: closed.ID, OwnerUserID: owner})
+	require.NoError(t, err)
+	q.SeedTask(p.ID, owner, "Unfiled task")
+
+	backlogs, err := svc.List(ctx, owner, p.ID, backlog.ListFilter{})
+	require.NoError(t, err)
+	require.Len(t, backlogs, 2)
+	assert.Equal(t, int64(2), backlogs[0].TaskCount)
+	assert.Equal(t, int64(1), backlogs[0].ClosedTaskCount)
+	assert.Equal(t, empty.ID, backlogs[1].ID)
+	assert.Equal(t, int64(0), backlogs[1].TaskCount)
+	assert.Equal(t, int64(0), backlogs[1].ClosedTaskCount)
 }
 
 func TestService_List_ReturnsNotFoundForForeignProject(t *testing.T) {

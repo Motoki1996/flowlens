@@ -48,6 +48,11 @@ export interface Backlog {
   dueOn: string | null;
   priority: Priority;
   progress: Progress;
+  // The backlog's total and closed task counts, aggregated server-side
+  // (issue #144) so the Backlog collection doesn't need to fetch every task
+  // itself just to show a count and a completion ratio.
+  taskCount: number;
+  closedTaskCount: number;
   createdAt: string;
   updatedAt: string;
 }

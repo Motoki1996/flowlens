@@ -98,9 +98,13 @@ export default async function TasksPage({
 
   let tasks: Awaited<ReturnType<typeof getTasks>> = [];
   let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
+  let totalCount: number | undefined;
   let tasksError = false;
   try {
-    [tasks, backlogs] = await Promise.all([
+    // The unfiltered fetch alongside the filtered one is the "母数" (issue
+    // #150): the project's task count with no filter applied at all, so the
+    // screen can show "N / total tasks" instead of just the filtered count.
+    const [fetchedTasks, fetchedBacklogs, allTasks] = await Promise.all([
       getTasks(projectId, {
         // The UI's Unclassified group is the API's "unassigned" backlog_id;
         // "all" is no filter at all.
@@ -118,7 +122,11 @@ export default async function TasksPage({
         q: search,
       }),
       getBacklogs(projectId),
+      getTasks(projectId, {}),
     ]);
+    tasks = fetchedTasks;
+    backlogs = fetchedBacklogs;
+    totalCount = allTasks.length;
   } catch {
     tasksError = true;
   }
@@ -166,6 +174,7 @@ export default async function TasksPage({
       assigneeAvailability={assigneeAvailability}
       sort={sort}
       today={today}
+      totalCount={totalCount}
       error={tasksError}
     />
   );

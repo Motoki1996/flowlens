@@ -571,14 +571,203 @@ describe("TaskListSection", () => {
     );
   });
 
-  it("does not offer selection when the project has no backlogs to move tasks into", () => {
-    // Scoped to the row-selection checkboxes ("Select <task>") rather than
-    // any checkbox: the "My tasks" filter checkbox (issue #146) is always in
-    // the filter row regardless of backlogs.
+  it("offers selection even when the project has no backlogs (issue #149)", () => {
     const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: null })];
     render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
     showListView();
-    expect(screen.queryByRole("checkbox", { name: "Select Only task" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select Only task" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select Only task" }));
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    // "Assign to backlog" stays hidden — there is nowhere to assign it to —
+    // but the rest of the bulk actions don't depend on a backlog existing.
+    expect(screen.queryByRole("combobox", { name: "Backlog to assign" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close selected" })).toBeInTheDocument();
+  });
+
+  describe("Bulk actions (issue #149)", () => {
+    it("selects and deselects every visible task with the top-level select-all checkbox", () => {
+      const tasks = [
+        makeTask({ id: "t1", title: "Task A", backlogId: null }),
+        makeTask({ id: "t2", title: "Task B", backlogId: null }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all tasks" }));
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Select Task A" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Select Task B" })).toBeChecked();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all tasks" }));
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("shows the select-all checkbox as indeterminate once some but not all tasks are selected", () => {
+      const tasks = [
+        makeTask({ id: "t1", title: "Task A", backlogId: null }),
+        makeTask({ id: "t2", title: "Task B", backlogId: null }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Task A" }));
+
+      const selectAll = screen.getByRole("checkbox", { name: "Select all tasks" }) as HTMLInputElement;
+      expect(selectAll.indeterminate).toBe(true);
+      expect(selectAll.checked).toBe(false);
+    });
+
+    it("selects only one backlog group's tasks from that group's own select-all checkbox", () => {
+      const tasks = [
+        makeTask({ id: "t1", title: "Sprint task", backlogId: "b1" }),
+        makeTask({ id: "t2", title: "Icebox task", backlogId: "b2" }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
+      showListView();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all in Sprint 1" }));
+
+      expect(screen.getByRole("checkbox", { name: "Select Sprint task" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Select Icebox task" })).not.toBeChecked();
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+    });
+
+    it("applies a bulk priority change to every selected task", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      const tasks = [
+        makeTask({ id: "t1", title: "Task A", backlogId: null }),
+        makeTask({ id: "t2", title: "Task B", backlogId: null }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all tasks" }));
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Priority to set" }));
+      fireEvent.click(await screen.findByRole("option", { name: "Urgent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Set priority" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "http://localhost:8080/api/v1/tasks/t1",
+        expect.objectContaining({ method: "PATCH", body: JSON.stringify({ priority: "urgent" }) }),
+      );
+      expect(fetch).toHaveBeenCalledWith(
+        "http://localhost:8080/api/v1/tasks/t2",
+        expect.objectContaining({ method: "PATCH", body: JSON.stringify({ priority: "urgent" }) }),
+      );
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("applies a bulk progress change to every selected task", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      const tasks = [makeTask({ id: "t1", title: "Task A", backlogId: null })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Task A" }));
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Progress to set" }));
+      fireEvent.click(await screen.findByRole("option", { name: "On hold" }));
+      fireEvent.click(screen.getByRole("button", { name: "Set progress" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "http://localhost:8080/api/v1/tasks/t1",
+        expect.objectContaining({ method: "PATCH", body: JSON.stringify({ progress: "on_hold" }) }),
+      );
+    });
+
+    it("closes every selected task in bulk", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      const tasks = [makeTask({ id: "t1", title: "Task A", backlogId: null, status: "open" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Task A" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Close selected" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "http://localhost:8080/api/v1/tasks/t1/close",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("reopens every selected task in bulk", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      const tasks = [makeTask({ id: "t1", title: "Task A", backlogId: null, status: "closed" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} statusFilter="all" />);
+      showListView();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Task A" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Reopen selected" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "http://localhost:8080/api/v1/tasks/t1/reopen",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    it("reports a partial failure with counts and narrows the selection to the failed tasks", async () => {
+      vi.mocked(fetch).mockImplementation((input) =>
+        String(input).includes("/t2")
+          ? Promise.resolve(new Response(null, { status: 500 }))
+          : Promise.resolve(new Response(null, { status: 200 })),
+      );
+      const tasks = [
+        makeTask({ id: "t1", title: "Task A", backlogId: null }),
+        makeTask({ id: "t2", title: "Task B", backlogId: null }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select all tasks" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Close selected" }));
+
+      expect(await screen.findByText("1 of 2 tasks failed to update.")).toBeInTheDocument();
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+      expect(screen.getByRole("checkbox", { name: "Select Task B" })).toBeChecked();
+      expect(screen.getByRole("checkbox", { name: "Select Task A" })).not.toBeChecked();
+    });
+
+    it("reports a full failure without narrowing, since nothing succeeded", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 500 }));
+      const tasks = [makeTask({ id: "t1", title: "Task A", backlogId: null })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Task A" }));
+
+      fireEvent.click(screen.getByRole("button", { name: "Close selected" }));
+
+      expect(await screen.findByText("Failed to update 1 task.")).toBeInTheDocument();
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+    });
+
+    it("prunes a selection that falls out of view once the task list narrows under it", () => {
+      const tasks = [
+        makeTask({ id: "t1", title: "Keep", backlogId: null }),
+        makeTask({ id: "t2", title: "Drop", backlogId: null }),
+      ];
+      const { rerender } = render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Keep" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Drop" }));
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+      // Simulates the filtered/re-fetched list the API would return once the
+      // selection's owning filter narrows — "Drop" is no longer among the
+      // tasks passed down at all.
+      rerender(
+        <TaskListSection
+          projectId="p1"
+          tasks={[makeTask({ id: "t1", title: "Keep", backlogId: null })]}
+          backlogs={[]}
+        />,
+      );
+
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+    });
   });
 
   it("opens in the board view mode, showing the tasks the API returned by progress", () => {

@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
@@ -11,7 +11,8 @@ import { backlogPath, tasksPath } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
 import type { ApiError, Backlog, Priority, Progress } from "@/types";
-import { PROGRESS_COLUMNS } from "@/lib/progress";
+import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
+import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,26 @@ import { DateField } from "@/components/DateField";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { BacklogBoardSection } from "@/components/BacklogBoardSection";
+import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
+
+/** The sort values the Backlog collection's `?sort=` accepts (issue #151):
+ *  "manual" keeps the API's own drag-reorderable `position` order;
+ *  "priority"/"progress" are applied server-side, the same as the Task
+ *  collection's own sort (parseBacklogListFilter,
+ *  internal/http/backlog_handler.go); "dueOn" is a Backlog-only value the API
+ *  has no concept of (a backlog's schedule is app-only, docs/ui-design.md),
+ *  so it's sorted client-side instead — see `visibleBacklogs` below. */
+type BacklogSort = "manual" | "dueOn" | "priority" | "progress";
+
+/** compareByDueOn orders backlogs by dueOn ascending, with undated backlogs
+ *  last — the client-side half of `sort=dueOn` (see BacklogSort). */
+function compareByDueOn(a: Backlog, b: Backlog): number {
+  if (!a.dueOn && !b.dueOn) return 0;
+  if (!a.dueOn) return 1;
+  if (!b.dueOn) return -1;
+  return a.dueOn.localeCompare(b.dueOn);
+}
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
@@ -398,20 +418,56 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
   );
 }
 
+/** The one place that defines what "no filter" means for each URL-held
+ *  filter (mirroring TaskListSection's FILTER_DEFAULTS, issue #150) — both
+ *  the changeXFilter functions below and the "is any filter active" check
+ *  that drives the Clear filters control read from here. */
+const FILTER_DEFAULTS = {
+  priority: "all",
+  progress: "all",
+  sort: "manual",
+} as const;
+
 /**
  * BacklogListSection is the Backlog collection view at
  * /projects/[projectId]/backlogs. List and Timeline are view modes of this one
  * screen (docs/ui-design.md rule 5), and backlog creation, editing and delete
  * all happen here rather than on a separate backlog-management screen —
  * actions live on the object they act on (rule 4).
+ *
+ * `priority`/`progress`/`sort` (issue #151) are the URL, applied server-side
+ * by the caller (page.tsx) the same way TaskListSection's own filters are —
+ * except `sort=dueOn`, which has no server-side meaning and is sorted here
+ * instead, and the name search (`?q=`), which has no API support at all and
+ * is read straight from `useSearchParams` and matched client-side, since
+ * backlogs run orders of magnitude fewer per project than tasks.
+ *
+ * Unlike a task's per-backlog bucket order, a backlog's own order is
+ * project-wide and `PATCH .../backlogs/order` requires *every* current
+ * backlog in one request (backlog.Service.Reorder) — so while any filter,
+ * search or non-manual sort narrows `backlogs` to less than the full set,
+ * drag-and-drop and the move buttons are hidden rather than sending a
+ * request that's certain to fail with a backlog ID mismatch.
  */
 export function BacklogListSection({
   projectId,
   backlogs,
+  priorityFilter,
+  progressFilter,
+  sort = "manual",
 }: {
   projectId: string;
   backlogs: Backlog[];
+  /** The applied `?priority=`; undefined means all of them. */
+  priorityFilter?: Priority;
+  /** The applied `?progress=`; undefined means all of them. */
+  progressFilter?: Progress;
+  /** The applied `?sort=`, or "manual" for the API's own position order. */
+  sort?: BacklogSort;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Board is the default: how far along each backlog is, is the first question
@@ -429,6 +485,89 @@ export function BacklogListSection({
   useEffect(() => setOrder(backlogs), [backlogs]);
   const [reorderError, setReorderError] = useState<string | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+
+  // See the class doc comment: `?q=` narrows `order` client-side rather than
+  // going through the API, the same way TaskListSection's `?label=`/`?due=`
+  // do.
+  const search = (searchParams.get("q") ?? "").trim();
+
+  // Manual reordering only makes sense against the API's own position order,
+  // and only over the project's full, unfiltered backlog set — see the class
+  // doc comment for why a filter/search/non-manual sort disables it outright
+  // rather than just hiding it during a non-manual sort the way Task's does.
+  const canReorder = sort === "manual" && !priorityFilter && !progressFilter && search === "";
+
+  // priority/progress are already applied server-side (the caller fetched
+  // with them); dueOn is the one sort the API doesn't know, so it's applied
+  // here, and the name search always is.
+  const visibleBacklogs = useMemo(() => {
+    let result = order;
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter((b) => b.name.toLowerCase().includes(q));
+    }
+    if (sort === "dueOn") {
+      result = [...result].sort(compareByDueOn);
+    }
+    return result;
+  }, [order, search, sort]);
+
+  const hasActiveFilters =
+    priorityFilter !== undefined ||
+    progressFilter !== undefined ||
+    sort !== FILTER_DEFAULTS.sort ||
+    search !== "";
+
+  /** Mirrors TaskListSection's updateQuery: every filter/sort choice belongs
+   *  in the URL, so the screen stays shareable and reload-stable, and a
+   *  value equal to that filter's default drops out of the query string
+   *  rather than being spelled out. */
+  function updateQuery(next: Record<string, string | undefined>) {
+    const params = new URLSearchParams(searchParams.toString());
+    for (const [key, value] of Object.entries(next)) {
+      params.delete(key);
+      if (value) params.set(key, value);
+    }
+    const query = params.toString();
+    router.push(query ? `${pathname}?${query}` : pathname);
+  }
+
+  function changePriorityFilter(value: "all" | Priority) {
+    updateQuery({ priority: value === FILTER_DEFAULTS.priority ? undefined : value });
+  }
+
+  function changeProgressFilter(value: "all" | Progress) {
+    updateQuery({ progress: value === FILTER_DEFAULTS.progress ? undefined : value });
+  }
+
+  function changeSort(value: BacklogSort) {
+    updateQuery({ sort: value === FILTER_DEFAULTS.sort ? undefined : value });
+  }
+
+  function changeSearch(value: string) {
+    updateQuery({ q: value.trim() === "" ? undefined : value });
+  }
+
+  function clearFilters() {
+    router.push(pathname);
+  }
+
+  // Distinguishes *why* the list came back empty, the same way
+  // TaskListSection's emptyFilterMessage does — a bare "no matches" doesn't
+  // say whether it's the search term, the priority/progress filter, or (see
+  // the render below) whether the project has no backlogs at all.
+  function emptyFilterMessage(): string {
+    if (search) {
+      return `No backlogs match "${search}".`;
+    }
+    if (priorityFilter) {
+      return `No ${PRIORITY_LABELS[priorityFilter].toLowerCase()} priority backlogs.`;
+    }
+    if (progressFilter) {
+      return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} backlogs.`;
+    }
+    return "No backlogs match the current filters.";
+  }
 
   async function commitOrder(next: Backlog[]) {
     const previous = order;
@@ -453,12 +592,14 @@ export function BacklogListSection({
   }
 
   function moveBacklog(index: number, direction: -1 | 1) {
+    if (!canReorder) return;
     const target = index + direction;
     if (target < 0 || target >= order.length) return;
     void commitOrder(moveItem(order, index, target));
   }
 
   function handleDrop(index: number) {
+    if (!canReorder) return;
     const fromIndex = order.findIndex((b) => b.id === draggingId);
     setDraggingId(null);
     if (fromIndex === -1 || fromIndex === index) return;
@@ -468,21 +609,93 @@ export function BacklogListSection({
   return (
     <Card>
       <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle className="text-base font-medium">Backlogs</CardTitle>
-          <div className="flex flex-wrap items-center gap-2">
-            {/* The view modes only make sense once backlogs exist, but "New
-                backlog" must stay reachable on an empty project. */}
-            {backlogs.length > 0 ? (
-              <ViewModeToggle value={view} onChange={setView} />
-            ) : null}
-            {!creating ? (
-              <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
-                <Plus className="size-4" aria-hidden />
-                New backlog
-              </Button>
-            ) : null}
+        {/* Two rows, same shape as the Task collection: the object's name and
+            its object-level controls (view mode, create) on the top row, and
+            the filter/sort controls left-aligned on their own row below. */}
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="text-base font-medium">Backlogs</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* The view modes only make sense once backlogs exist (and
+                  none of the current filters keep the project's own backlogs
+                  hidden), but "New backlog" must stay reachable on an empty
+                  project. */}
+              {backlogs.length > 0 || hasActiveFilters ? (
+                <ViewModeToggle value={view} onChange={setView} />
+              ) : null}
+              {!creating ? (
+                <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+                  <Plus className="size-4" aria-hidden />
+                  New backlog
+                </Button>
+              ) : null}
+            </div>
           </div>
+          {/* Filters belong to the collection, not to one presentation of it
+              (docs/ui-design.md rule 5), so they stay put across view modes
+              and narrow the timeline the same way they narrow the list. Only
+              shown once there's something to filter, same condition as the
+              view toggle above. */}
+          {backlogs.length > 0 || hasActiveFilters ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <TaskSearchBox value={search} onChange={changeSearch} label="backlogs" />
+              <Select
+                value={priorityFilter ?? "all"}
+                onValueChange={(value) => changePriorityFilter(value as "all" | Priority)}
+              >
+                <SelectTrigger size="sm" aria-label="Priority" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All priorities</SelectItem>
+                  {PRIORITY_COLUMNS.map((option) => (
+                    <SelectItem key={option.priority} value={option.priority}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={progressFilter ?? "all"}
+                onValueChange={(value) => changeProgressFilter(value as "all" | Progress)}
+              >
+                <SelectTrigger size="sm" aria-label="Progress" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All progress</SelectItem>
+                  {PROGRESS_COLUMNS.map((option) => (
+                    <SelectItem key={option.progress} value={option.progress}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={sort} onValueChange={(value) => changeSort(value as BacklogSort)}>
+                <SelectTrigger size="sm" aria-label="Sort" className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="manual">Manual order</SelectItem>
+                  <SelectItem value="dueOn">Due date</SelectItem>
+                  <SelectItem value="priority">Priority</SelectItem>
+                  <SelectItem value="progress">Progress</SelectItem>
+                </SelectContent>
+              </Select>
+              {/* Only appears once a filter actually differs from
+                  FILTER_DEFAULTS, mirroring TaskListSection's Clear filters
+                  control (issue #150). */}
+              {hasActiveFilters ? (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="text-muted-foreground hover:text-foreground text-xs underline"
+                >
+                  Clear filters
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </CardHeader>
       <CardContent>
@@ -491,12 +704,14 @@ export function BacklogListSection({
             <NewBacklogForm projectId={projectId} onCancel={() => setCreating(false)} />
           </div>
         ) : null}
-        {backlogs.length === 0 ? (
-          <p className="text-muted-foreground text-sm">No backlogs yet.</p>
+        {visibleBacklogs.length === 0 ? (
+          <p className="text-muted-foreground text-sm">
+            {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
+          </p>
         ) : view === "board" ? (
-          <BacklogBoardSection projectId={projectId} backlogs={order} />
+          <BacklogBoardSection projectId={projectId} backlogs={visibleBacklogs} />
         ) : view === "timeline" ? (
-          <BacklogTimelineSection projectId={projectId} backlogs={backlogs} />
+          <BacklogTimelineSection projectId={projectId} backlogs={visibleBacklogs} />
         ) : (
           <div className="space-y-2">
             {reorderError ? (
@@ -505,12 +720,13 @@ export function BacklogListSection({
               </Alert>
             ) : null}
             <ul className="space-y-2">
-              {order.map((backlog, index) => (
+              {visibleBacklogs.map((backlog, index) => (
               <li
                 key={backlog.id}
                 className="border-border rounded-md border px-3 py-2"
-                onDragOver={(e) => e.preventDefault()}
+                onDragOver={(e) => canReorder && e.preventDefault()}
                 onDrop={(e) => {
+                  if (!canReorder) return;
                   e.preventDefault();
                   handleDrop(index);
                 }}
@@ -523,35 +739,43 @@ export function BacklogListSection({
                   />
                 ) : (
                   <div className="flex items-center justify-between gap-4">
-                    <div className="flex shrink-0 flex-col items-center self-stretch">
-                      <button
-                        type="button"
-                        aria-label={`Move ${backlog.name} up`}
-                        disabled={index === 0}
-                        onClick={() => moveBacklog(index, -1)}
-                        className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                      >
-                        <ChevronUp className="size-4" />
-                      </button>
-                      <span
-                        draggable
-                        aria-hidden="true"
-                        onDragStart={() => setDraggingId(backlog.id)}
-                        onDragEnd={() => setDraggingId(null)}
-                        className="text-muted-foreground cursor-grab active:cursor-grabbing"
-                      >
-                        <GripVertical className="size-4" />
-                      </span>
-                      <button
-                        type="button"
-                        aria-label={`Move ${backlog.name} down`}
-                        disabled={index === order.length - 1}
-                        onClick={() => moveBacklog(index, 1)}
-                        className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                      >
-                        <ChevronDown className="size-4" />
-                      </button>
-                    </div>
+                    {/* Manual reordering only makes sense against the API's
+                        own position order, and only over the project's full,
+                        unfiltered backlog set (see the class doc comment) —
+                        so the move buttons and drag handle disappear
+                        whenever a filter, search or non-manual sort is
+                        active. */}
+                    {canReorder ? (
+                      <div className="flex shrink-0 flex-col items-center self-stretch">
+                        <button
+                          type="button"
+                          aria-label={`Move ${backlog.name} up`}
+                          disabled={index === 0}
+                          onClick={() => moveBacklog(index, -1)}
+                          className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                        >
+                          <ChevronUp className="size-4" />
+                        </button>
+                        <span
+                          draggable
+                          aria-hidden="true"
+                          onDragStart={() => setDraggingId(backlog.id)}
+                          onDragEnd={() => setDraggingId(null)}
+                          className="text-muted-foreground cursor-grab active:cursor-grabbing"
+                        >
+                          <GripVertical className="size-4" />
+                        </span>
+                        <button
+                          type="button"
+                          aria-label={`Move ${backlog.name} down`}
+                          disabled={index === visibleBacklogs.length - 1}
+                          onClick={() => moveBacklog(index, 1)}
+                          className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                        >
+                          <ChevronDown className="size-4" />
+                        </button>
+                      </div>
+                    ) : null}
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <Link

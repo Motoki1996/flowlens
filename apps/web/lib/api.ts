@@ -138,21 +138,42 @@ export const getProject = cache(async (id: string): Promise<Project | null> => {
   return (await res.json()) as Project;
 });
 
+/** BacklogListFilter is GET /api/v1/projects/{projectID}/backlogs's query
+ *  parameters (issue #151, mirroring ProjectTasksFilter above): every field is
+ *  optional and means "no filter"/"manual order" when omitted. Unlike a
+ *  task's sort, the API only orders by priority or progress — a "due date"
+ *  sort is a Backlog collection concept the client applies itself (see
+ *  BacklogListSection), so it never appears here. */
+export type BacklogListFilter = {
+  priority?: Priority;
+  progress?: Progress;
+  sort?: "priority" | "progress";
+};
+
 /**
- * getBacklogs returns every backlog in the project, ordered by position.
- * Callers must already know the request is authenticated.
+ * getBacklogs returns the project's backlogs matching filter, ordered by
+ * position unless filter.sort says otherwise. Callers must already know the
+ * request is authenticated.
  */
-export const getBacklogs = cache(async (projectId: string): Promise<Backlog[]> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/backlogs`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to load backlogs: ${res.status}`);
-  }
-  return (await res.json()) as Backlog[];
-});
+export const getBacklogs = cache(
+  async (projectId: string, filter: BacklogListFilter = {}): Promise<Backlog[]> => {
+    const cookieStore = await cookies();
+    const params = new URLSearchParams();
+    if (filter.priority) params.set("priority", filter.priority);
+    if (filter.progress) params.set("progress", filter.progress);
+    if (filter.sort) params.set("sort", filter.sort);
+    const query = params.toString();
+
+    const res = await fetch(
+      `${API_INTERNAL_URL}/api/v1/projects/${projectId}/backlogs${query ? `?${query}` : ""}`,
+      { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to load backlogs: ${res.status}`);
+    }
+    return (await res.json()) as Backlog[];
+  },
+);
 
 /**
  * getBacklog returns one backlog, or null when it doesn't exist or isn't

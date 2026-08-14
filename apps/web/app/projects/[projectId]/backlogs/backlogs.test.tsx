@@ -41,10 +41,12 @@ const getBacklogs = vi.fn();
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
   getProject: (id: string) => getProject(id),
-  getBacklogs: (id: string) => getBacklogs(id),
+  getBacklogs: (id: string, filter?: unknown) => getBacklogs(id, filter),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/projects/p1/backlogs",
+  useSearchParams: () => new URLSearchParams(),
   redirect: (url: string) => {
     throw new Error(`REDIRECT:${url}`);
   },
@@ -94,5 +96,52 @@ describe("BacklogsPage", () => {
     // The per-backlog count lives in the List view mode; Board is the default.
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     expect(screen.getByRole("link", { name: /Sprint 1/ })).toHaveTextContent("(3)");
+  });
+
+  // ?priority=/?progress=/?sort= (issue #151) go through to the API the same
+  // way the Task collection's own filters do.
+  it("forwards ?priority=/?progress=/?sort= to getBacklogs", async () => {
+    render(
+      await BacklogsPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ priority: "urgent", progress: "on_hold", sort: "priority" }),
+      }),
+    );
+    expect(getBacklogs).toHaveBeenCalledWith("p1", {
+      priority: "urgent",
+      progress: "on_hold",
+      sort: "priority",
+    });
+  });
+
+  // sort=dueOn has no server-side meaning (parseBacklogListFilter only
+  // accepts priority/progress) — BacklogListSection sorts it itself, so it
+  // must never reach the API as ?sort=.
+  it("does not forward sort=dueOn to getBacklogs, since the API doesn't accept it", async () => {
+    render(
+      await BacklogsPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ sort: "dueOn" }),
+      }),
+    );
+    expect(getBacklogs).toHaveBeenCalledWith("p1", {
+      priority: undefined,
+      progress: undefined,
+      sort: undefined,
+    });
+  });
+
+  it("falls back to no filter for an unrecognised ?priority=", async () => {
+    render(
+      await BacklogsPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ priority: "not-a-priority" }),
+      }),
+    );
+    expect(getBacklogs).toHaveBeenCalledWith("p1", {
+      priority: undefined,
+      progress: undefined,
+      sort: undefined,
+    });
   });
 });

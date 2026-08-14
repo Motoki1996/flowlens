@@ -1,11 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import type { Backlog } from "@/types";
 import { BacklogListSection } from "./BacklogListSection";
 
 const refresh = vi.fn();
+const push = vi.fn();
+// The filters are the URL (issue #151, mirroring TaskListSection), so what
+// these tests assert about filtering is the query pushed and, for the
+// client-only `sort=dueOn`/`?q=`, the order/list actually rendered.
+let currentSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh }),
+  useRouter: () => ({ refresh, push }),
+  usePathname: () => "/projects/p1/backlogs",
+  useSearchParams: () => currentSearchParams,
 }));
 
 const backlog: Backlog = {
@@ -40,7 +47,13 @@ function showList() {
 describe("BacklogListSection", () => {
   beforeEach(() => {
     refresh.mockClear();
+    push.mockClear();
+    currentSearchParams = new URLSearchParams();
     vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("shows an empty state with zero backlogs", () => {
@@ -196,5 +209,137 @@ describe("BacklogListSection", () => {
     showList();
     expect(screen.getByRole("button", { name: "Move Sprint 1 up" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Move Icebox down" })).toBeDisabled();
+  });
+
+  describe("filters and sort (issue #151)", () => {
+    it("pushes ?priority= alongside the other filters rather than replacing them", async () => {
+      currentSearchParams = new URLSearchParams("progress=on_hold");
+      render(
+        <BacklogListSection projectId="p1" backlogs={[backlog]} progressFilter="on_hold" />,
+      );
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Priority" }));
+      fireEvent.click(await screen.findByRole("option", { name: "Urgent" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?progress=on_hold&priority=urgent");
+    });
+
+    it("drops ?priority= back out of the query string when it returns to All priorities", async () => {
+      currentSearchParams = new URLSearchParams("priority=urgent");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} priorityFilter="urgent" />);
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Priority" }));
+      fireEvent.click(await screen.findByRole("option", { name: "All priorities" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs");
+    });
+
+    it("pushes ?progress= alongside the other filters rather than replacing them", async () => {
+      currentSearchParams = new URLSearchParams("priority=urgent");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} priorityFilter="urgent" />);
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Progress" }));
+      fireEvent.click(await screen.findByRole("option", { name: "On hold" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?priority=urgent&progress=on_hold");
+    });
+
+    it("shows the applied filters from the URL query the screen was opened with", () => {
+      render(
+        <BacklogListSection
+          projectId="p1"
+          backlogs={[backlog]}
+          priorityFilter="high"
+          progressFilter="on_hold"
+          sort="priority"
+        />,
+      );
+      expect(screen.getByRole("combobox", { name: "Priority" })).toHaveTextContent("High");
+      expect(screen.getByRole("combobox", { name: "Progress" })).toHaveTextContent("On hold");
+      expect(screen.getByRole("combobox", { name: "Sort" })).toHaveTextContent("Priority");
+    });
+
+    it("pushes ?sort=dueOn, sorting the client-side list it can't ask the API for", async () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+
+      fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
+      fireEvent.click(screen.getByRole("option", { name: "Due date" }));
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?sort=dueOn");
+    });
+
+    it("sorts by due date client-side, undated backlogs last", () => {
+      const dated = { ...backlog, id: "b1", name: "Sprint 1", dueOn: "2026-08-15T00:00:00Z" };
+      const undated = { ...otherBacklog, id: "b2", name: "Icebox", dueOn: null };
+      render(
+        <BacklogListSection projectId="p1" backlogs={[undated, dated]} sort="dueOn" />,
+      );
+      showList();
+      const names = screen
+        .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+        .map((el) => el.textContent);
+      expect(names).toEqual(["Sprint 1 (0)", "Icebox (0)"]);
+    });
+
+    it("hides the move buttons and drag handle while a priority filter narrows the list", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} priorityFilter="medium" />);
+      showList();
+      expect(screen.queryByRole("button", { name: "Move Sprint 1 up" })).not.toBeInTheDocument();
+    });
+
+    it("hides the move buttons and drag handle during a non-manual sort", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} sort="priority" />);
+      showList();
+      expect(screen.queryByRole("button", { name: "Move Sprint 1 up" })).not.toBeInTheDocument();
+    });
+
+    it("shows Clear filters once a filter differs from the default, and clears the whole query", () => {
+      currentSearchParams = new URLSearchParams("priority=urgent");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} priorityFilter="urgent" />);
+
+      const clearButton = screen.getByRole("button", { name: "Clear filters" });
+      fireEvent.click(clearButton);
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs");
+    });
+
+    it("pushes the search text as ?q= once the debounce elapses, matched client-side", () => {
+      vi.useFakeTimers();
+      render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
+
+      fireEvent.change(screen.getByRole("textbox", { name: "Search backlogs" }), {
+        target: { value: "sprint" },
+      });
+      expect(push).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(300);
+      });
+
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?q=sprint");
+    });
+
+    it("matches the search text against a backlog's name, case-insensitively", () => {
+      currentSearchParams = new URLSearchParams("q=SPRINT");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
+      showList();
+      expect(screen.getByRole("link", { name: /Sprint 1/ })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /Icebox/ })).not.toBeInTheDocument();
+    });
+
+    it("reports an empty result from the search term, distinct from an empty project", () => {
+      currentSearchParams = new URLSearchParams("q=nomatch");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+      expect(screen.getByText('No backlogs match "nomatch".')).toBeInTheDocument();
+    });
+
+    it("reports an empty result from the priority filter, distinct from an empty project", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[]} priorityFilter="urgent" />);
+      expect(screen.getByText("No urgent priority backlogs.")).toBeInTheDocument();
+    });
+
+    it("still shows the empty-project message with no filters active", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[]} />);
+      expect(screen.getByText("No backlogs yet.")).toBeInTheDocument();
+    });
   });
 });

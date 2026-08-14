@@ -1,22 +1,78 @@
 import { notFound } from "next/navigation";
 import { getBacklogs, getProject } from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
+import type { Priority, Progress } from "@/types";
 
-/** The Backlog collection view of one project. Auth is guarded by the parent
- *  layout.tsx. */
+const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
+const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
+
+// "manual" is the API's own position order, expressed by the absence of
+// ?sort= rather than a named value, same as the Task collection. "dueOn" is
+// the one value the API doesn't accept (parseBacklogListFilter,
+// internal/http/backlog_handler.go, only takes priority/progress) — it's
+// applied client-side instead, so it's still a recognised URL value even
+// though it's never forwarded to getBacklogs below.
+const NAMED_SORTS = ["dueOn", "priority", "progress"] as const;
+type NamedSort = (typeof NAMED_SORTS)[number];
+type Sort = "manual" | NamedSort;
+
+/**
+ * The Backlog collection view of one project — Board (the default), List and
+ * Timeline are view modes of this one screen, per docs/ui-design.md rule 5.
+ * `?priority=`/`?progress=`/`?sort=` mirror the Task collection's own filters
+ * (issue #151) and, like Task's, live in the URL and are applied by the API
+ * rather than the client — except `sort=dueOn`, which the API has no concept
+ * of and BacklogListSection sorts by itself. An unrecognised value falls back
+ * to that filter's default rather than erroring, since these come straight
+ * from a hand-editable query string.
+ *
+ * Auth is guarded by the parent layout.tsx.
+ */
 export default async function BacklogsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams?: Promise<{
+    priority?: string;
+    progress?: string;
+    sort?: string;
+  }>;
 }) {
   const { projectId } = await params;
   const project = await getProject(projectId);
   if (!project) notFound();
 
+  const resolvedSearchParams = await searchParams;
+  const priorityParam = resolvedSearchParams?.priority;
+  const priority = PRIORITIES.includes(priorityParam as Priority)
+    ? (priorityParam as Priority)
+    : undefined;
+  const progressParam = resolvedSearchParams?.progress;
+  const progress = PROGRESSES.includes(progressParam as Progress)
+    ? (progressParam as Progress)
+    : undefined;
+  const sortParam = resolvedSearchParams?.sort;
+  const sort: Sort = NAMED_SORTS.includes(sortParam as NamedSort)
+    ? (sortParam as NamedSort)
+    : "manual";
+
   // taskCount/closedTaskCount are aggregated server-side onto each backlog
   // (issue #144), so the collection no longer needs every task in the
   // project just to show a count and a completion ratio.
-  const backlogs = await getBacklogs(projectId);
+  const backlogs = await getBacklogs(projectId, {
+    priority,
+    progress,
+    sort: sort === "priority" || sort === "progress" ? sort : undefined,
+  });
 
-  return <BacklogListSection projectId={project.id} backlogs={backlogs} />;
+  return (
+    <BacklogListSection
+      projectId={project.id}
+      backlogs={backlogs}
+      priorityFilter={priority}
+      progressFilter={progress}
+      sort={sort}
+    />
+  );
 }

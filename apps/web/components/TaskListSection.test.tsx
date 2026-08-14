@@ -283,6 +283,45 @@ describe("TaskListSection", () => {
     expect(screen.getByText("Failed to load tasks. Try refreshing the page.")).toBeInTheDocument();
   });
 
+  describe("Result count and Clear filters (issue #150)", () => {
+    it("shows the filtered count against the project total", () => {
+      const tasks = [makeTask({ id: "t1" }), makeTask({ id: "t2" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} totalCount={5} />);
+      expect(screen.getByText("2 / 5 tasks")).toBeInTheDocument();
+    });
+
+    it("shows just the filtered count when no total was passed", () => {
+      const tasks = [makeTask({ id: "t1" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      expect(screen.getByText("1 tasks")).toBeInTheDocument();
+    });
+
+    it("omits the count on a load error", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} totalCount={5} error />);
+      expect(screen.queryByText(/tasks$/)).not.toBeInTheDocument();
+    });
+
+    it("hides Clear filters when every filter is at its default", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+      expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument();
+    });
+
+    it("shows Clear filters once a filter differs from its default, and resets the URL on click", () => {
+      currentSearchParams = new URLSearchParams("status=all");
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" />);
+
+      const clearButton = screen.getByRole("button", { name: "Clear filters" });
+      fireEvent.click(clearButton);
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+    });
+
+    it("shows Clear filters for a non-default sort, same as any other filter", () => {
+      currentSearchParams = new URLSearchParams("sort=priority");
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} sort="priority" />);
+      expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+    });
+  });
+
   describe("My tasks filter (issue #146)", () => {
     it("pushes ?assignee=me alongside the other filters when checked", () => {
       currentSearchParams = new URLSearchParams("status=all");

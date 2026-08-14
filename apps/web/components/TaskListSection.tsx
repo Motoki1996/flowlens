@@ -99,6 +99,20 @@ export type AssigneeAvailability = "available" | "no-connection" | "no-identity"
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
 
+/** The one place that defines what "no filter" means for each URL-held
+ *  filter (issue #150) — both the six changeXFilter functions below (which
+ *  drop a value back out of the query string once it matches its default)
+ *  and the "is any filter active" check that drives the Clear filters
+ *  control read from here, rather than each repeating the same literal. */
+const FILTER_DEFAULTS = {
+  backlog: "all",
+  status: "open",
+  progress: "all",
+  priority: "all",
+  due: "all",
+  sort: "manual",
+} as const;
+
 /** moveItem returns a copy of list with the item at fromIndex relocated to
  *  toIndex, used by both drag-and-drop and the up/down move buttons so the
  *  two interactions produce identical orderings. */
@@ -409,6 +423,7 @@ export function TaskListSection({
   assigneeMe = false,
   assigneeAvailability = "available",
   today,
+  totalCount,
   error = false,
 }: {
   projectId: string;
@@ -454,6 +469,11 @@ export function TaskListSection({
    *  (every real caller passes it; only tests that don't care rely on the
    *  fallback). */
   today?: string;
+  /** The project's task count with no filter applied at all (issue #150) —
+   *  the "母数" the result count reads against, e.g. "12 / 340 tasks".
+   *  Undefined omits the "/ total" part rather than showing a wrong number,
+   *  since the caller (page.tsx) may not always have one to hand. */
+  totalCount?: number;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -570,19 +590,19 @@ export function TaskListSection({
   }
 
   function changeBacklogFilter(value: string) {
-    updateQuery({ backlog: value === "all" ? undefined : value });
+    updateQuery({ backlog: value === FILTER_DEFAULTS.backlog ? undefined : value });
   }
 
   function changeStatusFilter(value: "all" | TaskStatus) {
-    updateQuery({ status: value === "open" ? undefined : value });
+    updateQuery({ status: value === FILTER_DEFAULTS.status ? undefined : value });
   }
 
   function changeProgressFilter(value: "all" | Progress) {
-    updateQuery({ progress: value === "all" ? undefined : value });
+    updateQuery({ progress: value === FILTER_DEFAULTS.progress ? undefined : value });
   }
 
   function changePriorityFilter(value: "all" | Priority) {
-    updateQuery({ priority: value === "all" ? undefined : value });
+    updateQuery({ priority: value === FILTER_DEFAULTS.priority ? undefined : value });
   }
 
   function changeAssigneeMe(checked: boolean) {
@@ -590,7 +610,7 @@ export function TaskListSection({
   }
 
   function changeDueFilter(value: string) {
-    updateQuery({ due: value === "all" ? undefined : value });
+    updateQuery({ due: value === FILTER_DEFAULTS.due ? undefined : value });
   }
 
   function changeSearch(value: string) {
@@ -598,11 +618,34 @@ export function TaskListSection({
   }
 
   function changeSort(value: TaskSort) {
-    updateQuery({ sort: value === "manual" ? undefined : value });
+    updateQuery({ sort: value === FILTER_DEFAULTS.sort ? undefined : value });
   }
 
   function toggleLabelFilter(label: string) {
     updateQuery({ label: labelFilter === label ? undefined : label });
+  }
+
+  // Drives the Clear filters control (issue #150): true once any filter
+  // disagrees with FILTER_DEFAULTS (or, for the two with no "all" sentinel,
+  // its own empty default). Sort is included since a non-manual sort is as
+  // much a reason today's result differs from tomorrow's default view as any
+  // other filter is.
+  const hasActiveFilters =
+    backlogFilter !== FILTER_DEFAULTS.backlog ||
+    search.trim() !== "" ||
+    statusFilter !== FILTER_DEFAULTS.status ||
+    Boolean(progressFilter) ||
+    Boolean(priorityFilter) ||
+    assigneeMe ||
+    sort !== FILTER_DEFAULTS.sort ||
+    Boolean(labelFilter) ||
+    Boolean(dueFilter);
+
+  // Every filter above is a URL query parameter, so resetting all of them at
+  // once is just dropping the query string entirely rather than undoing each
+  // control in turn.
+  function clearFilters() {
+    router.push(pathname);
   }
 
   // Distinguishes *why* the list came back empty — a bare "no matches" reads
@@ -879,7 +922,20 @@ export function TaskListSection({
             "New task" hard to find among the filters. */}
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle className="text-base font-medium">Tasks</CardTitle>
+            <div className="flex flex-wrap items-baseline gap-2">
+              <CardTitle className="text-base font-medium">Tasks</CardTitle>
+              {/* The result count (issue #150): what's showing under the
+                  current filters against the project's total with none
+                  applied — stays put across Board/List/Timeline since it
+                  lives here, above the view branch, rather than inside any
+                  one of them. Left off entirely on a load error, alongside
+                  the filter row below. */}
+              {!error ? (
+                <span className="text-muted-foreground text-xs">
+                  {`${visibleTasks.length}${totalCount !== undefined ? ` / ${totalCount}` : ""} tasks`}
+                </span>
+              ) : null}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               {/* The view toggle stays put whatever the filters return, for the
                   same reason the filter row below does — a view mode is not
@@ -1034,6 +1090,19 @@ export function TaskListSection({
                     <X className="size-3" aria-hidden />
                   </button>
                 </span>
+              ) : null}
+              {/* Only appears once a filter actually differs from
+                  FILTER_DEFAULTS (issue #150) — otherwise there is nothing
+                  for it to undo, and a control that's always there but
+                  usually a no-op just adds clutter to the row. */}
+              {hasActiveFilters ? (
+                <button
+                  type="button"
+                  onClick={clearFilters}
+                  className="text-muted-foreground hover:text-foreground text-xs underline"
+                >
+                  Clear filters
+                </button>
               ) : null}
             </div>
           ) : null}

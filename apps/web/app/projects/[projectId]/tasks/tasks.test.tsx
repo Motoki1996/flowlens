@@ -120,6 +120,20 @@ describe("TasksPage", () => {
     expect(screen.getByText("In sprint 1")).toBeInTheDocument();
   });
 
+  it("passes the project's unfiltered task count through as the result total (issue #150)", async () => {
+    // getTasks is called twice: once with the applied filter (always at
+    // least `status: "open"` by default) and once with `{}` for the
+    // unfiltered total — distinguished here by whether any filter key is
+    // actually set.
+    getTasks.mockImplementation((_id: string, filter: Record<string, unknown> = {}) =>
+      Promise.resolve(
+        Object.values(filter).some((v) => v !== undefined) ? [] : [{ id: "t1" }, { id: "t2" }],
+      ),
+    );
+    render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
+    expect(screen.getByText("0 / 2 tasks")).toBeInTheDocument();
+  });
+
   it("sends the Unclassified group as the API's backlog_id=unassigned", async () => {
     render(
       await TasksPage({

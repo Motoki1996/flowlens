@@ -57,6 +57,30 @@ export const List: Story = {
   },
 };
 
+/** Each row's own closed/total completion (issue #152) — the same
+ *  `backlogTaskCompletion` reading of taskCount/closedTaskCount the Board
+ *  mode's cards already use — plus a trailing "Unclassified" row for tasks
+ *  with no backlog, linking to the Task collection's Unclassified group. */
+export const ListWithCompletionAndUnclassified: Story = {
+  args: {
+    projectId: "p1",
+    backlogs: [
+      { ...backlog, taskCount: 5, closedTaskCount: 2 },
+      { ...backlog, id: "b2", name: "Icebox", priority: "low", position: 1 },
+    ],
+    unclassifiedCount: 3,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "List" }));
+    await expect(canvas.getByText("2/5 closed")).toBeInTheDocument();
+    await expect(canvas.getByText("No tasks")).toBeInTheDocument();
+    const unclassified = canvas.getByRole("link", { name: /Unclassified/ });
+    await expect(unclassified).toHaveTextContent("(3)");
+    await expect(unclassified).toHaveAttribute("href", "/projects/p1/tasks?backlog=unclassified");
+  },
+};
+
 /** The Timeline view mode of the same collection, reached from the List/
  *  Timeline toggle. The bars are covered in BacklogTimelineSection's own
  *  stories; this one covers the toggle that gets you there. */
@@ -107,9 +131,9 @@ export const SortedByDueDate: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: "List" }));
     const names = canvas
-      .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+      .getAllByRole("link", { name: /^(Sprint 1|Icebox)$/ })
       .map((el) => el.textContent);
-    await expect(names).toEqual(["Sprint 1 (0)", "Icebox (0)"]);
+    await expect(names).toEqual(["Sprint 1", "Icebox"]);
   },
 };
 

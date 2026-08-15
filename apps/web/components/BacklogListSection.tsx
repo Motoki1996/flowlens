@@ -7,9 +7,10 @@ import Link from "next/link";
 import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
-import { backlogPath, tasksPath } from "@/lib/routes";
+import { backlogPath, tasksPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
+import { backlogTaskCompletion } from "@/lib/timeline";
 import type { ApiError, Backlog, Priority, Progress } from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
@@ -57,8 +58,15 @@ function compareByDueOn(a: Backlog, b: Backlog): number {
  * Task collection.
  */
 const BacklogTimelineSection = dynamic(
-  () => import("@/components/BacklogTimelineSection").then((m) => m.BacklogTimelineSection),
-  { loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p> },
+  () =>
+    import("@/components/BacklogTimelineSection").then(
+      (m) => m.BacklogTimelineSection,
+    ),
+  {
+    loading: () => (
+      <p className="text-muted-foreground text-sm">Loading timeline…</p>
+    ),
+  },
 );
 
 /** moveItem returns a copy of list with the item at fromIndex relocated to
@@ -72,7 +80,13 @@ function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
 }
 
 /** NewBacklogForm is the inline creation form shown in the backlog list. */
-function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: () => void }) {
+function NewBacklogForm({
+  projectId,
+  onCancel,
+}: {
+  projectId: string;
+  onCancel: () => void;
+}) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -93,19 +107,22 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
     setPending(true);
     setError(null);
     try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", ...csrfHeaders() },
-        body: JSON.stringify({
-          name,
-          description,
-          startDate: toApiDate(startDate),
-          dueOn: toApiDate(dueOn),
-          priority,
-          progress,
-        }),
-      });
+      const res = await fetch(
+        `${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...csrfHeaders() },
+          body: JSON.stringify({
+            name,
+            description,
+            startDate: toApiDate(startDate),
+            dueOn: toApiDate(dueOn),
+            priority,
+            progress,
+          }),
+        },
+      );
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
         setError(body?.error.message ?? "Failed to create backlog.");
@@ -119,14 +136,21 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3" aria-label="New backlog">
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-3"
+      aria-label="New backlog"
+    >
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
       <div>
-        <label htmlFor="new-backlog-name" className="text-foreground block text-sm font-medium">
+        <label
+          htmlFor="new-backlog-name"
+          className="text-foreground block text-sm font-medium"
+        >
           Name
         </label>
         <Input
@@ -138,7 +162,10 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
         />
       </div>
       <div>
-        <label htmlFor="new-backlog-description" className="text-foreground block text-sm font-medium">
+        <label
+          htmlFor="new-backlog-description"
+          className="text-foreground block text-sm font-medium"
+        >
           Description
         </label>
         <Textarea
@@ -156,14 +183,28 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
           value={startDate}
           onChange={setStartDate}
         />
-        <DateField id="new-backlog-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
+        <DateField
+          id="new-backlog-due-on"
+          label="Due date"
+          value={dueOn}
+          onChange={setDueOn}
+        />
       </div>
       <div>
-        <label htmlFor="new-backlog-priority" className="text-foreground block text-sm font-medium">
+        <label
+          htmlFor="new-backlog-priority"
+          className="text-foreground block text-sm font-medium"
+        >
           Priority
         </label>
-        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
-          <SelectTrigger id="new-backlog-priority" className="mt-1 w-full sm:w-40">
+        <Select
+          value={priority}
+          onValueChange={(value) => setPriority(value as Priority)}
+        >
+          <SelectTrigger
+            id="new-backlog-priority"
+            className="mt-1 w-full sm:w-40"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -175,11 +216,20 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
         </Select>
       </div>
       <div>
-        <label htmlFor="new-backlog-progress" className="text-foreground block text-sm font-medium">
+        <label
+          htmlFor="new-backlog-progress"
+          className="text-foreground block text-sm font-medium"
+        >
           Progress
         </label>
-        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
-          <SelectTrigger id="new-backlog-progress" className="mt-1 w-full sm:w-40">
+        <Select
+          value={progress}
+          onValueChange={(value) => setProgress(value as Progress)}
+        >
+          <SelectTrigger
+            id="new-backlog-progress"
+            className="mt-1 w-full sm:w-40"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -195,7 +245,13 @@ function NewBacklogForm({ projectId, onCancel }: { projectId: string; onCancel: 
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Creating…" : "Create backlog"}
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={pending}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onCancel}
+          disabled={pending}
+        >
           Cancel
         </Button>
       </div>
@@ -235,20 +291,23 @@ function EditBacklogForm({
     setPending(true);
     setError(null);
     try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", ...csrfHeaders() },
-        body: JSON.stringify({
-          name,
-          description,
-          position: backlog.position,
-          startDate: toApiDate(startDate),
-          dueOn: toApiDate(dueOn),
-          priority,
-          progress,
-        }),
-      });
+      const res = await fetch(
+        `${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...csrfHeaders() },
+          body: JSON.stringify({
+            name,
+            description,
+            position: backlog.position,
+            startDate: toApiDate(startDate),
+            dueOn: toApiDate(dueOn),
+            priority,
+            progress,
+          }),
+        },
+      );
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
         setError(body?.error.message ?? "Failed to update backlog.");
@@ -262,14 +321,21 @@ function EditBacklogForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3" aria-label={`Edit ${backlog.name}`}>
+    <form
+      onSubmit={handleSubmit}
+      className="space-y-3"
+      aria-label={`Edit ${backlog.name}`}
+    >
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
       <div>
-        <label htmlFor={`edit-backlog-name-${backlog.id}`} className="text-foreground block text-sm font-medium">
+        <label
+          htmlFor={`edit-backlog-name-${backlog.id}`}
+          className="text-foreground block text-sm font-medium"
+        >
           Name
         </label>
         <Input
@@ -316,8 +382,14 @@ function EditBacklogForm({
         >
           Priority
         </label>
-        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
-          <SelectTrigger id={`edit-backlog-priority-${backlog.id}`} className="mt-1 w-full sm:w-40">
+        <Select
+          value={priority}
+          onValueChange={(value) => setPriority(value as Priority)}
+        >
+          <SelectTrigger
+            id={`edit-backlog-priority-${backlog.id}`}
+            className="mt-1 w-full sm:w-40"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -335,8 +407,14 @@ function EditBacklogForm({
         >
           Progress
         </label>
-        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
-          <SelectTrigger id={`edit-backlog-progress-${backlog.id}`} className="mt-1 w-full sm:w-40">
+        <Select
+          value={progress}
+          onValueChange={(value) => setProgress(value as Progress)}
+        >
+          <SelectTrigger
+            id={`edit-backlog-progress-${backlog.id}`}
+            className="mt-1 w-full sm:w-40"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -352,7 +430,13 @@ function EditBacklogForm({
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Saving…" : "Save"}
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={pending}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onCancel}
+          disabled={pending}
+        >
           Cancel
         </Button>
       </div>
@@ -375,11 +459,14 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
     setPending(true);
     setError(null);
     try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`, {
-        method: "DELETE",
-        credentials: "include",
-        headers: csrfHeaders(),
-      });
+      const res = await fetch(
+        `${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`,
+        {
+          method: "DELETE",
+          credentials: "include",
+          headers: csrfHeaders(),
+        },
+      );
       if (!res.ok && res.status !== 204) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
         setError(body?.error.message ?? "Failed to delete backlog.");
@@ -395,15 +482,27 @@ function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
   if (confirming) {
     return (
       <div className="flex flex-col items-end gap-1">
-        {error ? <span className="text-destructive text-xs">{error}</span> : null}
+        {error ? (
+          <span className="text-destructive text-xs">{error}</span>
+        ) : null}
         <span className="text-foreground text-xs">
           Its tasks will move to Unclassified. Delete this backlog?
         </span>
         <div className="flex gap-2">
-          <Button variant="destructive" size="sm" onClick={handleDelete} disabled={pending}>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleDelete}
+            disabled={pending}
+          >
             {pending ? "Deleting…" : "Confirm delete"}
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setConfirming(false)} disabled={pending}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setConfirming(false)}
+            disabled={pending}
+          >
             Cancel
           </Button>
         </div>
@@ -448,6 +547,18 @@ const FILTER_DEFAULTS = {
  * search or non-manual sort narrows `backlogs` to less than the full set,
  * drag-and-drop and the move buttons are hidden rather than sending a
  * request that's certain to fail with a backlog ID mismatch.
+ *
+ * List mode also shows each row's own closed/total completion — the same
+ * `backlogTaskCompletion` reading of `taskCount`/`closedTaskCount` the Board
+ * mode's cards already use (issue #144) — and a trailing "Unclassified (n)"
+ * row for tasks with no backlog at all (issue #152), matching the Task
+ * collection's own Unclassified group. That row isn't a backlog: it has no
+ * priority/progress of its own, so it drops out under either filter, and it
+ * carries no grip/Edit/Delete/move controls, just a link to the Task
+ * collection filtered to `UNCLASSIFIED_BACKLOG`. It's List-only — Board's
+ * axis is progress, which Unclassified tasks don't share one value of, and
+ * Timeline is a dated bar per backlog, which Unclassified isn't one of — and
+ * it disappears entirely at zero rather than reading "Unclassified (0)".
  */
 export function BacklogListSection({
   projectId,
@@ -455,6 +566,7 @@ export function BacklogListSection({
   priorityFilter,
   progressFilter,
   sort = "manual",
+  unclassifiedCount = 0,
 }: {
   projectId: string;
   backlogs: Backlog[];
@@ -464,6 +576,11 @@ export function BacklogListSection({
   progressFilter?: Progress;
   /** The applied `?sort=`, or "manual" for the API's own position order. */
   sort?: BacklogSort;
+  /** The project's task count with no backlog at all (issue #152), shown as
+   *  a trailing "Unclassified" row in List mode — see the class doc comment.
+   *  Defaults to 0, which keeps the row hidden for callers (tests, stories)
+   *  that don't pass one. */
+  unclassifiedCount?: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -495,7 +612,8 @@ export function BacklogListSection({
   // and only over the project's full, unfiltered backlog set — see the class
   // doc comment for why a filter/search/non-manual sort disables it outright
   // rather than just hiding it during a non-manual sort the way Task's does.
-  const canReorder = sort === "manual" && !priorityFilter && !progressFilter && search === "";
+  const canReorder =
+    sort === "manual" && !priorityFilter && !progressFilter && search === "";
 
   // priority/progress are already applied server-side (the caller fetched
   // with them); dueOn is the one sort the API doesn't know, so it's applied
@@ -518,6 +636,16 @@ export function BacklogListSection({
     sort !== FILTER_DEFAULTS.sort ||
     search !== "";
 
+  // See the class doc comment: the Unclassified row has no priority/progress
+  // of its own, so an active filter on either always excludes it, same as a
+  // backlog that doesn't match would be; the name search matches it against
+  // its own label like any other row's name.
+  const showUnclassified =
+    unclassifiedCount > 0 &&
+    !priorityFilter &&
+    !progressFilter &&
+    (search === "" || "unclassified".includes(search.toLowerCase()));
+
   /** Mirrors TaskListSection's updateQuery: every filter/sort choice belongs
    *  in the URL, so the screen stays shareable and reload-stable, and a
    *  value equal to that filter's default drops out of the query string
@@ -533,11 +661,15 @@ export function BacklogListSection({
   }
 
   function changePriorityFilter(value: "all" | Priority) {
-    updateQuery({ priority: value === FILTER_DEFAULTS.priority ? undefined : value });
+    updateQuery({
+      priority: value === FILTER_DEFAULTS.priority ? undefined : value,
+    });
   }
 
   function changeProgressFilter(value: "all" | Progress) {
-    updateQuery({ progress: value === FILTER_DEFAULTS.progress ? undefined : value });
+    updateQuery({
+      progress: value === FILTER_DEFAULTS.progress ? undefined : value,
+    });
   }
 
   function changeSort(value: BacklogSort) {
@@ -574,12 +706,15 @@ export function BacklogListSection({
     setOrder(next);
     setReorderError(null);
     try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs/order`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", ...csrfHeaders() },
-        body: JSON.stringify({ backlogIds: next.map((b) => b.id) }),
-      });
+      const res = await fetch(
+        `${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs/order`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...csrfHeaders() },
+          body: JSON.stringify({ backlogIds: next.map((b) => b.id) }),
+        },
+      );
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
         setOrder(previous);
@@ -620,11 +755,15 @@ export function BacklogListSection({
                   none of the current filters keep the project's own backlogs
                   hidden), but "New backlog" must stay reachable on an empty
                   project. */}
-              {backlogs.length > 0 || hasActiveFilters ? (
+              {backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0 ? (
                 <ViewModeToggle value={view} onChange={setView} />
               ) : null}
               {!creating ? (
-                <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreating(true)}
+                >
                   <Plus className="size-4" aria-hidden />
                   New backlog
                 </Button>
@@ -636,12 +775,18 @@ export function BacklogListSection({
               and narrow the timeline the same way they narrow the list. Only
               shown once there's something to filter, same condition as the
               view toggle above. */}
-          {backlogs.length > 0 || hasActiveFilters ? (
+          {backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
-              <TaskSearchBox value={search} onChange={changeSearch} label="backlogs" />
+              <TaskSearchBox
+                value={search}
+                onChange={changeSearch}
+                label="backlogs"
+              />
               <Select
                 value={priorityFilter ?? "all"}
-                onValueChange={(value) => changePriorityFilter(value as "all" | Priority)}
+                onValueChange={(value) =>
+                  changePriorityFilter(value as "all" | Priority)
+                }
               >
                 <SelectTrigger size="sm" aria-label="Priority" className="w-36">
                   <SelectValue />
@@ -657,7 +802,9 @@ export function BacklogListSection({
               </Select>
               <Select
                 value={progressFilter ?? "all"}
-                onValueChange={(value) => changeProgressFilter(value as "all" | Progress)}
+                onValueChange={(value) =>
+                  changeProgressFilter(value as "all" | Progress)
+                }
               >
                 <SelectTrigger size="sm" aria-label="Progress" className="w-36">
                   <SelectValue />
@@ -671,7 +818,10 @@ export function BacklogListSection({
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={sort} onValueChange={(value) => changeSort(value as BacklogSort)}>
+              <Select
+                value={sort}
+                onValueChange={(value) => changeSort(value as BacklogSort)}
+              >
                 <SelectTrigger size="sm" aria-label="Sort" className="w-40">
                   <SelectValue />
                 </SelectTrigger>
@@ -701,17 +851,34 @@ export function BacklogListSection({
       <CardContent>
         {creating ? (
           <div className="mb-4">
-            <NewBacklogForm projectId={projectId} onCancel={() => setCreating(false)} />
+            <NewBacklogForm
+              projectId={projectId}
+              onCancel={() => setCreating(false)}
+            />
           </div>
         ) : null}
-        {visibleBacklogs.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
-            {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
-          </p>
-        ) : view === "board" ? (
-          <BacklogBoardSection projectId={projectId} backlogs={visibleBacklogs} />
+        {view === "board" ? (
+          visibleBacklogs.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
+            </p>
+          ) : (
+            <BacklogBoardSection
+              projectId={projectId}
+              backlogs={visibleBacklogs}
+            />
+          )
         ) : view === "timeline" ? (
-          <BacklogTimelineSection projectId={projectId} backlogs={visibleBacklogs} />
+          visibleBacklogs.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
+            </p>
+          ) : (
+            <BacklogTimelineSection
+              projectId={projectId}
+              backlogs={visibleBacklogs}
+            />
+          )
         ) : (
           <div className="space-y-2">
             {reorderError ? (
@@ -719,101 +886,156 @@ export function BacklogListSection({
                 <AlertDescription>{reorderError}</AlertDescription>
               </Alert>
             ) : null}
-            <ul className="space-y-2">
-              {visibleBacklogs.map((backlog, index) => (
-              <li
-                key={backlog.id}
-                className="border-border rounded-md border px-3 py-2"
-                onDragOver={(e) => canReorder && e.preventDefault()}
-                onDrop={(e) => {
-                  if (!canReorder) return;
-                  e.preventDefault();
-                  handleDrop(index);
-                }}
-              >
-                {editingId === backlog.id ? (
-                  <EditBacklogForm
-                    backlog={backlog}
-                    onSaved={() => setEditingId(null)}
-                    onCancel={() => setEditingId(null)}
-                  />
-                ) : (
-                  <div className="flex items-center justify-between gap-4">
-                    {/* Manual reordering only makes sense against the API's
+            {/* Unlike Board/Timeline above, this branch's "empty" state also
+                depends on the Unclassified row (see the class doc comment) —
+                a project with no backlogs but some unclassified tasks still
+                has something to show in List. */}
+            {visibleBacklogs.length === 0 && !showUnclassified ? (
+              <p className="text-muted-foreground text-sm">
+                {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {visibleBacklogs.map((backlog, index) => {
+                  // Same closed/total reading the Board mode's cards use (issue
+                  // #144) — see the class doc comment.
+                  const completion = backlogTaskCompletion(backlog);
+                  return (
+                    <li
+                      key={backlog.id}
+                      className="border-border rounded-md border px-3 py-2"
+                      onDragOver={(e) => canReorder && e.preventDefault()}
+                      onDrop={(e) => {
+                        if (!canReorder) return;
+                        e.preventDefault();
+                        handleDrop(index);
+                      }}
+                    >
+                      {editingId === backlog.id ? (
+                        <EditBacklogForm
+                          backlog={backlog}
+                          onSaved={() => setEditingId(null)}
+                          onCancel={() => setEditingId(null)}
+                        />
+                      ) : (
+                        <div className="flex items-center justify-between gap-4">
+                          {/* Manual reordering only makes sense against the API's
                         own position order, and only over the project's full,
                         unfiltered backlog set (see the class doc comment) —
                         so the move buttons and drag handle disappear
                         whenever a filter, search or non-manual sort is
                         active. */}
-                    {canReorder ? (
-                      <div className="flex shrink-0 flex-col items-center self-stretch">
-                        <button
-                          type="button"
-                          aria-label={`Move ${backlog.name} up`}
-                          disabled={index === 0}
-                          onClick={() => moveBacklog(index, -1)}
-                          className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                        >
-                          <ChevronUp className="size-4" />
-                        </button>
-                        <span
-                          draggable
-                          aria-hidden="true"
-                          onDragStart={() => setDraggingId(backlog.id)}
-                          onDragEnd={() => setDraggingId(null)}
-                          className="text-muted-foreground cursor-grab active:cursor-grabbing"
-                        >
-                          <GripVertical className="size-4" />
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Move ${backlog.name} down`}
-                          disabled={index === visibleBacklogs.length - 1}
-                          onClick={() => moveBacklog(index, 1)}
-                          className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                        >
-                          <ChevronDown className="size-4" />
-                        </button>
-                      </div>
-                    ) : null}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Link
-                          href={backlogPath(projectId, backlog.id)}
-                          className="text-foreground text-sm hover:underline"
-                        >
-                          {backlog.name}{" "}
-                          <span className="text-muted-foreground text-xs">({backlog.taskCount})</span>
-                        </Link>
-                        <PriorityBadge priority={backlog.priority} />
-                        <ProgressBadge progress={backlog.progress} />
-                      </div>
-                      {backlogScheduleLabel(backlog) ? (
-                        <p className="text-muted-foreground truncate text-xs">
-                          {backlogScheduleLabel(backlog)}
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {/* Tasks live in the Task collection, filtered — this row
+                          {canReorder ? (
+                            <div className="flex shrink-0 flex-col items-center self-stretch">
+                              <button
+                                type="button"
+                                aria-label={`Move ${backlog.name} up`}
+                                disabled={index === 0}
+                                onClick={() => moveBacklog(index, -1)}
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              >
+                                <ChevronUp className="size-4" />
+                              </button>
+                              <span
+                                draggable
+                                aria-hidden="true"
+                                onDragStart={() => setDraggingId(backlog.id)}
+                                onDragEnd={() => setDraggingId(null)}
+                                className="text-muted-foreground cursor-grab active:cursor-grabbing"
+                              >
+                                <GripVertical className="size-4" />
+                              </span>
+                              <button
+                                type="button"
+                                aria-label={`Move ${backlog.name} down`}
+                                disabled={index === visibleBacklogs.length - 1}
+                                onClick={() => moveBacklog(index, 1)}
+                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                              >
+                                <ChevronDown className="size-4" />
+                              </button>
+                            </div>
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Link
+                                href={backlogPath(projectId, backlog.id)}
+                                className="text-foreground text-sm hover:underline"
+                              >
+                                {backlog.name}
+                              </Link>
+                              <PriorityBadge priority={backlog.priority} />
+                              <ProgressBadge progress={backlog.progress} />
+                            </div>
+                            {backlogScheduleLabel(backlog) ? (
+                              <p className="text-muted-foreground truncate text-xs">
+                                {backlogScheduleLabel(backlog)}
+                              </p>
+                            ) : null}
+                            {/* The fill is a second reading of the ratio stated
+                          beside it, never the only one — same rule the
+                          Board mode's cards and the timeline's bars
+                          follow. */}
+                            <div className="mt-1 flex items-center gap-2">
+                              <div className="bg-muted h-1 w-24 shrink-0 overflow-hidden rounded-full">
+                                <div
+                                  aria-hidden
+                                  className="bg-primary h-full"
+                                  style={{
+                                    width: `${Math.round(completion.ratio * 100)}%`,
+                                  }}
+                                />
+                              </div>
+                              <span className="text-muted-foreground text-xs tabular-nums">
+                                {completion.total === 0
+                                  ? "No tasks"
+                                  : `${completion.closed}/${completion.total} closed`}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {/* Tasks live in the Task collection, filtered — this row
                           hands off to it instead of the list growing a second
                           place to browse tasks (docs/ui-design.md rule 5). */}
-                      <Link
-                        href={tasksPath(projectId, { backlogId: backlog.id })}
-                        className="text-muted-foreground hover:text-foreground text-sm hover:underline"
-                      >
-                        View tasks
-                      </Link>
-                      <Button variant="outline" size="sm" onClick={() => setEditingId(backlog.id)}>
-                        Edit
-                      </Button>
-                      <DeleteBacklogButton backlog={backlog} />
-                    </div>
-                  </div>
-                )}
-              </li>
-              ))}
-            </ul>
+                            <Link
+                              href={tasksPath(projectId, {
+                                backlogId: backlog.id,
+                              })}
+                              className="text-muted-foreground hover:text-foreground text-sm hover:underline"
+                            >
+                              View tasks
+                            </Link>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEditingId(backlog.id)}
+                            >
+                              Edit
+                            </Button>
+                            <DeleteBacklogButton backlog={backlog} />
+                          </div>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+                {showUnclassified ? (
+                  <li className="border-border rounded-md border border-dashed px-3 py-2">
+                    <Link
+                      href={tasksPath(projectId, {
+                        backlogId: UNCLASSIFIED_BACKLOG,
+                      })}
+                      className="text-foreground text-sm hover:underline"
+                    >
+                      Unclassified{" "}
+                      <span className="text-muted-foreground text-xs">
+                        ({unclassifiedCount})
+                      </span>
+                    </Link>
+                  </li>
+                ) : null}
+              </ul>
+            )}
           </div>
         )}
       </CardContent>

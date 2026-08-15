@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getBacklogs, getProject } from "@/lib/api";
+import { getBacklogs, getProject, getTasks } from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
 import type { Priority, Progress } from "@/types";
 
@@ -60,11 +60,21 @@ export default async function BacklogsPage({
   // taskCount/closedTaskCount are aggregated server-side onto each backlog
   // (issue #144), so the collection no longer needs every task in the
   // project just to show a count and a completion ratio.
-  const backlogs = await getBacklogs(projectId, {
-    priority,
-    progress,
-    sort: sort === "priority" || sort === "progress" ? sort : undefined,
-  });
+  //
+  // The Unclassified count (issue #152) is fetched the same way the Task
+  // collection counts its own Unclassified group: every task with no
+  // backlog ("unassigned" is the API's backlog_id value for that, distinct
+  // from UNCLASSIFIED_BACKLOG which is this app's own route/filter value).
+  // It's independent of the priority/progress/sort params above, which only
+  // apply to backlogs.
+  const [backlogs, unclassifiedTasks] = await Promise.all([
+    getBacklogs(projectId, {
+      priority,
+      progress,
+      sort: sort === "priority" || sort === "progress" ? sort : undefined,
+    }),
+    getTasks(projectId, { backlogId: "unassigned" }),
+  ]);
 
   return (
     <BacklogListSection
@@ -73,6 +83,7 @@ export default async function BacklogsPage({
       priorityFilter={priority}
       progressFilter={progress}
       sort={sort}
+      unclassifiedCount={unclassifiedTasks.length}
     />
   );
 }

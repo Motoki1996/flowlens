@@ -61,12 +61,28 @@ describe("BacklogListSection", () => {
     expect(screen.getByText("No backlogs yet.")).toBeInTheDocument();
   });
 
-  it("lists backlogs with their task count and a link to the single view", () => {
+  it("lists backlogs with a link to the single view", () => {
     render(<BacklogListSection projectId="p1" backlogs={[{ ...backlog, taskCount: 3 }]} />);
     showList();
-    const link = screen.getByRole("link", { name: /Sprint 1/ });
+    const link = screen.getByRole("link", { name: "Sprint 1" });
     expect(link).toHaveAttribute("href", "/projects/p1/backlogs/b1");
-    expect(link).toHaveTextContent("(3)");
+  });
+
+  it("shows each row's closed/total completion, the same reading the Board mode's cards use", () => {
+    render(
+      <BacklogListSection
+        projectId="p1"
+        backlogs={[{ ...backlog, taskCount: 5, closedTaskCount: 2 }]}
+      />,
+    );
+    showList();
+    expect(screen.getByText("2/5 closed")).toBeInTheDocument();
+  });
+
+  it("reports \"No tasks\" for a backlog with none, rather than a 0/0 ratio", () => {
+    render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+    showList();
+    expect(screen.getByText("No tasks")).toBeInTheDocument();
   });
 
   it("shows the Board view mode by default, grouped by progress", () => {
@@ -174,9 +190,9 @@ describe("BacklogListSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Move Sprint 1 down" }));
 
     const names = screen
-      .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+      .getAllByRole("link", { name: /^(Sprint 1|Icebox)$/ })
       .map((el) => el.textContent);
-    expect(names).toEqual(["Icebox (0)", "Sprint 1 (0)"]);
+    expect(names).toEqual(["Icebox", "Sprint 1"]);
     expect(fetch).toHaveBeenCalledWith(
       "http://localhost:8080/api/v1/projects/p1/backlogs/order",
       expect.objectContaining({
@@ -199,9 +215,9 @@ describe("BacklogListSection", () => {
 
     expect(await screen.findByText("backlogIds must match")).toBeInTheDocument();
     const names = screen
-      .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+      .getAllByRole("link", { name: /^(Sprint 1|Icebox)$/ })
       .map((el) => el.textContent);
-    expect(names).toEqual(["Sprint 1 (0)", "Icebox (0)"]);
+    expect(names).toEqual(["Sprint 1", "Icebox"]);
   });
 
   it("disables the move buttons at the ends of the list", () => {
@@ -276,9 +292,9 @@ describe("BacklogListSection", () => {
       );
       showList();
       const names = screen
-        .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+        .getAllByRole("link", { name: /^(Sprint 1|Icebox)$/ })
         .map((el) => el.textContent);
-      expect(names).toEqual(["Sprint 1 (0)", "Icebox (0)"]);
+      expect(names).toEqual(["Sprint 1", "Icebox"]);
     });
 
     it("hides the move buttons and drag handle while a priority filter narrows the list", () => {
@@ -340,6 +356,91 @@ describe("BacklogListSection", () => {
     it("still shows the empty-project message with no filters active", () => {
       render(<BacklogListSection projectId="p1" backlogs={[]} />);
       expect(screen.getByText("No backlogs yet.")).toBeInTheDocument();
+    });
+  });
+
+  describe("Unclassified row (issue #152)", () => {
+    it("shows a trailing Unclassified row with its count, linking to the Task collection", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={4} />);
+      showList();
+      const link = screen.getByRole("link", { name: /Unclassified/ });
+      expect(link).toHaveTextContent("(4)");
+      expect(link).toHaveAttribute("href", "/projects/p1/tasks?backlog=unclassified");
+    });
+
+    it("hides the Unclassified row when there are no unclassified tasks", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={0} />);
+      showList();
+      expect(screen.queryByRole("link", { name: /Unclassified/ })).not.toBeInTheDocument();
+    });
+
+    it("hides the Unclassified row by default when the caller doesn't pass a count", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+      showList();
+      expect(screen.queryByRole("link", { name: /Unclassified/ })).not.toBeInTheDocument();
+    });
+
+    it("shows the Unclassified row even when the filtered backlog list itself is empty", () => {
+      currentSearchParams = new URLSearchParams("q=unclass");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={2} />);
+      showList();
+      expect(screen.getByRole("link", { name: /Unclassified/ })).toBeInTheDocument();
+      expect(screen.queryByText('No backlogs match "unclass".')).not.toBeInTheDocument();
+    });
+
+    it("has no grip, move or Edit/Delete controls on the Unclassified row", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={4} />);
+      showList();
+      expect(screen.queryByRole("button", { name: "Move Unclassified up" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Move Unclassified down" })).not.toBeInTheDocument();
+      // Sprint 1 still has its own Edit/Delete; Unclassified doesn't add a second pair.
+      expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);
+    });
+
+    it("hides the Unclassified row while a priority filter is active, since it has no priority", () => {
+      render(
+        <BacklogListSection
+          projectId="p1"
+          backlogs={[backlog]}
+          priorityFilter="medium"
+          unclassifiedCount={4}
+        />,
+      );
+      showList();
+      expect(screen.queryByRole("link", { name: /Unclassified/ })).not.toBeInTheDocument();
+    });
+
+    it("hides the Unclassified row while a progress filter is active, since it has no progress", () => {
+      render(
+        <BacklogListSection
+          projectId="p1"
+          backlogs={[backlog]}
+          progressFilter="on_hold"
+          unclassifiedCount={4}
+        />,
+      );
+      showList();
+      expect(screen.queryByRole("link", { name: /Unclassified/ })).not.toBeInTheDocument();
+    });
+
+    it("hides the Unclassified row once a name search doesn't match it", () => {
+      currentSearchParams = new URLSearchParams("q=sprint");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={4} />);
+      showList();
+      expect(screen.queryByRole("link", { name: /Unclassified/ })).not.toBeInTheDocument();
+    });
+
+    it("keeps showing the Unclassified row when the search matches its own name", () => {
+      currentSearchParams = new URLSearchParams("q=unclass");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={4} />);
+      showList();
+      expect(screen.getByRole("link", { name: /Unclassified/ })).toBeInTheDocument();
+    });
+
+    it("does not show the Unclassified row in Board mode", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={4} />);
+      expect(screen.queryByRole("link", { name: /Unclassified/ })).not.toBeInTheDocument();
     });
   });
 });

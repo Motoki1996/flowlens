@@ -10,6 +10,7 @@ import { csrfHeaders } from "@/lib/csrf";
 import { gitlabConnectionPath, taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { fromDateParam, toApiDate } from "@/lib/dates";
 import { dueStatus } from "@/lib/dashboard";
+import { useViewMode } from "@/lib/useViewMode";
 import type {
   ApiError,
   Backlog,
@@ -425,6 +426,7 @@ export function TaskListSection({
   today,
   totalCount,
   error = false,
+  initialView = "board",
 }: {
   projectId: string;
   /** The project's tasks matching the filters below — the API applied them,
@@ -475,13 +477,17 @@ export function TaskListSection({
    *  since the caller (page.tsx) may not always have one to hand. */
   totalCount?: number;
   error?: boolean;
+  /** The applied `?view=` (issue #153) — page.tsx already validated it, the
+   *  same fallback-to-default treatment every other filter above gets.
+   *  Board is the default: progress is the axis people scan the collection
+   *  by day to day, so the screen opens there and List/Timeline are one
+   *  click away. */
+  initialView?: ViewMode;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  // Board is the default: progress is the axis people scan the collection by
-  // day to day, so the screen opens there and List/Timeline are one click away.
-  const [view, setView] = useState<ViewMode>("board");
+  const [view, setView] = useViewMode(initialView);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [targetBacklogId, setTargetBacklogId] = useState("");

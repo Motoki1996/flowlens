@@ -162,4 +162,29 @@ describe("BacklogsPage", () => {
       sort: undefined,
     });
   });
+
+  describe("View mode in the URL (issue #153)", () => {
+    it("opens in the view named by ?view=", async () => {
+      render(
+        await BacklogsPage({
+          params: Promise.resolve({ projectId: "p1" }),
+          searchParams: Promise.resolve({ view: "timeline" }),
+        }),
+      );
+      expect(screen.getByRole("button", { name: "Timeline" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+
+    it("falls back to Board for an unrecognised ?view=", async () => {
+      render(
+        await BacklogsPage({
+          params: Promise.resolve({ projectId: "p1" }),
+          searchParams: Promise.resolve({ view: "kanban" }),
+        }),
+      );
+      expect(screen.getByRole("button", { name: "Board" })).toHaveAttribute("aria-pressed", "true");
+    });
+  });
 });

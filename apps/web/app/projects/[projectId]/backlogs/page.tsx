@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { getBacklogs, getProject, getTasks } from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
+import type { ViewMode } from "@/components/ViewModeToggle";
 import type { Priority, Progress } from "@/types";
 
 const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
@@ -15,6 +16,10 @@ const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 const NAMED_SORTS = ["dueOn", "priority", "progress"] as const;
 type NamedSort = (typeof NAMED_SORTS)[number];
 type Sort = "manual" | NamedSort;
+
+// The view modes ViewModeToggle offers, shared by Task and Backlog (issue
+// #153) — Board is the default and falls out of the query string entirely.
+const VIEW_MODES = ["board", "list", "timeline"] as const;
 
 /**
  * The Backlog collection view of one project — Board (the default), List and
@@ -37,6 +42,7 @@ export default async function BacklogsPage({
     priority?: string;
     progress?: string;
     sort?: string;
+    view?: string;
   }>;
 }) {
   const { projectId } = await params;
@@ -56,6 +62,10 @@ export default async function BacklogsPage({
   const sort: Sort = NAMED_SORTS.includes(sortParam as NamedSort)
     ? (sortParam as NamedSort)
     : "manual";
+  const viewParam = resolvedSearchParams?.view;
+  const initialView: ViewMode = VIEW_MODES.includes(viewParam as ViewMode)
+    ? (viewParam as ViewMode)
+    : "board";
 
   // taskCount/closedTaskCount are aggregated server-side onto each backlog
   // (issue #144), so the collection no longer needs every task in the
@@ -84,6 +94,7 @@ export default async function BacklogsPage({
       progressFilter={progress}
       sort={sort}
       unclassifiedCount={unclassifiedTasks.length}
+      initialView={initialView}
     />
   );
 }

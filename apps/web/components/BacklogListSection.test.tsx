@@ -443,4 +443,36 @@ describe("BacklogListSection", () => {
       expect(screen.queryByRole("link", { name: /Unclassified/ })).not.toBeInTheDocument();
     });
   });
+
+  describe("View mode in the URL (issue #153)", () => {
+    it("opens in Board by default when no initialView is passed", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+      expect(screen.getByRole("button", { name: "Board" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("opens in the view passed as initialView", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} initialView="timeline" />);
+      expect(screen.getByRole("button", { name: "Timeline" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("pushes ?view= when switching to List", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+      showList();
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?view=list");
+    });
+
+    it("drops ?view= back out of the query string when switching back to Board", () => {
+      currentSearchParams = new URLSearchParams("view=list");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} initialView="list" />);
+      fireEvent.click(screen.getByRole("button", { name: "Board" }));
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs");
+    });
+
+    it("keeps the other filters in the query string when switching view", () => {
+      currentSearchParams = new URLSearchParams("priority=urgent");
+      render(<BacklogListSection projectId="p1" backlogs={[backlog]} priorityFilter="urgent" />);
+      showList();
+      expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?priority=urgent&view=list");
+    });
+  });
 });

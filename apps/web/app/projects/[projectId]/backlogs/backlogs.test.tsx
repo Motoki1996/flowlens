@@ -90,6 +90,15 @@ describe("BacklogsPage", () => {
     ).rejects.toThrow("NOT_FOUND");
   });
 
+  // issue #155: a getBacklogs failure is caught in-page, the same as
+  // getTasks in tasks/page.tsx, rather than bubbling up to error.tsx and
+  // taking the rest of the screen (New backlog) down with it.
+  it("shows a load error without failing the whole page when backlogs fail to load", async () => {
+    getBacklogs.mockRejectedValue(new Error("boom"));
+    render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
+    expect(screen.getByText("Failed to load backlogs. Try refreshing the page.")).toBeInTheDocument();
+  });
+
   // The per-backlog count is aggregated server-side onto the backlog itself
   // (issue #144), so the collection renders it straight from getBacklogs
   // without a separate task fetch.

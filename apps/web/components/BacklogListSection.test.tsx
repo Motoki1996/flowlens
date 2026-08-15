@@ -61,6 +61,14 @@ describe("BacklogListSection", () => {
     expect(screen.getByText("No backlogs yet.")).toBeInTheDocument();
   });
 
+  it("shows a load error, without the view toggle or filter row, but keeps New backlog reachable", () => {
+    render(<BacklogListSection projectId="p1" backlogs={[]} error />);
+    expect(screen.getByText("Failed to load backlogs. Try refreshing the page.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "List" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Priority")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New backlog" })).toBeInTheDocument();
+  });
+
   it("lists backlogs with a link to the single view", () => {
     render(<BacklogListSection projectId="p1" backlogs={[{ ...backlog, taskCount: 3 }]} />);
     showList();

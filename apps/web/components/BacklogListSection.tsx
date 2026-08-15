@@ -569,6 +569,7 @@ export function BacklogListSection({
   sort = "manual",
   unclassifiedCount = 0,
   initialView = "board",
+  error = false,
 }: {
   projectId: string;
   backlogs: Backlog[];
@@ -589,6 +590,12 @@ export function BacklogListSection({
    *  question asked of a backlog collection, and the board answers it
    *  without reading every row. */
   initialView?: ViewMode;
+  /** Set when page.tsx's getBacklogs call failed (issue #155), mirroring
+   *  TaskListSection's own `error` prop: the view toggle and filter row hide
+   *  (there's nothing behind them to switch between or narrow), "New backlog"
+   *  stays reachable, and the content area reports the failure instead of an
+   *  empty list. */
+  error?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -759,8 +766,9 @@ export function BacklogListSection({
               {/* The view modes only make sense once backlogs exist (and
                   none of the current filters keep the project's own backlogs
                   hidden), but "New backlog" must stay reachable on an empty
-                  project. */}
-              {backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0 ? (
+                  project. Left off entirely on a load error, alongside the
+                  filter row below, the same way TaskListSection's does. */}
+              {!error && (backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0) ? (
                 <ViewModeToggle value={view} onChange={setView} />
               ) : null}
               {!creating ? (
@@ -780,7 +788,7 @@ export function BacklogListSection({
               and narrow the timeline the same way they narrow the list. Only
               shown once there's something to filter, same condition as the
               view toggle above. */}
-          {backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0 ? (
+          {!error && (backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0) ? (
             <div className="flex flex-wrap items-center gap-2">
               <TaskSearchBox
                 value={search}
@@ -862,7 +870,11 @@ export function BacklogListSection({
             />
           </div>
         ) : null}
-        {view === "board" ? (
+        {error ? (
+          <p className="text-destructive text-sm">
+            Failed to load backlogs. Try refreshing the page.
+          </p>
+        ) : view === "board" ? (
           visibleBacklogs.length === 0 ? (
             <p className="text-muted-foreground text-sm">
               {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}

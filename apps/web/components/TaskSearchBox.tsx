@@ -15,15 +15,23 @@ const DEBOUNCE_MS = 300;
  * updates every keystroke so typing feels responsive; onChange — which drives
  * a URL update and, on the cross-project screen, a server refetch — fires
  * debounced so neither screen does that work per keystroke.
+ *
+ * `label` (issue #151) lets the Backlog collection reuse the same debounced
+ * box for its own, client-side-only name search rather than duplicating it —
+ * it names what's being searched ("tasks"/"backlogs") in both the aria-label
+ * and the placeholder, and defaults to "tasks" so the two existing callers
+ * are unaffected.
  */
 export function TaskSearchBox({
   value,
   onChange,
   className,
+  label = "tasks",
 }: {
   value: string;
   onChange: (value: string) => void;
   className?: string;
+  label?: string;
 }) {
   const [draft, setDraft] = useState(value);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -46,8 +54,8 @@ export function TaskSearchBox({
 
   return (
     <Input
-      aria-label="Search tasks"
-      placeholder="Search tasks…"
+      aria-label={`Search ${label}`}
+      placeholder={`Search ${label}…`}
       value={draft}
       onChange={(e) => handleChange(e.target.value)}
       className={className ?? "h-8 w-40"}

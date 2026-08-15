@@ -22,6 +22,9 @@ const backlog: Backlog = {
 const meta = {
   title: "Components/BacklogListSection",
   component: BacklogListSection,
+  parameters: {
+    nextjs: { appDirectory: true, navigation: { pathname: "/projects/p1/backlogs" } },
+  },
 } satisfies Meta<typeof BacklogListSection>;
 
 export default meta;
@@ -66,6 +69,66 @@ export const Timeline: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole("button", { name: "Timeline" }));
     await expect(await canvas.findByRole("list", { name: "Bar colours" })).toBeInTheDocument();
+  },
+};
+
+/** A priority filter applied (issue #151): the List mode's move buttons and
+ *  drag handle disappear, since a filtered request can't include the
+ *  project's full backlog set that a reorder round trip requires — and
+ *  "Clear filters" appears to undo it. */
+export const PriorityFiltered: Story = {
+  args: {
+    projectId: "p1",
+    backlogs: [backlog],
+    priorityFilter: "medium",
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "List" }));
+    await expect(canvas.getByRole("link", { name: /Sprint 1/ })).toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "Move Sprint 1 up" })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "Clear filters" })).toBeInTheDocument();
+  },
+};
+
+/** Sorted by due date (issue #151): the one sort value the API doesn't apply
+ *  itself, so BacklogListSection orders the two backlogs client-side —
+ *  Icebox (no due date) sorts last. */
+export const SortedByDueDate: Story = {
+  args: {
+    projectId: "p1",
+    backlogs: [
+      { ...backlog, id: "b2", name: "Icebox", dueOn: null, position: 0 },
+      { ...backlog, id: "b1", name: "Sprint 1", dueOn: "2026-08-15T00:00:00Z", position: 1 },
+    ],
+    sort: "dueOn",
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: "List" }));
+    const names = canvas
+      .getAllByRole("link", { name: /^(Sprint 1|Icebox)/ })
+      .map((el) => el.textContent);
+    await expect(names).toEqual(["Sprint 1 (0)", "Icebox (0)"]);
+  },
+};
+
+/** A search with no matches (issue #151): distinct wording from the
+ *  no-backlogs-at-all empty state, and "Clear filters" is the way back out. */
+export const NoSearchMatches: Story = {
+  args: {
+    projectId: "p1",
+    backlogs: [backlog],
+  },
+  parameters: {
+    nextjs: {
+      appDirectory: true,
+      navigation: { pathname: "/projects/p1/backlogs", query: { q: "nope" } },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText('No backlogs match "nope".')).toBeInTheDocument();
   },
 };
 

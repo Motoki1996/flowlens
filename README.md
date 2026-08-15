@@ -893,6 +893,23 @@ of the same filtered set (`docs/ui-design.md` rule 5):
   that bucket's entire task ID list. Capping the response is the follow-up
   to make if a project ever grows past what one response should carry.
 
+The Backlog collection (`/projects/{projectId}/backlogs`, issue #151) carries
+the same idea across its own three view modes, at a smaller scale:
+
+- A priority filter, a progress filter and a sort (**Manual**, **Due date**,
+  **Priority**, **Progress**) sit in the same `CardHeader` shape as the Task
+  collection's own row. Priority and progress are held in the URL and applied
+  server-side (`?priority=`, `?progress=`, `?sort=priority|progress` on `GET
+  .../backlogs`, above); `?sort=dueOn` has no server-side equivalent — a
+  backlog's schedule is app-only — so `BacklogListSection` sorts that case
+  itself, dueOn ascending with undated backlogs last.
+- The name search box (also `TaskSearchBox`, parameterized with `label`) has
+  no API support at all and is matched entirely client-side: a project's
+  backlogs are already fetched in full for the List/Board/Timeline views, and
+  run orders of magnitude fewer than tasks, so there's nothing to gain from a
+  server round trip for it. It's still held in the URL (`?q=`) for
+  shareability and reload, the same as the client-only filters above.
+
 ### Task full-text search
 
 `GET /api/v1/projects/{projectID}/tasks` and the cross-project
@@ -1063,11 +1080,18 @@ and only calls the API in the background (rather than this app's usual
 server-component re-render per drag); a failed request reverts the order and
 shows the error inline. Drag handles and move buttons are hidden while the
 Task collection is sorted by anything other than the manual order, since a
-drag would otherwise fight the display order it's shown in. The
-drag-and-drop itself is native HTML5 drag-and-drop, not a dedicated library —
-no new frontend dependency was available to add when this shipped; swapping
-in a library like `@dnd-kit` later is a UI-only change, since it would still
-call the same `.../order` endpoints.
+drag would otherwise fight the display order it's shown in. The Backlog
+collection (issue #151) hides them under a wider condition — any priority/
+progress filter or name search active, not just a non-manual sort — because
+unlike a task's per-backlog bucket order, a backlog's order is project-wide
+and `PATCH .../backlogs/order` requires *every* current backlog in the
+request; a filtered or searched list is, by construction, less than that full
+set, and dragging within it would only produce a guaranteed
+`backlog_ids_mismatch`. The drag-and-drop itself is native HTML5
+drag-and-drop, not a dedicated library — no new frontend dependency was
+available to add when this shipped; swapping in a library like `@dnd-kit`
+later is a UI-only change, since it would still call the same `.../order`
+endpoints.
 
 ### GitLab user identity
 

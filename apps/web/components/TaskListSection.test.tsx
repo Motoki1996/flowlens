@@ -1053,4 +1053,50 @@ describe("TaskListSection", () => {
     showListView();
     expect(screen.queryByRole("button", { name: "Move Only task down" })).not.toBeInTheDocument();
   });
+
+  describe("View mode in the URL (issue #153)", () => {
+    it("opens in Board by default when no initialView is passed", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+      expect(screen.getByRole("button", { name: "Board" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("opens in the view passed as initialView", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} initialView="timeline" />);
+      expect(screen.getByRole("button", { name: "Timeline" })).toHaveAttribute("aria-pressed", "true");
+    });
+
+    it("pushes ?view= when switching to List", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+      showListView();
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?view=list");
+    });
+
+    it("pushes ?view= when switching to Timeline", () => {
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+      fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?view=timeline");
+    });
+
+    it("drops ?view= back out of the query string when switching back to Board", () => {
+      currentSearchParams = new URLSearchParams("view=list");
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} initialView="list" />);
+      fireEvent.click(screen.getByRole("button", { name: "Board" }));
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+    });
+
+    it("keeps the other filters in the query string when switching view", () => {
+      currentSearchParams = new URLSearchParams("status=all");
+      render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" />);
+      showListView();
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?status=all&view=list");
+    });
+
+    it("switches the rendered view immediately, without waiting on a navigation", () => {
+      const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+      showListView();
+      expect(screen.getByRole("button", { name: "List" })).toHaveAttribute("aria-pressed", "true");
+      expect(screen.getByText("Sprint 1 (1)")).toBeInTheDocument();
+    });
+  });
 });

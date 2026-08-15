@@ -181,6 +181,31 @@ describe("TasksPage", () => {
     expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 1");
   });
 
+  describe("View mode in the URL (issue #153)", () => {
+    it("opens in the view named by ?view=", async () => {
+      render(
+        await TasksPage({
+          params: Promise.resolve({ projectId: "p1" }),
+          searchParams: Promise.resolve({ view: "timeline" }),
+        }),
+      );
+      expect(screen.getByRole("button", { name: "Timeline" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    });
+
+    it("falls back to Board for an unrecognised ?view=", async () => {
+      render(
+        await TasksPage({
+          params: Promise.resolve({ projectId: "p1" }),
+          searchParams: Promise.resolve({ view: "kanban" }),
+        }),
+      );
+      expect(screen.getByRole("button", { name: "Board" })).toHaveAttribute("aria-pressed", "true");
+    });
+  });
+
   it("renders not-found when the project doesn't exist", async () => {
     getProject.mockResolvedValue(null);
     await expect(TasksPage({ params: Promise.resolve({ projectId: "unknown" }) })).rejects.toThrow(

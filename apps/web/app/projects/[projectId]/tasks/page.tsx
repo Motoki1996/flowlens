@@ -10,6 +10,7 @@ import {
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { toDateParam } from "@/lib/dates";
 import { TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
+import type { ViewMode } from "@/components/ViewModeToggle";
 import type { Priority, Progress, TaskStatus } from "@/types";
 
 const STATUSES = ["all", "open", "closed"] as const;
@@ -25,6 +26,10 @@ const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 const SORTS = ["dueOn", "priority", "progress", "updatedAt"] as const;
 type NamedSort = (typeof SORTS)[number];
 type Sort = "manual" | NamedSort;
+
+// The view modes ViewModeToggle offers, shared by Task and Backlog (issue
+// #153) — Board is the default and falls out of the query string entirely.
+const VIEW_MODES = ["board", "list", "timeline"] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -67,6 +72,7 @@ export default async function TasksPage({
     priority?: string;
     assignee?: string;
     sort?: string;
+    view?: string;
   }>;
 }) {
   const { projectId } = await params;
@@ -88,6 +94,10 @@ export default async function TasksPage({
     : undefined;
   const sortParam = resolvedSearchParams?.sort;
   const sort: Sort = SORTS.includes(sortParam as NamedSort) ? (sortParam as NamedSort) : "manual";
+  const viewParam = resolvedSearchParams?.view;
+  const initialView: ViewMode = VIEW_MODES.includes(viewParam as ViewMode)
+    ? (viewParam as ViewMode)
+    : "board";
   // The "today" cutoff the `?due=` filter and each row's/card's Overdue
   // badge classify against (issue #148), computed once here rather than in
   // the client component below — see TaskListSection's `today` prop doc
@@ -176,6 +186,7 @@ export default async function TasksPage({
       today={today}
       totalCount={totalCount}
       error={tasksError}
+      initialView={initialView}
     />
   );
 }

@@ -11,6 +11,7 @@ import { backlogPath, tasksPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { fromApiDate, toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
 import { backlogTaskCompletion } from "@/lib/timeline";
+import { useViewMode } from "@/lib/useViewMode";
 import type { ApiError, Backlog, Priority, Progress } from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
@@ -567,6 +568,7 @@ export function BacklogListSection({
   progressFilter,
   sort = "manual",
   unclassifiedCount = 0,
+  initialView = "board",
 }: {
   projectId: string;
   backlogs: Backlog[];
@@ -581,16 +583,19 @@ export function BacklogListSection({
    *  Defaults to 0, which keeps the row hidden for callers (tests, stories)
    *  that don't pass one. */
   unclassifiedCount?: number;
+  /** The applied `?view=` (issue #153) — page.tsx already validated it, the
+   *  same fallback-to-default treatment every other filter above gets.
+   *  Board is the default: how far along each backlog is, is the first
+   *  question asked of a backlog collection, and the board answers it
+   *  without reading every row. */
+  initialView?: ViewMode;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  // Board is the default: how far along each backlog is, is the first question
-  // asked of a backlog collection, and the board answers it without reading
-  // every row.
-  const [view, setView] = useState<ViewMode>("board");
+  const [view, setView] = useViewMode(initialView);
 
   // `order` mirrors `backlogs` but is reordered optimistically on drag/move,
   // ahead of the PATCH .../backlogs/order round trip — router.refresh()

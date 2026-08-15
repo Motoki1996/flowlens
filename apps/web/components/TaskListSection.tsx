@@ -100,6 +100,12 @@ export type AssigneeAvailability = "available" | "no-connection" | "no-identity"
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
 
+/** A row shows at most this many labels before rolling the rest into a "+n"
+ *  badge (issue #154) — a task with a handful of GitLab labels was crowding
+ *  the row's fixed-width meta section on top of assignee/due/the four
+ *  status badges. */
+const MAX_VISIBLE_ROW_LABELS = 3;
+
 /** The one place that defines what "no filter" means for each URL-held
  *  filter (issue #150) — both the six changeXFilter functions below (which
  *  drop a value back out of the query string once it matches its default)
@@ -506,6 +512,20 @@ export function TaskListSection({
   useEffect(() => setLocalTasks(tasks), [tasks]);
   const [reorderError, setReorderError] = useState<string | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  // Which row (or empty-group placeholder) the dragged task is currently
+  // hovering over, so the row under the pointer can be highlighted as the
+  // drop target (issue #154) — index counts within that group's own task
+  // list, matching what handleDropOnTask expects as targetIndex.
+  const [dragOverTarget, setDragOverTarget] = useState<{ groupKey: string; index: number } | null>(
+    null,
+  );
+  // dragover fires continuously as the pointer moves, so this only commits a
+  // state update (and re-render) when the target actually changes.
+  function setDragOverIfChanged(next: { groupKey: string; index: number }) {
+    setDragOverTarget((prev) =>
+      prev?.groupKey === next.groupKey && prev?.index === next.index ? prev : next,
+    );
+  }
 
   // See the class doc comment: unlike every other filter, `?label=` and
   // `?due=` narrow `localTasks` here rather than the API request.
@@ -558,6 +578,14 @@ export function TaskListSection({
     [backlogs],
   );
 
+  // Manual order is the only mode a task can be dragged in, so it's the only
+  // one where an empty backlog needs a group of its own to serve as a drop
+  // target (issue #154) — otherwise a backlog with zero (visible) tasks never
+  // gets a group at all, and there's nowhere to drag a task into it. Gated to
+  // the unfiltered "all backlogs" view: once `?backlog=` narrows to one
+  // specific backlog, the API's response already reflects that, and adding a
+  // group for every *other* backlog here would misrepresent the filter.
+  const manualOrder = sort === "manual";
   const groups = useMemo(() => {
     const byBacklog = new Map<string, Task[]>();
     for (const t of visibleTasks) {
@@ -566,17 +594,20 @@ export function TaskListSection({
       list.push(t);
       byBacklog.set(key, list);
     }
+    const includeEmpty = manualOrder && backlogFilter === "all";
     const ordered: { key: string; name: string; tasks: Task[] }[] = [];
     for (const backlog of backlogs) {
       const list = byBacklog.get(backlog.id);
-      if (list) ordered.push({ key: backlog.id, name: backlog.name, tasks: list });
+      if (list || includeEmpty) {
+        ordered.push({ key: backlog.id, name: backlog.name, tasks: list ?? [] });
+      }
     }
     const unclassified = byBacklog.get(UNCLASSIFIED);
-    if (unclassified) {
-      ordered.push({ key: UNCLASSIFIED, name: UNCLASSIFIED_LABEL, tasks: unclassified });
+    if (unclassified || includeEmpty) {
+      ordered.push({ key: UNCLASSIFIED, name: UNCLASSIFIED_LABEL, tasks: unclassified ?? [] });
     }
     return ordered;
-  }, [visibleTasks, backlogs]);
+  }, [visibleTasks, backlogs, manualOrder, backlogFilter]);
 
   /**
    * Every filter/sort choice belongs in the URL: the screen stays shareable,
@@ -899,6 +930,7 @@ export function TaskListSection({
   function handleDropOnTask(groupKey: string, groupTasks: Task[], targetIndex: number) {
     const taskId = draggingTaskId;
     setDraggingTaskId(null);
+    setDragOverTarget(null);
     if (!taskId) return;
     const dragged = localTasks.find((t) => t.id === taskId);
     if (!dragged) return;
@@ -1154,6 +1186,14 @@ export function TaskListSection({
                 for "manual". Reassigning a task to a different backlog has
                 no such conflict and stays available regardless of sort. */}
             {reorderError ? <p className="text-destructive text-sm">{reorderError}</p> : null}
+            {/* The grip and move buttons don't just fade away with no
+                explanation (issue #154) — a sort the reorder can't act
+                against gets a one-line reason instead. */}
+            {!manualOrder ? (
+              <p className="text-muted-foreground text-xs">
+                Switch sort to Manual order to drag or reorder tasks.
+              </p>
+            ) : null}
             {/* Selection itself no longer needs a backlog to exist (issue
                 #149) — it's the "Assign to backlog" action further down that
                 stays conditional on one. A top-level select-all covers the
@@ -1271,7 +1311,11 @@ export function TaskListSection({
             ) : null}
             <div className="space-y-6">
               {groups.map((group) => {
-                const manualOrder = sort === "manual";
+                // Whether the empty-group placeholder below is the drop
+                // target the pointer is currently over — its own row, since
+                // there are no tasks yet to attach the check to.
+                const emptyGroupIsDropTarget =
+                  dragOverTarget?.groupKey === group.key && dragOverTarget.index === 0;
                 return (
                   <div key={group.key}>
                     <h3 className="text-muted-foreground mb-2 flex items-center gap-2 text-sm font-medium">
@@ -1292,90 +1336,146 @@ export function TaskListSection({
                         handleDropOnTask(group.key, group.tasks, group.tasks.length);
                       }}
                     >
-                      {group.tasks.map((task, index) => (
+                      {group.tasks.length === 0 ? (
+                        // Only reachable in manual order with no backlog
+                        // filter (see the groups memo) — a backlog with no
+                        // tasks would otherwise never get a group, and so
+                        // never get a place to drop one into (issue #154).
                         <li
-                          key={task.id}
-                          className="flex items-center gap-2"
-                          onDragOver={(e) => manualOrder && e.preventDefault()}
+                          onDragOver={(e) => {
+                            if (!manualOrder) return;
+                            e.preventDefault();
+                            setDragOverIfChanged({ groupKey: group.key, index: 0 });
+                          }}
                           onDrop={(e) => {
                             if (!manualOrder) return;
                             e.preventDefault();
                             e.stopPropagation();
-                            handleDropOnTask(group.key, group.tasks, index);
+                            handleDropOnTask(group.key, group.tasks, 0);
                           }}
+                          className={`text-muted-foreground rounded-md border border-dashed px-3 py-4 text-center text-xs transition-colors ${
+                            emptyGroupIsDropTarget ? "border-primary ring-primary/50 ring-2" : "border-border"
+                          }`}
                         >
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${task.title}`}
-                            checked={selected.has(task.id)}
-                            onChange={() => toggleSelected(task.id)}
-                            className="border-input h-4 w-4 shrink-0 rounded"
-                          />
-                          {manualOrder ? (
-                            <div className="flex shrink-0 flex-col items-center">
-                              <button
-                                type="button"
-                                aria-label={`Move ${task.title} up`}
-                                disabled={index === 0}
-                                onClick={() => moveTaskWithinGroup(group.key, group.tasks, index, -1)}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                              >
-                                <ChevronUp className="size-3" />
-                              </button>
-                              <button
-                                type="button"
-                                aria-label={`Move ${task.title} down`}
-                                disabled={index === group.tasks.length - 1}
-                                onClick={() => moveTaskWithinGroup(group.key, group.tasks, index, 1)}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                              >
-                                <ChevronDown className="size-3" />
-                              </button>
-                            </div>
-                          ) : null}
-                          {manualOrder ? (
-                            <span
-                              draggable
-                              aria-hidden="true"
-                              onDragStart={() => setDraggingTaskId(task.id)}
-                              onDragEnd={() => setDraggingTaskId(null)}
-                              className="text-muted-foreground shrink-0 cursor-grab active:cursor-grabbing"
+                          Drag a task here to move it into this backlog.
+                        </li>
+                      ) : (
+                        group.tasks.map((task, index) => {
+                          const isDragging = draggingTaskId === task.id;
+                          const isDropTarget =
+                            !isDragging &&
+                            dragOverTarget?.groupKey === group.key &&
+                            dragOverTarget.index === index;
+                          return (
+                            <li
+                              key={task.id}
+                              className="flex items-center gap-2"
+                              onDragOver={(e) => {
+                                if (!manualOrder) return;
+                                e.preventDefault();
+                                setDragOverIfChanged({ groupKey: group.key, index });
+                              }}
+                              onDrop={(e) => {
+                                if (!manualOrder) return;
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleDropOnTask(group.key, group.tasks, index);
+                              }}
                             >
-                              <GripVertical className="size-4" />
-                            </span>
-                          ) : null}
-                          <Link
-                            href={taskPath(projectId, task.id)}
-                            className="border-border hover:border-ring flex flex-1 items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
-                          >
-                            <span className="flex min-w-0 items-center gap-2">
-                              <span className="text-foreground truncate">{task.title}</span>
-                              {task.labels.length > 0 ? (
-                                <span className="flex shrink-0 flex-wrap gap-1">
-                                  {task.labels.map((label) => (
-                                    <LabelBadge
-                                      key={label}
-                                      label={label}
-                                      active={label === labelFilter}
-                                      onToggle={toggleLabelFilter}
-                                    />
-                                  ))}
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${task.title}`}
+                                checked={selected.has(task.id)}
+                                onChange={() => toggleSelected(task.id)}
+                                className="border-input h-4 w-4 shrink-0 rounded"
+                              />
+                              {manualOrder ? (
+                                <div className="flex shrink-0 flex-col items-center">
+                                  <button
+                                    type="button"
+                                    aria-label={`Move ${task.title} up`}
+                                    disabled={index === 0}
+                                    onClick={() => moveTaskWithinGroup(group.key, group.tasks, index, -1)}
+                                    className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                                  >
+                                    <ChevronUp className="size-3" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-label={`Move ${task.title} down`}
+                                    disabled={index === group.tasks.length - 1}
+                                    onClick={() => moveTaskWithinGroup(group.key, group.tasks, index, 1)}
+                                    className="text-muted-foreground hover:text-foreground disabled:opacity-30"
+                                  >
+                                    <ChevronDown className="size-3" />
+                                  </button>
+                                </div>
+                              ) : null}
+                              {manualOrder ? (
+                                <span
+                                  draggable
+                                  aria-hidden="true"
+                                  data-testid={`drag-handle-${task.id}`}
+                                  onDragStart={() => setDraggingTaskId(task.id)}
+                                  onDragEnd={() => {
+                                    setDraggingTaskId(null);
+                                    setDragOverTarget(null);
+                                  }}
+                                  className="text-muted-foreground shrink-0 cursor-grab active:cursor-grabbing"
+                                >
+                                  <GripVertical className="size-4" />
                                 </span>
                               ) : null}
-                            </span>
-                            <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
-                              {task.assigneeGitlabUsername ? (
-                                <span>{task.assigneeGitlabUsername}</span>
-                              ) : null}
-                              {task.dueOn ? <DueDateLabel dueOn={task.dueOn} now={now} /> : null}
-                              <PriorityBadge priority={task.priority} />
-                              <ProgressBadge progress={task.progress} />
-                              <StatusBadge status={task.status} />
-                              <SyncBadge gitlab={task.gitlab} />
-                            </span>
-                          </Link>
-                        </li>
-                      ))}
+                              <Link
+                                href={taskPath(projectId, task.id)}
+                                className={`border-border hover:border-ring flex flex-1 flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                                  isDragging ? "opacity-50" : ""
+                                } ${isDropTarget ? "border-primary ring-primary/50 ring-2" : ""}`}
+                              >
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span className="text-foreground truncate">{task.title}</span>
+                                  {task.labels.length > 0 ? (
+                                    <span className="flex shrink-0 flex-wrap gap-1">
+                                      {task.labels.slice(0, MAX_VISIBLE_ROW_LABELS).map((label) => (
+                                        <LabelBadge
+                                          key={label}
+                                          label={label}
+                                          active={label === labelFilter}
+                                          onToggle={toggleLabelFilter}
+                                        />
+                                      ))}
+                                      {task.labels.length > MAX_VISIBLE_ROW_LABELS ? (
+                                        <Badge
+                                          variant="outline"
+                                          title={task.labels.slice(MAX_VISIBLE_ROW_LABELS).join(", ")}
+                                        >
+                                          {`+${task.labels.length - MAX_VISIBLE_ROW_LABELS}`}
+                                        </Badge>
+                                      ) : null}
+                                    </span>
+                                  ) : null}
+                                </span>
+                                <span className="text-muted-foreground flex w-full flex-wrap items-center gap-3 text-xs sm:w-auto sm:flex-nowrap">
+                                  {task.assigneeGitlabUsername ? (
+                                    <span>{task.assigneeGitlabUsername}</span>
+                                  ) : null}
+                                  {task.dueOn ? <DueDateLabel dueOn={task.dueOn} now={now} /> : null}
+                                  <PriorityBadge priority={task.priority} />
+                                  <ProgressBadge progress={task.progress} />
+                                  {/* Closed is the one status worth a badge —
+                                      open is the default nearly every task is
+                                      in, so stating it on every row was pure
+                                      noise (issue #154). */}
+                                  {task.status === "closed" ? (
+                                    <StatusBadge status={task.status} />
+                                  ) : null}
+                                  <SyncBadge gitlab={task.gitlab} />
+                                </span>
+                              </Link>
+                            </li>
+                          );
+                        })
+                      )}
                     </ul>
                   </div>
                 );

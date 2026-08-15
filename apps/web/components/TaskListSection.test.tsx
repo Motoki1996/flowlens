@@ -1054,6 +1054,137 @@ describe("TaskListSection", () => {
     expect(screen.queryByRole("button", { name: "Move Only task down" })).not.toBeInTheDocument();
   });
 
+  describe("Drag feedback and empty backlog drop targets (issue #154)", () => {
+    it("dims the row being dragged and highlights the row under the pointer as the drop target", () => {
+      const tasks = [
+        makeTask({ id: "t1", title: "First", backlogId: "b1" }),
+        makeTask({ id: "t2", title: "Second", backlogId: "b1" }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+      showListView();
+
+      const firstRow = screen.getByRole("link", { name: /First/ });
+      const secondRow = screen.getByRole("link", { name: /Second/ });
+
+      fireEvent.dragStart(screen.getByTestId("drag-handle-t1"));
+      expect(firstRow).toHaveClass("opacity-50");
+      expect(secondRow).not.toHaveClass("opacity-50");
+
+      fireEvent.dragOver(secondRow);
+      expect(secondRow).toHaveClass("ring-2");
+      expect(firstRow).not.toHaveClass("ring-2");
+
+      fireEvent.dragEnd(screen.getByTestId("drag-handle-t1"));
+      expect(firstRow).not.toHaveClass("opacity-50");
+      expect(secondRow).not.toHaveClass("ring-2");
+    });
+
+    it("renders an empty backlog as a labeled drop target while sorted manually with no backlog filter", () => {
+      // Unclassified is also empty here and gets the same placeholder, so
+      // this is scoped to the Icebox group specifically.
+      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
+      showListView();
+
+      const iceboxGroup = within(screen.getByText("Icebox (0)").closest("div")!);
+      expect(iceboxGroup.getByText("Drag a task here to move it into this backlog.")).toBeInTheDocument();
+    });
+
+    it("moves a task into an empty backlog by dropping it on the placeholder", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
+      showListView();
+
+      const iceboxGroup = within(screen.getByText("Icebox (0)").closest("div")!);
+      fireEvent.dragStart(screen.getByTestId("drag-handle-t1"));
+      const dropZone = iceboxGroup.getByText("Drag a task here to move it into this backlog.");
+      fireEvent.dragOver(dropZone);
+      fireEvent.drop(dropZone);
+
+      // A cross-backlog move is a reorder, not a create/bulk action — it
+      // updates optimistically rather than triggering a router.refresh().
+      await waitFor(() =>
+        expect(fetch).toHaveBeenCalledWith(
+          "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+          expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b2" }) }),
+        ),
+      );
+    });
+
+    it("does not add an empty backlog group once a backlog filter narrows the view", () => {
+      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
+      render(
+        <TaskListSection
+          projectId="p1"
+          tasks={tasks}
+          backlogs={[backlog, otherBacklog]}
+          backlogFilter="b1"
+        />,
+      );
+      showListView();
+      expect(screen.queryByText("Icebox (0)")).not.toBeInTheDocument();
+    });
+
+    it("hides the empty-backlog drop target while sorted by anything other than manual", () => {
+      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
+      render(
+        <TaskListSection
+          projectId="p1"
+          tasks={tasks}
+          backlogs={[backlog, otherBacklog]}
+          sort="priority"
+        />,
+      );
+      showListView();
+      expect(screen.queryByText("Icebox (0)")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Reorder hint while sort isn't manual (issue #154)", () => {
+    it("explains why the drag handle and move buttons are gone once sorted by something else", () => {
+      const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} sort="priority" />);
+      showListView();
+      expect(
+        screen.getByText("Switch sort to Manual order to drag or reorder tasks."),
+      ).toBeInTheDocument();
+    });
+
+    it("shows no such hint while already sorted manually", () => {
+      const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
+      showListView();
+      expect(
+        screen.queryByText("Switch sort to Manual order to drag or reorder tasks."),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Row density (issue #154)", () => {
+    it("shows the status badge only when the task is closed", () => {
+      const tasks = [
+        makeTask({ id: "t1", title: "Open task", status: "open" }),
+        makeTask({ id: "t2", title: "Closed task", status: "closed" }),
+      ];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} statusFilter="all" />);
+      showListView();
+      expect(screen.queryByText("Open")).not.toBeInTheDocument();
+      expect(screen.getByText("Closed")).toBeInTheDocument();
+    });
+
+    it("caps labels at three and rolls the rest into a +n badge", () => {
+      const tasks = [makeTask({ id: "t1", title: "Task", labels: ["a", "b", "c", "d", "e"] })];
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      showListView();
+      expect(screen.getByRole("button", { name: "a" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "b" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "c" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "d" })).not.toBeInTheDocument();
+      expect(screen.getByText("+2")).toBeInTheDocument();
+    });
+  });
+
   describe("View mode in the URL (issue #153)", () => {
     it("opens in Board by default when no initialView is passed", () => {
       render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);

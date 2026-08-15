@@ -77,14 +77,31 @@ export default async function BacklogsPage({
   // from UNCLASSIFIED_BACKLOG which is this app's own route/filter value).
   // It's independent of the priority/progress/sort params above, which only
   // apply to backlogs.
-  const [backlogs, unclassifiedTasks] = await Promise.all([
-    getBacklogs(projectId, {
-      priority,
-      progress,
-      sort: sort === "priority" || sort === "progress" ? sort : undefined,
-    }),
-    getTasks(projectId, { backlogId: "unassigned" }),
-  ]);
+  //
+  // getProject above is left unguarded: without a project there's nothing on
+  // this screen to fall back to, so its failure is left to bubble up to
+  // error.tsx (issue #93), the same as every other project screen. getBacklogs
+  // (and the Unclassified count alongside it) is caught here instead, mirroring
+  // getTasks in tasks/page.tsx, so a sync/DB hiccup on just this fetch doesn't
+  // take the New backlog action and the rest of the screen down with it (issue
+  // #155).
+  let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
+  let unclassifiedCount = 0;
+  let backlogsError = false;
+  try {
+    const [fetchedBacklogs, unclassifiedTasks] = await Promise.all([
+      getBacklogs(projectId, {
+        priority,
+        progress,
+        sort: sort === "priority" || sort === "progress" ? sort : undefined,
+      }),
+      getTasks(projectId, { backlogId: "unassigned" }),
+    ]);
+    backlogs = fetchedBacklogs;
+    unclassifiedCount = unclassifiedTasks.length;
+  } catch {
+    backlogsError = true;
+  }
 
   return (
     <BacklogListSection
@@ -93,8 +110,9 @@ export default async function BacklogsPage({
       priorityFilter={priority}
       progressFilter={progress}
       sort={sort}
-      unclassifiedCount={unclassifiedTasks.length}
+      unclassifiedCount={unclassifiedCount}
       initialView={initialView}
+      error={backlogsError}
     />
   );
 }

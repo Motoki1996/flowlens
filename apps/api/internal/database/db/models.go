@@ -266,6 +266,16 @@ type TaskGitlabLink struct {
 	LastSyncedAt          pgtype.Timestamptz `json:"last_synced_at"`
 }
 
+type TaskProgressEvent struct {
+	ID           uuid.UUID          `json:"id"`
+	TaskID       uuid.UUID          `json:"task_id"`
+	FromProgress string             `json:"from_progress"`
+	ToProgress   string             `json:"to_progress"`
+	ActorKind    string             `json:"actor_kind"`
+	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
+	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
+}
+
 type User struct {
 	ID           uuid.UUID          `json:"id"`
 	DisplayName  string             `json:"display_name"`

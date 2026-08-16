@@ -599,7 +599,7 @@ func TestRoundTrip_AppUpdateEcho_IsIgnored_RealPostgres(t *testing.T) {
 
 	_, err = e.tasks.Update(ctx, e.ownerID, tsk.ID, task.UpdateParams{
 		Title: task.Present("Edited from app"), Description: task.Present("edited"), Labels: task.Present([]string{"bug"}),
-	})
+	}, task.ActorKindUser)
 	require.NoError(t, err)
 	e.drainOutbox(t)
 	callsBefore := len(e.fake.CallLog)

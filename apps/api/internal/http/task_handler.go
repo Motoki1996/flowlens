@@ -403,7 +403,10 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 
 // handleUpdateTask updates one task, scoped to the authenticated user via
 // its project. A nil backlogId leaves the task unfiled (Unclassified); status only
-// changes through /close and /reopen.
+// changes through /close and /reopen. A progress change is attributed to a
+// task_progress_events row (issue #169) as ActorKindAgent for a bearer
+// caller (this route is shared, per requireAuthOrBearer) or ActorKindUser
+// for a session caller.
 func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	taskID, ok := taskIDFromURL(r)
@@ -418,6 +421,10 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actorKind := task.ActorKindUser
+	if _, ok := tokenScopeFromContext(r.Context()); ok {
+		actorKind = task.ActorKindAgent
+	}
 	t, err := s.tasks.Update(r.Context(), u.ID, taskID, task.UpdateParams{
 		Title:                  req.Title,
 		Description:            req.Description,
@@ -430,7 +437,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		Priority:               req.Priority,
 		Progress:               req.Progress,
 		Position:               req.Position,
-	})
+	}, actorKind)
 	if err != nil {
 		writeTaskError(w, err)
 		return

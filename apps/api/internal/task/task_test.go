@@ -122,21 +122,21 @@ func TestService_Update_ChangesPriority(t *testing.T) {
 
 	// An absent Priority leaves the stored value alone, the same as every
 	// other Optional field on UpdateParams.
-	untouched, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug")})
+	untouched, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug")}, task.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, task.PriorityLow, untouched.Priority)
 
 	updated, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{
 		Title:    task.Present("Fix bug"),
 		Priority: task.Present(task.PriorityUrgent),
-	})
+	}, task.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, task.PriorityUrgent, updated.Priority)
 
 	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{
 		Title:    task.Present("Fix bug"),
 		Priority: task.Present("not-a-priority"),
-	})
+	}, task.ActorKindUser)
 	assert.ErrorIs(t, err, task.ErrInvalidPriority)
 }
 
@@ -153,13 +153,13 @@ func TestService_Update_ChangesProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, task.ProgressNotStarted, created.Progress, "an absent progress defaults to not_started")
 
-	untouched, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug")})
+	untouched, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug")}, task.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, task.ProgressNotStarted, untouched.Progress)
 
 	updated, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{
 		Progress: task.Present(task.ProgressOnHold),
-	})
+	}, task.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, task.ProgressOnHold, updated.Progress)
 
@@ -172,8 +172,100 @@ func TestService_Update_ChangesProgress(t *testing.T) {
 
 	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{
 		Progress: task.Present("nearly-done"),
-	})
+	}, task.ActorKindUser)
 	assert.ErrorIs(t, err, task.ErrInvalidProgress)
+}
+
+// A progress-changing PATCH writes exactly one task_progress_events row
+// (issue #169), from the task's previous progress to its new one; the
+// first stage's start is tasks.created_at itself, so Create writes no row.
+func TestService_Update_ChangingProgress_RecordsOneProgressEvent(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug"})
+	require.NoError(t, err)
+	assert.Empty(t, mustListProgressEvents(t, q, created.ID), "creating a task writes no progress event")
+
+	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{
+		Progress: task.Present(task.ProgressInProgress),
+	}, task.ActorKindUser)
+	require.NoError(t, err)
+
+	events := mustListProgressEvents(t, q, created.ID)
+	require.Len(t, events, 1)
+	assert.Equal(t, task.ProgressNotStarted, events[0].FromProgress)
+	assert.Equal(t, task.ProgressInProgress, events[0].ToProgress)
+}
+
+// A PATCH that leaves progress untouched must not write a progress event,
+// even when other fields change (the same PATCH-with-no-progress-field case
+// TestService_Update_ChangesProgress's "untouched" case already covers for
+// the returned Progress value; this asserts the event log side).
+func TestService_Update_UnchangedProgress_RecordsNoProgressEvent(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", Progress: task.ProgressInProgress})
+	require.NoError(t, err)
+
+	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug, edited")}, task.ActorKindUser)
+	require.NoError(t, err)
+	assert.Empty(t, mustListProgressEvents(t, q, created.ID))
+
+	// A same-value PATCH (explicitly re-sending the current progress) must
+	// not add a row either.
+	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{Progress: task.Present(task.ProgressInProgress)}, task.ActorKindUser)
+	require.NoError(t, err)
+	assert.Empty(t, mustListProgressEvents(t, q, created.ID))
+}
+
+// actor_kind is taken from whatever Update's caller passes, not derived from
+// ownerID: a bearer-token caller (internal/http.handleUpdateTask passing
+// task.ActorKindAgent) leaves actor_user_id unset, while a session caller
+// (task.ActorKindUser) is attributed to ownerID.
+func TestService_Update_ChangingProgress_AttributesActorKind(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug"})
+	require.NoError(t, err)
+	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{Progress: task.Present(task.ProgressInProgress)}, task.ActorKindUser)
+	require.NoError(t, err)
+
+	other := q.SeedUser("hubot", "hubot@example.com").ID
+	p2 := q.SeedProject(other, "Beta")
+	agentTask, err := svc.Create(ctx, other, p2.ID, task.CreateParams{Title: "Agent task"})
+	require.NoError(t, err)
+	_, err = svc.Update(ctx, other, agentTask.ID, task.UpdateParams{Progress: task.Present(task.ProgressInProgress)}, task.ActorKindAgent)
+	require.NoError(t, err)
+
+	userEvents := mustListProgressEvents(t, q, created.ID)
+	require.Len(t, userEvents, 1)
+	assert.Equal(t, task.ActorKindUser, userEvents[0].ActorKind)
+	require.True(t, userEvents[0].ActorUserID.Valid)
+	assert.Equal(t, owner, uuid.UUID(userEvents[0].ActorUserID.Bytes))
+
+	agentEvents := mustListProgressEvents(t, q, agentTask.ID)
+	require.Len(t, agentEvents, 1)
+	assert.Equal(t, task.ActorKindAgent, agentEvents[0].ActorKind)
+	assert.False(t, agentEvents[0].ActorUserID.Valid, "an agent-attributed event has no actor user")
+}
+
+func mustListProgressEvents(t *testing.T, q *dbtest.FakeQuerier, taskID uuid.UUID) []db.TaskProgressEvent {
+	t.Helper()
+	events, err := q.ListTaskProgressEventsByTask(context.Background(), taskID)
+	require.NoError(t, err)
+	return events
 }
 
 func TestService_List_FiltersAndSortsByProgress(t *testing.T) {
@@ -432,7 +524,7 @@ func TestService_List_SortsByDueDateAndRecency(t *testing.T) {
 
 	// Touching a task in the middle of the manual order makes it the most
 	// recently updated one, so this can't pass on position order by accident.
-	touched, err := svc.Update(ctx, owner, dueLate.ID, task.UpdateParams{Title: task.Present("Late, edited")})
+	touched, err := svc.Update(ctx, owner, dueLate.ID, task.UpdateParams{Title: task.Present("Late, edited")}, task.ActorKindUser)
 	require.NoError(t, err)
 
 	byUpdatedAt, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortUpdatedAt})
@@ -801,7 +893,7 @@ func TestBuildGitlabIssuePayload_NeverReferencesAIContextFields(t *testing.T) {
 		Title:       task.Present("Fix bug"),
 		Description: task.Present("does not mention acceptance criteria"),
 		Labels:      task.Present([]string{"bug"}),
-	})
+	}, task.ActorKindUser)
 	require.NoError(t, err)
 
 	_, err = svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
@@ -851,7 +943,7 @@ func TestService_ScopesEveryOperationToProjectOwner(t *testing.T) {
 		p := q.SeedProject(owner, "Alpha")
 		tsk := q.SeedTask(p.ID, owner, "Fix bug")
 
-		_, err := svc.Update(ctx, other, tsk.ID, task.UpdateParams{Title: task.Present("Hijacked")})
+		_, err := svc.Update(ctx, other, tsk.ID, task.UpdateParams{Title: task.Present("Hijacked")}, task.ActorKindUser)
 		require.ErrorIs(t, err, task.ErrNotFound)
 
 		still, err := svc.Get(ctx, owner, tsk.ID)
@@ -986,7 +1078,7 @@ func TestService_Update_EnqueuesIssueUpdateJob_WhenMirroredFieldsChangeAndTaskIs
 		Title:       task.Present("Fix bug harder"),
 		Description: task.Present("more detail"),
 		Labels:      task.Present([]string{"bug", "urgent"}),
-	})
+	}, task.ActorKindUser)
 	require.NoError(t, err)
 
 	jobs := q.SyncJobsForTask(tsk.ID)
@@ -1009,7 +1101,7 @@ func TestService_Update_DoesNotEnqueue_WhenTaskHasNoGitlabLink(t *testing.T) {
 	p := q.SeedProject(owner, "Alpha")
 	tsk := q.SeedTask(p.ID, owner, "Fix bug")
 
-	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{Title: task.Present("Fix bug harder"), Description: task.Present("x")})
+	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{Title: task.Present("Fix bug harder"), Description: task.Present("x")}, task.ActorKindUser)
 	require.NoError(t, err)
 	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
 }
@@ -1028,7 +1120,7 @@ func TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange(t *testin
 	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
 		Title:    task.Present("Fix bug"), // unchanged
 		Position: task.Present(int32(5)),  // app-only, never mirrored to GitLab
-	})
+	}, task.ActorKindUser)
 	require.NoError(t, err)
 	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
 }
@@ -1108,7 +1200,7 @@ func TestService_Update_PartialUpdate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			svc, ctx, owner, before := seed(t)
-			after, err := svc.Update(ctx, owner, before.ID, tt.params)
+			after, err := svc.Update(ctx, owner, before.ID, tt.params, task.ActorKindUser)
 			require.NoError(t, err)
 			tt.want(t, before, after)
 		})
@@ -1156,7 +1248,7 @@ func TestService_Update_PersistsStartDate_WithoutEnqueuingSyncJob(t *testing.T) 
 	updated, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
 		Title:     task.Present("Fix bug"), // unchanged
 		StartDate: task.Present(&start),
-	})
+	}, task.ActorKindUser)
 	require.NoError(t, err)
 	require.NotNil(t, updated.StartDate)
 	assert.True(t, start.Equal(*updated.StartDate))

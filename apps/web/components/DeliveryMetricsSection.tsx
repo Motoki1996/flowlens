@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import type { DeliveryMetrics } from "@/types";
+import type { DeliveryMetrics, FlowMetrics } from "@/types";
 import { fromDateParam, toDateParam } from "@/lib/dates";
 import { DateField } from "@/components/DateField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,12 +15,22 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 
-/** median/p90 are two series of the same measure (lead time), not two
- *  statuses, so they take the first two categorical slots in fixed order —
- *  see app/globals.css's --chart-N assignment comment. */
-const chartConfig = {
-  median: { label: "Median", color: "var(--chart-1)" },
-  p90: { label: "p90", color: "var(--chart-2)" },
+/** The four work stages, stacked in pipeline order — see app/globals.css's
+ *  --chart-N assignment comment. Fixed order, never cycled: slot 1 is the
+ *  stage a task hits first. */
+const stageChartConfig = {
+  waitingToStart: { label: "Waiting to start", color: "var(--chart-1)" },
+  implementation: { label: "Implementation", color: "var(--chart-2)" },
+  reviewAndMerge: { label: "Review & merge", color: "var(--chart-3)" },
+  completion: { label: "Completion", color: "var(--chart-4)" },
+} satisfies ChartConfig;
+
+/** Blocked (on_hold) time is charted separately from the stage stack above
+ *  so it is never double-counted against the stage it interrupted — see
+ *  issue #172. It's a single series, so slot 5's protanopia caveat (see
+ *  globals.css) doesn't apply. */
+const blockedChartConfig = {
+  blocked: { label: "Blocked (on hold)", color: "var(--chart-5)" },
 } satisfies ChartConfig;
 
 /** formatHours renders a duration the way a human reads lead time: minutes
@@ -40,24 +50,39 @@ function formatPercent(ratio: number | null): string {
 
 /**
  * DeliveryMetricsSection is the Project single view's delivery-flow
- * aggregation (issue #113, ADR-0011 §3): review/merge lead time (median and
- * p90 — never a mean, since lead time is reliably skewed by a handful of
- * slow reviews), pipeline success rate and merge throughput, over an
- * optional date range held in the URL, the same
+ * aggregation, over an optional date range held in the URL — the same
  * hand-off-through-the-URL/server-refetch pattern MergeRequestListSection
- * uses for its own filters. Merge-request size distribution
- * (additions/deletions/changed files) is part of the API response but not
- * charted here yet: internal/mrsync doesn't fetch GitLab's diff stats, so
- * every merge request's size is 0 today (see README's "Delivery metrics"
- * section) — charting all-zero data would be misleading, not informative.
+ * uses for its own filters. It combines two independent, read-only
+ * aggregations that share the same [from, to] filter:
+ *
+ * - Delivery metrics (issue #113, ADR-0011 §3): pipeline success rate and
+ *   merge throughput, from `merge_requests`.
+ * - Flow metrics (issue #171, replacing this section's former open→first
+ *   review/first review→merge grouped bar chart per issue #172): per-task
+ *   stage lead time, from `task_progress_events` and `merge_requests`,
+ *   drawn as a stacked horizontal (value-stream) bar so the slowest stage
+ *   is visually obvious. Median and p90 are drawn as separate rows rather
+ *   than folded together, so "always slow" (both rows tall) reads
+ *   differently from "occasionally stuck" (p90 tall, median short). Blocked
+ *   (on_hold) time is charted separately from the stage stack, never
+ *   folded in, so it's never double-counted against the stage it
+ *   interrupted.
+ *
+ * Merge-request size distribution (additions/deletions/changed files) is
+ * part of the delivery-metrics API response but not charted here: every
+ * merge request's size is 0 today, since internal/mrsync doesn't fetch
+ * GitLab's diff stats yet (see README's "Delivery metrics" section) —
+ * charting all-zero data would be misleading, not informative.
  */
 export function DeliveryMetricsSection({
   metrics,
+  flowMetrics,
   from,
   to,
   error = false,
 }: {
   metrics: DeliveryMetrics | null;
+  flowMetrics: FlowMetrics | null;
   from?: string;
   to?: string;
   error?: boolean;
@@ -76,22 +101,37 @@ export function DeliveryMetricsSection({
     router.push(query ? `${pathname}?${query}` : pathname);
   }
 
-  const hasData =
-    !!metrics &&
-    (metrics.openToFirstReview.count > 0 || metrics.firstReviewToMerge.count > 0 || metrics.throughput > 0);
+  const hasStatData = !!metrics && (metrics.throughput > 0 || metrics.pipelineSuccessRate != null);
+  const stageStats = flowMetrics
+    ? [flowMetrics.waitingToStart, flowMetrics.implementation, flowMetrics.reviewAndMerge, flowMetrics.completion]
+    : [];
+  const hasStageData = stageStats.some((s) => s.count > 0);
+  const hasBlockedData = !!flowMetrics && flowMetrics.blocked.count > 0;
+  const hasData = hasStatData || hasStageData || hasBlockedData;
 
-  const chartData = metrics
+  const stageChartData = flowMetrics
     ? [
         {
-          stage: "Open → first review",
-          median: metrics.openToFirstReview.medianHours,
-          p90: metrics.openToFirstReview.p90Hours,
+          row: "Median",
+          waitingToStart: flowMetrics.waitingToStart.medianHours ?? 0,
+          implementation: flowMetrics.implementation.medianHours ?? 0,
+          reviewAndMerge: flowMetrics.reviewAndMerge.medianHours ?? 0,
+          completion: flowMetrics.completion.medianHours ?? 0,
         },
         {
-          stage: "First review → merge",
-          median: metrics.firstReviewToMerge.medianHours,
-          p90: metrics.firstReviewToMerge.p90Hours,
+          row: "p90",
+          waitingToStart: flowMetrics.waitingToStart.p90Hours ?? 0,
+          implementation: flowMetrics.implementation.p90Hours ?? 0,
+          reviewAndMerge: flowMetrics.reviewAndMerge.p90Hours ?? 0,
+          completion: flowMetrics.completion.p90Hours ?? 0,
         },
+      ]
+    : [];
+
+  const blockedChartData = flowMetrics
+    ? [
+        { row: "Median", blocked: flowMetrics.blocked.medianHours ?? 0 },
+        { row: "p90", blocked: flowMetrics.blocked.p90Hours ?? 0 },
       ]
     : [];
 
@@ -125,52 +165,68 @@ export function DeliveryMetricsSection({
       <CardContent className="space-y-6">
         {error ? (
           <p className="text-destructive text-sm">Failed to load delivery metrics.</p>
-        ) : !metrics || !hasData ? (
+        ) : !hasData ? (
           <p className="text-muted-foreground text-sm">
-            No merge requests synced in this range yet. Metrics appear once merge-request sync (see the GitLab
-            connection) has imported some.
+            No merge requests or task progress synced in this range yet. Metrics appear once merge-request sync
+            and task progress events (see the GitLab connection) have some history.
           </p>
         ) : (
           <>
-            <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm sm:grid-cols-4">
+            <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
               <div>
                 <dt className="text-muted-foreground">Throughput</dt>
-                <dd className="text-foreground font-medium">{metrics.throughput} merged</dd>
+                <dd className="text-foreground font-medium">{metrics?.throughput ?? 0} merged</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Pipeline success rate</dt>
-                <dd className="text-foreground font-medium">{formatPercent(metrics.pipelineSuccessRate)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Open → first review (median)</dt>
                 <dd className="text-foreground font-medium">
-                  {formatHours(metrics.openToFirstReview.medianHours)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">First review → merge (median)</dt>
-                <dd className="text-foreground font-medium">
-                  {formatHours(metrics.firstReviewToMerge.medianHours)}
+                  {formatPercent(metrics?.pipelineSuccessRate ?? null)}
                 </dd>
               </div>
             </dl>
 
-            <ChartContainer config={chartConfig} className="aspect-auto h-64 w-full">
-              <BarChart data={chartData} margin={{ left: 8, right: 8 }}>
-                <CartesianGrid vertical={false} />
-                <XAxis dataKey="stage" tickLine={false} axisLine={false} />
-                <YAxis
-                  tickLine={false}
-                  axisLine={false}
-                  width={48}
-                  tickFormatter={(value: number) => formatHours(value)}
-                />
-                <ChartTooltip content={<ChartTooltipContent formatter={(value) => formatHours(value as number)} />} />
-                <ChartLegend content={<ChartLegendContent />} />
-                <Bar dataKey="median" fill="var(--color-median)" radius={4} />
-                <Bar dataKey="p90" fill="var(--color-p90)" radius={4} />
-              </BarChart>
-            </ChartContainer>
+            <div>
+              <h3 className="text-foreground mb-3 text-sm font-medium">Stage lead time</h3>
+              {hasStageData ? (
+                <ChartContainer config={stageChartConfig} className="aspect-auto h-40 w-full">
+                  <BarChart data={stageChartData} layout="vertical" margin={{ left: 8, right: 8 }}>
+                    <CartesianGrid horizontal={false} />
+                    <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={formatHours} />
+                    <YAxis dataKey="row" type="category" tickLine={false} axisLine={false} width={56} />
+                    <ChartTooltip
+                      content={<ChartTooltipContent formatter={(value) => formatHours(value as number)} />}
+                    />
+                    <ChartLegend content={<ChartLegendContent />} />
+                    <Bar dataKey="waitingToStart" stackId="stage" fill="var(--color-waitingToStart)" />
+                    <Bar dataKey="implementation" stackId="stage" fill="var(--color-implementation)" />
+                    <Bar dataKey="reviewAndMerge" stackId="stage" fill="var(--color-reviewAndMerge)" />
+                    <Bar dataKey="completion" stackId="stage" fill="var(--color-completion)" />
+                  </BarChart>
+                </ChartContainer>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  No task progress history yet. Stage lead time appears once tasks move through in_progress/done
+                  (see the progress convention for agents).
+                </p>
+              )}
+            </div>
+
+            {hasBlockedData ? (
+              <div>
+                <h3 className="text-foreground mb-3 text-sm font-medium">Blocked time</h3>
+                <ChartContainer config={blockedChartConfig} className="aspect-auto h-24 w-full">
+                  <BarChart data={blockedChartData} layout="vertical" margin={{ left: 8, right: 8 }}>
+                    <CartesianGrid horizontal={false} />
+                    <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={formatHours} />
+                    <YAxis dataKey="row" type="category" tickLine={false} axisLine={false} width={56} />
+                    <ChartTooltip
+                      content={<ChartTooltipContent formatter={(value) => formatHours(value as number)} />}
+                    />
+                    <Bar dataKey="blocked" fill="var(--color-blocked)" />
+                  </BarChart>
+                </ChartContainer>
+              </div>
+            ) : null}
           </>
         )}
       </CardContent>

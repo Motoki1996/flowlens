@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
-import type { DeliveryMetrics } from "@/types";
+import type { DeliveryMetrics, FlowMetrics } from "@/types";
 import { DeliveryMetricsSection } from "./DeliveryMetricsSection";
 
 function makeMetrics(overrides: Partial<DeliveryMetrics>): DeliveryMetrics {
@@ -17,6 +17,19 @@ function makeMetrics(overrides: Partial<DeliveryMetrics>): DeliveryMetrics {
   };
 }
 
+function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
+  return {
+    from: null,
+    to: null,
+    waitingToStart: { count: 0, medianHours: null, p90Hours: null },
+    implementation: { count: 0, medianHours: null, p90Hours: null },
+    reviewAndMerge: { count: 0, medianHours: null, p90Hours: null },
+    completion: { count: 0, medianHours: null, p90Hours: null },
+    blocked: { count: 0, medianHours: null, p90Hours: null },
+    ...overrides,
+  };
+}
+
 const meta = {
   title: "Components/DeliveryMetricsSection",
   component: DeliveryMetricsSection,
@@ -28,33 +41,45 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** NoData: no merge requests synced yet, or none in the selected range. */
+/** NoData: no merge requests or task progress synced yet, or none in the
+ *  selected range. */
 export const NoData: Story = {
-  args: { metrics: makeMetrics({}) },
+  args: { metrics: makeMetrics({}), flowMetrics: makeFlowMetrics({}) },
 };
 
-/** Few: a single merge request has been through review and merge, so
- *  median and p90 are identical — the smallest non-empty distribution. */
+/** Few: a single task has moved through every stage, so median and p90 are
+ *  identical — the smallest non-empty distribution. */
 export const Few: Story = {
   args: {
     metrics: makeMetrics({
-      openToFirstReview: { count: 1, medianHours: 2, p90Hours: 2 },
-      firstReviewToMerge: { count: 1, medianHours: 1, p90Hours: 1 },
       pipelineSuccessRate: 1,
       throughput: 1,
+    }),
+    flowMetrics: makeFlowMetrics({
+      waitingToStart: { count: 1, medianHours: 4, p90Hours: 4 },
+      implementation: { count: 1, medianHours: 6, p90Hours: 6 },
+      reviewAndMerge: { count: 1, medianHours: 2, p90Hours: 2 },
+      completion: { count: 1, medianHours: 0.5, p90Hours: 0.5 },
     }),
   },
 };
 
-/** Normal: a healthy stream of merge requests, with p90 clearly above the
- *  median — the shape a real team's review time distribution takes. */
+/** Normal: a healthy stream of tasks, with implementation the clear
+ *  bottleneck (tall stack segment) and p90 well above the median on every
+ *  stage — the shape a real team's lead time distribution takes. Blocked
+ *  time is present too, shown in its own separate chart. */
 export const Normal: Story = {
   args: {
     metrics: makeMetrics({
-      openToFirstReview: { count: 42, medianHours: 3.2, p90Hours: 30.5 },
-      firstReviewToMerge: { count: 40, medianHours: 1.1, p90Hours: 10.4 },
       pipelineSuccessRate: 0.92,
       throughput: 37,
+    }),
+    flowMetrics: makeFlowMetrics({
+      waitingToStart: { count: 30, medianHours: 12, p90Hours: 48 },
+      implementation: { count: 28, medianHours: 40, p90Hours: 96 },
+      reviewAndMerge: { count: 28, medianHours: 8, p90Hours: 30 },
+      completion: { count: 27, medianHours: 1, p90Hours: 4 },
+      blocked: { count: 9, medianHours: 6, p90Hours: 24 },
     }),
   },
 };
@@ -62,5 +87,5 @@ export const Normal: Story = {
 /** Error: the metrics request failed; the rest of the Project view still
  *  renders around it. */
 export const Error: Story = {
-  args: { metrics: null, error: true },
+  args: { metrics: null, flowMetrics: null, error: true },
 };

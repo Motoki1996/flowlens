@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import type { DeliveryMetrics } from "@/types";
+import type { DeliveryMetrics, FlowMetrics } from "@/types";
 import { DeliveryMetricsSection } from "./DeliveryMetricsSection";
 
 const push = vi.fn();
@@ -25,55 +25,91 @@ function makeMetrics(overrides: Partial<DeliveryMetrics>): DeliveryMetrics {
   };
 }
 
+function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
+  return {
+    from: null,
+    to: null,
+    waitingToStart: { count: 0, medianHours: null, p90Hours: null },
+    implementation: { count: 0, medianHours: null, p90Hours: null },
+    reviewAndMerge: { count: 0, medianHours: null, p90Hours: null },
+    completion: { count: 0, medianHours: null, p90Hours: null },
+    blocked: { count: 0, medianHours: null, p90Hours: null },
+    ...overrides,
+  };
+}
+
 describe("DeliveryMetricsSection", () => {
   beforeEach(() => {
     push.mockClear();
   });
 
   it("shows an empty state with no data", () => {
-    render(<DeliveryMetricsSection metrics={makeMetrics({})} />);
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={makeFlowMetrics({})} />);
     expect(screen.getByText("Delivery metrics")).toBeInTheDocument();
-    expect(screen.getByText(/No merge requests synced in this range yet/)).toBeInTheDocument();
+    expect(screen.getByText(/No merge requests or task progress synced in this range yet/)).toBeInTheDocument();
   });
 
-  it("shows an empty state when metrics is null", () => {
-    render(<DeliveryMetricsSection metrics={null} />);
-    expect(screen.getByText(/No merge requests synced in this range yet/)).toBeInTheDocument();
+  it("shows an empty state when both metrics are null", () => {
+    render(<DeliveryMetricsSection metrics={null} flowMetrics={null} />);
+    expect(screen.getByText(/No merge requests or task progress synced in this range yet/)).toBeInTheDocument();
   });
 
   it("shows a failed-to-load state", () => {
-    render(<DeliveryMetricsSection metrics={null} error />);
+    render(<DeliveryMetricsSection metrics={null} flowMetrics={null} error />);
     expect(screen.getByText("Failed to load delivery metrics.")).toBeInTheDocument();
   });
 
-  it("shows the stat row for a single merge request's metrics", () => {
-    const metrics = makeMetrics({
-      openToFirstReview: { count: 1, medianHours: 2, p90Hours: 2 },
-      firstReviewToMerge: { count: 1, medianHours: 1, p90Hours: 1 },
-      pipelineSuccessRate: 1,
-      throughput: 1,
-    });
-    render(<DeliveryMetricsSection metrics={metrics} />);
+  it("shows the stat row once delivery metrics have data, even with no stage history yet", () => {
+    const metrics = makeMetrics({ pipelineSuccessRate: 1, throughput: 1 });
+    render(<DeliveryMetricsSection metrics={metrics} flowMetrics={makeFlowMetrics({})} />);
     expect(screen.getByText("1 merged")).toBeInTheDocument();
     expect(screen.getByText("100%")).toBeInTheDocument();
-    expect(screen.getAllByText("2.0h").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("1.0h").length).toBeGreaterThan(0);
+    expect(screen.getByText(/No task progress history yet/)).toBeInTheDocument();
   });
 
-  it("shows normal (many merge requests) metrics with a wide median/p90 spread", () => {
-    const metrics = makeMetrics({
-      openToFirstReview: { count: 5, medianHours: 1, p90Hours: 100 },
-      firstReviewToMerge: { count: 4, medianHours: 3, p90Hours: 30 },
-      pipelineSuccessRate: 0.75,
-      throughput: 12,
+  it("shows the stage lead-time chart for a single task's flow metrics", () => {
+    const flowMetrics = makeFlowMetrics({
+      waitingToStart: { count: 1, medianHours: 4, p90Hours: 4 },
+      implementation: { count: 1, medianHours: 6, p90Hours: 6 },
+      reviewAndMerge: { count: 1, medianHours: 2, p90Hours: 2 },
+      completion: { count: 1, medianHours: 0.5, p90Hours: 0.5 },
     });
-    render(<DeliveryMetricsSection metrics={metrics} />);
-    expect(screen.getByText("12 merged")).toBeInTheDocument();
-    expect(screen.getByText("75%")).toBeInTheDocument();
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={flowMetrics} />);
+    expect(screen.getByText("Stage lead time")).toBeInTheDocument();
+    expect(screen.queryByText(/No task progress history yet/)).not.toBeInTheDocument();
+  });
+
+  it("shows a separate blocked-time chart only when blocked time was recorded", () => {
+    const { rerender } = render(
+      <DeliveryMetricsSection
+        metrics={makeMetrics({})}
+        flowMetrics={makeFlowMetrics({
+          waitingToStart: { count: 1, medianHours: 4, p90Hours: 4 },
+        })}
+      />,
+    );
+    expect(screen.queryByText("Blocked time")).not.toBeInTheDocument();
+
+    rerender(
+      <DeliveryMetricsSection
+        metrics={makeMetrics({})}
+        flowMetrics={makeFlowMetrics({
+          waitingToStart: { count: 1, medianHours: 4, p90Hours: 4 },
+          blocked: { count: 2, medianHours: 6, p90Hours: 24 },
+        })}
+      />,
+    );
+    expect(screen.getByText("Blocked time")).toBeInTheDocument();
   });
 
   it("updates the URL's from query param when a day is picked from the calendar", async () => {
-    render(<DeliveryMetricsSection metrics={makeMetrics({})} from="2026-01-05" />);
+    render(
+      <DeliveryMetricsSection
+        metrics={makeMetrics({})}
+        flowMetrics={makeFlowMetrics({})}
+        from="2026-01-05"
+      />,
+    );
 
     // The calendar opens on the picked date's month, so January 1st is one
     // click away. Day buttons are named by react-day-picker's own aria-label.
@@ -84,7 +120,14 @@ describe("DeliveryMetricsSection", () => {
   });
 
   it("shows the current range on the triggers and clears a date when its own day is re-picked", async () => {
-    render(<DeliveryMetricsSection metrics={makeMetrics({})} from="2026-01-05" to="2026-02-10" />);
+    render(
+      <DeliveryMetricsSection
+        metrics={makeMetrics({})}
+        flowMetrics={makeFlowMetrics({})}
+        from="2026-01-05"
+        to="2026-02-10"
+      />,
+    );
 
     expect(screen.getByRole("button", { name: "From" })).toHaveTextContent("Jan 5, 2026");
     expect(screen.getByRole("button", { name: "To" })).toHaveTextContent("Feb 10, 2026");

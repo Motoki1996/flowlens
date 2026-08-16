@@ -396,3 +396,26 @@ export interface DeliveryMetrics {
   /** Count of merge requests with state "merged" in range. */
   throughput: number;
 }
+
+/** FlowMetrics is a project's per-task stage lead-time aggregation over the
+ *  optional [from, to] range, bounding tasks.created_at (issue #171): how
+ *  long tasks spend waiting to start, in AI-driven implementation, in
+ *  review/merge, and in completion processing, plus cumulative time spent
+ *  blocked (on_hold). Each stage only counts tasks that reached both of its
+ *  endpoints — see apps/api/internal/flowmetrics.Metrics. */
+export interface FlowMetrics {
+  from: string | null;
+  to: string | null;
+  /** tasks.created_at -> the task's first transition to in_progress. */
+  waitingToStart: DurationStats;
+  /** First in_progress transition -> the earliest linked merge request's
+   *  gitlab_created_at. */
+  implementation: DurationStats;
+  /** That merge request's gitlab_created_at -> merged_at. */
+  reviewAndMerge: DurationStats;
+  /** merged_at -> the task's first transition to done. */
+  completion: DurationStats;
+  /** Cumulative time across every closed on_hold interval; kept separate
+   *  from the other stages so it is never double-counted against them. */
+  blocked: DurationStats;
+}

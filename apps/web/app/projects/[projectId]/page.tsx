@@ -7,6 +7,7 @@ import {
   getLinkedGitlabProjects,
   getProject,
   getProjectApiTokens,
+  getProjectFlowMetrics,
   getProjectMembers,
   getProjectMetrics,
   getTasks,
@@ -84,10 +85,17 @@ export default async function ProjectPage({
     // Left null; the section renders its read-only state.
   }
 
+  // Delivery metrics (issue #113) and flow metrics (issue #171) share the
+  // same date-range filter and render in the same card, so a failure on
+  // either side falls back to the same error state.
   let metrics: Awaited<ReturnType<typeof getProjectMetrics>> | null = null;
+  let flowMetrics: Awaited<ReturnType<typeof getProjectFlowMetrics>> | null = null;
   let metricsError = false;
   try {
-    metrics = await getProjectMetrics(projectId, { from: metricsFrom, to: metricsTo });
+    [metrics, flowMetrics] = await Promise.all([
+      getProjectMetrics(projectId, { from: metricsFrom, to: metricsTo }),
+      getProjectFlowMetrics(projectId, { from: metricsFrom, to: metricsTo }),
+    ]);
   } catch {
     metricsError = true;
   }
@@ -106,6 +114,7 @@ export default async function ProjectPage({
       members={members}
       currentUserId={currentUser?.id ?? ""}
       metrics={metrics}
+      flowMetrics={flowMetrics}
       metricsError={metricsError}
       metricsFrom={metricsFrom}
       metricsTo={metricsTo}

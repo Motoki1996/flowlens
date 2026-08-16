@@ -13,6 +13,7 @@ import type {
   ApiToken,
   Backlog,
   DeliveryMetrics,
+  FlowMetrics,
   GitlabConnection,
   GitlabIdentity,
   GitlabLabelOption,
@@ -409,6 +410,33 @@ export async function getProjectMetrics(
     throw new Error(`Failed to load project metrics: ${res.status}`);
   }
   return (await res.json()) as DeliveryMetrics;
+}
+
+/**
+ * getProjectFlowMetrics returns the project's per-task stage lead-time
+ * aggregation (issue #171): waiting-to-start/implementation/review-and-merge/
+ * completion/blocked durations, over the same optional [from, to] range
+ * shape as getProjectMetrics. Callers must already know the request is
+ * authenticated.
+ */
+export async function getProjectFlowMetrics(
+  projectId: string,
+  filter: ProjectMetricsFilter = {},
+): Promise<FlowMetrics> {
+  const cookieStore = await cookies();
+  const params = new URLSearchParams();
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  const query = params.toString();
+
+  const res = await fetch(
+    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/flow-metrics${query ? `?${query}` : ""}`,
+    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load project flow metrics: ${res.status}`);
+  }
+  return (await res.json()) as FlowMetrics;
 }
 
 /**

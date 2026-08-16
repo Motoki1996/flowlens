@@ -1347,11 +1347,13 @@ synced; nothing is cached or materialized yet.
     human reading the Project view, not an AI-facing read.
   - Median/p90 use the nearest-rank method (no interpolation) — see
     `apps/api/internal/deliverymetrics`.
-- Web: a "Delivery metrics" card on the Project single view
-  (`/projects/[projectId]`), with `?from=`/`?to=` date filters held in the
-  URL and a grouped bar chart (median vs. p90) for the two lead-time stages,
-  alongside a stat row for throughput and pipeline success rate. Size
-  distribution isn't charted yet — see above.
+- Web: a stat row (throughput, pipeline success rate) on the "Delivery
+  metrics" card on the Project single view (`/projects/[projectId]`), with
+  `?from=`/`?to=` date filters held in the URL. The open→first-review/
+  first-review→merge lead time is no longer charted on its own here — see
+  [Flow metrics](#flow-metrics-issue-171)'s `reviewAndMerge` stage, which the
+  same card now charts instead (issue #172). Size distribution isn't charted
+  yet — see above.
 - The aggregation started as a plain query over `merge_requests`, computing
   median/p90 in the application layer (cheap to unit test with fakes, per
   [`docs/testing.md`](docs/testing.md)); a materialized view is future work
@@ -1402,7 +1404,16 @@ done.
 - Median/p90 use the same nearest-rank method as delivery metrics —
   currently duplicated in `apps/api/internal/flowmetrics` rather than
   shared, since the two aggregations are still small and independent.
-- No web screen yet; the API is the full scope of issue #171.
+- Web (issue #172): the same "Delivery metrics" card on the Project single
+  view now also charts these four stages (`waitingToStart`,
+  `implementation`, `reviewAndMerge`, `completion`) as a stacked horizontal
+  bar — a value-stream map, so the tallest segment reads as the bottleneck
+  at a glance. Median and p90 are drawn as separate rows rather than
+  averaged together, so "always slow" (both rows tall) is visually distinct
+  from "occasionally stuck" (only the p90 row is tall). `blocked` is charted
+  separately from that stack, never folded into it, so blocked time is never
+  double-counted against the stage it interrupted. It shares the card's
+  `?from=`/`?to=` filters with delivery metrics.
 
 ## Current limitations
 

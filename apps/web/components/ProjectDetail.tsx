@@ -10,6 +10,7 @@ import type {
   ApiError,
   ApiToken,
   DeliveryMetrics,
+  FlowMetrics,
   GitlabConnection,
   Project,
   ProjectMember,
@@ -224,6 +225,7 @@ export function ProjectDetail({
   members = null,
   currentUserId,
   metrics = null,
+  flowMetrics = null,
   metricsError = false,
   metricsFrom,
   metricsTo,
@@ -244,6 +246,9 @@ export function ProjectDetail({
   currentUserId: string;
   /** Delivery-flow metrics (issue #113); null when they failed to load. */
   metrics?: DeliveryMetrics | null;
+  /** Per-task stage lead-time metrics (issue #171); null when they failed
+   *  to load. */
+  flowMetrics?: FlowMetrics | null;
   metricsError?: boolean;
   metricsFrom?: string;
   metricsTo?: string;
@@ -326,7 +331,13 @@ export function ProjectDetail({
       </div>
 
       <div className="mt-8">
-        <DeliveryMetricsSection metrics={metrics} from={metricsFrom} to={metricsTo} error={metricsError} />
+        <DeliveryMetricsSection
+          metrics={metrics}
+          flowMetrics={flowMetrics}
+          from={metricsFrom}
+          to={metricsTo}
+          error={metricsError}
+        />
       </div>
 
       <div className="mt-8">

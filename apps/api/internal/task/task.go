@@ -1461,6 +1461,15 @@ type GitlabContext struct {
 	ProjectPath  string     `json:"projectPath"`
 }
 
+// ProgressGuidance is fixed instruction text embedded in every AI-facing
+// Context response (issue #170). The context API is the only thing a VS
+// Code agent working through a project API token reliably reads on every
+// task — human-only documentation like this README never reaches it — so
+// the progress transition convention has to travel inside the response
+// itself for lead-time measurement (issue #169's task_progress_events) to
+// have any events to measure at all.
+const ProgressGuidance = `Update this task's progress as you work, via PATCH /api/v1/tasks/{taskID} with {"progress": "..."}: set "in_progress" when you start work, "on_hold" when you are blocked or waiting on something outside this task (this is what separates wait time from work time in FlowLens's metrics — use it whenever you are stalled), and "done" when the work is finished. Never set "status" yourself — that mirrors the GitLab issue's open/closed state and is kept in sync automatically.`
+
 // Context is the stable, documented response shape for the AI-facing
 // endpoints (GET /api/v1/tasks/{taskID}/context and GET
 // /api/v1/projects/{projectID}/tasks/context — docs/plans/issue-sync.md,
@@ -1477,6 +1486,8 @@ type Context struct {
 	Title                  string         `json:"title"`
 	Description            string         `json:"description"`
 	Status                 string         `json:"status"`
+	Progress               string         `json:"progress"`
+	ProgressGuidance       string         `json:"progressGuidance"`
 	AssigneeGitlabUserID   *int64         `json:"assigneeGitlabUserId"`
 	AssigneeGitlabUsername string         `json:"assigneeGitlabUsername"`
 	Labels                 []string       `json:"labels"`
@@ -1499,6 +1510,8 @@ func toContext(t Task, gc *GitlabContext, ai AIContext) Context {
 		Title:                  t.Title,
 		Description:            t.Description,
 		Status:                 t.Status,
+		Progress:               t.Progress,
+		ProgressGuidance:       ProgressGuidance,
 		AssigneeGitlabUserID:   t.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: t.AssigneeGitlabUsername,
 		Labels:                 t.Labels,

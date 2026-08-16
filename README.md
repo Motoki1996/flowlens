@@ -522,6 +522,8 @@ curl "$API_BASE_URL/api/v1/tasks/$TASK_ID/context" \
   "title": "Fix login redirect",
   "description": "…",
   "status": "open",             // "open" | "closed"
+  "progress": "in_progress",    // "not_started" | "in_progress" | "on_hold" | "done"
+  "progressGuidance": "Update this task's progress as you work, via PATCH …",
   "assigneeGitlabUserId": 42,   // null when unassigned
   "assigneeGitlabUsername": "octocat",
   "labels": ["bug"],
@@ -553,6 +555,32 @@ To list several tasks at once (e.g. an agent polling its queue), use
 which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
+
+#### Progress convention for agents (issue #170)
+
+FlowLens can only measure how long work actually takes if an agent keeps
+`progress` current while it works — `PATCH /api/v1/tasks/{taskID}` with
+`{"progress": "..."}`, the same `write`-scoped route as any other task edit:
+
+- `in_progress` — set it the moment the agent starts working the task.
+- `on_hold` — set it whenever the agent is blocked or waiting on something
+  outside the task (a human review, a flaky CI run, a dependency). This is
+  the value the eventual bottleneck detection leans on hardest: leave it
+  unused and wait time silently gets counted as work time.
+- `done` — set it once the work is finished.
+
+Never PATCH `status`; that field mirrors the GitLab issue's open/closed
+state and is kept in sync automatically in both directions, independently
+of `progress` (see "Task & backlog progress" below).
+
+Every `PATCH` that changes `progress` is recorded as a
+`task_progress_events` row (issue #169), attributed to `"agent"` when the
+caller is a bearer token — that log is what a future delivery-metrics view
+will read lead time and wait time off of, so an agent that never calls
+`PATCH` leaves nothing to measure. This convention is not only written down
+here: the `progressGuidance` field above carries the same instructions in
+every `GET .../context` response, since that response is the one thing an
+agent working through a token reliably reads, unlike this README.
 
 #### Activity log (comments)
 

@@ -450,6 +450,13 @@ type Querier interface {
 	ListTaskCommentsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskComment, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
 	ListTaskProgressEventsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskProgressEvent, error)
+	// ListTaskProgressEventsForFlowMetrics returns every task_progress_events
+	// row for tasks in the same project/date range ListTasksForFlowMetrics
+	// selects, so internal/flowmetrics can replay each task's progress
+	// timeline (first in_progress, first done, on_hold intervals) without an
+	// N+1 query per task. Ordered by task then occurred_at so the caller can
+	// walk each task's timeline in order without re-sorting.
+	ListTaskProgressEventsForFlowMetrics(ctx context.Context, arg ListTaskProgressEventsForFlowMetricsParams) ([]ListTaskProgressEventsForFlowMetricsRow, error)
 	// ListTasksByProject's priority and progress filters and sorts follow the same
 	// "empty/false disables it" convention as the other three filters. Sorting by
 	// priority ranks urgent > high > medium > low; sorting by progress runs the
@@ -481,6 +488,20 @@ type Querier interface {
 	// use for it yet, unlike the board view ListTasksByProject serves.
 	ListTasksByProjectPaged(ctx context.Context, arg ListTasksByProjectPagedParams) ([]Task, error)
 	ListTasksDueSoonByProject(ctx context.Context, arg ListTasksDueSoonByProjectParams) ([]Task, error)
+	// Flow-metrics aggregation (issue #171): per-task stage lead times, sourced
+	// from task_progress_events (issue #169) plus each task's earliest linked
+	// merge request (merge_requests.task_id, set by internal/mrsync, issue
+	// #111). Unlike deliverymetrics, which aggregates merge_requests alone,
+	// this walks the whole progress pipeline a task moves through — see
+	// internal/flowmetrics for how the two queries below are combined.
+	// ListTasksForFlowMetrics returns each in-range task alongside its earliest
+	// linked merge request's gitlab_created_at/merged_at (NULL when the task
+	// has no linked merge request, or none yet has a GitLab-side created_at). A
+	// merge request has at most one task (migration 000019's comment), but a
+	// task can have more than one merge request; the earliest by
+	// gitlab_created_at is the one flow-metrics' implementation/review stages
+	// measure against, since it's the one that closes the "in_progress" wait.
+	ListTasksForFlowMetrics(ctx context.Context, arg ListTasksForFlowMetricsParams) ([]ListTasksForFlowMetricsRow, error)
 	// ListTasksForOwner backs the cross-project task collection (GET
 	// /api/v1/tasks, issue #76): every task across every project ownerID owns,
 	// narrowed by the same status/priority/progress filters as ListTasksByProject plus

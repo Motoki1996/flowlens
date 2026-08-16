@@ -13,6 +13,7 @@ import (
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/deliverymetrics"
+	"github.com/flowlens/api/internal/flowmetrics"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/gitlabidentity"
@@ -52,6 +53,7 @@ type Server struct {
 	taskComments     *taskcomment.Service
 	mergeRequests    *mergerequest.Service
 	deliveryMetrics  *deliverymetrics.Service
+	flowMetrics      *flowmetrics.Service
 	gitlabConns      *gitlabconn.Service
 	gitlabIdentities *gitlabidentity.Service
 	linkedProjects   *linkedproject.Service
@@ -95,6 +97,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		taskComments:     taskcomment.NewService(queries, txRunner, projects, tasks),
 		mergeRequests:    mergerequest.NewService(queries, projects),
 		deliveryMetrics:  deliverymetrics.NewService(queries, projects),
+		flowMetrics:      flowmetrics.NewService(queries, projects),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(queries),
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
@@ -219,6 +222,13 @@ func (s *Server) Router() chi.Router {
 				// Project single view, not an AI-facing read — session-only
 				// like the rest of this group.
 				projects.Get("/{projectID}/metrics", s.handleGetProjectMetrics)
+
+				// Stage-level flow metrics (issue #171): waiting-to-start/
+				// implementation/review-and-merge/completion/blocked lead
+				// times, built on the task_progress_events log #169
+				// introduced. Same session-only, chart-for-a-human scoping
+				// as /metrics above.
+				projects.Get("/{projectID}/flow-metrics", s.handleGetProjectFlowMetrics)
 			})
 
 			protected.Route("/api-tokens", func(tokens chi.Router) {

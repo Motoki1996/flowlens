@@ -771,6 +771,16 @@ func (f *FakeQuerier) SeedTaskInBacklog(projectID, backlogID, createdByUserID uu
 	return f.seedTask(projectID, createdByUserID, title, pgtype.UUID{Bytes: backlogID, Valid: true})
 }
 
+// SeedTaskWithCreatedAt is SeedTask with an explicit created_at, for tests
+// (e.g. internal/flowmetrics) that need to control a task's age precisely
+// instead of getting seedTask's now().
+func (f *FakeQuerier) SeedTaskWithCreatedAt(projectID, createdByUserID uuid.UUID, title string, createdAt time.Time) db.Task {
+	t := f.seedTask(projectID, createdByUserID, title, pgtype.UUID{})
+	t.CreatedAt = pgtype.Timestamptz{Time: createdAt, Valid: true}
+	f.storeTask(t)
+	return t
+}
+
 func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title string, backlogID pgtype.UUID) db.Task {
 	t := db.Task{
 		ID:              uuid.New(),
@@ -966,6 +976,109 @@ func (f *FakeQuerier) ListTasksByProjectPaged(_ context.Context, arg db.ListTask
 	if limit < len(items) {
 		items = items[:limit]
 	}
+	return items, nil
+}
+
+// earliestMergeRequestForTask mirrors ListTasksForFlowMetrics' LATERAL join:
+// among merge_requests linked to taskID, the one with the earliest
+// gitlab_created_at (NULLS LAST), tie-broken by created_at ASC. ok is false
+// when taskID has no linked merge request at all.
+func (f *FakeQuerier) earliestMergeRequestForTask(taskID uuid.UUID) (db.MergeRequest, bool) {
+	var (
+		best   db.MergeRequest
+		found  bool
+		better = func(candidate db.MergeRequest) bool {
+			if !found {
+				return true
+			}
+			if candidate.GitlabCreatedAt.Valid != best.GitlabCreatedAt.Valid {
+				return candidate.GitlabCreatedAt.Valid
+			}
+			if candidate.GitlabCreatedAt.Valid && !candidate.GitlabCreatedAt.Time.Equal(best.GitlabCreatedAt.Time) {
+				return candidate.GitlabCreatedAt.Time.Before(best.GitlabCreatedAt.Time)
+			}
+			return candidate.CreatedAt.Time.Before(best.CreatedAt.Time)
+		}
+	)
+	for _, m := range f.mergeRequestsByID {
+		if !m.TaskID.Valid || m.TaskID.Bytes != taskID {
+			continue
+		}
+		if better(m) {
+			best = m
+			found = true
+		}
+	}
+	return best, found
+}
+
+// ListTasksForFlowMetrics mirrors the SQL: projectID's tasks gated by
+// ownerUserID's project membership and bounded by since/until on
+// created_at, each joined to its earliestMergeRequestForTask.
+func (f *FakeQuerier) ListTasksForFlowMetrics(_ context.Context, arg db.ListTasksForFlowMetricsParams) ([]db.ListTasksForFlowMetricsRow, error) {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return []db.ListTasksForFlowMetricsRow{}, nil
+	}
+	items := []db.ListTasksForFlowMetricsRow{}
+	for _, t := range f.tasks {
+		if t.ProjectID != arg.ProjectID {
+			continue
+		}
+		if arg.Since.Valid && t.CreatedAt.Time.Before(arg.Since.Time) {
+			continue
+		}
+		if arg.Until.Valid && t.CreatedAt.Time.After(arg.Until.Time) {
+			continue
+		}
+		row := db.ListTasksForFlowMetricsRow{ID: t.ID, CreatedAt: t.CreatedAt}
+		if mr, ok := f.earliestMergeRequestForTask(t.ID); ok {
+			row.MrGitlabCreatedAt = mr.GitlabCreatedAt
+			row.MrMergedAt = mr.MergedAt
+		}
+		items = append(items, row)
+	}
+	return items, nil
+}
+
+// ListTaskProgressEventsForFlowMetrics mirrors the SQL: every
+// task_progress_events row for tasks ListTasksForFlowMetrics would select
+// (same project-membership scoping and since/until bounding), ordered by
+// task then occurred_at.
+func (f *FakeQuerier) ListTaskProgressEventsForFlowMetrics(_ context.Context, arg db.ListTaskProgressEventsForFlowMetricsParams) ([]db.ListTaskProgressEventsForFlowMetricsRow, error) {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return []db.ListTaskProgressEventsForFlowMetricsRow{}, nil
+	}
+	inRange := map[uuid.UUID]bool{}
+	for _, t := range f.tasks {
+		if t.ProjectID != arg.ProjectID {
+			continue
+		}
+		if arg.Since.Valid && t.CreatedAt.Time.Before(arg.Since.Time) {
+			continue
+		}
+		if arg.Until.Valid && t.CreatedAt.Time.After(arg.Until.Time) {
+			continue
+		}
+		inRange[t.ID] = true
+	}
+	items := []db.ListTaskProgressEventsForFlowMetricsRow{}
+	for _, e := range f.taskProgressEvents {
+		if !inRange[e.TaskID] {
+			continue
+		}
+		items = append(items, db.ListTaskProgressEventsForFlowMetricsRow{
+			TaskID:       e.TaskID,
+			FromProgress: e.FromProgress,
+			ToProgress:   e.ToProgress,
+			OccurredAt:   e.OccurredAt,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].TaskID != items[j].TaskID {
+			return items[i].TaskID.String() < items[j].TaskID.String()
+		}
+		return items[i].OccurredAt.Time.Before(items[j].OccurredAt.Time)
+	})
 	return items, nil
 }
 
@@ -1460,6 +1573,23 @@ func (f *FakeQuerier) ListTaskProgressEventsByTask(_ context.Context, taskID uui
 		}
 	}
 	return items, nil
+}
+
+// SeedTaskProgressEvent inserts a ready-made progress-transition event
+// directly, bypassing internal/task.Service.Update, so a test (e.g.
+// internal/flowmetrics) can control occurred_at precisely instead of
+// getting CreateTaskProgressEvent's now().
+func (f *FakeQuerier) SeedTaskProgressEvent(taskID uuid.UUID, fromProgress, toProgress string, occurredAt time.Time) db.TaskProgressEvent {
+	e := db.TaskProgressEvent{
+		ID:           uuid.New(),
+		TaskID:       taskID,
+		FromProgress: fromProgress,
+		ToProgress:   toProgress,
+		ActorKind:    "agent",
+		OccurredAt:   pgtype.Timestamptz{Time: occurredAt, Valid: true},
+	}
+	f.taskProgressEvents = append(f.taskProgressEvents, e)
+	return e
 }
 
 // CreateGitlabTaskComment mirrors the SQL: always author_kind 'gitlab' with

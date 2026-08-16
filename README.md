@@ -575,9 +575,10 @@ of `progress` (see "Task & backlog progress" below).
 
 Every `PATCH` that changes `progress` is recorded as a
 `task_progress_events` row (issue #169), attributed to `"agent"` when the
-caller is a bearer token — that log is what a future delivery-metrics view
-will read lead time and wait time off of, so an agent that never calls
-`PATCH` leaves nothing to measure. This convention is not only written down
+caller is a bearer token — that log is what
+[Flow metrics](#flow-metrics-issue-171) reads lead time and wait time off
+of, so an agent that never calls `PATCH` leaves nothing to measure. This
+convention is not only written down
 here: the `progressGuidance` field above carries the same instructions in
 every `GET .../context` response, since that response is the one thing an
 agent working through a token reliably reads, unlike this README.
@@ -1356,6 +1357,53 @@ synced; nothing is cached or materialized yet.
   [`docs/testing.md`](docs/testing.md)); a materialized view is future work
   if `EXPLAIN` on real data ever calls for one, not before.
 
+### Flow metrics (issue #171)
+
+Once the `task_progress_events` log the
+[progress convention for agents](#progress-convention-for-agents-issue-170)
+populates has real history in it, it can be aggregated into per-stage lead
+time — the work `internal/flowmetrics` does, in the same read-only,
+compute-on-request shape as [Delivery metrics](#delivery-metrics-issue-113).
+Where delivery metrics look only at `merge_requests`, flow metrics walk a
+task's whole pipeline: from creation, through an agent picking it up,
+through the merge request that closes it out, to the task being marked
+done.
+
+- `GET /api/v1/projects/{projectID}/flow-metrics?from=&to=` (`YYYY-MM-DD`,
+  both optional, bounding `tasks.created_at`) returns five stages, each as a
+  **median and p90** in hours (never a mean, same rationale as delivery
+  metrics) over only the tasks that reached *both* ends of that stage — a
+  task that hasn't reached a stage's end yet is excluded from it rather than
+  counted as a zero duration:
+  - **`waitingToStart`**: `tasks.created_at` → the task's first transition
+    to `in_progress`.
+  - **`implementation`**: that first `in_progress` transition → the
+    earliest linked merge request's `gitlab_created_at`. A task with more
+    than one linked merge request (a follow-up MR, say) is measured against
+    the earliest one, since that's the one that actually closed the wait.
+  - **`reviewAndMerge`**: that merge request's `gitlab_created_at` →
+    `merged_at` — one span, unlike delivery metrics' open→first-review/
+    first-review→merge split; `first_reviewed_at` isn't used here.
+  - **`completion`**: `merged_at` → the task's first transition to `done`.
+  - **`blocked`**: cumulative time across every *closed* `on_hold`
+    interval a task passed through (entering and later leaving, however
+    many round trips); a task still `on_hold` with no exit yet has that
+    stretch excluded, and a task never `on_hold` at all is excluded
+    entirely rather than counted as zero.
+  - A task with no linked merge request (no code change involved — a
+    research spike, a docs task) is excluded from `implementation` and
+    `reviewAndMerge` by the same "both ends known" rule. **This is
+    intentional, not a bug**: those two stages measure code-review lead
+    time, which doesn't exist for a task that never produced a merge
+    request.
+  - Session-only, not on the bearer-token allowlist — like delivery
+    metrics, this is a chart for a human reading the Project view, not an
+    AI-facing read.
+- Median/p90 use the same nearest-rank method as delivery metrics —
+  currently duplicated in `apps/api/internal/flowmetrics` rather than
+  shared, since the two aggregations are still small and independent.
+- No web screen yet; the API is the full scope of issue #171.
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault
@@ -1390,7 +1438,14 @@ synced; nothing is cached or materialized yet.
    median/p90, pipeline success rate, throughput) across a project's merge
    requests, with empty/loading/error states — see
    [Delivery metrics](#delivery-metrics-issue-113).
-7. **Automation:** webhooks (with duplicate-delivery handling) and scheduled
+7. **Progress transitions + flow metrics (done):** an append-only
+   `task_progress_events` log of `progress` changes, the agent-facing
+   convention for keeping it populated, and a stage-level lead-time
+   aggregation (waiting-to-start/implementation/review-and-merge/
+   completion/blocked) computed from it — see
+   [Progress convention for agents](#progress-convention-for-agents-issue-170)
+   and [Flow metrics](#flow-metrics-issue-171).
+8. **Automation:** webhooks (with duplicate-delivery handling) and scheduled
    sync via Azure Service Bus.
-8. **Azure deployment:** Container Apps, Azure Database for PostgreSQL, Key
+9. **Azure deployment:** Container Apps, Azure Database for PostgreSQL, Key
    Vault, Application Insights.

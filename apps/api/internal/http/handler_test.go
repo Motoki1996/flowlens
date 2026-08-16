@@ -15,6 +15,7 @@ import (
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/deliverymetrics"
+	"github.com/flowlens/api/internal/flowmetrics"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
 	"github.com/flowlens/api/internal/gitlabidentity"
@@ -86,6 +87,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		taskComments:     taskcomment.NewService(q, txRunner, projects, tasks),
 		mergeRequests:    mergerequest.NewService(q, projects),
 		deliveryMetrics:  deliverymetrics.NewService(q, projects),
+		flowMetrics:      flowmetrics.NewService(q, projects),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(q),
 		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),

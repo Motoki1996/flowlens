@@ -168,6 +168,27 @@ func TestHandleGetTaskContext_IncludesAIContextAndGitlabProjectPath(t *testing.T
 	assert.Equal(t, link.PathWithNamespace, gitlabBody["projectPath"])
 }
 
+func TestHandleGetTaskContext_IncludesProgressAndGuidance(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	tsk := q.SeedTask(p.ID, ownerID, "Fix bug")
+
+	_, err := s.tasks.Update(context.Background(), ownerID, tsk.ID, task.UpdateParams{
+		Progress: task.Present(task.ProgressInProgress),
+	}, task.ActorKindUser)
+	require.NoError(t, err)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String()+"/context", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, task.ProgressInProgress, body["progress"])
+	assert.Equal(t, task.ProgressGuidance, body["progressGuidance"])
+	assert.NotEmpty(t, body["progressGuidance"])
+}
+
 func TestHandleListTaskContexts_SessionAuth(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

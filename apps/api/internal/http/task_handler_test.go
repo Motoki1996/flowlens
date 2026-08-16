@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flowlens/api/internal/apitoken"
 	"github.com/flowlens/api/internal/issuesync"
+	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -636,6 +638,47 @@ func TestHandleUpdateTask(t *testing.T) {
 			map[string]any{"priority": "critical"}, ownerToken)
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
+}
+
+// A progress-changing PATCH over a session cookie is attributed to the
+// task_progress_events log as actor_kind "user" (issue #169).
+func TestHandleUpdateTask_SessionAuth_ProgressChangeRecordsUserActor(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	tsk := q.SeedTask(p.ID, ownerID, "Fix bug")
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+tsk.ID.String(),
+		map[string]any{"progress": "in_progress"}, token)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	events, err := q.ListTaskProgressEventsByTask(context.Background(), tsk.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, task.ActorKindUser, events[0].ActorKind)
+	require.True(t, events[0].ActorUserID.Valid)
+	assert.Equal(t, ownerID, uuid.UUID(events[0].ActorUserID.Bytes))
+}
+
+// The same PATCH over a bearer token is attributed as actor_kind "agent",
+// so the two transition sources can be told apart later (issue #169).
+func TestHandleUpdateTask_BearerAuth_ProgressChangeRecordsAgentActor(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	tsk := q.SeedTask(p.ID, owner.ID, "Fix bug")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeWrite}, nil)
+	require.NoError(t, err)
+
+	rec := doBearerRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+tsk.ID.String(),
+		map[string]any{"progress": "in_progress"}, raw)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	events, err := q.ListTaskProgressEventsByTask(context.Background(), tsk.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, task.ActorKindAgent, events[0].ActorKind)
+	assert.False(t, events[0].ActorUserID.Valid, "an agent-attributed event has no actor user")
 }
 
 // PATCH is a partial update at the wire level too: a key absent from the

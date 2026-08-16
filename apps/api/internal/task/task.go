@@ -81,6 +81,15 @@ const (
 	SortProgress = "progress"
 )
 
+// Actor kind values Update accepts to attribute a task_progress_events row
+// (issue #169), the same vocabulary task_comments.author_kind (and
+// taskcomment.AuthorKindUser/AuthorKindAgent) already uses, minus 'gitlab':
+// progress is app-only and never moves via the GitLab sync path.
+const (
+	ActorKindUser  = "user"
+	ActorKindAgent = "agent"
+)
+
 // Sort values accepted by ListForOwner's CrossProjectFilter.Sort, alongside
 // SortPriority above (the cross-project list has no manual/DnD order to fall
 // back to, so unlike ListFilter.Sort, "" is not itself a valid value —
@@ -1029,7 +1038,14 @@ func (s *Service) RetrySync(ctx context.Context, ownerID, taskID uuid.UUID) (Tas
 // in the same transaction, deduped per task so rapid repeated edits
 // collapse into one pending push (docs/plans/issue-sync.md, "Outbound"). A
 // backlog/position-only edit, or a task with no link, enqueues nothing.
-func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params UpdateParams) (Task, error) {
+//
+// actorKind (ActorKindUser for a session caller, ActorKindAgent for a
+// bearer-token caller) attributes a task_progress_events row (issue #169),
+// written in the same transaction only when progress actually changes —
+// this is the sole place that table is ever written. actorUserID is
+// recorded only for ActorKindUser; an agent's change has no user to
+// attribute beyond that.
+func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params UpdateParams, actorKind string) (Task, error) {
 	current, err := s.Get(ctx, ownerID, taskID)
 	if err != nil {
 		return Task{}, err
@@ -1060,6 +1076,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 	}
 
 	mirroredChanged := mirroredFieldsChanged(current, resolved)
+	progressChanged := current.Progress != resolved.Progress
 
 	var result Task
 	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
@@ -1085,6 +1102,22 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			return fmt.Errorf("task: update: %w", err)
 		}
 		result = fromRow(row)
+
+		if progressChanged {
+			actorUserID := &ownerID
+			if actorKind == ActorKindAgent {
+				actorUserID = nil
+			}
+			if _, err := q.CreateTaskProgressEvent(ctx, db.CreateTaskProgressEventParams{
+				TaskID:       taskID,
+				FromProgress: current.Progress,
+				ToProgress:   resolved.Progress,
+				ActorKind:    actorKind,
+				ActorUserID:  toUUID(actorUserID),
+			}); err != nil {
+				return fmt.Errorf("task: update: record progress event: %w", err)
+			}
+		}
 
 		if !mirroredChanged {
 			return nil

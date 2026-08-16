@@ -44,6 +44,8 @@ type FakeQuerier struct {
 	taskComments     []db.TaskComment // insertion order, newest last
 	taskCommentsByID map[uuid.UUID]db.TaskComment
 
+	taskProgressEvents []db.TaskProgressEvent // insertion order, oldest first
+
 	gitlabConnectionsByProjectID map[uuid.UUID]db.GitlabConnection
 	gitlabConnectionsByID        map[uuid.UUID]db.GitlabConnection
 
@@ -1429,6 +1431,35 @@ func (f *FakeQuerier) GetTaskCommentByID(_ context.Context, id uuid.UUID) (db.Ta
 		return db.TaskComment{}, pgx.ErrNoRows
 	}
 	return c, nil
+}
+
+// CreateTaskProgressEvent mirrors the SQL: an append-only row, never
+// updated or looked up by ID (internal/task.Service.Update is the only
+// writer).
+func (f *FakeQuerier) CreateTaskProgressEvent(_ context.Context, arg db.CreateTaskProgressEventParams) (db.TaskProgressEvent, error) {
+	e := db.TaskProgressEvent{
+		ID:           uuid.New(),
+		TaskID:       arg.TaskID,
+		FromProgress: arg.FromProgress,
+		ToProgress:   arg.ToProgress,
+		ActorKind:    arg.ActorKind,
+		ActorUserID:  arg.ActorUserID,
+		OccurredAt:   now(),
+	}
+	f.taskProgressEvents = append(f.taskProgressEvents, e)
+	return e, nil
+}
+
+// ListTaskProgressEventsByTask mirrors the SQL: every event on taskID,
+// oldest first (insertion order).
+func (f *FakeQuerier) ListTaskProgressEventsByTask(_ context.Context, taskID uuid.UUID) ([]db.TaskProgressEvent, error) {
+	items := []db.TaskProgressEvent{}
+	for _, e := range f.taskProgressEvents {
+		if e.TaskID == taskID {
+			items = append(items, e)
+		}
+	}
+	return items, nil
 }
 
 // CreateGitlabTaskComment mirrors the SQL: always author_kind 'gitlab' with

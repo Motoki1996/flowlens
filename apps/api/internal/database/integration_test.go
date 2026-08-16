@@ -522,6 +522,56 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 	assert.Equal(t, 0, linkCount, "the gitlab sync link row must be gone")
 }
 
+// task_progress_events.task_id is declared ON DELETE CASCADE (issue #169):
+// deleting a task must take its progress history with it, since a row with
+// no task to belong to would be meaningless. The fake querier has no
+// foreign keys to exercise, so this is real-Postgres-only.
+func TestDeletingTaskCascadesItsProgressEvents(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	tsk, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID:       p.ID,
+		Title:           "Fix bug",
+		Labels:          []string{},
+		Priority:        "medium",
+		Progress:        "in_progress",
+		CreatedByUserID: owner.ID,
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateTaskProgressEvent(ctx, db.CreateTaskProgressEventParams{
+		TaskID:       tsk.ID,
+		FromProgress: "not_started",
+		ToProgress:   "in_progress",
+		ActorKind:    "user",
+		ActorUserID:  pgtype.UUID{Bytes: owner.ID, Valid: true},
+	})
+	require.NoError(t, err)
+
+	events, err := q.ListTaskProgressEventsByTask(ctx, tsk.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 1, "the event must exist before the task is deleted")
+
+	affected, err := q.DeleteTaskForOwner(ctx, db.DeleteTaskForOwnerParams{ID: tsk.ID, OwnerUserID: owner.ID})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM task_progress_events WHERE task_id = $1`, tsk.ID).Scan(&count))
+	assert.Equal(t, 0, count, "task_progress_events rows must be cascade-deleted with their task")
+}
+
 // ListTasksForMember (GET /api/v1/tasks, issue #76, membership-based since
 // issue #99) is hand-written rather than sqlc-generated in this branch,
 // since sqlc wasn't runnable in the environment that authored it — this

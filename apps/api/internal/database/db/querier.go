@@ -159,6 +159,7 @@ type Querier interface {
 	// internal/task enqueued it in the same transaction as the task write. See
 	// docs/plans/issue-sync.md, "Outbound".
 	CreateTaskGitlabLink(ctx context.Context, arg CreateTaskGitlabLinkParams) (TaskGitlabLink, error)
+	CreateTaskProgressEvent(ctx context.Context, arg CreateTaskProgressEventParams) (TaskProgressEvent, error)
 	CreateUser(ctx context.Context, arg CreateUserParams) (User, error)
 	// webhook_events has no owner column and is never queried through a
 	// project/owner join: the linkID in the URL path (POST
@@ -448,6 +449,7 @@ type Querier interface {
 	ListProjectsByMember(ctx context.Context, userID uuid.UUID) ([]Project, error)
 	ListTaskCommentsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskComment, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
+	ListTaskProgressEventsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskProgressEvent, error)
 	// ListTasksByProject's priority and progress filters and sorts follow the same
 	// "empty/false disables it" convention as the other three filters. Sorting by
 	// priority ranks urgent > high > medium > low; sorting by progress runs the

@@ -43,6 +43,11 @@ var (
 	// ErrUnreachable means the GitLab instance could not be reached at all
 	// (DNS/connection failure, timeout, or an unexpected non-auth status).
 	ErrUnreachable = errors.New("gitlabconn: gitlab instance unreachable")
+	// ErrTLSVerification means the instance answered but its TLS certificate
+	// was rejected. It is split out from ErrUnreachable because it is the one
+	// failure the operator fixes by configuration (GITLAB_CA_CERT_FILE /
+	// GITLAB_TLS_INSECURE_SKIP_VERIFY) rather than by fixing the network.
+	ErrTLSVerification = errors.New("gitlabconn: gitlab instance TLS certificate could not be verified")
 	// ErrTokenInvalid means the instance was reached but rejected the token
 	// (401).
 	ErrTokenInvalid = errors.New("gitlabconn: personal access token is invalid")
@@ -113,8 +118,12 @@ func normalizeBaseURL(raw string) (string, error) {
 }
 
 // classifyVerifyError maps a gitlab.Client verification error to a
-// sentinel that distinguishes unreachable, invalid-token, and
+// sentinel that distinguishes TLS, unreachable, invalid-token, and
 // insufficient-scope outcomes, as required by the "save" and "test" flows.
+// The transport-level cases keep the underlying cause wrapped in: without
+// it every network failure reads as the same "could not reach" and the
+// operator has nothing to act on. The cause never carries the access token,
+// which travels in the PRIVATE-TOKEN header and not in the URL.
 func classifyVerifyError(err error) error {
 	var apiErr *gitlab.APIError
 	if errors.As(err, &apiErr) {
@@ -125,7 +134,10 @@ func classifyVerifyError(err error) error {
 			return ErrInsufficientScope
 		}
 	}
-	return ErrUnreachable
+	if gitlab.IsCertificateError(err) {
+		return fmt.Errorf("%w: %v", ErrTLSVerification, err)
+	}
+	return fmt.Errorf("%w: %v", ErrUnreachable, err)
 }
 
 // fromRow maps a database row and the token's plaintext (for the last-four

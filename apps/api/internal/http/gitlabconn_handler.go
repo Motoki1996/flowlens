@@ -127,7 +127,16 @@ func writeGitlabConnError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_base_url", "base_url must be an absolute http(s) URL")
 	case errors.Is(err, gitlabconn.ErrTokenRequired):
 		writeError(w, http.StatusBadRequest, "token_required", "personal access token is required")
+	case errors.Is(err, gitlabconn.ErrTLSVerification):
+		// The cause goes to the log, not the body: the response only needs to
+		// name the class of failure and where its knobs are, while an
+		// authenticated caller should not get to read back the exact
+		// transport error for an arbitrary URL they supplied.
+		slog.Warn("gitlab connection verification failed", "error", err)
+		writeError(w, http.StatusUnprocessableEntity, "tls_error",
+			"the gitlab instance's TLS certificate could not be verified; set GITLAB_CA_CERT_FILE to trust its CA, or GITLAB_TLS_INSECURE_SKIP_VERIFY=true to skip verification")
 	case errors.Is(err, gitlabconn.ErrUnreachable):
+		slog.Warn("gitlab connection verification failed", "error", err)
 		writeError(w, http.StatusUnprocessableEntity, "unreachable", "could not reach the gitlab instance")
 	case errors.Is(err, gitlabconn.ErrTokenInvalid):
 		writeError(w, http.StatusUnprocessableEntity, "invalid_token", "the personal access token was rejected")

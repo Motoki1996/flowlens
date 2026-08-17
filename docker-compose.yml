@@ -40,6 +40,11 @@ services:
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
       SYNC_WORKER_ENABLED: ${SYNC_WORKER_ENABLED:-true}
       SYNC_WORKER_POLL_INTERVAL: ${SYNC_WORKER_POLL_INTERVAL:-5s}
+      # Self-hosted GitLab CE usually presents a certificate this container
+      # cannot verify, so verification is off by default. Mount the CA below
+      # and point GITLAB_CA_CERT_FILE at it to turn it back on.
+      GITLAB_TLS_INSECURE_SKIP_VERIFY: ${GITLAB_TLS_INSECURE_SKIP_VERIFY:-true}
+      GITLAB_CA_CERT_FILE: ${GITLAB_CA_CERT_FILE:-}
     ports:
       - "8080:8080"
     volumes:
@@ -47,6 +52,10 @@ services:
       - ./apps/api:/app
       # Keep the module cache out of the bind mount.
       - go-mod-cache:/go/pkg/mod
+      # To verify an on-prem GitLab CE certificate instead of skipping the
+      # check, mount its CA here and set GITLAB_CA_CERT_FILE to the container
+      # path, e.g.:
+      #   - ./certs/corp-ca.pem:/etc/ssl/certs/corp-ca.pem:ro
 
   web:
     build:

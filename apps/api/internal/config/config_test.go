@@ -67,6 +67,45 @@ func TestLoad_SyncWorkerAndAppPublicURLDefaults(t *testing.T) {
 	assert.Equal(t, 5*time.Second, cfg.SyncWorkerPollInterval)
 }
 
+// The GitLab TLS defaults are deliberately unlike the rest: skip-verify is
+// on out of the box because FlowLens targets self-hosted GitLab CE behind a
+// private CA. Naming a CA is how an operator switches verification back on.
+func TestLoad_GitlabTLSDefaultsToSkipVerify(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("ENCRYPTION_KEY", validEncryptionKey())
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.True(t, cfg.GitlabTLSInsecureSkipVerify)
+	assert.Empty(t, cfg.GitlabCACertFile)
+}
+
+func TestLoad_GitlabTLSOverrides(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("ENCRYPTION_KEY", validEncryptionKey())
+	t.Setenv("GITLAB_TLS_INSECURE_SKIP_VERIFY", "false")
+	t.Setenv("GITLAB_CA_CERT_FILE", "/etc/ssl/certs/corp-ca.pem")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	assert.False(t, cfg.GitlabTLSInsecureSkipVerify)
+	assert.Equal(t, "/etc/ssl/certs/corp-ca.pem", cfg.GitlabCACertFile)
+}
+
+func TestLoad_RejectsInvalidGitlabTLSFlag(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv("ENCRYPTION_KEY", validEncryptionKey())
+	t.Setenv("GITLAB_TLS_INSECURE_SKIP_VERIFY", "sometimes")
+
+	cfg, err := Load()
+
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.ErrorContains(t, err, "GITLAB_TLS_INSECURE_SKIP_VERIFY")
+}
+
 func TestLoad_SyncWorkerAndAppPublicURLOverrides(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv("ENCRYPTION_KEY", validEncryptionKey())

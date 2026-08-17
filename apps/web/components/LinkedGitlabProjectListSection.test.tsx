@@ -1,10 +1,33 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { LinkedGitlabProjectListSection } from "./LinkedGitlabProjectListSection";
+import type { LinkedGitlabProject } from "@/types";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
 }));
+
+function makeLink(overrides: Partial<LinkedGitlabProject>): LinkedGitlabProject {
+  return {
+    id: "l1",
+    gitlabConnectionId: "c1",
+    gitlabProjectId: 100,
+    pathWithNamespace: "team/flowlens-demo",
+    name: "flowlens-demo",
+    webUrl: "https://gitlab.example.com/team/flowlens-demo",
+    syncScope: "all",
+    syncLabels: [],
+    isDefault: false,
+    initialImportStatus: "completed",
+    lastSyncedAt: "2026-01-06T12:00:00Z",
+    webhookStatus: "registered",
+    webhookRegisteredAt: "2026-01-05T09:05:00Z",
+    webhookError: "",
+    createdAt: "2026-01-05T09:00:00Z",
+    updatedAt: "2026-01-06T12:00:00Z",
+    ...overrides,
+  };
+}
 
 function searchResponse(projects: { id: number; path: string }[], nextPage: number) {
   return new Response(
@@ -47,6 +70,27 @@ describe("LinkedGitlabProjectListSection", () => {
       expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument(),
     );
     expect(vi.mocked(fetch).mock.calls[1][0]).toContain("page=2");
+  });
+
+  // Which link a task with no link of its own is pushed to is otherwise only
+  // visible on each link's own view, one click away from the list.
+  it("badges the default link, and only that one", () => {
+    render(
+      <LinkedGitlabProjectListSection
+        projectId="p1"
+        links={[
+          makeLink({ id: "l1", pathWithNamespace: "team/api", isDefault: false }),
+          makeLink({ id: "l2", pathWithNamespace: "team/web", isDefault: true }),
+        ]}
+        connected
+      />,
+    );
+
+    const rows = screen.getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent("team/api");
+    expect(rows[0]).not.toHaveTextContent("Default");
+    expect(rows[1]).toHaveTextContent("team/web");
+    expect(rows[1]).toHaveTextContent("Default");
   });
 
   it("offers no Show more when the first page is the only one", async () => {

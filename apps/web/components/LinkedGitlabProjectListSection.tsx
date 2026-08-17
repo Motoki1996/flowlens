@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { WebhookBadge } from "@/components/WebhookBadge";
+import { DefaultLinkBadge } from "@/components/DefaultLinkBadge";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -290,9 +291,12 @@ export function LinkedGitlabProjectListSection({
                   className="border-border hover:border-ring flex flex-wrap items-start justify-between gap-3 rounded-md border px-3 py-2 transition-colors"
                 >
                   <div>
-                    <span className="text-foreground text-sm font-medium">
-                      {link.pathWithNamespace}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-foreground text-sm font-medium">
+                        {link.pathWithNamespace}
+                      </span>
+                      <DefaultLinkBadge isDefault={link.isDefault} />
+                    </div>
                     <p className="text-muted-foreground text-xs">
                       {link.syncScope === "all"
                         ? "All issues"

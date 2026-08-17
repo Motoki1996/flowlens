@@ -491,6 +491,123 @@ func TestService_Update_RejectsStartAfterStoredDue(t *testing.T) {
 	assert.Nil(t, unchanged.StartDate)
 }
 
+// seedLink links a GitLab project to projectID's connection, creating the
+// connection too. gitlabProjectID keeps two links in the same test distinct.
+func seedLink(t *testing.T, q *dbtest.FakeQuerier, projectID uuid.UUID, gitlabProjectID int64) db.LinkedGitlabProject {
+	t.Helper()
+	conn := q.SeedGitlabConnection(projectID, []byte("encrypted"))
+	link, err := q.CreateLinkedGitlabProject(context.Background(), db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: conn.ID,
+		GitlabProjectID:    gitlabProjectID,
+		PathWithNamespace:  "group/demo",
+		Name:               "demo",
+		WebUrl:             "https://gitlab.example.com/group/demo",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+	return link
+}
+
+// The backlog's own issue destination (issue #180): set at create, kept
+// through an unrelated update, cleared by an explicit null, and never allowed
+// to point outside the backlog's own project.
+
+func TestService_Create_SetsDefaultLinkedGitlabProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	link := seedLink(t, q, p.ID, 100)
+
+	got, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{
+		Name:                         "Sprint 1",
+		DefaultLinkedGitlabProjectID: &link.ID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got.DefaultLinkedGitlabProjectID)
+	assert.Equal(t, link.ID, *got.DefaultLinkedGitlabProjectID)
+}
+
+func TestService_Create_DefaultsToNoLinkedGitlabProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	got, err := svc.Create(context.Background(), owner, p.ID, backlog.CreateParams{Name: "Sprint 1"})
+	require.NoError(t, err)
+	assert.Nil(t, got.DefaultLinkedGitlabProjectID, "an unset link means the project default is used")
+}
+
+func TestService_Create_RejectsLinkedGitlabProjectOutsideProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	other := q.SeedProject(owner, "Beta")
+	foreign := seedLink(t, q, other.ID, 200)
+
+	_, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{
+		Name:                         "Sprint 1",
+		DefaultLinkedGitlabProjectID: &foreign.ID,
+	})
+	assert.ErrorIs(t, err, backlog.ErrLinkNotInProject)
+}
+
+func TestService_Update_SetsKeepsAndClearsDefaultLinkedGitlabProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	link := seedLink(t, q, p.ID, 100)
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+
+	set, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
+		Name:                         "Sprint 1",
+		DefaultLinkedGitlabProjectID: optional.Present(&link.ID),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, set.DefaultLinkedGitlabProjectID)
+	assert.Equal(t, link.ID, *set.DefaultLinkedGitlabProjectID)
+
+	// A rename must not silently reset where this backlog's issues go.
+	renamed, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{Name: "Renamed"})
+	require.NoError(t, err)
+	require.NotNil(t, renamed.DefaultLinkedGitlabProjectID)
+	assert.Equal(t, link.ID, *renamed.DefaultLinkedGitlabProjectID)
+
+	cleared, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
+		Name:                         "Renamed",
+		DefaultLinkedGitlabProjectID: optional.Present[*uuid.UUID](nil),
+	})
+	require.NoError(t, err)
+	assert.Nil(t, cleared.DefaultLinkedGitlabProjectID)
+}
+
+func TestService_Update_RejectsLinkedGitlabProjectOutsideProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	other := q.SeedProject(owner, "Beta")
+	foreign := seedLink(t, q, other.ID, 200)
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+
+	_, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
+		Name:                         "Sprint 1",
+		DefaultLinkedGitlabProjectID: optional.Present(&foreign.ID),
+	})
+	assert.ErrorIs(t, err, backlog.ErrLinkNotInProject)
+
+	unchanged, err := svc.Get(ctx, owner, b.ID)
+	require.NoError(t, err)
+	assert.Nil(t, unchanged.DefaultLinkedGitlabProjectID)
+}
+
 func TestService_Delete_RemovesBacklog(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

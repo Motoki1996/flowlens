@@ -1,5 +1,10 @@
 import { notFound } from "next/navigation";
-import { getBacklogs, getProject, getTasks } from "@/lib/api";
+import {
+  getBacklogs,
+  getLinkedGitlabProjects,
+  getProject,
+  getTasks,
+} from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
 import type { Priority, Progress } from "@/types";
@@ -103,10 +108,23 @@ export default async function BacklogsPage({
     backlogsError = true;
   }
 
+  // The linked GitLab projects a backlog can name as its own issue
+  // destination (issue #180). Caught separately from the backlogs above: a
+  // project with no GitLab connection has none, and that is the same
+  // empty-list outcome as a failed fetch — either way the create/edit forms
+  // simply drop the field rather than taking the screen down.
+  let links: Awaited<ReturnType<typeof getLinkedGitlabProjects>> = [];
+  try {
+    links = await getLinkedGitlabProjects(projectId);
+  } catch {
+    links = [];
+  }
+
   return (
     <BacklogListSection
       projectId={project.id}
       backlogs={backlogs}
+      links={links}
       priorityFilter={priority}
       progressFilter={progress}
       sort={sort}

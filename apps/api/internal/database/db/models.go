@@ -10,17 +10,18 @@ import (
 )
 
 type Backlog struct {
-	ID          uuid.UUID          `json:"id"`
-	ProjectID   uuid.UUID          `json:"project_id"`
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Position    int32              `json:"position"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	StartDate   pgtype.Date        `json:"start_date"`
-	DueOn       pgtype.Date        `json:"due_on"`
-	Priority    string             `json:"priority"`
-	Progress    string             `json:"progress"`
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	Name                         string             `json:"name"`
+	Description                  string             `json:"description"`
+	Position                     int32              `json:"position"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	StartDate                    pgtype.Date        `json:"start_date"`
+	DueOn                        pgtype.Date        `json:"due_on"`
+	Priority                     string             `json:"priority"`
+	Progress                     string             `json:"progress"`
+	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
 }
 
 type GitlabConnection struct {

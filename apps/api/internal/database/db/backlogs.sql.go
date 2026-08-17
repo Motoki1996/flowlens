@@ -14,7 +14,7 @@ import (
 
 const createBacklog = `-- name: CreateBacklog :one
 
-INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress)
+INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id)
 VALUES (
     $1,
     $2,
@@ -23,19 +23,21 @@ VALUES (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
-RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress
+RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id
 `
 
 type CreateBacklogParams struct {
-	ProjectID   uuid.UUID   `json:"project_id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	StartDate   pgtype.Date `json:"start_date"`
-	DueOn       pgtype.Date `json:"due_on"`
-	Priority    string      `json:"priority"`
-	Progress    string      `json:"progress"`
+	ProjectID                    uuid.UUID   `json:"project_id"`
+	Name                         string      `json:"name"`
+	Description                  string      `json:"description"`
+	StartDate                    pgtype.Date `json:"start_date"`
+	DueOn                        pgtype.Date `json:"due_on"`
+	Priority                     string      `json:"priority"`
+	Progress                     string      `json:"progress"`
+	DefaultLinkedGitlabProjectID pgtype.UUID `json:"default_linked_gitlab_project_id"`
 }
 
 // Backlogs have no owner column of their own; ownership is always checked
@@ -43,6 +45,10 @@ type CreateBacklogParams struct {
 // caller to have already verified project ownership (e.g. via
 // project.Service.Get), while the single-backlog queries join to projects so
 // a foreign backlog is indistinguishable from a missing one.
+// default_linked_gitlab_project_id is the backlog's own destination for new
+// issues, overriding the project's default link (000021). NULL means "use the
+// project default". internal/backlog checks the link belongs to this project's
+// GitLab connection before writing it — the schema cannot.
 func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error) {
 	row := q.db.QueryRow(ctx, createBacklog,
 		arg.ProjectID,
@@ -52,6 +58,7 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		arg.DueOn,
 		arg.Priority,
 		arg.Progress,
+		arg.DefaultLinkedGitlabProjectID,
 	)
 	var i Backlog
 	err := row.Scan(
@@ -66,6 +73,7 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		&i.DueOn,
 		&i.Priority,
 		&i.Progress,
+		&i.DefaultLinkedGitlabProjectID,
 	)
 	return i, err
 }
@@ -93,7 +101,7 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 }
 
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress
+SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -122,6 +130,7 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 		&i.DueOn,
 		&i.Priority,
 		&i.Progress,
+		&i.DefaultLinkedGitlabProjectID,
 	)
 	return i, err
 }
@@ -146,7 +155,7 @@ func (q *Queries) GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.U
 const listBacklogsByProject = `-- name: ListBacklogsByProject :many
 SELECT
   b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
-  b.start_date, b.due_on, b.priority, b.progress,
+  b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM backlogs b
@@ -174,19 +183,20 @@ type ListBacklogsByProjectParams struct {
 }
 
 type ListBacklogsByProjectRow struct {
-	ID              uuid.UUID          `json:"id"`
-	ProjectID       uuid.UUID          `json:"project_id"`
-	Name            string             `json:"name"`
-	Description     string             `json:"description"`
-	Position        int32              `json:"position"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	StartDate       pgtype.Date        `json:"start_date"`
-	DueOn           pgtype.Date        `json:"due_on"`
-	Priority        string             `json:"priority"`
-	Progress        string             `json:"progress"`
-	TaskCount       int64              `json:"task_count"`
-	ClosedTaskCount int64              `json:"closed_task_count"`
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	Name                         string             `json:"name"`
+	Description                  string             `json:"description"`
+	Position                     int32              `json:"position"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	StartDate                    pgtype.Date        `json:"start_date"`
+	DueOn                        pgtype.Date        `json:"due_on"`
+	Priority                     string             `json:"priority"`
+	Progress                     string             `json:"progress"`
+	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
+	TaskCount                    int64              `json:"task_count"`
+	ClosedTaskCount              int64              `json:"closed_task_count"`
 }
 
 // ListBacklogsByProject's priority and progress filters and sorts follow the
@@ -229,6 +239,7 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 			&i.DueOn,
 			&i.Priority,
 			&i.Progress,
+			&i.DefaultLinkedGitlabProjectID,
 			&i.TaskCount,
 			&i.ClosedTaskCount,
 		); err != nil {
@@ -272,30 +283,32 @@ func (q *Queries) ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams
 
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, updated_at = now()
+SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, updated_at = now()
 WHERE b.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = b.project_id AND pm.user_id = $9 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = b.project_id AND pm.user_id = $10 AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress
+RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id
 `
 
 type UpdateBacklogForOwnerParams struct {
-	ID          uuid.UUID   `json:"id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Position    int32       `json:"position"`
-	StartDate   pgtype.Date `json:"start_date"`
-	DueOn       pgtype.Date `json:"due_on"`
-	Priority    string      `json:"priority"`
-	Progress    string      `json:"progress"`
-	OwnerUserID uuid.UUID   `json:"owner_user_id"`
+	ID                           uuid.UUID   `json:"id"`
+	Name                         string      `json:"name"`
+	Description                  string      `json:"description"`
+	Position                     int32       `json:"position"`
+	StartDate                    pgtype.Date `json:"start_date"`
+	DueOn                        pgtype.Date `json:"due_on"`
+	Priority                     string      `json:"priority"`
+	Progress                     string      `json:"progress"`
+	DefaultLinkedGitlabProjectID pgtype.UUID `json:"default_linked_gitlab_project_id"`
+	OwnerUserID                  uuid.UUID   `json:"owner_user_id"`
 }
 
 // UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
-// must arrive already resolved: backlog.Service reads the current row first and
-// fills in whatever the PATCH body left out (see its Update).
+// and default_linked_gitlab_project_id must arrive already resolved: backlog.Service
+// reads the current row first and fills in whatever the PATCH body left out
+// (see its Update).
 func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error) {
 	row := q.db.QueryRow(ctx, updateBacklogForOwner,
 		arg.ID,
@@ -306,6 +319,7 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		arg.DueOn,
 		arg.Priority,
 		arg.Progress,
+		arg.DefaultLinkedGitlabProjectID,
 		arg.OwnerUserID,
 	)
 	var i Backlog
@@ -321,6 +335,7 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		&i.DueOn,
 		&i.Priority,
 		&i.Progress,
+		&i.DefaultLinkedGitlabProjectID,
 	)
 	return i, err
 }

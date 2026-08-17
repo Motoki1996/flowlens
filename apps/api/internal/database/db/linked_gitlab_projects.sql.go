@@ -146,6 +146,54 @@ func (q *Queries) DeleteLinkedGitlabProjectForOwner(ctx context.Context, arg Del
 	return i, err
 }
 
+const getBacklogLinkedGitlabProjectForOwner = `-- name: GetBacklogLinkedGitlabProjectForOwner :one
+SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
+FROM backlogs b
+JOIN linked_gitlab_projects lgp ON lgp.id = b.default_linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE b.id = $1
+  AND gc.project_id = b.project_id
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2
+  )
+`
+
+type GetBacklogLinkedGitlabProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// The backlog-scoped half of GetDefaultLinkedGitlabProjectForOwner:
+// internal/task resolves a new task's issue destination from its backlog
+// first (000021), falling back to the project default when the backlog names
+// no link of its own. Joining through backlogs keeps the check that the link
+// and the backlog share a project inside the query.
+func (q *Queries) GetBacklogLinkedGitlabProjectForOwner(ctx context.Context, arg GetBacklogLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, getBacklogLinkedGitlabProjectForOwner, arg.ID, arg.OwnerUserID)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
 const getDefaultLinkedGitlabProjectForOwner = `-- name: GetDefaultLinkedGitlabProjectForOwner :one
 SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
 FROM linked_gitlab_projects lgp
@@ -242,6 +290,54 @@ type GetLinkedGitlabProjectForOwnerParams struct {
 
 func (q *Queries) GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error) {
 	row := q.db.QueryRow(ctx, getLinkedGitlabProjectForOwner, arg.ID, arg.OwnerUserID)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
+const getLinkedGitlabProjectInProjectForOwner = `-- name: GetLinkedGitlabProjectInProjectForOwner :one
+SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
+FROM linked_gitlab_projects lgp
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE lgp.id = $1
+  AND gc.project_id = $2
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $3
+  )
+`
+
+type GetLinkedGitlabProjectInProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	ProjectID   uuid.UUID `json:"project_id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// internal/backlog uses this to check that the link a backlog names as its own
+// issue destination (000021) really belongs to that backlog's project — a
+// constraint the schema cannot express, since a link reaches its project only
+// through gitlab_connections. A link in another project, or in a project the
+// caller cannot see, comes back as no rows, the same as a missing one.
+func (q *Queries) GetLinkedGitlabProjectInProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectInProjectForOwnerParams) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, getLinkedGitlabProjectInProjectForOwner, arg.ID, arg.ProjectID, arg.OwnerUserID)
 	var i LinkedGitlabProject
 	err := row.Scan(
 		&i.ID,

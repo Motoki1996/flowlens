@@ -20,6 +20,10 @@ type createBacklogRequest struct {
 	DueOn       *time.Time `json:"dueOn"`
 	Priority    string     `json:"priority"`
 	Progress    string     `json:"progress"`
+	// DefaultLinkedGitlabProjectID overrides where this backlog's tasks get
+	// their GitLab issue created; omitted or null leaves it on the project's
+	// default link.
+	DefaultLinkedGitlabProjectID *uuid.UUID `json:"defaultLinkedGitlabProjectId"`
 }
 
 // The dates, priority and progress are Optional so PATCH stays a partial
@@ -36,6 +40,9 @@ type updateBacklogRequest struct {
 	DueOn       optional.Optional[*time.Time] `json:"dueOn"`
 	Priority    optional.Optional[string]     `json:"priority"`
 	Progress    optional.Optional[string]     `json:"progress"`
+	// Optional like the dates, and nullable the same way: an explicit null
+	// falls the backlog back to the project's default link.
+	DefaultLinkedGitlabProjectID optional.Optional[*uuid.UUID] `json:"defaultLinkedGitlabProjectId"`
 }
 
 // reorderBacklogsRequest carries a project's full, newly-ordered backlog ID
@@ -174,12 +181,13 @@ func (s *Server) handleCreateBacklog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := s.backlogs.Create(r.Context(), u.ID, projectID, backlog.CreateParams{
-		Name:        req.Name,
-		Description: req.Description,
-		StartDate:   req.StartDate,
-		DueOn:       req.DueOn,
-		Priority:    req.Priority,
-		Progress:    req.Progress,
+		Name:                         req.Name,
+		Description:                  req.Description,
+		StartDate:                    req.StartDate,
+		DueOn:                        req.DueOn,
+		Priority:                     req.Priority,
+		Progress:                     req.Progress,
+		DefaultLinkedGitlabProjectID: req.DefaultLinkedGitlabProjectID,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -223,13 +231,14 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := s.backlogs.Update(r.Context(), u.ID, backlogID, backlog.UpdateParams{
-		Name:        req.Name,
-		Description: req.Description,
-		Position:    req.Position,
-		StartDate:   req.StartDate,
-		DueOn:       req.DueOn,
-		Priority:    req.Priority,
-		Progress:    req.Progress,
+		Name:                         req.Name,
+		Description:                  req.Description,
+		Position:                     req.Position,
+		StartDate:                    req.StartDate,
+		DueOn:                        req.DueOn,
+		Priority:                     req.Priority,
+		Progress:                     req.Progress,
+		DefaultLinkedGitlabProjectID: req.DefaultLinkedGitlabProjectID,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -267,6 +276,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
 	case errors.Is(err, backlog.ErrInvalidProgress):
 		writeError(w, http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done")
+	case errors.Is(err, backlog.ErrLinkNotInProject):
+		writeError(w, http.StatusBadRequest, "invalid_linked_gitlab_project", "defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	case errors.Is(err, backlog.ErrBacklogIDsMismatch):
 		writeError(w, http.StatusBadRequest, "backlog_ids_mismatch", "backlogIds must exactly match the project's current backlogs")
 	case errors.Is(err, backlog.ErrNotFound):

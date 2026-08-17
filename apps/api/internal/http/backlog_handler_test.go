@@ -365,6 +365,65 @@ func TestHandleUpdateBacklog_Schedule(t *testing.T) {
 	}
 }
 
+// defaultLinkedGitlabProjectId (issue #180) is a partial-update field like the
+// dates: absent keeps it, an explicit null falls the backlog back to the
+// project's default link.
+func TestHandleUpdateBacklog_DefaultLinkedGitlabProject(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link, err := q.CreateLinkedGitlabProject(context.Background(), db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: conn.ID,
+		GitlabProjectID:    100,
+		PathWithNamespace:  "group/demo",
+		Name:               "demo",
+		WebUrl:             "https://gitlab.example.com/group/demo",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+	id := q.SeedBacklog(p.ID, "Sprint 1").ID.String()
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+		map[string]any{"name": "Sprint 1", "defaultLinkedGitlabProjectId": link.ID.String()}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, link.ID.String(), got["defaultLinkedGitlabProjectId"])
+
+	rec = doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id, map[string]any{"name": "Renamed"}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, link.ID.String(), got["defaultLinkedGitlabProjectId"], "an absent field must not reset the link")
+
+	rec = doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+		map[string]any{"name": "Renamed", "defaultLinkedGitlabProjectId": nil}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Nil(t, got["defaultLinkedGitlabProjectId"])
+}
+
+func TestHandleCreateBacklog_RejectsLinkedGitlabProjectOutsideProject(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	other := q.SeedProject(ownerID, "Beta")
+	conn := q.SeedGitlabConnection(other.ID, []byte("encrypted"))
+	foreign, err := q.CreateLinkedGitlabProject(context.Background(), db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: conn.ID,
+		GitlabProjectID:    200,
+		PathWithNamespace:  "group/other",
+		Name:               "other",
+		WebUrl:             "https://gitlab.example.com/group/other",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		map[string]any{"name": "Sprint 1", "defaultLinkedGitlabProjectId": foreign.ID.String()}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestHandleCreateBacklog_RejectsStartAfterDue(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

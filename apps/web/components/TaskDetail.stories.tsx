@@ -15,6 +15,7 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  defaultLinkedGitlabProjectId: null,
   taskCount: 0,
   closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",

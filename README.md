@@ -356,6 +356,36 @@ reads back at `GET /api/v1/projects/{projectID}/linked-gitlab-projects/{linkID}`
 carries no project in its response. Trigger a re-sync at any time from the
 linked project's view (`POST .../sync-runs`, `kind = 'manual_resync'`).
 
+### A backlog's own GitLab project
+
+A project's default link is project-wide, but a team often keeps one backlog's
+work in a different GitLab repository. A backlog can therefore name its own
+destination for new issues — `defaultLinkedGitlabProjectId` on
+`POST /api/v1/projects/{projectID}/backlogs` and
+`PATCH /api/v1/backlogs/{backlogID}`, editable from the create/edit form on the
+Backlog collection screen and shown on the Backlog single view.
+
+Creating a task resolves where its GitLab issue goes in this order:
+
+1. the task's backlog's own linked GitLab project, if it names one;
+2. otherwise the project's **default** linked GitLab project;
+3. otherwise nowhere — the task stays purely local.
+
+Two rules make this predictable:
+
+- **It is read only at task-create time.** Once an issue exists, its linked
+  project is recorded in `task_gitlab_links` and every later update, close and
+  reopen follows that row, so moving a task between backlogs afterwards never
+  moves the issue or re-targets it. FlowLens does not move GitLab issues
+  between projects.
+- **The link must belong to the same FlowLens project.** A link from another
+  project is rejected with 400 `invalid_linked_gitlab_project`. Unlinking a
+  GitLab project doesn't delete the backlogs that named it — they fall back to
+  the project default (`ON DELETE SET NULL`).
+
+Inbound sync is unchanged: an issue imported or delivered by webhook still
+lands with no backlog (Unclassified), whichever GitLab project it came from.
+
 ### What FlowLens registers as a webhook
 
 For each linked GitLab project, FlowLens registers exactly one webhook on

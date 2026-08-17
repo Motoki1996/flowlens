@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Backlog, Task, TaskStatus } from "@/types";
+import type { Backlog, LinkedGitlabProject, Task, TaskStatus } from "@/types";
 import { taskPath, tasksPath } from "@/lib/routes";
 import { backlogCompletion } from "@/lib/timeline";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
@@ -44,16 +44,34 @@ export function BacklogDetail({
   backlog,
   project,
   tasks = [],
+  links = [],
   tasksError = false,
 }: {
   backlog: Backlog;
   project: { id: string; name: string };
   tasks?: Task[];
+  /** The project's linked GitLab projects (issue #180), used to name this
+   *  backlog's issue destination. Empty hides that row. */
+  links?: LinkedGitlabProject[];
   tasksError?: boolean;
 }) {
   // tasks is already filtered to this backlog by the page, but backlogCompletion
   // is the one place the ratio is defined, so it counts rather than the view.
   const completion = backlogCompletion(tasks, backlog.id);
+
+  // The same resolution internal/task.Service.Create applies when a task is
+  // filed here: this backlog's own link first, then the project's default.
+  // `inherited` is what distinguishes the two for the reader — the value is
+  // the same GitLab project either way, but only one of them follows the
+  // project if its default changes.
+  const issueDestination = (() => {
+    const own = backlog.defaultLinkedGitlabProjectId
+      ? links.find((l) => l.id === backlog.defaultLinkedGitlabProjectId)
+      : undefined;
+    if (own) return { link: own, inherited: false };
+    const projectDefault = links.find((l) => l.isDefault);
+    return projectDefault ? { link: projectDefault, inherited: true } : null;
+  })();
 
   return (
     <>
@@ -104,6 +122,26 @@ export function BacklogDetail({
                     : `${completion.closed}/${completion.total} closed (${Math.round(completion.ratio * 100)}%)`}
               </dd>
             </div>
+            {/* Where a task filed here gets its GitLab issue created (issue
+                #180). Hidden entirely for a project with no linked GitLab
+                project — there is no destination to state. */}
+            {links.length > 0 ? (
+              <div>
+                <dt className="text-muted-foreground">GitLab project for new issues</dt>
+                <dd className="text-foreground">
+                  {issueDestination ? (
+                    <>
+                      {issueDestination.link.pathWithNamespace}
+                      {issueDestination.inherited ? (
+                        <span className="text-muted-foreground"> (project default)</span>
+                      ) : null}
+                    </>
+                  ) : (
+                    "Not set"
+                  )}
+                </dd>
+              </div>
+            ) : null}
             <div>
               <dt className="text-muted-foreground">Created</dt>
               <dd className="text-foreground">{formatDateTime(backlog.createdAt)}</dd>

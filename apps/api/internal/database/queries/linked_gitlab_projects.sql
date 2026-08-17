@@ -55,6 +55,39 @@ FROM linked_gitlab_projects lgp
 JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
 WHERE lgp.id = $1;
 
+-- name: GetLinkedGitlabProjectInProjectForOwner :one
+-- internal/backlog uses this to check that the link a backlog names as its own
+-- issue destination (000021) really belongs to that backlog's project — a
+-- constraint the schema cannot express, since a link reaches its project only
+-- through gitlab_connections. A link in another project, or in a project the
+-- caller cannot see, comes back as no rows, the same as a missing one.
+SELECT lgp.*
+FROM linked_gitlab_projects lgp
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE lgp.id = $1
+  AND gc.project_id = $2
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
+
+-- name: GetBacklogLinkedGitlabProjectForOwner :one
+-- The backlog-scoped half of GetDefaultLinkedGitlabProjectForOwner:
+-- internal/task resolves a new task's issue destination from its backlog
+-- first (000021), falling back to the project default when the backlog names
+-- no link of its own. Joining through backlogs keeps the check that the link
+-- and the backlog share a project inside the query.
+SELECT lgp.*
+FROM backlogs b
+JOIN linked_gitlab_projects lgp ON lgp.id = b.default_linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE b.id = $1
+  AND gc.project_id = b.project_id
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
+
 -- name: GetDefaultLinkedGitlabProjectForOwner :one
 -- internal/task uses this at task-create time to decide whether the
 -- project has anywhere to push a new issue, and if so, where

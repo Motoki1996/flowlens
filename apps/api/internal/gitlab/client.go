@@ -295,13 +295,30 @@ type HTTPClient struct {
 
 var _ Client = (*HTTPClient)(nil)
 
+// Option customises an HTTPClient at construction.
+type Option func(*HTTPClient)
+
+// WithTransport sends the client's requests through rt. Production wiring
+// passes the transport built from a TLSPolicy (see NewClientFactory); one
+// transport is shared across every client so the connection pool is too.
+func WithTransport(rt http.RoundTripper) Option {
+	return func(c *HTTPClient) { c.http.Transport = rt }
+}
+
 // NewHTTPClient builds a client with a sensible timeout, pointed at a
 // GitLab CE instance's base URL (e.g. "https://gitlab.example.com").
-func NewHTTPClient(baseURL string) *HTTPClient {
-	return &HTTPClient{
+// Without WithTransport it uses Go's default transport, which verifies the
+// server certificate against the system roots — a self-hosted instance
+// behind a private CA needs a TLSPolicy-built transport instead.
+func NewHTTPClient(baseURL string, opts ...Option) *HTTPClient {
+	c := &HTTPClient{
 		baseURL: baseURL,
 		http:    &http.Client{Timeout: 15 * time.Second},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func (c *HTTPClient) GetAuthenticatedUser(ctx context.Context, personalAccessToken string) (*User, error) {
@@ -553,6 +570,11 @@ func (c *HTTPClient) doRequest(ctx context.Context, method, path, token string, 
 		resp, err := c.http.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("gitlab: do request: %w", err)
+			// A rejected certificate is permanent: retrying only repeats the
+			// same failed handshake and logs it again on the GitLab side.
+			if IsCertificateError(err) {
+				return nil, lastErr
+			}
 			continue
 		}
 

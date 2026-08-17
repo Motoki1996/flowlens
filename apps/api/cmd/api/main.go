@@ -57,7 +57,23 @@ func run() error {
 		return err
 	}
 
-	server, err := apihttp.NewServer(cfg, database.NewQuerier(pool), pool, database.NewTxRunner(pool), cipher)
+	// One TLS policy, one transport, shared by the request-path clients
+	// inside the server and the background sync workers below — otherwise a
+	// connection could verify from the browser and fail in the worker.
+	gitlabTLS := gitlab.TLSPolicy{
+		CACertFile:         cfg.GitlabCACertFile,
+		InsecureSkipVerify: cfg.GitlabTLSInsecureSkipVerify,
+	}
+	clientFactory, err := gitlab.NewClientFactory(gitlabTLS)
+	if err != nil {
+		return err
+	}
+	if !gitlabTLS.Verifying() {
+		slog.Warn("gitlab TLS certificate verification is disabled",
+			"hint", "set GITLAB_CA_CERT_FILE to trust a private CA, or GITLAB_TLS_INSECURE_SKIP_VERIFY=false, to verify certificates")
+	}
+
+	server, err := apihttp.NewServer(cfg, database.NewQuerier(pool), pool, database.NewTxRunner(pool), cipher, clientFactory)
 	if err != nil {
 		return err
 	}
@@ -70,7 +86,6 @@ func run() error {
 
 	// Outbound issue sync job handlers (docs/plans/issue-sync.md,
 	// "Outbound"); internal/task enqueues the jobs they execute.
-	clientFactory := func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
 	issueSync := issuesync.NewService(database.NewQuerier(pool), cipher, clientFactory)
 	registry := syncpkg.NewRegistry()
 	registry.Register(issuesync.KindIssueCreate, issueSync.HandleIssueCreate)

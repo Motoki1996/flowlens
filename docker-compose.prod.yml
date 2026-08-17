@@ -41,6 +41,11 @@ services:
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
       SYNC_WORKER_ENABLED: ${SYNC_WORKER_ENABLED:-true}
       SYNC_WORKER_POLL_INTERVAL: ${SYNC_WORKER_POLL_INTERVAL:-5s}
+      # See the dev compose file: verification is off by default because the
+      # target is an on-prem GitLab CE. Prefer mounting the instance's CA and
+      # setting GITLAB_CA_CERT_FILE, which turns verification back on.
+      GITLAB_TLS_INSECURE_SKIP_VERIFY: ${GITLAB_TLS_INSECURE_SKIP_VERIFY:-true}
+      GITLAB_CA_CERT_FILE: ${GITLAB_CA_CERT_FILE:-}
     ports:
       - "8080:8080"
     restart: unless-stopped

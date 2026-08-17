@@ -305,6 +305,33 @@ scoped before linking any project. **Disconnect**
 project linked through the connection; the tasks themselves stay, as local
 tasks.
 
+### TLS for a self-hosted instance
+
+An on-prem GitLab CE typically presents a certificate signed by a private CA
+(or a self-signed one) that the API container has no reason to trust. Go
+verifies against the system roots by default, so the handshake fails before
+any request is sent and the connection form can only report it as
+`unreachable`. Two environment variables control this, and they apply to
+**GitLab only** — the client's TLS policy is passed in at wiring time
+(`gitlab.TLSPolicy`), so a future GitHub client keeps verifying normally.
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `GITLAB_TLS_INSECURE_SKIP_VERIFY` | `true` | Skips certificate verification entirely. Only safe on a network you already trust — it leaves the connection open to interception. The API logs a warning at startup while it is on. |
+| `GITLAB_CA_CERT_FILE` | *(unset)* | Path to a PEM bundle added to the system roots. **Takes precedence**: naming a CA turns verification back on, so a configured CA can never silently degrade into no verification. |
+
+Preferring the CA file is the better setup wherever the CA is available:
+
+```bash
+# docker-compose.yml already reads both; mount the CA into the api service.
+GITLAB_CA_CERT_FILE=/etc/ssl/certs/corp-ca.pem
+```
+
+A certificate the policy still rejects is reported distinctly from a network
+failure — 422 `tls_error` rather than `unreachable`, with the underlying
+x509 error in the API log — and is not retried, since retrying only repeats
+the same handshake.
+
 ### Linking a GitLab project and the initial import
 
 From the project's GitLab connection, list the GitLab projects the token can

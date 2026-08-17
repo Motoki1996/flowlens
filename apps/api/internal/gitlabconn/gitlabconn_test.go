@@ -2,6 +2,8 @@ package gitlabconn_test
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"testing"
 
@@ -116,6 +118,11 @@ func TestService_Save_ClassifiesVerificationFailureAndWritesNothing(t *testing.T
 		wantErr error
 	}{
 		{"network error is unreachable", fmt.Errorf("dial tcp: connection refused"), gitlabconn.ErrUnreachable},
+		{
+			"a rejected certificate is its own class, not unreachable",
+			&tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}},
+			gitlabconn.ErrTLSVerification,
+		},
 		{"5xx is unreachable", &gitlab.APIError{StatusCode: 503, Body: "unavailable"}, gitlabconn.ErrUnreachable},
 		{"401 is invalid token", &gitlab.APIError{StatusCode: 401, Body: "unauthorized"}, gitlabconn.ErrTokenInvalid},
 		{"403 is insufficient scope", &gitlab.APIError{StatusCode: 403, Body: "forbidden"}, gitlabconn.ErrInsufficientScope},

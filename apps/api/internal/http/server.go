@@ -76,13 +76,20 @@ type Server struct {
 // outbound sync job commit atomically, per docs/plans/issue-sync.md), and a
 // Cipher for encrypting secrets at rest (GitLab access tokens, webhook
 // secrets).
-func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRunner database.TxRunner, cipher *crypto.Cipher) (*Server, error) {
+//
+// clientFactory builds the GitLab API clients the request path uses; the
+// caller owns it because it carries the instance's TLS policy
+// (gitlab.TLSPolicy), which the background workers must share. A nil
+// factory falls back to Go's default certificate verification.
+func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRunner database.TxRunner, cipher *crypto.Cipher, clientFactory func(baseURL string) gitlab.Client) (*Server, error) {
 	projects := project.NewService(queries)
 	backlogs := backlog.NewService(queries, projects)
 	apiTokens := apitoken.NewService(queries, projects)
 	users := user.NewService(queries)
 	projectMembers := projectmember.NewService(queries, projects, users)
-	clientFactory := func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
+	if clientFactory == nil {
+		clientFactory = func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
+	}
 	gitlabConns := gitlabconn.NewService(queries, projects, cipher, clientFactory)
 	tasks := task.NewService(queries, txRunner, projects, backlogs)
 	return &Server{

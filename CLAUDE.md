@@ -87,6 +87,7 @@ The repo also has a GitHub Actions path (`.github/workflows/claude.yml`) trigger
 - **Passwords are hashed with bcrypt** (`internal/auth/password.go`), never stored or logged in plaintext. Minimum length 8, enforced at signup.
 - API mutations are protected by `SameSite=Lax` + locked CORS origin, plus a double-submit CSRF token: a non-HttpOnly `flowlens_csrf` cookie is set alongside the session cookie at login, and every session-authenticated POST/PATCH/PUT/DELETE must echo its value in an `X-CSRF-Token` header (`internal/http/middleware.go`'s `requireCSRF`) or is rejected with 403. It is a no-op for bearer-token requests, which carry no cookie at all.
 - Secrets come only from env / `.env` (git-ignored). Never commit real credentials.
+- **Outbound TLS to GitLab skips certificate verification by default** (`GITLAB_TLS_INSECURE_SKIP_VERIFY=true`), because FlowLens targets on-prem GitLab CE behind a private CA; `GITLAB_CA_CERT_FILE` takes precedence and turns verification back on. The policy is a value (`gitlab.TLSPolicy`) built once in `cmd/api/main.go` and injected into both `NewServer` and the sync workers — it is **not** a global, so a future GitHub client gets its own (verified) policy. See the "TLS for a self-hosted instance" section in [`README.md`](README.md).
 - The planned "connect GitLab" feature stores the access token **per app project, not per user** ([ADR-0008](docs/decisions/0008-why-per-project-gitlab-connection.md)), encrypted at rest with AES-256-GCM. No such storage exists yet.
 
 ## Local ports (important)

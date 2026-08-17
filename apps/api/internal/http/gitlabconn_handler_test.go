@@ -1,6 +1,8 @@
 package http
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -68,6 +70,7 @@ func TestHandlePutGitlabConnection_ReturnsDistinctCodesForUnreachableVsInvalidTo
 		wantCode string
 	}{
 		{"connection refused is unreachable", assert.AnError, "unreachable"},
+		{"a rejected certificate is a tls error", &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}, "tls_error"},
 		{"401 is an invalid token", &gitlab.APIError{StatusCode: 401, Body: "unauthorized"}, "invalid_token"},
 		{"403 is insufficient scope", &gitlab.APIError{StatusCode: 403, Body: "forbidden"}, "insufficient_scope"},
 	}

@@ -35,6 +35,21 @@ type Config struct {
 
 	SyncWorkerEnabled      bool
 	SyncWorkerPollInterval time.Duration
+
+	// GitlabCACertFile is the path to a PEM bundle trusted when calling the
+	// GitLab API, for a self-hosted instance behind a private CA. When set
+	// it takes precedence over GitlabTLSInsecureSkipVerify.
+	GitlabCACertFile string
+
+	// GitlabTLSInsecureSkipVerify disables TLS certificate verification for
+	// outbound GitLab API calls. It defaults to **true**: FlowLens targets
+	// self-hosted GitLab CE, where the instance certificate is typically
+	// signed by a private CA the API host does not trust, and a failed
+	// handshake there surfaces only as an unexplained "unreachable"
+	// connection. Set it to false (or name a CA above) once certificates
+	// are verifiable. It applies to GitLab only — a future GitHub client
+	// gets its own policy and stays verified.
+	GitlabTLSInsecureSkipVerify bool
 }
 
 // IsProduction reports whether the API runs in production mode.
@@ -82,6 +97,14 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: invalid SYNC_WORKER_POLL_INTERVAL: %w", err)
 	}
 	cfg.SyncWorkerPollInterval = pollInterval
+
+	cfg.GitlabCACertFile = os.Getenv("GITLAB_CA_CERT_FILE")
+
+	skipVerify, err := strconv.ParseBool(getEnv("GITLAB_TLS_INSECURE_SKIP_VERIFY", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid GITLAB_TLS_INSECURE_SKIP_VERIFY: %w", err)
+	}
+	cfg.GitlabTLSInsecureSkipVerify = skipVerify
 
 	return cfg, nil
 }

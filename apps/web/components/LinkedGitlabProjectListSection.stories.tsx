@@ -53,7 +53,9 @@ export const NoLinks: Story = {
   args: { projectId: "p1", links: [], connected: true },
 };
 
-/** With links: one link per row, each carrying its scope, last sync and webhook status. */
+/** With links: one link per row, each carrying its scope, last sync and webhook
+ *  status, and — on the one row that has it — the Default badge marking where a
+ *  task with no link of its own is pushed. */
 export const WithLinks: Story = {
   args: {
     projectId: "p1",
@@ -63,6 +65,7 @@ export const WithLinks: Story = {
       makeLink({
         id: "l2",
         pathWithNamespace: "team/api",
+        isDefault: false,
         syncScope: "labels",
         syncLabels: ["bug", "needs-triage"],
         webhookStatus: "not_registered",
@@ -72,6 +75,7 @@ export const WithLinks: Story = {
       makeLink({
         id: "l3",
         pathWithNamespace: "team/web",
+        isDefault: false,
         webhookStatus: "failed",
         webhookRegisteredAt: null,
         webhookError: "the token's user needs at least the Maintainer role",

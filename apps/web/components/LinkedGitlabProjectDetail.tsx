@@ -8,9 +8,9 @@ import { gitlabConnectionPath } from "@/lib/routes";
 import type { ApiError, LinkedGitlabProject, SyncRun, SyncScope, WebhookEvent } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DefaultLinkBadge } from "@/components/DefaultLinkBadge";
 import { WebhookBadge } from "@/components/WebhookBadge";
 import { SyncRunSection } from "@/components/SyncRunSection";
 import { WebhookEventSection } from "@/components/WebhookEventSection";
@@ -277,7 +277,7 @@ function DefaultSection({ link }: { link: LinkedGitlabProject }) {
   if (link.isDefault) {
     return (
       <dd>
-        <Badge variant="secondary">Default</Badge>
+        <DefaultLinkBadge isDefault />
       </dd>
     );
   }

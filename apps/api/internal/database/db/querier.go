@@ -61,6 +61,10 @@ type Querier interface {
 	// caller to have already verified project ownership (e.g. via
 	// project.Service.Get), while the single-backlog queries join to projects so
 	// a foreign backlog is indistinguishable from a missing one.
+	// default_linked_gitlab_project_id is the backlog's own destination for new
+	// issues, overriding the project's default link (000021). NULL means "use the
+	// project default". internal/backlog checks the link belongs to this project's
+	// GitLab connection before writing it — the schema cannot.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
 	// gitlab_sync_runs records one project.import / project.resync execution
 	// against a linked GitLab project (docs/plans/issue-sync.md's SyncRun
@@ -214,6 +218,12 @@ type Querier interface {
 	FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunParams) (GitlabSyncRun, error)
 	FailRepositorySyncRun(ctx context.Context, arg FailRepositorySyncRunParams) (RepositorySyncRun, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
+	// The backlog-scoped half of GetDefaultLinkedGitlabProjectForOwner:
+	// internal/task resolves a new task's issue destination from its backlog
+	// first (000021), falling back to the project default when the backlog names
+	// no link of its own. Joining through backlogs keeps the check that the link
+	// and the backlog share a project inside the query.
+	GetBacklogLinkedGitlabProjectForOwner(ctx context.Context, arg GetBacklogLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// GetBacklogProjectID is the lightweight project lookup
 	// requireTokenResourceProject (internal/http, issue #66) uses to enforce a
 	// bearer token's project boundary on a single-backlog URL, without
@@ -266,6 +276,12 @@ type Querier interface {
 	// ownership check.
 	GetLinkedGitlabProjectByID(ctx context.Context, id uuid.UUID) (LinkedGitlabProject, error)
 	GetLinkedGitlabProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
+	// internal/backlog uses this to check that the link a backlog names as its own
+	// issue destination (000021) really belongs to that backlog's project — a
+	// constraint the schema cannot express, since a link reaches its project only
+	// through gitlab_connections. A link in another project, or in a project the
+	// caller cannot see, comes back as no rows, the same as a missing one.
+	GetLinkedGitlabProjectInProjectForOwner(ctx context.Context, arg GetLinkedGitlabProjectInProjectForOwnerParams) (LinkedGitlabProject, error)
 	// The lightweight project lookup requireTokenResourceProject (internal/http,
 	// issue #66) uses to enforce a bearer token's project boundary on
 	// GET /linked-gitlab-projects/{linkID}/sync-runs, resolved through
@@ -624,8 +640,9 @@ type Querier interface {
 	SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error)
 	SetTaskCommentGitlabNoteID(ctx context.Context, arg SetTaskCommentGitlabNoteIDParams) error
 	// UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
-	// must arrive already resolved: backlog.Service reads the current row first and
-	// fills in whatever the PATCH body left out (see its Update).
+	// and default_linked_gitlab_project_id must arrive already resolved: backlog.Service
+	// reads the current row first and fills in whatever the PATCH body left out
+	// (see its Update).
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
 	// Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.

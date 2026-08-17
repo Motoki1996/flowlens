@@ -33,6 +33,7 @@ var (
 	ErrInvalidSchedule    = errors.New("backlog: start date must not be after due date")
 	ErrInvalidPriority    = errors.New("backlog: priority must be one of low, medium, high, urgent")
 	ErrInvalidProgress    = errors.New("backlog: progress must be one of not_started, in_progress, on_hold, done")
+	ErrLinkNotInProject   = errors.New("backlog: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	ErrNotFound           = errors.New("backlog: not found")
 	ErrForbidden          = errors.New("backlog: forbidden")
 	ErrBacklogIDsMismatch = errors.New("backlog: backlogIds must exactly match the project's current backlogs")
@@ -80,6 +81,13 @@ type Backlog struct {
 	DueOn       *time.Time `json:"dueOn"`
 	Priority    string     `json:"priority"`
 	Progress    string     `json:"progress"`
+	// DefaultLinkedGitlabProjectID is the GitLab project a task filed in this
+	// backlog gets its issue created in, overriding the project's own default
+	// link. nil — the value every backlog starts with — means "use the project
+	// default" (see the 000021 migration and internal/task.Service.Create).
+	// It is read only when a task is created: moving a task into or out of a
+	// backlog afterwards never moves an issue that already exists.
+	DefaultLinkedGitlabProjectID *uuid.UUID `json:"defaultLinkedGitlabProjectId"`
 	// TaskCount and ClosedTaskCount are the backlog's total and closed task
 	// counts, computed by ListBacklogsByProject's LEFT JOIN aggregate (issue
 	// #144) so the Backlog collection screen doesn't need to fetch every task
@@ -98,17 +106,18 @@ type Backlog struct {
 // db.ListBacklogsByProjectRow (see fromListRow).
 func fromRow(row db.Backlog) Backlog {
 	return Backlog{
-		ID:          row.ID,
-		ProjectID:   row.ProjectID,
-		Name:        row.Name,
-		Description: row.Description,
-		Position:    row.Position,
-		StartDate:   datePtr(row.StartDate),
-		DueOn:       datePtr(row.DueOn),
-		Priority:    row.Priority,
-		Progress:    row.Progress,
-		CreatedAt:   row.CreatedAt.Time,
-		UpdatedAt:   row.UpdatedAt.Time,
+		ID:                           row.ID,
+		ProjectID:                    row.ProjectID,
+		Name:                         row.Name,
+		Description:                  row.Description,
+		Position:                     row.Position,
+		StartDate:                    datePtr(row.StartDate),
+		DueOn:                        datePtr(row.DueOn),
+		Priority:                     row.Priority,
+		Progress:                     row.Progress,
+		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
+		CreatedAt:                    row.CreatedAt.Time,
+		UpdatedAt:                    row.UpdatedAt.Time,
 	}
 }
 
@@ -116,19 +125,20 @@ func fromRow(row db.Backlog) Backlog {
 // the LEFT JOIN's task counts, to the domain model.
 func fromListRow(row db.ListBacklogsByProjectRow) Backlog {
 	return Backlog{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		Name:            row.Name,
-		Description:     row.Description,
-		Position:        row.Position,
-		StartDate:       datePtr(row.StartDate),
-		DueOn:           datePtr(row.DueOn),
-		Priority:        row.Priority,
-		Progress:        row.Progress,
-		TaskCount:       row.TaskCount,
-		ClosedTaskCount: row.ClosedTaskCount,
-		CreatedAt:       row.CreatedAt.Time,
-		UpdatedAt:       row.UpdatedAt.Time,
+		ID:                           row.ID,
+		ProjectID:                    row.ProjectID,
+		Name:                         row.Name,
+		Description:                  row.Description,
+		Position:                     row.Position,
+		StartDate:                    datePtr(row.StartDate),
+		DueOn:                        datePtr(row.DueOn),
+		Priority:                     row.Priority,
+		Progress:                     row.Progress,
+		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
+		TaskCount:                    row.TaskCount,
+		ClosedTaskCount:              row.ClosedTaskCount,
+		CreatedAt:                    row.CreatedAt.Time,
+		UpdatedAt:                    row.UpdatedAt.Time,
 	}
 }
 
@@ -145,6 +155,21 @@ func toDate(v *time.Time) pgtype.Date {
 		return pgtype.Date{}
 	}
 	return pgtype.Date{Time: *v, Valid: true}
+}
+
+func uuidPtr(v pgtype.UUID) *uuid.UUID {
+	if !v.Valid {
+		return nil
+	}
+	id := uuid.UUID(v.Bytes)
+	return &id
+}
+
+func toUUID(v *uuid.UUID) pgtype.UUID {
+	if v == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *v, Valid: true}
 }
 
 // validateSchedule rejects a period that ends before it starts. Either date
@@ -214,6 +239,30 @@ func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, m
 	}
 }
 
+// validateLink checks that linkID, if set, is a GitLab project linked to
+// projectID's own GitLab connection. Nothing in the schema can enforce this —
+// linked_gitlab_projects reaches its project only through gitlab_connections —
+// so a backlog pointing at another project's link would otherwise silently
+// push issues somewhere the project has no business writing to. A link the
+// caller cannot see is rejected the same as one that does not exist.
+func (s *Service) validateLink(ctx context.Context, ownerID, projectID uuid.UUID, linkID *uuid.UUID) error {
+	if linkID == nil {
+		return nil
+	}
+	_, err := s.q.GetLinkedGitlabProjectInProjectForOwner(ctx, db.GetLinkedGitlabProjectInProjectForOwnerParams{
+		ID:          *linkID,
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrLinkNotInProject
+		}
+		return fmt.Errorf("backlog: validate linked gitlab project: %w", err)
+	}
+	return nil
+}
+
 // normalizeName trims raw and enforces the 1-100 character rule.
 func normalizeName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
@@ -235,6 +284,10 @@ type CreateParams struct {
 	Priority string
 	// Progress defaults to ProgressNotStarted when empty.
 	Progress string
+	// DefaultLinkedGitlabProjectID is optional: nil leaves the backlog on the
+	// project's default link. A link outside this project is rejected with
+	// ErrLinkNotInProject.
+	DefaultLinkedGitlabProjectID *uuid.UUID
 }
 
 // Create validates name and creates a backlog at the end of projectID's
@@ -260,14 +313,18 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	if err != nil {
 		return Backlog{}, err
 	}
+	if err := s.validateLink(ctx, ownerID, projectID, p.DefaultLinkedGitlabProjectID); err != nil {
+		return Backlog{}, err
+	}
 	row, err := s.q.CreateBacklog(ctx, db.CreateBacklogParams{
-		ProjectID:   projectID,
-		Name:        normalized,
-		Description: p.Description,
-		StartDate:   toDate(p.StartDate),
-		DueOn:       toDate(p.DueOn),
-		Priority:    priority,
-		Progress:    progress,
+		ProjectID:                    projectID,
+		Name:                         normalized,
+		Description:                  p.Description,
+		StartDate:                    toDate(p.StartDate),
+		DueOn:                        toDate(p.DueOn),
+		Priority:                     priority,
+		Progress:                     progress,
+		DefaultLinkedGitlabProjectID: toUUID(p.DefaultLinkedGitlabProjectID),
 	})
 	if err != nil {
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
@@ -362,6 +419,11 @@ type UpdateParams struct {
 	// Progress follows the same absent/explicit-empty rule as Priority,
 	// resetting to ProgressNotStarted when explicitly empty.
 	Progress optional.Optional[string]
+	// DefaultLinkedGitlabProjectID is Optional for the same reason the dates
+	// are: a caller that only renames a backlog must not silently reset where
+	// its tasks' issues go. An explicit null falls the backlog back to the
+	// project's default link.
+	DefaultLinkedGitlabProjectID optional.Optional[*uuid.UUID]
 }
 
 // Update overwrites name, description and position, and applies whichever of
@@ -398,17 +460,27 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 	if err != nil {
 		return Backlog{}, err
 	}
+	// Only a link the caller actually sent is re-validated: the stored one
+	// was checked when it was written, and a link that has since been
+	// unlinked is already NULL here (ON DELETE SET NULL).
+	link := p.DefaultLinkedGitlabProjectID.Or(current.DefaultLinkedGitlabProjectID)
+	if _, changed := p.DefaultLinkedGitlabProjectID.Get(); changed {
+		if err := s.validateLink(ctx, ownerID, current.ProjectID, link); err != nil {
+			return Backlog{}, err
+		}
+	}
 
 	row, err := s.q.UpdateBacklogForOwner(ctx, db.UpdateBacklogForOwnerParams{
-		ID:          backlogID,
-		OwnerUserID: ownerID,
-		Name:        normalized,
-		Description: p.Description,
-		Position:    p.Position,
-		StartDate:   toDate(startDate),
-		DueOn:       toDate(dueOn),
-		Priority:    priority,
-		Progress:    progress,
+		ID:                           backlogID,
+		OwnerUserID:                  ownerID,
+		Name:                         normalized,
+		Description:                  p.Description,
+		Position:                     p.Position,
+		StartDate:                    toDate(startDate),
+		DueOn:                        toDate(dueOn),
+		Priority:                     priority,
+		Progress:                     progress,
+		DefaultLinkedGitlabProjectID: toUUID(link),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

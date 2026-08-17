@@ -249,6 +249,74 @@ func TestDeleteBacklogForOwner_TasksBecomeUnfiled(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A backlog's own issue destination (issue #180) is a real FK with ON DELETE
+// SET NULL, and the query that reads it back joins three tables — neither is
+// something the fake querier proves, so both run against Postgres here.
+func TestBacklogDefaultLinkedGitlabProject_ResolvesAndSurvivesUnlink(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	conn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:      p.ID,
+		BaseUrl:        "https://gitlab.example.com",
+		EncryptedToken: []byte("ciphertext"),
+	})
+	require.NoError(t, err)
+	projectDefault := seedLinkedGitlabProject(t, q, conn.ID, 501)
+	backlogLink := seedLinkedGitlabProject(t, q, conn.ID, 502)
+	require.True(t, projectDefault.IsDefault)
+
+	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{
+		ProjectID:                    p.ID,
+		Name:                         "Sprint 1",
+		Priority:                     "medium",
+		Progress:                     "not_started",
+		DefaultLinkedGitlabProjectID: pgtype.UUID{Bytes: backlogLink.ID, Valid: true},
+	})
+	require.NoError(t, err)
+
+	got, err := q.GetBacklogLinkedGitlabProjectForOwner(ctx, db.GetBacklogLinkedGitlabProjectForOwnerParams{
+		ID:          b.ID,
+		OwnerUserID: owner.ID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, backlogLink.ID, got.ID, "the backlog's own link wins over the project default")
+
+	_, err = q.GetBacklogLinkedGitlabProjectForOwner(ctx, db.GetBacklogLinkedGitlabProjectForOwnerParams{
+		ID:          b.ID,
+		OwnerUserID: createUser(t, q, "intruder").ID,
+	})
+	assert.ErrorIs(t, err, pgx.ErrNoRows, "a non-member must not resolve the backlog's link")
+
+	// Unlinking the GitLab project falls the backlog back to the project
+	// default rather than deleting the backlog.
+	_, err = q.DeleteLinkedGitlabProjectForOwner(ctx, db.DeleteLinkedGitlabProjectForOwnerParams{
+		ID:          backlogLink.ID,
+		OwnerUserID: owner.ID,
+	})
+	require.NoError(t, err)
+
+	still, err := q.GetBacklogForOwner(ctx, db.GetBacklogForOwnerParams{ID: b.ID, OwnerUserID: owner.ID})
+	require.NoError(t, err)
+	assert.False(t, still.DefaultLinkedGitlabProjectID.Valid, "expected ON DELETE SET NULL, not a deleted backlog")
+
+	_, err = q.GetBacklogLinkedGitlabProjectForOwner(ctx, db.GetBacklogLinkedGitlabProjectForOwnerParams{
+		ID:          b.ID,
+		OwnerUserID: owner.ID,
+	})
+	assert.ErrorIs(t, err, pgx.ErrNoRows)
+}
+
 // ListBacklogsByProject's task counts (issue #144) are a LEFT JOIN aggregate
 // the fake querier can only approximate, so this exercises the real GROUP BY
 // against Postgres: an empty backlog reports zero rather than being dropped

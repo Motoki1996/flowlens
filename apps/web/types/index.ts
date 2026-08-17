@@ -48,6 +48,12 @@ export interface Backlog {
   dueOn: string | null;
   priority: Priority;
   progress: Progress;
+  // The GitLab project a task filed in this backlog gets its issue created
+  // in, overriding the project's own default link. null — the value every
+  // backlog starts with — means the project default is used. Read only when a
+  // task is created: moving a task between backlogs afterwards never moves an
+  // issue that already exists.
+  defaultLinkedGitlabProjectId: string | null;
   // The backlog's total and closed task counts, aggregated server-side
   // (issue #144) so the Backlog collection doesn't need to fetch every task
   // itself just to show a count and a completion ratio.

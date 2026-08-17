@@ -526,14 +526,15 @@ func normalizeLabels(labels []string) []string {
 // end of its backlog's (or the unfiled group's) position order. It returns
 // ErrNotFound if projectID does not exist or belongs to another user.
 //
-// If projectID has a default linked GitLab project, an issue.create sync
-// job is enqueued in the same transaction as the task write, so the task is
-// always eventually pushed (docs/plans/issue-sync.md, "Outbound"); a
-// project with no linked GitLab project yet creates a purely local task. An
-// unspecified assignee defaults to the project's GitLab connection's own
-// token identity — the MVP has one token per project, not per user
-// (ADR-0008), so that token's account stands in for "the creator's GitLab
-// account".
+// If the task has anywhere to be pushed — its backlog's own linked GitLab
+// project, or failing that projectID's default link, see
+// resolveLinkedGitlabProject — an issue.create sync job is enqueued in the
+// same transaction as the task write, so the task is always eventually
+// pushed (docs/plans/issue-sync.md, "Outbound"); a project with no linked
+// GitLab project yet creates a purely local task. An unspecified assignee
+// defaults to the project's GitLab connection's own token identity — the MVP
+// has one token per project, not per user (ADR-0008), so that token's account
+// stands in for "the creator's GitLab account".
 func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, params CreateParams) (Task, error) {
 	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
 		return Task{}, err
@@ -560,7 +561,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 		assigneeID := params.AssigneeGitlabUserID
 		assigneeUsername := params.AssigneeGitlabUsername
 
-		defaultLink, hasLink, err := getDefaultLinkedGitlabProject(ctx, q, ownerID, projectID)
+		link, hasLink, err := resolveLinkedGitlabProject(ctx, q, ownerID, projectID, params.BacklogID)
 		if err != nil {
 			return fmt.Errorf("task: create: %w", err)
 		}
@@ -594,7 +595,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 			return nil
 		}
 		payload, err := json.Marshal(issuesync.CreatePayload{
-			LinkedGitlabProjectID: defaultLink.ID,
+			LinkedGitlabProjectID: link.ID,
 			IssuePayload:          BuildGitlabIssuePayload(result),
 		})
 		if err != nil {
@@ -615,6 +616,34 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 		return Task{}, err
 	}
 	return result, nil
+}
+
+// resolveLinkedGitlabProject decides where a new task's issue is created:
+// the task's backlog's own linked GitLab project first (migration 000021),
+// then projectID's default link, then nowhere at all — a project with no
+// linked GitLab project yet is not an error, the task is simply created as a
+// purely local one.
+//
+// This runs at task-create time only. Once an issue exists, its linked
+// project is recorded in task_gitlab_links and every later update follows
+// that row, so moving a task between backlogs afterwards never moves (or
+// re-targets) the issue.
+func resolveLinkedGitlabProject(ctx context.Context, q db.Querier, ownerID, projectID uuid.UUID, backlogID *uuid.UUID) (db.LinkedGitlabProject, bool, error) {
+	if backlogID != nil {
+		link, err := q.GetBacklogLinkedGitlabProjectForOwner(ctx, db.GetBacklogLinkedGitlabProjectForOwnerParams{
+			ID:          *backlogID,
+			OwnerUserID: ownerID,
+		})
+		if err == nil {
+			return link, true, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return db.LinkedGitlabProject{}, false, err
+		}
+		// The backlog names no link of its own (or it was unlinked since):
+		// fall back to the project default below.
+	}
+	return getDefaultLinkedGitlabProject(ctx, q, ownerID, projectID)
 }
 
 // getDefaultLinkedGitlabProject looks up projectID's default linked GitLab

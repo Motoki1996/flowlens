@@ -1,9 +1,14 @@
 import { notFound } from "next/navigation";
-import { getBacklog, getProject, getTasks } from "@/lib/api";
+import {
+  getBacklog,
+  getLinkedGitlabProjects,
+  getProject,
+  getTasks,
+} from "@/lib/api";
 import { backlogsPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { BacklogDetail } from "@/components/BacklogDetail";
-import type { Task } from "@/types";
+import type { LinkedGitlabProject, Task } from "@/types";
 
 // Auth is guarded by the parent layout.tsx (it also owns the AppHeader this
 // page doesn't need its own user object for).
@@ -28,6 +33,16 @@ export default async function BacklogPage({
     tasksError = true;
   }
 
+  // Names this backlog's issue destination (issue #180). A project with no
+  // GitLab connection has none, which reads the same as a failed fetch: the
+  // row simply doesn't appear.
+  let links: LinkedGitlabProject[] = [];
+  try {
+    links = await getLinkedGitlabProjects(projectId);
+  } catch {
+    links = [];
+  }
+
   return (
     <>
       <Breadcrumbs
@@ -36,7 +51,13 @@ export default async function BacklogPage({
           { label: backlog.name },
         ]}
       />
-      <BacklogDetail backlog={backlog} project={project} tasks={tasks} tasksError={tasksError} />
+      <BacklogDetail
+        backlog={backlog}
+        project={project}
+        tasks={tasks}
+        links={links}
+        tasksError={tasksError}
+      />
     </>
   );
 }

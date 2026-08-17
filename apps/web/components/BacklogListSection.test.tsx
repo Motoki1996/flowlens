@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
-import type { Backlog } from "@/types";
+import type { Backlog, LinkedGitlabProject } from "@/types";
 import { BacklogListSection } from "./BacklogListSection";
 
 const refresh = vi.fn();
@@ -25,11 +25,58 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  defaultLinkedGitlabProjectId: null,
   taskCount: 0,
   closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
+
+/** Two links so "the project default" and "this backlog's own" are distinct
+ *  (issue #180). */
+const links: LinkedGitlabProject[] = [
+  {
+    id: "l1",
+    gitlabConnectionId: "c1",
+    gitlabProjectId: 100,
+    pathWithNamespace: "group/demo",
+    name: "demo",
+    webUrl: "https://gitlab.example.com/group/demo",
+    syncScope: "all",
+    syncLabels: [],
+    isDefault: true,
+    initialImportStatus: "completed",
+    lastSyncedAt: null,
+    webhookStatus: "registered",
+    webhookRegisteredAt: null,
+    webhookError: "",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "l2",
+    gitlabConnectionId: "c1",
+    gitlabProjectId: 200,
+    pathWithNamespace: "group/other",
+    name: "other",
+    webUrl: "https://gitlab.example.com/group/other",
+    syncScope: "all",
+    syncLabels: [],
+    isDefault: false,
+    initialImportStatus: "completed",
+    lastSyncedAt: null,
+    webhookStatus: "registered",
+    webhookRegisteredAt: null,
+    webhookError: "",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+];
+
+/** bodyOf reads back the JSON a mocked fetch call was given. */
+function bodyOf(call: Parameters<typeof fetch>) {
+  return JSON.parse(String((call[1] as RequestInit).body));
+}
 
 const otherBacklog: Backlog = {
   ...backlog,
@@ -112,6 +159,71 @@ describe("BacklogListSection", () => {
       "http://localhost:8080/api/v1/projects/p1/backlogs",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  // A backlog can name its own GitLab project for new issues (issue #180).
+  // The field only exists where there is something to choose between, and an
+  // edit that doesn't touch it must not reset it.
+  describe("GitLab project for new issues", () => {
+    it("hides the field when the project has no linked GitLab project", () => {
+      render(<BacklogListSection projectId="p1" backlogs={[]} />);
+      fireEvent.click(screen.getByRole("button", { name: "New backlog" }));
+      expect(
+        screen.queryByLabelText("GitLab project for new issues"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("defaults a new backlog to the project default", async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(JSON.stringify(backlog), { status: 201 }),
+      );
+      render(
+        <BacklogListSection projectId="p1" backlogs={[]} links={links} />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "New backlog" }));
+      expect(
+        screen.getByLabelText("GitLab project for new issues"),
+      ).toHaveTextContent("Project default (group/demo)");
+      fireEvent.change(screen.getByLabelText("Name"), {
+        target: { value: "Sprint 2" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Create backlog" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(bodyOf(vi.mocked(fetch).mock.calls[0])).toMatchObject({
+        defaultLinkedGitlabProjectId: null,
+      });
+    });
+
+    it("keeps the backlog's own link through an unrelated edit", async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        new Response(JSON.stringify(backlog), { status: 200 }),
+      );
+      render(
+        <BacklogListSection
+          projectId="p1"
+          backlogs={[{ ...backlog, defaultLinkedGitlabProjectId: "l2" }]}
+          links={links}
+        />,
+      );
+      showList();
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      expect(
+        screen.getByLabelText("GitLab project for new issues"),
+      ).toHaveTextContent("group/other");
+      fireEvent.change(screen.getByLabelText("Name"), {
+        target: { value: "Renamed" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(bodyOf(vi.mocked(fetch).mock.calls[0])).toMatchObject({
+        name: "Renamed",
+        defaultLinkedGitlabProjectId: "l2",
+      });
+    });
   });
 
   it("renames a backlog", async () => {

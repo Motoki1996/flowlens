@@ -12,7 +12,13 @@ import { fromApiDate, toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
 import { backlogTaskCompletion } from "@/lib/timeline";
 import { useViewMode } from "@/lib/useViewMode";
-import type { ApiError, Backlog, Priority, Progress } from "@/types";
+import type {
+  ApiError,
+  Backlog,
+  LinkedGitlabProject,
+  Priority,
+  Progress,
+} from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -80,12 +86,73 @@ function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
   return next;
 }
 
+/** The Select value standing in for "no link of this backlog's own" — Radix
+ *  Select has no empty-string item, and the API's own spelling for it is
+ *  `null`, which a Select can't hold either. */
+const PROJECT_DEFAULT_LINK = "project-default";
+
+/**
+ * LinkedGitlabProjectField picks the GitLab project this backlog's new tasks
+ * get their issue created in (issue #180). Choosing "Project default" sends
+ * null, which falls the backlog back to the project's own default link.
+ *
+ * It renders nothing when the project has no linked GitLab project at all:
+ * there is no destination to choose between, and the field would only raise a
+ * question the screen can't answer.
+ */
+function LinkedGitlabProjectField({
+  id,
+  links,
+  value,
+  onChange,
+}: {
+  id: string;
+  links: LinkedGitlabProject[];
+  value: string | null;
+  onChange: (value: string | null) => void;
+}) {
+  if (links.length === 0) return null;
+  const projectDefault = links.find((l) => l.isDefault);
+
+  return (
+    <div>
+      <label htmlFor={id} className="text-foreground block text-sm font-medium">
+        GitLab project for new issues
+      </label>
+      <Select
+        value={value ?? PROJECT_DEFAULT_LINK}
+        onValueChange={(next) =>
+          onChange(next === PROJECT_DEFAULT_LINK ? null : next)
+        }
+      >
+        <SelectTrigger id={id} className="mt-1 w-full sm:w-80">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={PROJECT_DEFAULT_LINK}>
+            {projectDefault
+              ? `Project default (${projectDefault.pathWithNamespace})`
+              : "Project default"}
+          </SelectItem>
+          {links.map((link) => (
+            <SelectItem key={link.id} value={link.id}>
+              {link.pathWithNamespace}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 /** NewBacklogForm is the inline creation form shown in the backlog list. */
 function NewBacklogForm({
   projectId,
+  links,
   onCancel,
 }: {
   projectId: string;
+  links: LinkedGitlabProject[];
   onCancel: () => void;
 }) {
   const router = useRouter();
@@ -95,6 +162,7 @@ function NewBacklogForm({
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [priority, setPriority] = useState<Priority>("medium");
   const [progress, setProgress] = useState<Progress>("not_started");
+  const [linkId, setLinkId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -121,6 +189,7 @@ function NewBacklogForm({
             dueOn: toApiDate(dueOn),
             priority,
             progress,
+            defaultLinkedGitlabProjectId: linkId,
           }),
         },
       );
@@ -242,6 +311,12 @@ function NewBacklogForm({
           </SelectContent>
         </Select>
       </div>
+      <LinkedGitlabProjectField
+        id="new-backlog-linked-gitlab-project"
+        links={links}
+        value={linkId}
+        onChange={setLinkId}
+      />
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Creating…" : "Create backlog"}
@@ -265,10 +340,12 @@ function NewBacklogForm({
  *  "Rename". */
 function EditBacklogForm({
   backlog,
+  links,
   onSaved,
   onCancel,
 }: {
   backlog: Backlog;
+  links: LinkedGitlabProject[];
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -279,6 +356,9 @@ function EditBacklogForm({
   const [dueOn, setDueOn] = useState(fromApiDate(backlog.dueOn));
   const [priority, setPriority] = useState<Priority>(backlog.priority);
   const [progress, setProgress] = useState<Progress>(backlog.progress);
+  const [linkId, setLinkId] = useState<string | null>(
+    backlog.defaultLinkedGitlabProjectId,
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -306,6 +386,7 @@ function EditBacklogForm({
             dueOn: toApiDate(dueOn),
             priority,
             progress,
+            defaultLinkedGitlabProjectId: linkId,
           }),
         },
       );
@@ -427,6 +508,12 @@ function EditBacklogForm({
           </SelectContent>
         </Select>
       </div>
+      <LinkedGitlabProjectField
+        id={`edit-backlog-linked-gitlab-project-${backlog.id}`}
+        links={links}
+        value={linkId}
+        onChange={setLinkId}
+      />
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Saving…" : "Save"}
@@ -564,6 +651,7 @@ const FILTER_DEFAULTS = {
 export function BacklogListSection({
   projectId,
   backlogs,
+  links = [],
   priorityFilter,
   progressFilter,
   sort = "manual",
@@ -573,6 +661,11 @@ export function BacklogListSection({
 }: {
   projectId: string;
   backlogs: Backlog[];
+  /** The project's linked GitLab projects (issue #180), offered by the
+   *  create/edit forms as a backlog's own destination for new issues. Empty
+   *  — the default, and the case for a project with no GitLab connection —
+   *  hides that field entirely. */
+  links?: LinkedGitlabProject[];
   /** The applied `?priority=`; undefined means all of them. */
   priorityFilter?: Priority;
   /** The applied `?progress=`; undefined means all of them. */
@@ -866,6 +959,7 @@ export function BacklogListSection({
           <div className="mb-4">
             <NewBacklogForm
               projectId={projectId}
+              links={links}
               onCancel={() => setCreating(false)}
             />
           </div>
@@ -931,6 +1025,7 @@ export function BacklogListSection({
                       {editingId === backlog.id ? (
                         <EditBacklogForm
                           backlog={backlog}
+                          links={links}
                           onSaved={() => setEditingId(null)}
                           onCancel={() => setEditingId(null)}
                         />

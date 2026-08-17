@@ -1,8 +1,47 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
 import { BacklogDetail } from "./BacklogDetail";
-import type { Backlog, Task } from "@/types";
+import type { Backlog, LinkedGitlabProject, Task } from "@/types";
 
 const project = { id: "p1", name: "Alpha" };
+
+const links: LinkedGitlabProject[] = [
+  {
+    id: "l1",
+    gitlabConnectionId: "c1",
+    gitlabProjectId: 100,
+    pathWithNamespace: "group/demo",
+    name: "demo",
+    webUrl: "https://gitlab.example.com/group/demo",
+    syncScope: "all",
+    syncLabels: [],
+    isDefault: true,
+    initialImportStatus: "completed",
+    lastSyncedAt: null,
+    webhookStatus: "registered",
+    webhookRegisteredAt: null,
+    webhookError: "",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "l2",
+    gitlabConnectionId: "c1",
+    gitlabProjectId: 200,
+    pathWithNamespace: "group/other",
+    name: "other",
+    webUrl: "https://gitlab.example.com/group/other",
+    syncScope: "all",
+    syncLabels: [],
+    isDefault: false,
+    initialImportStatus: "completed",
+    lastSyncedAt: null,
+    webhookStatus: "registered",
+    webhookRegisteredAt: null,
+    webhookError: "",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+];
 
 const backlog: Backlog = {
   id: "b1",
@@ -14,6 +53,7 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  defaultLinkedGitlabProjectId: null,
   taskCount: 0,
   closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
@@ -72,6 +112,17 @@ export const WithTasks: Story = {
       makeTask({ id: "t1", title: "Fix the bug" }),
       makeTask({ id: "t2", title: "Write docs", status: "closed", assigneeGitlabUsername: "" }),
     ],
+  },
+};
+
+/** A backlog that files its tasks' issues in a GitLab project of its own,
+ *  rather than following the project's default link (issue #180). */
+export const WithOwnGitlabProject: Story = {
+  args: {
+    backlog: { ...backlog, defaultLinkedGitlabProjectId: "l2" },
+    project,
+    tasks: [],
+    links,
   },
 };
 

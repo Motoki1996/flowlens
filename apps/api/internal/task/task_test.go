@@ -1000,6 +1000,70 @@ func TestService_Create_EnqueuesIssueCreateJob_WhenProjectHasDefaultLinkedGitlab
 	assert.Equal(t, []string{"bug"}, payload.Labels)
 }
 
+// A backlog can name its own GitLab project (issue #180). It wins over the
+// project's default link, and only at create time — see
+// resolveLinkedGitlabProject.
+func TestService_Create_EnqueuesToBacklogsOwnLinkedGitlabProject(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	projectDefault := seedLinkedGitlabProject(t, q, conn.ID)
+	backlogLink, err := q.CreateLinkedGitlabProject(ctx, db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: conn.ID,
+		GitlabProjectID:    200,
+		PathWithNamespace:  "group/other",
+		Name:               "other",
+		WebUrl:             "https://gitlab.example.com/group/other",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+	require.False(t, backlogLink.IsDefault, "the second link is not the project default")
+
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	_, err = q.UpdateBacklogForOwner(ctx, db.UpdateBacklogForOwnerParams{
+		ID:                           b.ID,
+		OwnerUserID:                  owner,
+		Name:                         b.Name,
+		Priority:                     b.Priority,
+		Progress:                     b.Progress,
+		DefaultLinkedGitlabProjectID: pgtype.UUID{Bytes: backlogLink.ID, Valid: true},
+	})
+	require.NoError(t, err)
+
+	got, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", BacklogID: &b.ID})
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(got.ID)
+	require.Len(t, jobs, 1)
+	var payload issuesync.CreatePayload
+	require.NoError(t, json.Unmarshal(jobs[0].Payload, &payload))
+	assert.Equal(t, backlogLink.ID, payload.LinkedGitlabProjectID)
+	assert.NotEqual(t, projectDefault.ID, payload.LinkedGitlabProjectID)
+}
+
+func TestService_Create_FallsBackToProjectDefault_WhenBacklogNamesNoLink(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	projectDefault := seedLinkedGitlabProject(t, q, conn.ID)
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+
+	got, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", BacklogID: &b.ID})
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(got.ID)
+	require.Len(t, jobs, 1)
+	var payload issuesync.CreatePayload
+	require.NoError(t, json.Unmarshal(jobs[0].Payload, &payload))
+	assert.Equal(t, projectDefault.ID, payload.LinkedGitlabProjectID)
+}
+
 func TestService_Create_DoesNotEnqueue_WhenProjectHasNoLinkedGitlabProject(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

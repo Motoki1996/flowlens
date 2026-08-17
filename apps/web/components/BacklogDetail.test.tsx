@@ -1,9 +1,49 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type { Backlog, Task } from "@/types";
+import type { Backlog, LinkedGitlabProject, Task } from "@/types";
 import { BacklogDetail } from "./BacklogDetail";
 
 const project = { id: "p1", name: "Alpha" };
+
+/** Two links so the project default and a backlog's own are distinct. */
+const links: LinkedGitlabProject[] = [
+  {
+    id: "l1",
+    gitlabConnectionId: "c1",
+    gitlabProjectId: 100,
+    pathWithNamespace: "group/demo",
+    name: "demo",
+    webUrl: "https://gitlab.example.com/group/demo",
+    syncScope: "all",
+    syncLabels: [],
+    isDefault: true,
+    initialImportStatus: "completed",
+    lastSyncedAt: null,
+    webhookStatus: "registered",
+    webhookRegisteredAt: null,
+    webhookError: "",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+  {
+    id: "l2",
+    gitlabConnectionId: "c1",
+    gitlabProjectId: 200,
+    pathWithNamespace: "group/other",
+    name: "other",
+    webUrl: "https://gitlab.example.com/group/other",
+    syncScope: "all",
+    syncLabels: [],
+    isDefault: false,
+    initialImportStatus: "completed",
+    lastSyncedAt: null,
+    webhookStatus: "registered",
+    webhookRegisteredAt: null,
+    webhookError: "",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+  },
+];
 
 const backlog: Backlog = {
   id: "b1",
@@ -15,6 +55,7 @@ const backlog: Backlog = {
   dueOn: null,
   priority: "medium",
   progress: "not_started",
+  defaultLinkedGitlabProjectId: null,
   taskCount: 0,
   closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
@@ -73,6 +114,34 @@ describe("BacklogDetail", () => {
     );
     expect(screen.getByText("Aug 1, 2026")).toBeInTheDocument();
     expect(screen.getByText("Aug 31, 2026")).toBeInTheDocument();
+  });
+
+  // Where a task filed here gets its GitLab issue created (issue #180): the
+  // backlog's own link, or the project's default when it names none.
+  it("names the GitLab project new issues go to, and where that came from", () => {
+    const { rerender } = render(
+      <BacklogDetail backlog={backlog} project={project} tasks={[]} links={links} />,
+    );
+    expect(screen.getByText("group/demo")).toBeInTheDocument();
+    expect(screen.getByText("(project default)")).toBeInTheDocument();
+
+    rerender(
+      <BacklogDetail
+        backlog={{ ...backlog, defaultLinkedGitlabProjectId: "l2" }}
+        project={project}
+        tasks={[]}
+        links={links}
+      />,
+    );
+    expect(screen.getByText("group/other")).toBeInTheDocument();
+    expect(screen.queryByText("(project default)")).not.toBeInTheDocument();
+  });
+
+  it("omits the GitLab destination for a project with no linked GitLab project", () => {
+    render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
+    expect(
+      screen.queryByText("GitLab project for new issues"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the closed/total progress its timeline bar is filled by", () => {

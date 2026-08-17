@@ -554,17 +554,18 @@ func (f *FakeQuerier) nextBacklogPosition(projectID uuid.UUID) int32 {
 
 func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParams) (db.Backlog, error) {
 	b := db.Backlog{
-		ID:          uuid.New(),
-		ProjectID:   arg.ProjectID,
-		Name:        arg.Name,
-		Description: arg.Description,
-		Position:    f.nextBacklogPosition(arg.ProjectID),
-		StartDate:   arg.StartDate,
-		DueOn:       arg.DueOn,
-		Priority:    arg.Priority,
-		Progress:    arg.Progress,
-		CreatedAt:   now(),
-		UpdatedAt:   now(),
+		ID:                           uuid.New(),
+		ProjectID:                    arg.ProjectID,
+		Name:                         arg.Name,
+		Description:                  arg.Description,
+		Position:                     f.nextBacklogPosition(arg.ProjectID),
+		StartDate:                    arg.StartDate,
+		DueOn:                        arg.DueOn,
+		Priority:                     arg.Priority,
+		Progress:                     arg.Progress,
+		DefaultLinkedGitlabProjectID: arg.DefaultLinkedGitlabProjectID,
+		CreatedAt:                    now(),
+		UpdatedAt:                    now(),
 	}
 	f.backlogs = append(f.backlogs, b)
 	f.backlogsByID[b.ID] = b
@@ -623,19 +624,20 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 		}
 		taskCount, closedTaskCount := f.backlogTaskCounts(b.ID)
 		items = append(items, db.ListBacklogsByProjectRow{
-			ID:              b.ID,
-			ProjectID:       b.ProjectID,
-			Name:            b.Name,
-			Description:     b.Description,
-			Position:        b.Position,
-			CreatedAt:       b.CreatedAt,
-			UpdatedAt:       b.UpdatedAt,
-			StartDate:       b.StartDate,
-			DueOn:           b.DueOn,
-			Priority:        b.Priority,
-			Progress:        b.Progress,
-			TaskCount:       taskCount,
-			ClosedTaskCount: closedTaskCount,
+			ID:                           b.ID,
+			ProjectID:                    b.ProjectID,
+			Name:                         b.Name,
+			Description:                  b.Description,
+			Position:                     b.Position,
+			CreatedAt:                    b.CreatedAt,
+			UpdatedAt:                    b.UpdatedAt,
+			StartDate:                    b.StartDate,
+			DueOn:                        b.DueOn,
+			Priority:                     b.Priority,
+			Progress:                     b.Progress,
+			DefaultLinkedGitlabProjectID: b.DefaultLinkedGitlabProjectID,
+			TaskCount:                    taskCount,
+			ClosedTaskCount:              closedTaskCount,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -705,6 +707,7 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	existing.DueOn = arg.DueOn
 	existing.Priority = arg.Priority
 	existing.Progress = arg.Progress
+	existing.DefaultLinkedGitlabProjectID = arg.DefaultLinkedGitlabProjectID
 	existing.UpdatedAt = now()
 
 	f.backlogsByID[arg.ID] = existing
@@ -1960,6 +1963,43 @@ func (f *FakeQuerier) GetLinkedGitlabProjectProjectID(_ context.Context, id uuid
 	return conn.ProjectID, nil
 }
 
+// GetLinkedGitlabProjectInProjectForOwner mirrors the SQL: the link, but only
+// when it belongs to arg.ProjectID's own GitLab connection and the caller can
+// see that project. Used by internal/backlog to validate a backlog's own issue
+// destination.
+func (f *FakeQuerier) GetLinkedGitlabProjectInProjectForOwner(_ context.Context, arg db.GetLinkedGitlabProjectInProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	l, ok := f.linkedGitlabProjectsByID[arg.ID]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	projectID, ok := f.linkedProjectProjectID(l)
+	if !ok || projectID != arg.ProjectID || !f.hasMembership(projectID, arg.OwnerUserID) {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+// GetBacklogLinkedGitlabProjectForOwner mirrors the SQL: the link a backlog
+// names as its own issue destination, or no rows when it names none.
+func (f *FakeQuerier) GetBacklogLinkedGitlabProjectForOwner(_ context.Context, arg db.GetBacklogLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	b, ok := f.backlogsByID[arg.ID]
+	if !ok || !b.DefaultLinkedGitlabProjectID.Valid {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	if !f.hasMembership(b.ProjectID, arg.OwnerUserID) {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	l, ok := f.linkedGitlabProjectsByID[uuid.UUID(b.DefaultLinkedGitlabProjectID.Bytes)]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	projectID, ok := f.linkedProjectProjectID(l)
+	if !ok || projectID != b.ProjectID {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
 // GetDefaultLinkedGitlabProjectForOwner mirrors the SQL: the project's
 // default link, scoped through its connection to the owning project like
 // every other linked-project query.
@@ -2050,7 +2090,21 @@ func (f *FakeQuerier) DeleteLinkedGitlabProjectForOwner(_ context.Context, arg d
 			break
 		}
 	}
+	f.clearBacklogDefaultLink(existing.ID)
 	return existing, nil
+}
+
+// clearBacklogDefaultLink mirrors backlogs.default_linked_gitlab_project_id's
+// ON DELETE SET NULL (migration 000021): unlinking a GitLab project falls
+// every backlog that pointed at it back to the project's default link rather
+// than deleting the backlog.
+func (f *FakeQuerier) clearBacklogDefaultLink(linkID uuid.UUID) {
+	for i, b := range f.backlogs {
+		if b.DefaultLinkedGitlabProjectID.Valid && uuid.UUID(b.DefaultLinkedGitlabProjectID.Bytes) == linkID {
+			f.backlogs[i].DefaultLinkedGitlabProjectID = pgtype.UUID{}
+			f.backlogsByID[b.ID] = f.backlogs[i]
+		}
+	}
 }
 
 // PromoteOldestLinkedGitlabProjectAsDefault makes the oldest remaining link

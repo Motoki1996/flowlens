@@ -4,8 +4,12 @@
 -- project.Service.Get), while the single-backlog queries join to projects so
 -- a foreign backlog is indistinguishable from a missing one.
 
+-- default_linked_gitlab_project_id is the backlog's own destination for new
+-- issues, overriding the project's default link (000021). NULL means "use the
+-- project default". internal/backlog checks the link belongs to this project's
+-- GitLab connection before writing it — the schema cannot.
 -- name: CreateBacklog :one
-INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress)
+INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id)
 VALUES (
     $1,
     $2,
@@ -14,7 +18,8 @@ VALUES (
     $4,
     $5,
     $6,
-    $7
+    $7,
+    $8
 )
 RETURNING *;
 
@@ -34,7 +39,7 @@ RETURNING *;
 -- name: ListBacklogsByProject :many
 SELECT
   b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
-  b.start_date, b.due_on, b.priority, b.progress,
+  b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM backlogs b
@@ -53,7 +58,7 @@ ORDER BY
   b.position ASC, b.created_at ASC;
 
 -- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress
+SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -88,17 +93,18 @@ WHERE backlogs.id = ordered.id
   AND backlogs.project_id = sqlc.arg(project_id);
 
 -- UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
--- must arrive already resolved: backlog.Service reads the current row first and
--- fills in whatever the PATCH body left out (see its Update).
+-- and default_linked_gitlab_project_id must arrive already resolved: backlog.Service
+-- reads the current row first and fills in whatever the PATCH body left out
+-- (see its Update).
 -- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, updated_at = now()
+SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, updated_at = now()
 WHERE b.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress;
+RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id;
 
 -- name: DeleteBacklogForOwner :execrows
 DELETE FROM backlogs b

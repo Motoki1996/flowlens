@@ -640,6 +640,53 @@ func TestDeletingTaskCascadesItsProgressEvents(t *testing.T) {
 	assert.Equal(t, 0, count, "task_progress_events rows must be cascade-deleted with their task")
 }
 
+// backlog_progress_events.backlog_id is declared ON DELETE CASCADE (issue
+// #173), mirroring task_progress_events (issue #169) one level up: deleting
+// a backlog must take its progress history with it.
+func TestDeletingBacklogCascadesItsProgressEvents(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{
+		ProjectID: p.ID,
+		Name:      "Sprint 1",
+		Priority:  "medium",
+		Progress:  "in_progress",
+	})
+	require.NoError(t, err)
+
+	_, err = q.CreateBacklogProgressEvent(ctx, db.CreateBacklogProgressEventParams{
+		BacklogID:    b.ID,
+		FromProgress: "not_started",
+		ToProgress:   "in_progress",
+		ActorKind:    "user",
+		ActorUserID:  pgtype.UUID{Bytes: owner.ID, Valid: true},
+	})
+	require.NoError(t, err)
+
+	events, err := q.ListBacklogProgressEventsByBacklog(ctx, b.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 1, "the event must exist before the backlog is deleted")
+
+	affected, err := q.DeleteBacklogForOwner(ctx, db.DeleteBacklogForOwnerParams{ID: b.ID, OwnerUserID: owner.ID})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), affected)
+
+	var count int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM backlog_progress_events WHERE backlog_id = $1`, b.ID).Scan(&count))
+	assert.Equal(t, 0, count, "backlog_progress_events rows must be cascade-deleted with their backlog")
+}
+
 // ListTasksForMember (GET /api/v1/tasks, issue #76, membership-based since
 // issue #99) is hand-written rather than sqlc-generated in this branch,
 // since sqlc wasn't runnable in the environment that authored it — this

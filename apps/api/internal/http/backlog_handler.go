@@ -215,7 +215,10 @@ func (s *Server) handleGetBacklog(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateBacklog updates one backlog, scoped to the authenticated user
-// via its project.
+// via its project. A progress change is attributed to a
+// backlog_progress_events row (issue #173) as ActorKindAgent for a bearer
+// caller (this route is shared, per requireAuthOrBearer) or ActorKindUser
+// for a session caller, mirroring handleUpdateTask.
 func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	backlogID, ok := backlogIDFromURL(r)
@@ -230,6 +233,10 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	actorKind := backlog.ActorKindUser
+	if _, ok := tokenScopeFromContext(r.Context()); ok {
+		actorKind = backlog.ActorKindAgent
+	}
 	b, err := s.backlogs.Update(r.Context(), u.ID, backlogID, backlog.UpdateParams{
 		Name:                         req.Name,
 		Description:                  req.Description,
@@ -239,7 +246,7 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		Priority:                     req.Priority,
 		Progress:                     req.Progress,
 		DefaultLinkedGitlabProjectID: req.DefaultLinkedGitlabProjectID,
-	})
+	}, actorKind)
 	if err != nil {
 		writeBacklogError(w, err)
 		return

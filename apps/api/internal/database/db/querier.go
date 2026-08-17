@@ -66,6 +66,7 @@ type Querier interface {
 	// project default". internal/backlog checks the link belongs to this project's
 	// GitLab connection before writing it — the schema cannot.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
+	CreateBacklogProgressEvent(ctx context.Context, arg CreateBacklogProgressEventParams) (BacklogProgressEvent, error)
 	// gitlab_sync_runs records one project.import / project.resync execution
 	// against a linked GitLab project (docs/plans/issue-sync.md's SyncRun
 	// object, issue #25). Concurrency is enforced at the database level, not by
@@ -394,6 +395,16 @@ type Querier interface {
 	// second process) hits the notification_digests unique constraint and
 	// reports pgx.ErrNoRows instead of a duplicate send.
 	InsertNotificationDigestLog(ctx context.Context, arg InsertNotificationDigestLogParams) (NotificationDigest, error)
+	ListBacklogProgressEventsByBacklog(ctx context.Context, backlogID uuid.UUID) ([]BacklogProgressEvent, error)
+	ListBacklogProgressEventsForFlowMetrics(ctx context.Context, arg ListBacklogProgressEventsForFlowMetricsParams) ([]ListBacklogProgressEventsForFlowMetricsRow, error)
+	// ListBacklogTaskCreatedAtForFlowMetrics returns every (backlog_id,
+	// task.created_at) pair for tasks filed under an in-range backlog,
+	// unfiltered by the task's own created_at — internal/flowmetrics needs a
+	// backlog's *whole* task history to tell "tasks created after this backlog
+	// went in_progress" apart from "this backlog already had tasks before it
+	// went in_progress" (the exclusion issue #173 asks for), which a
+	// task-created_at bound would silently break.
+	ListBacklogTaskCreatedAtForFlowMetrics(ctx context.Context, arg ListBacklogTaskCreatedAtForFlowMetricsParams) ([]ListBacklogTaskCreatedAtForFlowMetricsRow, error)
 	// ListBacklogsByProject's priority and progress filters and sorts follow the
 	// same "empty/false disables it" convention as internal/task's
 	// ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
@@ -408,6 +419,13 @@ type Querier interface {
 	// List row count, Board card ratio and Timeline bar fill) doesn't need to
 	// fetch every task in the project just to derive them.
 	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]ListBacklogsByProjectRow, error)
+	// Backlog-level flow metrics (issue #173): one level up from the
+	// task-level queries above, sourced from backlog_progress_events (issue
+	// #173) plus each backlog's own tasks. since/until bound backlogs.created_at
+	// here, not tasks.created_at — a backlog and its eventual tasks can span
+	// very different windows, and it's the backlog's own creation that starts
+	// the "waiting to start" clock this query feeds.
+	ListBacklogsForFlowMetrics(ctx context.Context, arg ListBacklogsForFlowMetricsParams) ([]ListBacklogsForFlowMetricsRow, error)
 	// ListEnabledNotificationSettings backs the digest worker's sweep: every
 	// project with notifications turned on, regardless of caller, since the
 	// worker runs outside any request.

@@ -47,13 +47,19 @@
    * floor, normal-vision separation and 3:1 contrast all pass. The one caveat
    * is slots 4↔5 (amber/green), which separate by ΔE 6.2 under protanopia —
    * inside the 6–8 floor band, so any chart using both must carry a legend or
-   * direct labels rather than relying on hue alone.
+   * direct labels rather than relying on hue alone. Slots 6-7 (violet/olive,
+   * issue #173) were added later for the two backlog-level flow-metrics
+   * stages and validated the same way against the six-segment stage-lead-time
+   * stack's actual adjacency order (chart-6, chart-7, chart-1..4) — clean,
+   * no floor-band caveats.
    */
   --chart-1: #6366f1;
   --chart-2: #ef4a6a;
   --chart-3: #06a6c2;
   --chart-4: #d97706;
   --chart-5: #16a34a;
+  --chart-6: #8b5cf6;
+  --chart-7: #65a30d;
 }
 
 .dark {
@@ -90,6 +96,8 @@
   --chart-3: #06a6c2;
   --chart-4: #d97706;
   --chart-5: #16a34a;
+  --chart-6: #8b5cf6;
+  --chart-7: #65a30d;
 }
 
 @theme inline {
@@ -117,6 +125,8 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

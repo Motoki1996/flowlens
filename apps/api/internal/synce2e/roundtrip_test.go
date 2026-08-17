@@ -179,7 +179,7 @@ func newEnv(t *testing.T) *env {
 	txRunner := database.NewTxRunner(pool)
 
 	projects := project.NewService(q)
-	backlogs := backlog.NewService(q, projects)
+	backlogs := backlog.NewService(q, txRunner, projects)
 	tasks := task.NewService(q, txRunner, projects, backlogs)
 	comments := taskcomment.NewService(q, txRunner, projects, tasks)
 

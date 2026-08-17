@@ -46,12 +46,23 @@ type StageStats struct {
 	P90    *float64 `json:"p90Hours"`
 }
 
-// Metrics is the aggregation Service.Compute returns: FlowLens's five work
-// stages (see the table in issue #171).
+// Metrics is the aggregation Service.Compute returns: FlowLens's five
+// task-level work stages (issue #171) plus two backlog-level stages one
+// step earlier in the pipeline (issue #173).
 type Metrics struct {
 	From *time.Time `json:"from"`
 	To   *time.Time `json:"to"`
 
+	// BacklogWaitingToStart is backlogs.created_at -> a backlog's first
+	// in_progress transition. Bounded by [from, to] on backlogs.created_at,
+	// not tasks.created_at like every other stage here.
+	BacklogWaitingToStart StageStats `json:"backlogWaitingToStart"`
+	// TaskBreakdown is a backlog's first in_progress transition -> the
+	// earliest created_at among its tasks. A backlog that already had a
+	// task filed under it before going in_progress is excluded entirely
+	// (issue #173): the breakdown work this stage measures never happened
+	// after the transition, so there is nothing to time.
+	TaskBreakdown StageStats `json:"taskBreakdown"`
 	// WaitingToStart is tasks.created_at -> the first in_progress transition.
 	WaitingToStart StageStats `json:"waitingToStart"`
 	// Implementation is the first in_progress transition -> the linked
@@ -160,15 +171,92 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		}
 	}
 
+	backlogWaitingToStart, taskBreakdown, err := s.computeBacklogStages(ctx, projectID, ownerID, since, until)
+	if err != nil {
+		return Metrics{}, err
+	}
+
 	return Metrics{
-		From:           from,
-		To:             to,
-		WaitingToStart: stageStats(waitingToStart),
-		Implementation: stageStats(implementation),
-		ReviewAndMerge: stageStats(reviewAndMerge),
-		Completion:     stageStats(completion),
-		Blocked:        stageStats(blocked),
+		From:                  from,
+		To:                    to,
+		BacklogWaitingToStart: stageStats(backlogWaitingToStart),
+		TaskBreakdown:         stageStats(taskBreakdown),
+		WaitingToStart:        stageStats(waitingToStart),
+		Implementation:        stageStats(implementation),
+		ReviewAndMerge:        stageStats(reviewAndMerge),
+		Completion:            stageStats(completion),
+		Blocked:               stageStats(blocked),
 	}, nil
+}
+
+// computeBacklogStages returns the raw per-backlog hour samples for the two
+// backlog-level stages (issue #173): backlogWaitingToStart
+// (backlogs.created_at -> first in_progress) and taskBreakdown (first
+// in_progress -> the earliest created_at among the backlog's tasks). A
+// backlog that hasn't gone in_progress yet contributes to neither; one that
+// already had a task filed under it before going in_progress is excluded
+// from taskBreakdown entirely, per the issue's own rule — there was no
+// breakdown work to time after the transition.
+func (s *Service) computeBacklogStages(ctx context.Context, projectID, ownerID uuid.UUID, since, until pgtype.Timestamptz) (backlogWaitingToStart, taskBreakdown []float64, err error) {
+	backlogs, err := s.q.ListBacklogsForFlowMetrics(ctx, db.ListBacklogsForFlowMetricsParams{
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+		Since:       since,
+		Until:       until,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("flowmetrics: list backlogs: %w", err)
+	}
+
+	events, err := s.q.ListBacklogProgressEventsForFlowMetrics(ctx, db.ListBacklogProgressEventsForFlowMetricsParams{
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+		Since:       since,
+		Until:       until,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("flowmetrics: list backlog progress events: %w", err)
+	}
+
+	taskCreatedAts, err := s.q.ListBacklogTaskCreatedAtForFlowMetrics(ctx, db.ListBacklogTaskCreatedAtForFlowMetricsParams{
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+		Since:       since,
+		Until:       until,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("flowmetrics: list backlog tasks: %w", err)
+	}
+
+	eventsByBacklog := make(map[uuid.UUID][]db.ListBacklogProgressEventsForFlowMetricsRow)
+	for _, e := range events {
+		eventsByBacklog[e.BacklogID] = append(eventsByBacklog[e.BacklogID], e)
+	}
+	// The query orders by backlog_id, created_at ASC, so the first entry
+	// per backlog is already its earliest task.
+	earliestTaskByBacklog := make(map[uuid.UUID]time.Time)
+	for _, t := range taskCreatedAts {
+		if !t.BacklogID.Valid || !t.CreatedAt.Valid {
+			continue
+		}
+		if _, seen := earliestTaskByBacklog[t.BacklogID.Bytes]; !seen {
+			earliestTaskByBacklog[t.BacklogID.Bytes] = t.CreatedAt.Time
+		}
+	}
+
+	for _, b := range backlogs {
+		firstInProgress := firstBacklogOccurrence(eventsByBacklog[b.ID], "in_progress")
+		if firstInProgress == nil {
+			continue
+		}
+		if b.CreatedAt.Valid {
+			backlogWaitingToStart = append(backlogWaitingToStart, firstInProgress.Sub(b.CreatedAt.Time).Hours())
+		}
+		if earliestTask, ok := earliestTaskByBacklog[b.ID]; ok && earliestTask.After(*firstInProgress) {
+			taskBreakdown = append(taskBreakdown, earliestTask.Sub(*firstInProgress).Hours())
+		}
+	}
+	return backlogWaitingToStart, taskBreakdown, nil
 }
 
 // firstOccurrence returns the occurred_at of the first event transitioning
@@ -176,6 +264,19 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 // must already be oldest-first (ListTaskProgressEventsForFlowMetrics
 // guarantees this).
 func firstOccurrence(events []db.ListTaskProgressEventsForFlowMetricsRow, toProgress string) *time.Time {
+	for _, e := range events {
+		if e.ToProgress == toProgress && e.OccurredAt.Valid {
+			t := e.OccurredAt.Time
+			return &t
+		}
+	}
+	return nil
+}
+
+// firstBacklogOccurrence is firstOccurrence for a backlog's own progress
+// timeline (issue #173) — duplicated rather than shared for the same reason
+// stageStats' median/p90 is: two small, independent row types.
+func firstBacklogOccurrence(events []db.ListBacklogProgressEventsForFlowMetricsRow, toProgress string) *time.Time {
 	for _, e := range events {
 		if e.ToProgress == toProgress && e.OccurredAt.Valid {
 			t := e.OccurredAt.Time

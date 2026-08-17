@@ -22,7 +22,7 @@ import (
 
 func newService(q *dbtest.FakeQuerier) *task.Service {
 	projects := project.NewService(q)
-	backlogs := backlog.NewService(q, projects)
+	backlogs := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects)
 	return task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs)
 }
 

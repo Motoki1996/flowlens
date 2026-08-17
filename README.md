@@ -1472,6 +1472,41 @@ done.
   double-counted against the stage it interrupted. It shares the card's
   `?from=`/`?to=` filters with delivery metrics.
 
+#### Backlog-level stages: waiting to start and task breakdown (issue #173)
+
+A task's whole pipeline above still starts at `tasks.created_at` — it says
+nothing about how long a backlog sat before anyone started it, or how long
+it took to break that backlog down into tasks once someone did. `#169`'s
+`task_progress_events` can't answer either question, since neither happens
+to a task. `backlog_progress_events` (migration `000022`) is the
+backlog-level counterpart, an append-only log of `backlogs.progress`
+transitions in the same shape, written from the single insertion point
+`internal/backlog.Service.Update` — only when `progress` actually changes,
+attributed to `actor_kind`/`actor_user_id` exactly like a task's own
+(`"agent"` for a bearer-token caller, `"user"` for a session caller, since
+`PATCH /backlogs/{backlogID}` is on the same shared allowlist as a task's).
+
+`GET /api/v1/projects/{projectID}/flow-metrics?from=&to=` returns two more
+stages alongside the five above, this time bounding `backlogs.created_at`
+rather than `tasks.created_at`:
+
+- **`backlogWaitingToStart`**: `backlogs.created_at` → a backlog's first
+  transition to `in_progress`.
+- **`taskBreakdown`**: that same transition → the earliest `created_at`
+  among the backlog's tasks — the AI-driven "break this backlog into tasks"
+  step this flow means to measure. A backlog that already had a task filed
+  under it *before* going `in_progress` is excluded from this stage
+  entirely rather than counted as a zero (or negative) duration: there was
+  no breakdown work left to time after the transition.
+
+Both follow the same "both ends known, excluded rather than zero" rule as
+every other stage. Web: these two stages ride in the *same* stacked
+value-stream bar as the four task-level ones (six segments total), placed
+leftmost since they happen chronologically first — a backlog is waited on,
+then broken down into tasks, then a task is waited on, implemented,
+reviewed, and completed. `blocked` is unaffected and stays its own separate
+chart.
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault
@@ -1510,9 +1545,12 @@ done.
    `task_progress_events` log of `progress` changes, the agent-facing
    convention for keeping it populated, and a stage-level lead-time
    aggregation (waiting-to-start/implementation/review-and-merge/
-   completion/blocked) computed from it — see
-   [Progress convention for agents](#progress-convention-for-agents-issue-170)
-   and [Flow metrics](#flow-metrics-issue-171).
+   completion/blocked) computed from it, plus a `backlog_progress_events`
+   counterpart adding two more backlog-level stages (waiting-to-start/
+   task-breakdown) one step earlier in the pipeline — see
+   [Progress convention for agents](#progress-convention-for-agents-issue-170),
+   [Flow metrics](#flow-metrics-issue-171), and
+   [Backlog-level stages](#backlog-level-stages-waiting-to-start-and-task-breakdown-issue-173).
 8. **Automation:** webhooks (with duplicate-delivery handling) and scheduled
    sync via Azure Service Bus.
 9. **Azure deployment:** Container Apps, Azure Database for PostgreSQL, Key

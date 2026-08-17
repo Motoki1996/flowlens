@@ -68,11 +68,11 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		t.Fatalf("crypto.New: %v", err)
 	}
 	projects := project.NewService(q)
-	backlogs := backlog.NewService(q, projects)
+	txRunner := dbtest.FakeTxRunner{Q: q}
+	backlogs := backlog.NewService(q, txRunner, projects)
 	apiTokens := apitoken.NewService(q, projects)
 	users := user.NewService(q)
 	projectMembers := projectmember.NewService(q, projects, users)
-	txRunner := dbtest.FakeTxRunner{Q: q}
 	clientFactory := func(string) gitlab.Client { return fake }
 	gitlabConns := gitlabconn.NewService(q, projects, cipher, clientFactory)
 	tasks := task.NewService(q, txRunner, projects, backlogs)

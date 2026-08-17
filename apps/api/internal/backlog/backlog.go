@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/optional"
 	"github.com/flowlens/api/internal/project"
@@ -65,6 +66,16 @@ const (
 	ProgressDone       = "done"
 
 	SortProgress = "progress"
+)
+
+// Actor kind values Update accepts to attribute a backlog_progress_events
+// row (issue #173) to whoever changed progress — a bearer-token (agent)
+// caller or a session (user) caller — mirroring internal/task's own
+// ActorKindUser/ActorKindAgent. Like a task's, a backlog's progress is
+// app-only and never moves via the GitLab sync path.
+const (
+	ActorKindUser  = "user"
+	ActorKindAgent = "agent"
 )
 
 // Backlog is the API-facing representation of a project backlog. StartDate and
@@ -214,13 +225,16 @@ func normalizeProgress(raw string) (string, error) {
 // Service manages backlogs inside projects owned by a single user.
 type Service struct {
 	q        db.Querier
+	txRunner database.TxRunner
 	projects *project.Service
 }
 
 // NewService constructs a backlog Service. projects is used to verify
-// project access before any project-scoped operation.
-func NewService(q db.Querier, projects *project.Service) *Service {
-	return &Service{q: q, projects: projects}
+// project access before any project-scoped operation. txRunner is used only
+// by Update, to write a backlog_progress_events row (issue #173) in the
+// same transaction as a progress change.
+func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service) *Service {
+	return &Service{q: q, txRunner: txRunner, projects: projects}
 }
 
 // authorize requires ownerID to hold at least min on projectID, mapping
@@ -429,7 +443,13 @@ type UpdateParams struct {
 // Update overwrites name, description and position, and applies whichever of
 // the dates the caller set. Ownership is enforced by the query, so a non-owner
 // gets ErrNotFound and nothing is written.
-func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p UpdateParams) (Backlog, error) {
+//
+// actorKind (ActorKindUser for a session caller, ActorKindAgent for a
+// bearer-token caller) attributes a backlog_progress_events row (issue
+// #173), written in the same transaction only when progress actually
+// changes — this is the sole place that table is ever written, mirroring
+// internal/task.Service.Update's own progress-event insertion point.
+func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p UpdateParams, actorKind string) (Backlog, error) {
 	normalized, err := normalizeName(p.Name)
 	if err != nil {
 		return Backlog{}, err
@@ -470,25 +490,51 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		}
 	}
 
-	row, err := s.q.UpdateBacklogForOwner(ctx, db.UpdateBacklogForOwnerParams{
-		ID:                           backlogID,
-		OwnerUserID:                  ownerID,
-		Name:                         normalized,
-		Description:                  p.Description,
-		Position:                     p.Position,
-		StartDate:                    toDate(startDate),
-		DueOn:                        toDate(dueOn),
-		Priority:                     priority,
-		Progress:                     progress,
-		DefaultLinkedGitlabProjectID: toUUID(link),
+	progressChanged := current.Progress != progress
+
+	var result Backlog
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		row, err := q.UpdateBacklogForOwner(ctx, db.UpdateBacklogForOwnerParams{
+			ID:                           backlogID,
+			OwnerUserID:                  ownerID,
+			Name:                         normalized,
+			Description:                  p.Description,
+			Position:                     p.Position,
+			StartDate:                    toDate(startDate),
+			DueOn:                        toDate(dueOn),
+			Priority:                     priority,
+			Progress:                     progress,
+			DefaultLinkedGitlabProjectID: toUUID(link),
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("backlog: update: %w", err)
+		}
+		result = fromRow(row)
+
+		if progressChanged {
+			actorUserID := &ownerID
+			if actorKind == ActorKindAgent {
+				actorUserID = nil
+			}
+			if _, err := q.CreateBacklogProgressEvent(ctx, db.CreateBacklogProgressEventParams{
+				BacklogID:    backlogID,
+				FromProgress: current.Progress,
+				ToProgress:   progress,
+				ActorKind:    actorKind,
+				ActorUserID:  toUUID(actorUserID),
+			}); err != nil {
+				return fmt.Errorf("backlog: update: record progress event: %w", err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Backlog{}, ErrNotFound
-		}
-		return Backlog{}, fmt.Errorf("backlog: update: %w", err)
+		return Backlog{}, err
 	}
-	return fromRow(row), nil
+	return result, nil
 }
 
 // Reorder resequences the position of every backlog in projectID to match

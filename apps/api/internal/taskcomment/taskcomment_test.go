@@ -17,7 +17,7 @@ import (
 
 func newService(q *dbtest.FakeQuerier) (*taskcomment.Service, *task.Service) {
 	projects := project.NewService(q)
-	backlogs := backlog.NewService(q, projects)
+	backlogs := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects)
 	tasks := task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs)
 	return taskcomment.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, tasks), tasks
 }

@@ -15,10 +15,15 @@ import {
   type ChartConfig,
 } from "@/components/ui/chart";
 
-/** The four work stages, stacked in pipeline order — see app/globals.css's
- *  --chart-N assignment comment. Fixed order, never cycled: slot 1 is the
- *  stage a task hits first. */
+/** The six work stages, stacked in pipeline order — see app/globals.css's
+ *  --chart-N assignment comment. Color slots are fixed and never cycled
+ *  (slot 1 is the stage a task itself hits first), so the two backlog-level
+ *  stages issue #173 added get the newer slots 6-7 rather than reusing 1-4,
+ *  even though they render leftmost in the stack: backlogWaitingToStart and
+ *  taskBreakdown happen before a task even exists. */
 const stageChartConfig = {
+  backlogWaitingToStart: { label: "Backlog waiting to start", color: "var(--chart-6)" },
+  taskBreakdown: { label: "Task breakdown", color: "var(--chart-7)" },
   waitingToStart: { label: "Waiting to start", color: "var(--chart-1)" },
   implementation: { label: "Implementation", color: "var(--chart-2)" },
   reviewAndMerge: { label: "Review & merge", color: "var(--chart-3)" },
@@ -66,7 +71,9 @@ function formatPercent(ratio: number | null): string {
  *   differently from "occasionally stuck" (p90 tall, median short). Blocked
  *   (on_hold) time is charted separately from the stage stack, never
  *   folded in, so it's never double-counted against the stage it
- *   interrupted.
+ *   interrupted. Two backlog-level stages (issue #173) — backlogWaitingToStart
+ *   and taskBreakdown, from `backlog_progress_events` — extend the same
+ *   stack one step earlier in the pipeline, before a task even exists.
  *
  * Merge-request size distribution (additions/deletions/changed files) is
  * part of the delivery-metrics API response but not charted here: every
@@ -103,7 +110,14 @@ export function DeliveryMetricsSection({
 
   const hasStatData = !!metrics && (metrics.throughput > 0 || metrics.pipelineSuccessRate != null);
   const stageStats = flowMetrics
-    ? [flowMetrics.waitingToStart, flowMetrics.implementation, flowMetrics.reviewAndMerge, flowMetrics.completion]
+    ? [
+        flowMetrics.backlogWaitingToStart,
+        flowMetrics.taskBreakdown,
+        flowMetrics.waitingToStart,
+        flowMetrics.implementation,
+        flowMetrics.reviewAndMerge,
+        flowMetrics.completion,
+      ]
     : [];
   const hasStageData = stageStats.some((s) => s.count > 0);
   const hasBlockedData = !!flowMetrics && flowMetrics.blocked.count > 0;
@@ -113,6 +127,8 @@ export function DeliveryMetricsSection({
     ? [
         {
           row: "Median",
+          backlogWaitingToStart: flowMetrics.backlogWaitingToStart.medianHours ?? 0,
+          taskBreakdown: flowMetrics.taskBreakdown.medianHours ?? 0,
           waitingToStart: flowMetrics.waitingToStart.medianHours ?? 0,
           implementation: flowMetrics.implementation.medianHours ?? 0,
           reviewAndMerge: flowMetrics.reviewAndMerge.medianHours ?? 0,
@@ -120,6 +136,8 @@ export function DeliveryMetricsSection({
         },
         {
           row: "p90",
+          backlogWaitingToStart: flowMetrics.backlogWaitingToStart.p90Hours ?? 0,
+          taskBreakdown: flowMetrics.taskBreakdown.p90Hours ?? 0,
           waitingToStart: flowMetrics.waitingToStart.p90Hours ?? 0,
           implementation: flowMetrics.implementation.p90Hours ?? 0,
           reviewAndMerge: flowMetrics.reviewAndMerge.p90Hours ?? 0,
@@ -197,6 +215,8 @@ export function DeliveryMetricsSection({
                       content={<ChartTooltipContent formatter={(value) => formatHours(value as number)} />}
                     />
                     <ChartLegend content={<ChartLegendContent />} />
+                    <Bar dataKey="backlogWaitingToStart" stackId="stage" fill="var(--color-backlogWaitingToStart)" />
+                    <Bar dataKey="taskBreakdown" stackId="stage" fill="var(--color-taskBreakdown)" />
                     <Bar dataKey="waitingToStart" stackId="stage" fill="var(--color-waitingToStart)" />
                     <Bar dataKey="implementation" stackId="stage" fill="var(--color-implementation)" />
                     <Bar dataKey="reviewAndMerge" stackId="stage" fill="var(--color-reviewAndMerge)" />

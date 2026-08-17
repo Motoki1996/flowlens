@@ -240,3 +240,98 @@ func TestService_Compute_FiltersBySinceUntil(t *testing.T) {
 	require.Equal(t, 1, got.WaitingToStart.Count)
 	assert.InDelta(t, 2.0, *got.WaitingToStart.Median, 0.001)
 }
+
+// Backlog-level stages (issue #173): backlogWaitingToStart
+// (backlogs.created_at -> first in_progress) and taskBreakdown (first
+// in_progress -> the earliest task filed under the backlog).
+
+func TestService_Compute_BacklogWaitingToStart(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	startedWork := created.Add(6 * time.Hour)
+
+	b := f.q.SeedBacklogWithCreatedAt(f.project.ID, "Sprint 1", created)
+	f.q.SeedBacklogProgressEvent(b.ID, "not_started", "in_progress", startedWork)
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, got.BacklogWaitingToStart.Count)
+	assert.InDelta(t, 6.0, *got.BacklogWaitingToStart.Median, 0.001)
+}
+
+// A backlog that never went in_progress contributes to neither backlog
+// stage — both ends unknown, the same "excluded, not zero" rule every other
+// stage in this package follows.
+func TestService_Compute_BacklogNeverStarted_ExcludedFromBacklogStages(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	f.q.SeedBacklogWithCreatedAt(f.project.ID, "Untouched", created)
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, got.BacklogWaitingToStart.Count)
+	assert.Equal(t, 0, got.TaskBreakdown.Count)
+}
+
+// The issue's first case: a backlog goes in_progress with no tasks filed
+// under it yet, and a task appears afterwards — taskBreakdown measures the
+// gap between the two.
+func TestService_Compute_TaskBreakdown_TaskCreatedAfterInProgress(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	startedWork := created.Add(2 * time.Hour)
+	firstTaskCreated := startedWork.Add(4 * time.Hour)
+
+	b := f.q.SeedBacklogWithCreatedAt(f.project.ID, "Sprint 1", created)
+	f.q.SeedBacklogProgressEvent(b.ID, "not_started", "in_progress", startedWork)
+	f.q.SeedTaskInBacklogWithCreatedAt(f.project.ID, b.ID, f.owner, "Task 1", firstTaskCreated)
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, got.TaskBreakdown.Count)
+	assert.InDelta(t, 4.0, *got.TaskBreakdown.Median, 0.001)
+}
+
+// The issue's second case: a backlog already has a task filed under it
+// before it goes in_progress. There was no breakdown work to time after the
+// transition, so the backlog is excluded from the stat entirely rather than
+// counted as a zero (or negative) duration.
+func TestService_Compute_TaskBreakdown_PreexistingTaskExcludesBacklog(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	taskCreated := created.Add(1 * time.Hour)
+	startedWork := taskCreated.Add(1 * time.Hour)
+
+	b := f.q.SeedBacklogWithCreatedAt(f.project.ID, "Sprint 1", created)
+	f.q.SeedTaskInBacklogWithCreatedAt(f.project.ID, b.ID, f.owner, "Pre-existing task", taskCreated)
+	f.q.SeedBacklogProgressEvent(b.ID, "not_started", "in_progress", startedWork)
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, got.TaskBreakdown.Count)
+	// backlogWaitingToStart is unaffected by the exclusion above — it's a
+	// separate stage with its own endpoints.
+	require.Equal(t, 1, got.BacklogWaitingToStart.Count)
+}
+
+// The issue's third case: a backlog goes in_progress and stays that way
+// with zero tasks ever filed under it. Both ends of taskBreakdown are
+// unknown, so it's excluded exactly like a task that never reached done.
+func TestService_Compute_TaskBreakdown_NoTasksYet_Excluded(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	startedWork := created.Add(2 * time.Hour)
+
+	b := f.q.SeedBacklogWithCreatedAt(f.project.ID, "Sprint 1", created)
+	f.q.SeedBacklogProgressEvent(b.ID, "not_started", "in_progress", startedWork)
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, got.TaskBreakdown.Count)
+	require.Equal(t, 1, got.BacklogWaitingToStart.Count, "the backlog itself still reached in_progress")
+}

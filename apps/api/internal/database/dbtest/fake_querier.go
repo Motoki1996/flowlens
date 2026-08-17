@@ -46,6 +46,8 @@ type FakeQuerier struct {
 
 	taskProgressEvents []db.TaskProgressEvent // insertion order, oldest first
 
+	backlogProgressEvents []db.BacklogProgressEvent // insertion order, oldest first
+
 	gitlabConnectionsByProjectID map[uuid.UUID]db.GitlabConnection
 	gitlabConnectionsByID        map[uuid.UUID]db.GitlabConnection
 
@@ -542,6 +544,21 @@ func (f *FakeQuerier) SeedBacklog(projectID uuid.UUID, name string) db.Backlog {
 	return b
 }
 
+// SeedBacklogWithCreatedAt is SeedBacklog with an explicit created_at, for
+// tests (e.g. internal/flowmetrics) that need to control a backlog's age
+// precisely instead of getting SeedBacklog's now().
+func (f *FakeQuerier) SeedBacklogWithCreatedAt(projectID uuid.UUID, name string, createdAt time.Time) db.Backlog {
+	b := f.SeedBacklog(projectID, name)
+	b.CreatedAt = pgtype.Timestamptz{Time: createdAt, Valid: true}
+	f.backlogsByID[b.ID] = b
+	for i, x := range f.backlogs {
+		if x.ID == b.ID {
+			f.backlogs[i] = b
+		}
+	}
+	return b
+}
+
 func (f *FakeQuerier) nextBacklogPosition(projectID uuid.UUID) int32 {
 	var max int32 = -1
 	for _, b := range f.backlogs {
@@ -772,6 +789,17 @@ func (f *FakeQuerier) SeedTask(projectID, createdByUserID uuid.UUID, title strin
 // bypassing validation. Returns the stored row.
 func (f *FakeQuerier) SeedTaskInBacklog(projectID, backlogID, createdByUserID uuid.UUID, title string) db.Task {
 	return f.seedTask(projectID, createdByUserID, title, pgtype.UUID{Bytes: backlogID, Valid: true})
+}
+
+// SeedTaskInBacklogWithCreatedAt combines SeedTaskInBacklog and
+// SeedTaskWithCreatedAt: a task filed under backlogID with an explicit
+// created_at, for tests (e.g. internal/flowmetrics's task-breakdown stage)
+// that need to control both.
+func (f *FakeQuerier) SeedTaskInBacklogWithCreatedAt(projectID, backlogID, createdByUserID uuid.UUID, title string, createdAt time.Time) db.Task {
+	t := f.seedTask(projectID, createdByUserID, title, pgtype.UUID{Bytes: backlogID, Valid: true})
+	t.CreatedAt = pgtype.Timestamptz{Time: createdAt, Valid: true}
+	f.storeTask(t)
+	return t
 }
 
 // SeedTaskWithCreatedAt is SeedTask with an explicit created_at, for tests
@@ -1081,6 +1109,115 @@ func (f *FakeQuerier) ListTaskProgressEventsForFlowMetrics(_ context.Context, ar
 			return items[i].TaskID.String() < items[j].TaskID.String()
 		}
 		return items[i].OccurredAt.Time.Before(items[j].OccurredAt.Time)
+	})
+	return items, nil
+}
+
+// backlogsInFlowMetricsRange returns the IDs of projectID's backlogs that
+// ownerUserID can see and that fall inside since/until on created_at — the
+// same set ListBacklogsForFlowMetrics, ListBacklogProgressEventsForFlowMetrics
+// and ListBacklogTaskCreatedAtForFlowMetrics all scope to.
+func (f *FakeQuerier) backlogsInFlowMetricsRange(arg struct {
+	ProjectID   uuid.UUID
+	OwnerUserID uuid.UUID
+	Since       pgtype.Timestamptz
+	Until       pgtype.Timestamptz
+}) map[uuid.UUID]bool {
+	inRange := map[uuid.UUID]bool{}
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return inRange
+	}
+	for _, b := range f.backlogs {
+		if b.ProjectID != arg.ProjectID {
+			continue
+		}
+		if arg.Since.Valid && b.CreatedAt.Time.Before(arg.Since.Time) {
+			continue
+		}
+		if arg.Until.Valid && b.CreatedAt.Time.After(arg.Until.Time) {
+			continue
+		}
+		inRange[b.ID] = true
+	}
+	return inRange
+}
+
+// ListBacklogsForFlowMetrics mirrors the SQL: projectID's backlogs gated by
+// ownerUserID's project membership and bounded by since/until on
+// backlogs.created_at.
+func (f *FakeQuerier) ListBacklogsForFlowMetrics(_ context.Context, arg db.ListBacklogsForFlowMetricsParams) ([]db.ListBacklogsForFlowMetricsRow, error) {
+	ids := f.backlogsInFlowMetricsRange(struct {
+		ProjectID   uuid.UUID
+		OwnerUserID uuid.UUID
+		Since       pgtype.Timestamptz
+		Until       pgtype.Timestamptz
+	}{arg.ProjectID, arg.OwnerUserID, arg.Since, arg.Until})
+	items := []db.ListBacklogsForFlowMetricsRow{}
+	for _, b := range f.backlogs {
+		if !ids[b.ID] {
+			continue
+		}
+		items = append(items, db.ListBacklogsForFlowMetricsRow{ID: b.ID, CreatedAt: b.CreatedAt})
+	}
+	return items, nil
+}
+
+// ListBacklogProgressEventsForFlowMetrics mirrors the SQL: every
+// backlog_progress_events row for backlogs ListBacklogsForFlowMetrics would
+// select, ordered by backlog then occurred_at.
+func (f *FakeQuerier) ListBacklogProgressEventsForFlowMetrics(_ context.Context, arg db.ListBacklogProgressEventsForFlowMetricsParams) ([]db.ListBacklogProgressEventsForFlowMetricsRow, error) {
+	ids := f.backlogsInFlowMetricsRange(struct {
+		ProjectID   uuid.UUID
+		OwnerUserID uuid.UUID
+		Since       pgtype.Timestamptz
+		Until       pgtype.Timestamptz
+	}{arg.ProjectID, arg.OwnerUserID, arg.Since, arg.Until})
+	items := []db.ListBacklogProgressEventsForFlowMetricsRow{}
+	for _, e := range f.backlogProgressEvents {
+		if !ids[e.BacklogID] {
+			continue
+		}
+		items = append(items, db.ListBacklogProgressEventsForFlowMetricsRow{
+			BacklogID:    e.BacklogID,
+			FromProgress: e.FromProgress,
+			ToProgress:   e.ToProgress,
+			OccurredAt:   e.OccurredAt,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].BacklogID != items[j].BacklogID {
+			return items[i].BacklogID.String() < items[j].BacklogID.String()
+		}
+		return items[i].OccurredAt.Time.Before(items[j].OccurredAt.Time)
+	})
+	return items, nil
+}
+
+// ListBacklogTaskCreatedAtForFlowMetrics mirrors the SQL: every task filed
+// under a backlog ListBacklogsForFlowMetrics would select, unfiltered by
+// the task's own created_at (see the query's own doc comment for why).
+func (f *FakeQuerier) ListBacklogTaskCreatedAtForFlowMetrics(_ context.Context, arg db.ListBacklogTaskCreatedAtForFlowMetricsParams) ([]db.ListBacklogTaskCreatedAtForFlowMetricsRow, error) {
+	ids := f.backlogsInFlowMetricsRange(struct {
+		ProjectID   uuid.UUID
+		OwnerUserID uuid.UUID
+		Since       pgtype.Timestamptz
+		Until       pgtype.Timestamptz
+	}{arg.ProjectID, arg.OwnerUserID, arg.Since, arg.Until})
+	items := []db.ListBacklogTaskCreatedAtForFlowMetricsRow{}
+	for _, t := range f.tasks {
+		if !t.BacklogID.Valid || !ids[t.BacklogID.Bytes] {
+			continue
+		}
+		items = append(items, db.ListBacklogTaskCreatedAtForFlowMetricsRow{
+			BacklogID: t.BacklogID,
+			CreatedAt: t.CreatedAt,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].BacklogID.Bytes != items[j].BacklogID.Bytes {
+			return items[i].BacklogID.String() < items[j].BacklogID.String()
+		}
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
 	return items, nil
 }
@@ -1592,6 +1729,52 @@ func (f *FakeQuerier) SeedTaskProgressEvent(taskID uuid.UUID, fromProgress, toPr
 		OccurredAt:   pgtype.Timestamptz{Time: occurredAt, Valid: true},
 	}
 	f.taskProgressEvents = append(f.taskProgressEvents, e)
+	return e
+}
+
+// CreateBacklogProgressEvent mirrors the SQL: an append-only row, never
+// updated or looked up by ID (internal/backlog.Service.Update is the only
+// writer).
+func (f *FakeQuerier) CreateBacklogProgressEvent(_ context.Context, arg db.CreateBacklogProgressEventParams) (db.BacklogProgressEvent, error) {
+	e := db.BacklogProgressEvent{
+		ID:           uuid.New(),
+		BacklogID:    arg.BacklogID,
+		FromProgress: arg.FromProgress,
+		ToProgress:   arg.ToProgress,
+		ActorKind:    arg.ActorKind,
+		ActorUserID:  arg.ActorUserID,
+		OccurredAt:   now(),
+	}
+	f.backlogProgressEvents = append(f.backlogProgressEvents, e)
+	return e, nil
+}
+
+// ListBacklogProgressEventsByBacklog mirrors the SQL: every event on
+// backlogID, oldest first (insertion order).
+func (f *FakeQuerier) ListBacklogProgressEventsByBacklog(_ context.Context, backlogID uuid.UUID) ([]db.BacklogProgressEvent, error) {
+	items := []db.BacklogProgressEvent{}
+	for _, e := range f.backlogProgressEvents {
+		if e.BacklogID == backlogID {
+			items = append(items, e)
+		}
+	}
+	return items, nil
+}
+
+// SeedBacklogProgressEvent inserts a ready-made progress-transition event
+// directly, bypassing internal/backlog.Service.Update, so a test (e.g.
+// internal/flowmetrics) can control occurred_at precisely instead of
+// getting CreateBacklogProgressEvent's now().
+func (f *FakeQuerier) SeedBacklogProgressEvent(backlogID uuid.UUID, fromProgress, toProgress string, occurredAt time.Time) db.BacklogProgressEvent {
+	e := db.BacklogProgressEvent{
+		ID:           uuid.New(),
+		BacklogID:    backlogID,
+		FromProgress: fromProgress,
+		ToProgress:   toProgress,
+		ActorKind:    "agent",
+		OccurredAt:   pgtype.Timestamptz{Time: occurredAt, Valid: true},
+	}
+	f.backlogProgressEvents = append(f.backlogProgressEvents, e)
 	return e
 }
 

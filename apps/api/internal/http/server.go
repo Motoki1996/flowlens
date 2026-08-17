@@ -83,7 +83,7 @@ type Server struct {
 // factory falls back to Go's default certificate verification.
 func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRunner database.TxRunner, cipher *crypto.Cipher, clientFactory func(baseURL string) gitlab.Client) (*Server, error) {
 	projects := project.NewService(queries)
-	backlogs := backlog.NewService(queries, projects)
+	backlogs := backlog.NewService(queries, txRunner, projects)
 	apiTokens := apitoken.NewService(queries, projects)
 	users := user.NewService(queries)
 	projectMembers := projectmember.NewService(queries, projects, users)

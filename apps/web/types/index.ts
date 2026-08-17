@@ -408,10 +408,18 @@ export interface DeliveryMetrics {
  *  long tasks spend waiting to start, in AI-driven implementation, in
  *  review/merge, and in completion processing, plus cumulative time spent
  *  blocked (on_hold). Each stage only counts tasks that reached both of its
- *  endpoints — see apps/api/internal/flowmetrics.Metrics. */
+ *  endpoints — see apps/api/internal/flowmetrics.Metrics. Two backlog-level
+ *  stages (issue #173), bounding backlogs.created_at instead, sit one step
+ *  earlier in the pipeline. */
 export interface FlowMetrics {
   from: string | null;
   to: string | null;
+  /** backlogs.created_at -> a backlog's first transition to in_progress. */
+  backlogWaitingToStart: DurationStats;
+  /** A backlog's first in_progress transition -> the earliest created_at
+   *  among its tasks. A backlog that already had a task filed under it
+   *  before going in_progress is excluded, not counted as zero. */
+  taskBreakdown: DurationStats;
   /** tasks.created_at -> the task's first transition to in_progress. */
   waitingToStart: DurationStats;
   /** First in_progress transition -> the earliest linked merge request's

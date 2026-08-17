@@ -21,6 +21,8 @@ function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
   return {
     from: null,
     to: null,
+    backlogWaitingToStart: { count: 0, medianHours: null, p90Hours: null },
+    taskBreakdown: { count: 0, medianHours: null, p90Hours: null },
     waitingToStart: { count: 0, medianHours: null, p90Hours: null },
     implementation: { count: 0, medianHours: null, p90Hours: null },
     reviewAndMerge: { count: 0, medianHours: null, p90Hours: null },
@@ -56,6 +58,8 @@ export const Few: Story = {
       throughput: 1,
     }),
     flowMetrics: makeFlowMetrics({
+      backlogWaitingToStart: { count: 1, medianHours: 3, p90Hours: 3 },
+      taskBreakdown: { count: 1, medianHours: 1, p90Hours: 1 },
       waitingToStart: { count: 1, medianHours: 4, p90Hours: 4 },
       implementation: { count: 1, medianHours: 6, p90Hours: 6 },
       reviewAndMerge: { count: 1, medianHours: 2, p90Hours: 2 },
@@ -75,6 +79,8 @@ export const Normal: Story = {
       throughput: 37,
     }),
     flowMetrics: makeFlowMetrics({
+      backlogWaitingToStart: { count: 6, medianHours: 24, p90Hours: 96 },
+      taskBreakdown: { count: 5, medianHours: 8, p90Hours: 40 },
       waitingToStart: { count: 30, medianHours: 12, p90Hours: 48 },
       implementation: { count: 28, medianHours: 40, p90Hours: 96 },
       reviewAndMerge: { count: 28, medianHours: 8, p90Hours: 30 },

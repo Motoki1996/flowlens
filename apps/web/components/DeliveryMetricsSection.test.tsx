@@ -29,6 +29,8 @@ function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
   return {
     from: null,
     to: null,
+    backlogWaitingToStart: { count: 0, medianHours: null, p90Hours: null },
+    taskBreakdown: { count: 0, medianHours: null, p90Hours: null },
     waitingToStart: { count: 0, medianHours: null, p90Hours: null },
     implementation: { count: 0, medianHours: null, p90Hours: null },
     reviewAndMerge: { count: 0, medianHours: null, p90Hours: null },
@@ -77,6 +79,19 @@ describe("DeliveryMetricsSection", () => {
     render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={flowMetrics} />);
     expect(screen.getByText("Stage lead time")).toBeInTheDocument();
     expect(screen.queryByText(/No task progress history yet/)).not.toBeInTheDocument();
+  });
+
+  // Issue #173: the two backlog-level stages ride in the same stage
+  // lead-time stack/legend as the four task-level ones, not a separate chart.
+  it("includes the two backlog-level stages in the stage lead-time legend", () => {
+    const flowMetrics = makeFlowMetrics({
+      backlogWaitingToStart: { count: 3, medianHours: 24, p90Hours: 96 },
+      taskBreakdown: { count: 2, medianHours: 8, p90Hours: 40 },
+    });
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={flowMetrics} />);
+    expect(screen.getByText("Stage lead time")).toBeInTheDocument();
+    expect(screen.getByText("Backlog waiting to start")).toBeInTheDocument();
+    expect(screen.getByText("Task breakdown")).toBeInTheDocument();
   });
 
   it("shows a separate blocked-time chart only when blocked time was recorded", () => {

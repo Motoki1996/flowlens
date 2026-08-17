@@ -24,6 +24,16 @@ type Backlog struct {
 	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
 }
 
+type BacklogProgressEvent struct {
+	ID           uuid.UUID          `json:"id"`
+	BacklogID    uuid.UUID          `json:"backlog_id"`
+	FromProgress string             `json:"from_progress"`
+	ToProgress   string             `json:"to_progress"`
+	ActorKind    string             `json:"actor_kind"`
+	ActorUserID  pgtype.UUID        `json:"actor_user_id"`
+	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
+}
+
 type GitlabConnection struct {
 	ID                  uuid.UUID          `json:"id"`
 	ProjectID           uuid.UUID          `json:"project_id"`

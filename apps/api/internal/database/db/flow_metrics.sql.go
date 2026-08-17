@@ -12,6 +12,179 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const listBacklogProgressEventsForFlowMetrics = `-- name: ListBacklogProgressEventsForFlowMetrics :many
+SELECT e.backlog_id, e.from_progress, e.to_progress, e.occurred_at
+FROM backlog_progress_events e
+JOIN backlogs b ON b.id = e.backlog_id
+WHERE b.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2
+  )
+  AND ($3::timestamptz IS NULL OR b.created_at >= $3)
+  AND ($4::timestamptz IS NULL OR b.created_at <= $4)
+ORDER BY e.backlog_id, e.occurred_at ASC
+`
+
+type ListBacklogProgressEventsForFlowMetricsParams struct {
+	ProjectID   uuid.UUID          `json:"project_id"`
+	OwnerUserID uuid.UUID          `json:"owner_user_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Until       pgtype.Timestamptz `json:"until"`
+}
+
+type ListBacklogProgressEventsForFlowMetricsRow struct {
+	BacklogID    uuid.UUID          `json:"backlog_id"`
+	FromProgress string             `json:"from_progress"`
+	ToProgress   string             `json:"to_progress"`
+	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
+}
+
+func (q *Queries) ListBacklogProgressEventsForFlowMetrics(ctx context.Context, arg ListBacklogProgressEventsForFlowMetricsParams) ([]ListBacklogProgressEventsForFlowMetricsRow, error) {
+	rows, err := q.db.Query(ctx, listBacklogProgressEventsForFlowMetrics,
+		arg.ProjectID,
+		arg.OwnerUserID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBacklogProgressEventsForFlowMetricsRow{}
+	for rows.Next() {
+		var i ListBacklogProgressEventsForFlowMetricsRow
+		if err := rows.Scan(
+			&i.BacklogID,
+			&i.FromProgress,
+			&i.ToProgress,
+			&i.OccurredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBacklogTaskCreatedAtForFlowMetrics = `-- name: ListBacklogTaskCreatedAtForFlowMetrics :many
+
+SELECT t.backlog_id, t.created_at
+FROM tasks t
+JOIN backlogs b ON b.id = t.backlog_id
+WHERE b.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2
+  )
+  AND ($3::timestamptz IS NULL OR b.created_at >= $3)
+  AND ($4::timestamptz IS NULL OR b.created_at <= $4)
+ORDER BY t.backlog_id, t.created_at ASC
+`
+
+type ListBacklogTaskCreatedAtForFlowMetricsParams struct {
+	ProjectID   uuid.UUID          `json:"project_id"`
+	OwnerUserID uuid.UUID          `json:"owner_user_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Until       pgtype.Timestamptz `json:"until"`
+}
+
+type ListBacklogTaskCreatedAtForFlowMetricsRow struct {
+	BacklogID pgtype.UUID        `json:"backlog_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+// ListBacklogTaskCreatedAtForFlowMetrics returns every (backlog_id,
+// task.created_at) pair for tasks filed under an in-range backlog,
+// unfiltered by the task's own created_at — internal/flowmetrics needs a
+// backlog's *whole* task history to tell "tasks created after this backlog
+// went in_progress" apart from "this backlog already had tasks before it
+// went in_progress" (the exclusion issue #173 asks for), which a
+// task-created_at bound would silently break.
+func (q *Queries) ListBacklogTaskCreatedAtForFlowMetrics(ctx context.Context, arg ListBacklogTaskCreatedAtForFlowMetricsParams) ([]ListBacklogTaskCreatedAtForFlowMetricsRow, error) {
+	rows, err := q.db.Query(ctx, listBacklogTaskCreatedAtForFlowMetrics,
+		arg.ProjectID,
+		arg.OwnerUserID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBacklogTaskCreatedAtForFlowMetricsRow{}
+	for rows.Next() {
+		var i ListBacklogTaskCreatedAtForFlowMetricsRow
+		if err := rows.Scan(&i.BacklogID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBacklogsForFlowMetrics = `-- name: ListBacklogsForFlowMetrics :many
+
+SELECT b.id, b.created_at
+FROM backlogs b
+WHERE b.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2
+  )
+  AND ($3::timestamptz IS NULL OR b.created_at >= $3)
+  AND ($4::timestamptz IS NULL OR b.created_at <= $4)
+`
+
+type ListBacklogsForFlowMetricsParams struct {
+	ProjectID   uuid.UUID          `json:"project_id"`
+	OwnerUserID uuid.UUID          `json:"owner_user_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Until       pgtype.Timestamptz `json:"until"`
+}
+
+type ListBacklogsForFlowMetricsRow struct {
+	ID        uuid.UUID          `json:"id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+// Backlog-level flow metrics (issue #173): one level up from the
+// task-level queries above, sourced from backlog_progress_events (issue
+// #173) plus each backlog's own tasks. since/until bound backlogs.created_at
+// here, not tasks.created_at — a backlog and its eventual tasks can span
+// very different windows, and it's the backlog's own creation that starts
+// the "waiting to start" clock this query feeds.
+func (q *Queries) ListBacklogsForFlowMetrics(ctx context.Context, arg ListBacklogsForFlowMetricsParams) ([]ListBacklogsForFlowMetricsRow, error) {
+	rows, err := q.db.Query(ctx, listBacklogsForFlowMetrics,
+		arg.ProjectID,
+		arg.OwnerUserID,
+		arg.Since,
+		arg.Until,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListBacklogsForFlowMetricsRow{}
+	for rows.Next() {
+		var i ListBacklogsForFlowMetricsRow
+		if err := rows.Scan(&i.ID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskProgressEventsForFlowMetrics = `-- name: ListTaskProgressEventsForFlowMetrics :many
 
 SELECT e.task_id, e.from_progress, e.to_progress, e.occurred_at

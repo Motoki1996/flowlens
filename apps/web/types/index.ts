@@ -390,13 +390,17 @@ export interface SizeStats {
   p90: number | null;
 }
 
-/** DeliveryMetrics is a project's delivery-flow aggregation over the
- *  optional [from, to] range (issue #113, ADR-0011 §3): review/merge lead
- *  time, merge-request size distribution, pipeline success rate and
- *  throughput. See apps/api/internal/deliverymetrics.Metrics. */
-export interface DeliveryMetrics {
-  from: string | null;
-  to: string | null;
+/** MetricsInterval is the ?interval= bucket size delivery/flow metrics'
+ *  period time series can be grouped by (issue #188). See
+ *  apps/api/internal/metricsperiod.Interval. */
+export type MetricsInterval = "week" | "month" | "year";
+
+/** DeliveryPeriodStats is the set of stats reported both for a delivery
+ *  metrics request's whole range and for each of its periods — the same
+ *  field list as DeliveryMetrics minus from/to/interval/truncated/periods,
+ *  so the two shapes can't drift. See
+ *  apps/api/internal/deliverymetrics.PeriodStats. */
+export interface DeliveryPeriodStats {
   openToFirstReview: DurationStats;
   firstReviewToMerge: DurationStats;
   additions: SizeStats;
@@ -409,17 +413,37 @@ export interface DeliveryMetrics {
   throughput: number;
 }
 
-/** FlowMetrics is a project's per-task stage lead-time aggregation over the
- *  optional [from, to] range, bounding tasks.created_at (issue #171): how
- *  long tasks spend waiting to start, in AI-driven implementation, in
- *  review/merge, and in completion processing, plus cumulative time spent
- *  blocked (on_hold). Each stage only counts tasks that reached both of its
- *  endpoints — see apps/api/internal/flowmetrics.Metrics. Two backlog-level
- *  stages (issue #173), bounding backlogs.created_at instead, sit one step
- *  earlier in the pipeline. */
-export interface FlowMetrics {
+/** DeliveryPeriod is one interval-sized bucket of DeliveryPeriodStats
+ *  (issue #188), assigned by merge_requests.gitlab_created_at. See
+ *  apps/api/internal/deliverymetrics.Period. */
+export interface DeliveryPeriod extends DeliveryPeriodStats {
+  /** Bucket bounds in UTC; end is exclusive. */
+  start: string;
+  end: string;
+}
+
+/** DeliveryMetrics is a project's delivery-flow aggregation over the
+ *  optional [from, to] range (issue #113, ADR-0011 §3): review/merge lead
+ *  time, merge-request size distribution, pipeline success rate and
+ *  throughput. See apps/api/internal/deliverymetrics.Metrics. */
+export interface DeliveryMetrics extends DeliveryPeriodStats {
   from: string | null;
   to: string | null;
+  /** The ?interval= the request asked to bucket periods by, or null when
+   *  omitted — in which case periods is empty and truncated is false
+   *  (issue #188). */
+  interval: MetricsInterval | null;
+  /** True when periods was capped at metricsperiod.MaxPeriods (52) and the
+   *  oldest buckets were dropped. */
+  truncated: boolean;
+  periods: DeliveryPeriod[];
+}
+
+/** FlowPeriodStats is the set of stages reported both for a flow metrics
+ *  request's whole range and for each of its periods — the same field list
+ *  as FlowMetrics minus from/to/interval/truncated/periods, so the two
+ *  shapes can't drift. See apps/api/internal/flowmetrics.PeriodStats. */
+export interface FlowPeriodStats {
   /** backlogs.created_at -> a backlog's first transition to in_progress. */
   backlogWaitingToStart: DurationStats;
   /** A backlog's first in_progress transition -> the earliest created_at
@@ -443,4 +467,34 @@ export interface FlowMetrics {
   /** Cumulative time across every closed on_hold interval; kept separate
    *  from the other stages so it is never double-counted against them. */
   blocked: DurationStats;
+}
+
+/** FlowPeriod is one interval-sized bucket of FlowPeriodStats (issue #188),
+ *  assigned by tasks.created_at/backlogs.created_at (per stage, same as the
+ *  unbucketed totals). See apps/api/internal/flowmetrics.Period. */
+export interface FlowPeriod extends FlowPeriodStats {
+  /** Bucket bounds in UTC; end is exclusive. */
+  start: string;
+  end: string;
+}
+
+/** FlowMetrics is a project's per-task stage lead-time aggregation over the
+ *  optional [from, to] range, bounding tasks.created_at (issue #171): how
+ *  long tasks spend waiting to start, in AI-driven implementation, in
+ *  review/merge, and in completion processing, plus cumulative time spent
+ *  blocked (on_hold). Each stage only counts tasks that reached both of its
+ *  endpoints — see apps/api/internal/flowmetrics.Metrics. Two backlog-level
+ *  stages (issue #173), bounding backlogs.created_at instead, sit one step
+ *  earlier in the pipeline. */
+export interface FlowMetrics extends FlowPeriodStats {
+  from: string | null;
+  to: string | null;
+  /** The ?interval= the request asked to bucket periods by, or null when
+   *  omitted — in which case periods is empty and truncated is false
+   *  (issue #188). */
+  interval: MetricsInterval | null;
+  /** True when periods was capped at metricsperiod.MaxPeriods (52) and the
+   *  oldest buckets were dropped. */
+  truncated: boolean;
+  periods: FlowPeriod[];
 }

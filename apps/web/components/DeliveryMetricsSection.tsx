@@ -1,11 +1,22 @@
 "use client";
 
+import { useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis, type LegendPayload } from "recharts";
-import type { DeliveryMetrics, FlowMetrics } from "@/types";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+  type LegendPayload,
+} from "recharts";
+import type { DeliveryMetrics, DeliveryPeriod, FlowMetrics, FlowPeriod, MetricsInterval } from "@/types";
 import { fromDateParam, toDateParam } from "@/lib/dates";
 import { DateField } from "@/components/DateField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   ChartContainer,
   ChartLegend,
@@ -42,6 +53,18 @@ const blockedChartConfig = {
   blocked: { label: "Blocked (on hold)", color: "var(--chart-5)" },
 } satisfies ChartConfig;
 
+/** Throughput/success-rate trend charts (issue #189) reuse the two chart
+ *  slots the stage chart's Design-onward narrowing freed up (6-7); each is
+ *  a single series, so the protanopia pairing caveat in globals.css doesn't
+ *  apply to either. */
+const throughputChartConfig = {
+  throughput: { label: "Throughput", color: "var(--chart-6)" },
+} satisfies ChartConfig;
+
+const successRateChartConfig = {
+  successRate: { label: "Pipeline success rate", color: "var(--chart-7)" },
+} satisfies ChartConfig;
+
 /** recharts 3's <Legend> defaults to sorting entries alphabetically by label
  *  (`itemSorter: "value"`), which scrambles this value-stream chart's
  *  left-to-right stage order (e.g. "Completion" sorts before "Design"). Sort
@@ -67,6 +90,92 @@ function formatPercent(ratio: number | null): string {
   return `${Math.round(ratio * 100)}%`;
 }
 
+/** isoWeekLabel renders a bucket's UTC start (already the ISO week's Monday
+ *  00:00 — see apps/api/internal/metricsperiod.BucketStart) as "YYYY-Www",
+ *  per the standard ISO 8601 week-numbering algorithm. */
+function isoWeekLabel(start: Date): string {
+  const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  const isoWeekday = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - isoWeekday);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+/** periodLabel renders one bucket's start as the Y-axis category a
+ *  time-series row is keyed by: "2026-W07" / "2026-02" / "2026". */
+function periodLabel(period: { start: string }, interval: MetricsInterval): string {
+  const start = new Date(period.start);
+  if (interval === "year") return String(start.getUTCFullYear());
+  if (interval === "month") return `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`;
+  return isoWeekLabel(start);
+}
+
+type StatTab = "median" | "p90";
+
+const STAT_TABS: ReadonlyArray<{ key: StatTab; label: string }> = [
+  { key: "median", label: "Median" },
+  { key: "p90", label: "p90" },
+];
+
+function statValue(stats: { medianHours: number | null; p90Hours: number | null }, statTab: StatTab): number {
+  return (statTab === "median" ? stats.medianHours : stats.p90Hours) ?? 0;
+}
+
+/** StatTabs switches Stage lead time and Blocked time between their Median
+ *  and p90 view at once — a single piece of state on purpose (issue #189):
+ *  the two charts share one "way of reading" the distribution, so letting
+ *  them switch independently would invite misreading one against the
+ *  other's stat. Not held in the URL, since it's a view preference on
+ *  already-fetched data, not a filter on what was fetched. A small
+ *  hand-rolled tablist (role="tablist"/"tab"/aria-selected, arrow-key
+ *  roving tabindex) rather than @radix-ui/react-tabs, which isn't a
+ *  dependency of this repo yet. */
+function StatTabs({ value, onChange }: { value: StatTab; onChange: (next: StatTab) => void }) {
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+    event.preventDefault();
+    const next =
+      event.key === "ArrowRight" ? (index + 1) % STAT_TABS.length : (index - 1 + STAT_TABS.length) % STAT_TABS.length;
+    onChange(STAT_TABS[next].key);
+    tabRefs.current[next]?.focus();
+  }
+
+  return (
+    <div role="tablist" aria-label="Statistic" className="border-border inline-flex gap-0.5 rounded-md border p-0.5">
+      {STAT_TABS.map((tab, index) => (
+        <button
+          key={tab.key}
+          ref={(el) => {
+            tabRefs.current[index] = el;
+          }}
+          type="button"
+          role="tab"
+          aria-selected={value === tab.key}
+          tabIndex={value === tab.key ? 0 : -1}
+          onClick={() => onChange(tab.key)}
+          onKeyDown={(event) => handleKeyDown(event, index)}
+          className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+            value === tab.key
+              ? "bg-accent text-accent-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const PERIOD_ROW_HEIGHT = 28;
+
+function periodChartHeightPx(periodCount: number): number {
+  return Math.max(96, periodCount * PERIOD_ROW_HEIGHT + 40);
+}
+
 /**
  * DeliveryMetricsSection is the Project single view's delivery-flow
  * aggregation, over an optional date range held in the URL — the same
@@ -84,15 +193,23 @@ function formatPercent(ratio: number | null): string {
  *   implementationStartedAt (explicit spec-driven-development phase
  *   markers a caller sets via POST .../design-started and
  *   .../implementation-started), Review & merge and Completion from
- *   `merge_requests`/`task_progress_events` as before. Median and p90 are
- *   drawn as separate rows rather than folded together, so "always slow"
- *   (both rows tall) reads differently from "occasionally stuck" (p90 tall,
- *   median short). Blocked (on_hold) time is charted separately from the
- *   stage stack, never folded in, so it's never double-counted against the
- *   stage it interrupted. The API also reports three earlier stages —
- *   backlogWaitingToStart, taskBreakdown and waitingToStart (issues #171,
- *   #173) — but this chart deliberately starts at Design: only
- *   from-Implementation-onward lead time is visualized here.
+ *   `merge_requests`/`task_progress_events` as before. Blocked (on_hold)
+ *   time is charted separately from the stage stack, never folded in, so
+ *   it's never double-counted against the stage it interrupted. The API
+ *   also reports three earlier stages — backlogWaitingToStart, taskBreakdown
+ *   and waitingToStart (issues #171, #173) — but this chart deliberately
+ *   starts at Design: only from-Implementation-onward lead time is
+ *   visualized here.
+ *
+ * Median and p90 (issue #189) switch via one shared tab above both charts,
+ * rather than drawing two rows at once, so a single period/range's bars stay
+ * legible; the `?interval=week|month|year` selector (issue #188's period
+ * bucketing) turns each chart from one summary row into one row per period,
+ * oldest on top, so "is this improving?" reads top-to-bottom. `interval`
+ * lives in the URL alongside `from`/`to`; the tab choice does not, since it's
+ * a way of reading already-fetched data, not a filter on what was fetched.
+ * `interval` also adds small throughput/pipeline-success-rate trend charts
+ * below the stat row.
  *
  * Merge-request size distribution (additions/deletions/changed files) is
  * part of the delivery-metrics API response but not charted here: every
@@ -105,17 +222,20 @@ export function DeliveryMetricsSection({
   flowMetrics,
   from,
   to,
+  interval,
   error = false,
 }: {
   metrics: DeliveryMetrics | null;
   flowMetrics: FlowMetrics | null;
   from?: string;
   to?: string;
+  interval?: MetricsInterval;
   error?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [statTab, setStatTab] = useState<StatTab>("median");
 
   function updateQuery(next: Record<string, string | undefined>) {
     const params = new URLSearchParams(searchParams.toString());
@@ -134,32 +254,47 @@ export function DeliveryMetricsSection({
   const hasStageData = stageStats.some((s) => s.count > 0);
   const hasBlockedData = !!flowMetrics && flowMetrics.blocked.count > 0;
   const hasData = hasStatData || hasStageData || hasBlockedData;
+  const truncated = !!metrics?.truncated || !!flowMetrics?.truncated;
 
-  const stageChartData = flowMetrics
-    ? [
-        {
-          row: "Median",
-          design: flowMetrics.design.medianHours ?? 0,
-          implementation: flowMetrics.implementation.medianHours ?? 0,
-          reviewAndMerge: flowMetrics.reviewAndMerge.medianHours ?? 0,
-          completion: flowMetrics.completion.medianHours ?? 0,
-        },
-        {
-          row: "p90",
-          design: flowMetrics.design.p90Hours ?? 0,
-          implementation: flowMetrics.implementation.p90Hours ?? 0,
-          reviewAndMerge: flowMetrics.reviewAndMerge.p90Hours ?? 0,
-          completion: flowMetrics.completion.p90Hours ?? 0,
-        },
-      ]
-    : [];
+  const stagePeriods: FlowPeriod[] = interval ? (flowMetrics?.periods ?? []) : [];
+  const stageChartData = interval
+    ? stagePeriods.map((period) => ({
+        row: periodLabel(period, interval),
+        design: statValue(period.design, statTab),
+        implementation: statValue(period.implementation, statTab),
+        reviewAndMerge: statValue(period.reviewAndMerge, statTab),
+        completion: statValue(period.completion, statTab),
+      }))
+    : flowMetrics
+      ? [
+          {
+            row: statTab === "median" ? "Median" : "p90",
+            design: statValue(flowMetrics.design, statTab),
+            implementation: statValue(flowMetrics.implementation, statTab),
+            reviewAndMerge: statValue(flowMetrics.reviewAndMerge, statTab),
+            completion: statValue(flowMetrics.completion, statTab),
+          },
+        ]
+      : [];
 
-  const blockedChartData = flowMetrics
-    ? [
-        { row: "Median", blocked: flowMetrics.blocked.medianHours ?? 0 },
-        { row: "p90", blocked: flowMetrics.blocked.p90Hours ?? 0 },
-      ]
-    : [];
+  const blockedChartData = interval
+    ? stagePeriods.map((period) => ({ row: periodLabel(period, interval), blocked: statValue(period.blocked, statTab) }))
+    : flowMetrics
+      ? [{ row: statTab === "median" ? "Median" : "p90", blocked: statValue(flowMetrics.blocked, statTab) }]
+      : [];
+
+  const trendPeriods: DeliveryPeriod[] = interval ? (metrics?.periods ?? []) : [];
+  const throughputTrendData = trendPeriods.map((period) => ({
+    period: periodLabel(period, interval as MetricsInterval),
+    throughput: period.throughput,
+  }));
+  const successRateTrendData = trendPeriods.map((period) => ({
+    period: periodLabel(period, interval as MetricsInterval),
+    successRate: period.pipelineSuccessRate == null ? null : Math.round(period.pipelineSuccessRate * 100),
+  }));
+
+  const stageChartHeight = interval ? periodChartHeightPx(stagePeriods.length) : 96;
+  const blockedChartHeight = interval ? periodChartHeightPx(stagePeriods.length) : 64;
 
   return (
     <Card>
@@ -185,6 +320,20 @@ export function DeliveryMetricsSection({
               value={fromDateParam(to)}
               onChange={(date) => updateQuery({ to: date ? toDateParam(date) : undefined })}
             />
+            <Select
+              value={interval ?? "all"}
+              onValueChange={(value) => updateQuery({ interval: value === "all" ? undefined : value })}
+            >
+              <SelectTrigger id="delivery-metrics-interval" aria-label="Interval" className="h-8 w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="week">Week</SelectItem>
+                <SelectItem value="month">Month</SelectItem>
+                <SelectItem value="year">Year</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
       </CardHeader>
@@ -211,14 +360,68 @@ export function DeliveryMetricsSection({
               </div>
             </dl>
 
+            {interval && trendPeriods.length > 0 ? (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <h4 className="text-muted-foreground mb-2 text-xs font-medium">Throughput trend</h4>
+                  <ChartContainer config={throughputChartConfig} className="aspect-auto h-28 w-full">
+                    <BarChart data={throughputTrendData} margin={{ left: 4, right: 8 }}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="period" tickLine={false} axisLine={false} fontSize={11} />
+                      <YAxis tickLine={false} axisLine={false} width={28} allowDecimals={false} />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Bar dataKey="throughput" fill="var(--color-throughput)" />
+                    </BarChart>
+                  </ChartContainer>
+                </div>
+                <div>
+                  <h4 className="text-muted-foreground mb-2 text-xs font-medium">Pipeline success rate trend</h4>
+                  <ChartContainer config={successRateChartConfig} className="aspect-auto h-28 w-full">
+                    <LineChart data={successRateTrendData} margin={{ left: 4, right: 8 }}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="period" tickLine={false} axisLine={false} fontSize={11} />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickFormatter={(value) => `${value}%`}
+                        tickLine={false}
+                        axisLine={false}
+                        width={36}
+                      />
+                      <ChartTooltip
+                        content={<ChartTooltipContent formatter={(value) => `${value}%`} />}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="successRate"
+                        stroke="var(--color-successRate)"
+                        connectNulls={false}
+                        dot
+                      />
+                    </LineChart>
+                  </ChartContainer>
+                </div>
+              </div>
+            ) : null}
+
+            {truncated ? (
+              <p className="text-muted-foreground text-xs">Showing the most recent 52 periods only.</p>
+            ) : null}
+
             <div>
-              <h3 className="text-foreground mb-3 text-sm font-medium">Stage lead time</h3>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h3 className="text-foreground text-sm font-medium">Stage lead time</h3>
+                <StatTabs value={statTab} onChange={setStatTab} />
+              </div>
               {hasStageData ? (
-                <ChartContainer config={stageChartConfig} className="aspect-auto h-40 w-full">
+                <ChartContainer
+                  config={stageChartConfig}
+                  className="aspect-auto w-full"
+                  style={{ height: `${stageChartHeight}px` }}
+                >
                   <BarChart data={stageChartData} layout="vertical" margin={{ left: 8, right: 8 }}>
                     <CartesianGrid horizontal={false} />
                     <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={formatHours} />
-                    <YAxis dataKey="row" type="category" tickLine={false} axisLine={false} width={56} />
+                    <YAxis dataKey="row" type="category" tickLine={false} axisLine={false} width={64} />
                     <ChartTooltip
                       content={<ChartTooltipContent formatter={(value) => formatHours(value as number)} />}
                     />
@@ -240,11 +443,15 @@ export function DeliveryMetricsSection({
             {hasBlockedData ? (
               <div>
                 <h3 className="text-foreground mb-3 text-sm font-medium">Blocked time</h3>
-                <ChartContainer config={blockedChartConfig} className="aspect-auto h-24 w-full">
+                <ChartContainer
+                  config={blockedChartConfig}
+                  className="aspect-auto w-full"
+                  style={{ height: `${blockedChartHeight}px` }}
+                >
                   <BarChart data={blockedChartData} layout="vertical" margin={{ left: 8, right: 8 }}>
                     <CartesianGrid horizontal={false} />
                     <XAxis type="number" tickLine={false} axisLine={false} tickFormatter={formatHours} />
-                    <YAxis dataKey="row" type="category" tickLine={false} axisLine={false} width={56} />
+                    <YAxis dataKey="row" type="category" tickLine={false} axisLine={false} width={64} />
                     <ChartTooltip
                       content={<ChartTooltipContent formatter={(value) => formatHours(value as number)} />}
                     />

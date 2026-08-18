@@ -50,9 +50,10 @@
    * direct labels rather than relying on hue alone. Slots 6-7 (violet/olive,
    * issue #173) were added for the backlog-level flow-metrics stages
    * (backlogWaitingToStart, taskBreakdown) that DeliveryMetricsSection's
-   * stage-lead-time chart no longer visualizes (it now starts at Design,
-   * slot 1) — kept defined and validated here in case a future chart needs
-   * them again, just currently unreferenced by any component.
+   * stage-lead-time chart doesn't visualize (it starts at Design, slot 1);
+   * issue #189 reused them instead for that same section's period-trend
+   * charts (throughput, slot 6; pipeline success rate, slot 7) — each a
+   * single series, so the protanopia caveat above doesn't apply to either.
    */
   --chart-1: #6366f1;
   --chart-2: #ef4a6a;

@@ -11,6 +11,7 @@ import type {
   ApiToken,
   DeliveryMetrics,
   FlowMetrics,
+  MetricsInterval,
   GitlabConnection,
   Project,
   ProjectMember,
@@ -229,6 +230,7 @@ export function ProjectDetail({
   metricsError = false,
   metricsFrom,
   metricsTo,
+  metricsInterval,
 }: {
   project: Project;
   backlogCount?: number;
@@ -252,6 +254,7 @@ export function ProjectDetail({
   metricsError?: boolean;
   metricsFrom?: string;
   metricsTo?: string;
+  metricsInterval?: MetricsInterval;
 }) {
   const [project, setProject] = useState(initial);
   const [editing, setEditing] = useState(false);
@@ -336,6 +339,7 @@ export function ProjectDetail({
           flowMetrics={flowMetrics}
           from={metricsFrom}
           to={metricsTo}
+          interval={metricsInterval}
           error={metricsError}
         />
       </div>

@@ -1415,7 +1415,10 @@ synced; nothing is cached or materialized yet.
   first-review→merge lead time is no longer charted on its own here — see
   [Flow metrics](#flow-metrics-issue-171)'s `reviewAndMerge` stage, which the
   same card now charts instead (issue #172). Size distribution isn't charted
-  yet — see above.
+  yet — see above. With `?interval=` selected (issue #189, an `All`/`Week`/
+  `Month`/`Year` selector next to the date filters), the stat row gains a
+  small throughput bar chart and pipeline-success-rate line chart underneath,
+  one point per period.
 - The aggregation started as a plain query over `merge_requests`, computing
   median/p90 in the application layer (cheap to unit test with fakes, per
   [`docs/testing.md`](docs/testing.md)); a materialized view is future work
@@ -1489,11 +1492,12 @@ done.
   stacked horizontal bar — a value-stream map, so the tallest segment reads
   as the bottleneck at a glance. `waitingToStart` and the two backlog-level
   stages below are still returned by the API but are not part of this
-  chart. Median and p90 are drawn as separate rows rather than averaged
-  together, so "always slow" (both rows tall) is visually distinct from
-  "occasionally stuck" (only the p90 row is tall). `blocked` is charted
-  separately from that stack, never folded into it, so blocked time is never
-  double-counted against the stage it interrupted. It shares the card's
+  chart. `blocked` is charted separately from that stack, never folded into
+  it, so blocked time is never double-counted against the stage it
+  interrupted. Median and p90 switch via a shared tab above both charts
+  (issue #189) rather than drawing two rows at once — one piece of state for
+  both, since letting them switch independently would invite reading one
+  chart's median against the other's p90. It shares the card's
   `?from=`/`?to=` filters with delivery metrics.
 
 #### Backlog-level stages: waiting to start and task breakdown (issue #173)
@@ -1575,7 +1579,23 @@ issue**, `"interval"` is `null`, and `"periods"` is empty.
   `internal/flowmetrics` and `internal/deliverymetrics` — bucket-boundary
   bugs are the kind worth fixing in one place, unlike the median/p90 helpers
   those two packages still duplicate.
-- Web: not wired up yet — see issue #189.
+- Web (issue #189): an `All`/`Week`/`Month`/`Year` selector next to the
+  "Delivery metrics" card's date filters, held in the URL as `?interval=`
+  alongside `?from=`/`?to=` (server-refetched, not client-recomputed —
+  the same hand-off-through-the-URL pattern the date filters already use).
+  With an interval selected:
+  - Stage lead time and Blocked time each draw one horizontal stacked-bar row
+    per period instead of one summary row, oldest period on top/newest on
+    bottom — reading top-to-bottom shows whether lead time is shrinking. A
+    period with `count: 0` still draws its (empty) row, so a gap in the data
+    reads as a gap rather than silently disappearing. `"truncated": true`
+    shows a one-line note that only the most recent 52 periods are shown.
+  - The stat row gains a small throughput bar chart and pipeline-success-rate
+    line chart underneath, one point per period.
+  - `All` (the default, no `interval` in the URL) is unchanged from before
+    this issue except that Stage/Blocked draw only the tab-selected stat's
+    row, not both at once — see [Flow metrics](#flow-metrics-issue-171)'s
+    Median/p90 tab above.
 
 ## Current limitations
 

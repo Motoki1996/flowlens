@@ -6,6 +6,9 @@ function makeMetrics(overrides: Partial<DeliveryMetrics>): DeliveryMetrics {
   return {
     from: null,
     to: null,
+    interval: null,
+    truncated: false,
+    periods: [],
     openToFirstReview: { count: 0, medianHours: null, p90Hours: null },
     firstReviewToMerge: { count: 0, medianHours: null, p90Hours: null },
     additions: { count: 0, median: null, p90: null },
@@ -21,6 +24,9 @@ function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
   return {
     from: null,
     to: null,
+    interval: null,
+    truncated: false,
+    periods: [],
     backlogWaitingToStart: { count: 0, medianHours: null, p90Hours: null },
     taskBreakdown: { count: 0, medianHours: null, p90Hours: null },
     waitingToStart: { count: 0, medianHours: null, p90Hours: null },
@@ -30,6 +36,23 @@ function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
     completion: { count: 0, medianHours: null, p90Hours: null },
     blocked: { count: 0, medianHours: null, p90Hours: null },
     ...overrides,
+  };
+}
+
+/** stageStats builds one period's worth of task-level stage stats, for the
+ *  MonthlyTrend story below — every non-design/blocked stage stays empty so
+ *  the shrinking Design segment reads clearly across months. */
+function stageStats(designMedian: number, designP90: number, blockedMedian: number, blockedP90: number) {
+  const empty = { count: 0, medianHours: null, p90Hours: null };
+  return {
+    backlogWaitingToStart: empty,
+    taskBreakdown: empty,
+    waitingToStart: empty,
+    design: { count: 6, medianHours: designMedian, p90Hours: designP90 },
+    implementation: empty,
+    reviewAndMerge: empty,
+    completion: empty,
+    blocked: { count: 2, medianHours: blockedMedian, p90Hours: blockedP90 },
   };
 }
 
@@ -89,6 +112,64 @@ export const Normal: Story = {
       reviewAndMerge: { count: 28, medianHours: 8, p90Hours: 30 },
       completion: { count: 27, medianHours: 1, p90Hours: 4 },
       blocked: { count: 9, medianHours: 6, p90Hours: 24 },
+    }),
+  },
+};
+
+/** MonthlyTrend: `?interval=month` turns the summary bars into one row per
+ *  month (oldest on top), so the shrinking Design segment and climbing
+ *  pipeline success rate read as improvement over time rather than a single
+ *  snapshot (issue #189). Blocked time follows the same three months. */
+export const MonthlyTrend: Story = {
+  args: {
+    interval: "month",
+    metrics: makeMetrics({
+      pipelineSuccessRate: 0.97,
+      throughput: 14,
+      periods: [
+        {
+          start: "2026-01-01T00:00:00Z",
+          end: "2026-02-01T00:00:00Z",
+          openToFirstReview: { count: 0, medianHours: null, p90Hours: null },
+          firstReviewToMerge: { count: 0, medianHours: null, p90Hours: null },
+          additions: { count: 0, median: null, p90: null },
+          deletions: { count: 0, median: null, p90: null },
+          changedFiles: { count: 0, median: null, p90: null },
+          pipelineSuccessRate: 0.75,
+          throughput: 4,
+        },
+        {
+          start: "2026-02-01T00:00:00Z",
+          end: "2026-03-01T00:00:00Z",
+          openToFirstReview: { count: 0, medianHours: null, p90Hours: null },
+          firstReviewToMerge: { count: 0, medianHours: null, p90Hours: null },
+          additions: { count: 0, median: null, p90: null },
+          deletions: { count: 0, median: null, p90: null },
+          changedFiles: { count: 0, median: null, p90: null },
+          pipelineSuccessRate: 0.88,
+          throughput: 5,
+        },
+        {
+          start: "2026-03-01T00:00:00Z",
+          end: "2026-04-01T00:00:00Z",
+          openToFirstReview: { count: 0, medianHours: null, p90Hours: null },
+          firstReviewToMerge: { count: 0, medianHours: null, p90Hours: null },
+          additions: { count: 0, median: null, p90: null },
+          deletions: { count: 0, median: null, p90: null },
+          changedFiles: { count: 0, median: null, p90: null },
+          pipelineSuccessRate: 0.97,
+          throughput: 5,
+        },
+      ],
+    }),
+    flowMetrics: makeFlowMetrics({
+      design: { count: 18, medianHours: 20, p90Hours: 64 },
+      blocked: { count: 6, medianHours: 8, p90Hours: 30 },
+      periods: [
+        { start: "2026-01-01T00:00:00Z", end: "2026-02-01T00:00:00Z", ...stageStats(56, 96, 18, 48) },
+        { start: "2026-02-01T00:00:00Z", end: "2026-03-01T00:00:00Z", ...stageStats(28, 60, 8, 24) },
+        { start: "2026-03-01T00:00:00Z", end: "2026-04-01T00:00:00Z", ...stageStats(12, 30, 2, 8) },
+      ],
     }),
   },
 };

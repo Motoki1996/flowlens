@@ -4,16 +4,20 @@ import type { DeliveryMetrics, FlowMetrics } from "@/types";
 import { DeliveryMetricsSection } from "./DeliveryMetricsSection";
 
 const push = vi.fn();
+let mockSearchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
   usePathname: () => "/projects/p1",
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
 }));
 
 function makeMetrics(overrides: Partial<DeliveryMetrics>): DeliveryMetrics {
   return {
     from: null,
     to: null,
+    interval: null,
+    truncated: false,
+    periods: [],
     openToFirstReview: { count: 0, medianHours: null, p90Hours: null },
     firstReviewToMerge: { count: 0, medianHours: null, p90Hours: null },
     additions: { count: 0, median: null, p90: null },
@@ -29,6 +33,9 @@ function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
   return {
     from: null,
     to: null,
+    interval: null,
+    truncated: false,
+    periods: [],
     backlogWaitingToStart: { count: 0, medianHours: null, p90Hours: null },
     taskBreakdown: { count: 0, medianHours: null, p90Hours: null },
     waitingToStart: { count: 0, medianHours: null, p90Hours: null },
@@ -44,6 +51,7 @@ function makeFlowMetrics(overrides: Partial<FlowMetrics>): FlowMetrics {
 describe("DeliveryMetricsSection", () => {
   beforeEach(() => {
     push.mockClear();
+    mockSearchParams = new URLSearchParams();
   });
 
   it("shows an empty state with no data", () => {
@@ -182,5 +190,128 @@ describe("DeliveryMetricsSection", () => {
     fireEvent.click(await screen.findByRole("button", { name: /February 10th, 2026/ }));
 
     expect(push).toHaveBeenCalledWith("/projects/p1");
+  });
+
+  it("pushes ?interval= when the interval selector changes", async () => {
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={makeFlowMetrics({})} />);
+    fireEvent.click(screen.getByRole("combobox", { name: "Interval" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Month" }));
+    expect(push).toHaveBeenCalledWith("/projects/p1?interval=month");
+  });
+
+  it("clears ?interval= when All is picked", async () => {
+    mockSearchParams = new URLSearchParams("interval=month");
+    render(
+      <DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={makeFlowMetrics({})} interval="month" />,
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "Interval" }));
+    fireEvent.click(await screen.findByRole("option", { name: "All" }));
+    expect(push).toHaveBeenCalledWith("/projects/p1");
+  });
+
+  it("draws one stage lead-time row per period, oldest first, including empty periods", () => {
+    const flowMetrics = makeFlowMetrics({
+      design: { count: 2, medianHours: 4, p90Hours: 8 },
+      periods: [
+        {
+          start: "2026-01-01T00:00:00Z",
+          end: "2026-02-01T00:00:00Z",
+          backlogWaitingToStart: { count: 0, medianHours: null, p90Hours: null },
+          taskBreakdown: { count: 0, medianHours: null, p90Hours: null },
+          waitingToStart: { count: 0, medianHours: null, p90Hours: null },
+          design: { count: 1, medianHours: 8, p90Hours: 8 },
+          implementation: { count: 0, medianHours: null, p90Hours: null },
+          reviewAndMerge: { count: 0, medianHours: null, p90Hours: null },
+          completion: { count: 0, medianHours: null, p90Hours: null },
+          blocked: { count: 0, medianHours: null, p90Hours: null },
+        },
+        {
+          // A gap-filled empty period (count: 0 throughout) must still render
+          // as its own row, so a gap reads as a gap rather than disappearing.
+          start: "2026-02-01T00:00:00Z",
+          end: "2026-03-01T00:00:00Z",
+          backlogWaitingToStart: { count: 0, medianHours: null, p90Hours: null },
+          taskBreakdown: { count: 0, medianHours: null, p90Hours: null },
+          waitingToStart: { count: 0, medianHours: null, p90Hours: null },
+          design: { count: 0, medianHours: null, p90Hours: null },
+          implementation: { count: 0, medianHours: null, p90Hours: null },
+          reviewAndMerge: { count: 0, medianHours: null, p90Hours: null },
+          completion: { count: 0, medianHours: null, p90Hours: null },
+          blocked: { count: 0, medianHours: null, p90Hours: null },
+        },
+      ],
+    });
+    render(
+      <DeliveryMetricsSection
+        metrics={makeMetrics({})}
+        flowMetrics={flowMetrics}
+        interval="month"
+      />,
+    );
+
+    const rowLabels = Array.from(
+      document.querySelectorAll(".recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value"),
+    ).map((el) => el.textContent);
+    expect(rowLabels).toEqual(["2026-01", "2026-02"]);
+  });
+
+  it("shows a truncated-periods note when the API reports truncated", () => {
+    render(
+      <DeliveryMetricsSection
+        metrics={makeMetrics({ truncated: true })}
+        flowMetrics={makeFlowMetrics({ design: { count: 1, medianHours: 1, p90Hours: 1 } })}
+        interval="week"
+      />,
+    );
+    expect(screen.getByText(/most recent 52 periods only/)).toBeInTheDocument();
+  });
+
+  it("switches both the stage and blocked charts' values together via the Median/p90 tabs", () => {
+    const flowMetrics = makeFlowMetrics({
+      design: { count: 2, medianHours: 4, p90Hours: 40 },
+      blocked: { count: 2, medianHours: 2, p90Hours: 20 },
+    });
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={flowMetrics} />);
+
+    const stageSection = screen.getByRole("heading", { name: "Stage lead time" }).closest("div")!.parentElement!;
+    const blockedSection = screen.getByRole("heading", { name: "Blocked time" }).closest("div")!;
+    // Without ?interval=, each chart draws a single row keyed by the active
+    // stat's own name — a reliable proxy (unlike a numeric axis tick, never
+    // subject to recharts' own "nice round number" tick rounding) for which
+    // stat a chart is currently drawing.
+    function rowLabel(section: HTMLElement): string | null {
+      return section.querySelector(".recharts-yAxis-tick-labels .recharts-cartesian-axis-tick-value")?.textContent ?? null;
+    }
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Median", "p90"]);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(tabs[1]).toHaveAttribute("aria-selected", "false");
+    expect(rowLabel(stageSection)).toBe("Median");
+    expect(rowLabel(blockedSection)).toBe("Median");
+
+    fireEvent.click(tabs[1]);
+    expect(tabs[1]).toHaveAttribute("aria-selected", "true");
+    expect(tabs[0]).toHaveAttribute("aria-selected", "false");
+    expect(rowLabel(stageSection)).toBe("p90");
+    expect(rowLabel(blockedSection)).toBe("p90");
+  });
+
+  it("moves the Median/p90 tab selection with the arrow keys", () => {
+    const flowMetrics = makeFlowMetrics({ design: { count: 1, medianHours: 1, p90Hours: 2 } });
+    render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={flowMetrics} />);
+
+    const [medianTab, p90Tab] = screen.getAllByRole("tab");
+    medianTab.focus();
+    expect(medianTab).toHaveFocus();
+
+    fireEvent.keyDown(medianTab, { key: "ArrowRight" });
+    expect(p90Tab).toHaveAttribute("aria-selected", "true");
+    expect(p90Tab).toHaveFocus();
+    expect(medianTab).toHaveAttribute("tabIndex", "-1");
+
+    fireEvent.keyDown(p90Tab, { key: "ArrowLeft" });
+    expect(medianTab).toHaveAttribute("aria-selected", "true");
+    expect(medianTab).toHaveFocus();
   });
 });

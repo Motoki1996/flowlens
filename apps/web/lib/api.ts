@@ -14,6 +14,7 @@ import type {
   Backlog,
   DeliveryMetrics,
   FlowMetrics,
+  MetricsInterval,
   GitlabConnection,
   GitlabIdentity,
   GitlabLabelOption,
@@ -380,10 +381,12 @@ export async function getMergeRequest(id: string): Promise<MergeRequest | null> 
 /** ProjectMetricsFilter narrows getProjectMetrics to a date range (issue
  *  #113); both bounds are optional YYYY-MM-DD strings, unbounded when
  *  omitted, the same date-only convention MergeRequestFilter's since/until
- *  use. */
+ *  use. interval (issue #188) additionally buckets the response into a
+ *  periods time series; omitted, the response is unchanged from before #188. */
 export type ProjectMetricsFilter = {
   from?: string;
   to?: string;
+  interval?: MetricsInterval;
 };
 
 /**
@@ -400,6 +403,7 @@ export async function getProjectMetrics(
   const params = new URLSearchParams();
   if (filter.from) params.set("from", filter.from);
   if (filter.to) params.set("to", filter.to);
+  if (filter.interval) params.set("interval", filter.interval);
   const query = params.toString();
 
   const res = await fetch(
@@ -427,6 +431,7 @@ export async function getProjectFlowMetrics(
   const params = new URLSearchParams();
   if (filter.from) params.set("from", filter.from);
   if (filter.to) params.set("to", filter.to);
+  if (filter.interval) params.set("interval", filter.interval);
   const query = params.toString();
 
   const res = await fetch(

@@ -21,12 +21,18 @@ export default async function ProjectPage({
   searchParams,
 }: {
   params: Promise<{ projectId: string }>;
-  searchParams?: Promise<{ from?: string; to?: string }>;
+  searchParams?: Promise<{ from?: string; to?: string; interval?: string }>;
 }) {
   const { projectId } = await params;
   const resolvedSearchParams = await searchParams;
   const metricsFrom = resolvedSearchParams?.from;
   const metricsTo = resolvedSearchParams?.to;
+  const metricsInterval =
+    resolvedSearchParams?.interval === "week" ||
+    resolvedSearchParams?.interval === "month" ||
+    resolvedSearchParams?.interval === "year"
+      ? resolvedSearchParams.interval
+      : undefined;
 
   const project = await getProject(projectId);
   if (!project) notFound();
@@ -93,8 +99,8 @@ export default async function ProjectPage({
   let metricsError = false;
   try {
     [metrics, flowMetrics] = await Promise.all([
-      getProjectMetrics(projectId, { from: metricsFrom, to: metricsTo }),
-      getProjectFlowMetrics(projectId, { from: metricsFrom, to: metricsTo }),
+      getProjectMetrics(projectId, { from: metricsFrom, to: metricsTo, interval: metricsInterval }),
+      getProjectFlowMetrics(projectId, { from: metricsFrom, to: metricsTo, interval: metricsInterval }),
     ]);
   } catch {
     metricsError = true;
@@ -118,6 +124,7 @@ export default async function ProjectPage({
       metricsError={metricsError}
       metricsFrom={metricsFrom}
       metricsTo={metricsTo}
+      metricsInterval={metricsInterval}
     />
   );
 }

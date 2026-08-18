@@ -112,7 +112,7 @@ func fieldsFromPayload(p issueWebhookPayload) taskFields {
 		DueDate:          dueDate,
 		AssigneeID:       assigneeID,
 		AssigneeUsername: assigneeUsername,
-		UpdatedAt:        parseGitlabTime(p.ObjectAttributes.UpdatedAt),
+		UpdatedAt:        parseHookTime(p.ObjectAttributes.UpdatedAt),
 		IssueID:          p.ObjectAttributes.ID,
 		IssueIID:         p.ObjectAttributes.IID,
 		WebURL:           p.ObjectAttributes.URL,
@@ -333,7 +333,7 @@ func (s *Service) applyMergeRequest(ctx context.Context, q db.Querier, event db.
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("get repository: %w", err))
 	}
 
-	updatedAt := parseGitlabTime(payload.ObjectAttributes.UpdatedAt)
+	updatedAt := parseHookTime(payload.ObjectAttributes.UpdatedAt)
 	var mergedAt, closedAt pgtype.Timestamptz
 	switch payload.ObjectAttributes.State {
 	case "merged":
@@ -379,7 +379,7 @@ func (s *Service) applyMergeRequest(ctx context.Context, q db.Querier, event db.
 			AuthorAvatarUrl:      payload.User.AvatarURL,
 			BaseBranch:           payload.ObjectAttributes.TargetBranch,
 			HeadBranch:           payload.ObjectAttributes.SourceBranch,
-			GitlabCreatedAt:      toTimestamptz(parseGitlabTime(payload.ObjectAttributes.CreatedAt)),
+			GitlabCreatedAt:      toTimestamptz(parseHookTime(payload.ObjectAttributes.CreatedAt)),
 			GitlabUpdatedAt:      toTimestamptz(updatedAt),
 			MergedAt:             mergedAt,
 			ClosedAt:             closedAt,
@@ -438,7 +438,7 @@ func (s *Service) applyPipeline(ctx context.Context, q db.Querier, event db.Webh
 		ID:                mr.ID,
 		PipelineStatus:    payload.ObjectAttributes.Status,
 		PipelineID:        pgtype.Int8{Int64: payload.ObjectAttributes.ID, Valid: true},
-		PipelineUpdatedAt: toTimestamptz(parseGitlabTime(payload.ObjectAttributes.UpdatedAt)),
+		PipelineUpdatedAt: toTimestamptz(parseHookTime(payload.ObjectAttributes.UpdatedAt)),
 	}); err != nil {
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("update pipeline: %w", err))
 	}
@@ -644,13 +644,14 @@ func toTimestamptz(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
-// parseGitlabTime parses a GitLab webhook payload timestamp
-// (object_attributes.updated_at, RFC3339). An empty or unparsable value
-// returns the zero time.
-func parseGitlabTime(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}
+// parseHookTime wraps gitlab.ParseHookTime for call sites here that only
+// want the zero-time-on-failure shape, logging a warning first so a payload
+// in a format ParseHookTime doesn't recognise is never silently swallowed
+// into "no timestamp".
+func parseHookTime(s string) time.Time {
+	t, ok := gitlab.ParseHookTime(s)
+	if !ok && s != "" {
+		slog.Warn("unparsable gitlab webhook timestamp", "raw_updated_at", s)
 	}
 	return t
 }

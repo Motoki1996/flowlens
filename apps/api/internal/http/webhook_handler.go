@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/webhookevent"
 )
 
@@ -107,6 +108,11 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 		status, skipReason, respStatus = webhookevent.StatusSkipped, webhookevent.SkipReasonUnsupportedEvent, http.StatusAccepted
 	}
 
+	updatedAt, ok := gitlab.ParseHookTime(payload.ObjectAttributes.UpdatedAt)
+	if !ok && payload.ObjectAttributes.UpdatedAt != "" {
+		slog.Warn("unparsable gitlab webhook updated_at", "raw_updated_at", payload.ObjectAttributes.UpdatedAt)
+	}
+
 	deliveryUUID := r.Header.Get("X-Gitlab-Event-UUID")
 	if deliveryUUID == "" {
 		// GitLab added this header in 14.8; on-prem GitLab CE older than that
@@ -127,7 +133,7 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 		ObjectKind:            payload.ObjectKind,
 		GitlabIssueIID:        payload.issueIID(),
 		Payload:               body,
-		GitlabUpdatedAt:       parseGitlabTime(payload.ObjectAttributes.UpdatedAt),
+		GitlabUpdatedAt:       updatedAt,
 		Status:                status,
 		SkipReason:            skipReason,
 	})
@@ -145,17 +151,4 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 	webhookEventsReceivedTotal.WithLabelValues(metricStatus).Inc()
 
 	w.WriteHeader(respStatus)
-}
-
-// parseGitlabTime parses a GitLab webhook payload timestamp (RFC3339, e.g.
-// object_attributes.updated_at). An empty or unparsable value returns the
-// zero time, which webhookevent.Record stores as SQL NULL rather than
-// failing the request — the receiver's job is to record, not to validate
-// GitLab's payload shape.
-func parseGitlabTime(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
 }

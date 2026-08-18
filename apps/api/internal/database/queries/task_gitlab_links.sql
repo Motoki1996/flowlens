@@ -77,11 +77,14 @@ WHERE linked_gitlab_project_id = $1 AND gitlab_issue_iid = $2;
 -- sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask (the
 -- outbound counterpart), it never touches last_pushed_fingerprint — that
 -- field records what FlowLens itself last pushed, and an inbound apply is by
--- definition not that.
+-- definition not that. gitlab_updated_at is COALESCEd rather than written
+-- unconditionally: a delivery whose updated_at didn't parse (issue #183)
+-- passes NULL here, and that must never erase an already-recorded baseline
+-- — doing so would silently disable the stale guard this column exists for.
 
 -- name: MarkTaskGitlabLinkAppliedForTask :one
 UPDATE task_gitlab_links
-SET gitlab_updated_at = $2,
+SET gitlab_updated_at = COALESCE(sqlc.narg('gitlab_updated_at'), gitlab_updated_at),
     sync_status = 'synced',
     last_error = ''
 WHERE task_id = $1

@@ -108,6 +108,24 @@ func TestHandleGitlabWebhook_MissingEventUUIDDoesNotCollide(t *testing.T) {
 	assert.Len(t, q.WebhookEventsForLink(linkID), 2, "deliveries without X-Gitlab-Event-UUID must never be treated as duplicates of each other")
 }
 
+func TestHandleGitlabWebhook_HookFormatUpdatedAtIsRecorded(t *testing.T) {
+	// GitLab's webhook payloads serialize updated_at through Ruby's Time#to_s,
+	// not the REST API's RFC3339 (issue #183) — a delivery in that format
+	// must still populate gitlab_updated_at rather than silently recording
+	// NULL, which would disable the stale-delivery guard downstream.
+	s, q := newTestServer(t)
+	linkID := seedWebhookLink(t, s, q, testWebhookSecret)
+	payload := `{"object_kind":"issue","object_attributes":{"iid":1,"updated_at":"2017-09-15 16:50:55 UTC"}}`
+
+	rec := webhookRequest(t, s, linkID, testWebhookSecret, webhookevent.SupportedEventHeader, "delivery-hook-format", []byte(payload))
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	events := q.WebhookEventsForLink(linkID)
+	require.Len(t, events, 1)
+	require.True(t, events[0].GitlabUpdatedAt.Valid, "gitlab_updated_at must not be NULL for a parsable hook-format timestamp")
+	assert.Equal(t, 2017, events[0].GitlabUpdatedAt.Time.Year())
+}
+
 func TestHandleGitlabWebhook_UnsupportedEventIsRecordedAsSkipped(t *testing.T) {
 	s, q := newTestServer(t)
 	linkID := seedWebhookLink(t, s, q, testWebhookSecret)

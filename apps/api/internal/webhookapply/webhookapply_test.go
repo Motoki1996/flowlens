@@ -66,6 +66,7 @@ type issuePayloadOpts struct {
 	AssigneeUsername string
 	DueDate          string
 	UpdatedAt        time.Time
+	UpdatedAtRaw     string // overrides UpdatedAt's RFC3339 formatting when set, for a raw GitLab hook-format timestamp
 	URL              string
 }
 
@@ -89,6 +90,11 @@ func issuePayload(o issuePayloadOpts) []byte {
 		assignees = append(assignees, map[string]any{"id": o.AssigneeID, "username": o.AssigneeUsername})
 	}
 
+	updatedAt := o.UpdatedAtRaw
+	if updatedAt == "" {
+		updatedAt = o.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+
 	body := map[string]any{
 		"object_kind": "issue",
 		"object_attributes": map[string]any{
@@ -98,7 +104,7 @@ func issuePayload(o issuePayloadOpts) []byte {
 			"description": o.Description,
 			"state":       o.State,
 			"due_date":    o.DueDate,
-			"updated_at":  o.UpdatedAt.UTC().Format(time.RFC3339),
+			"updated_at":  updatedAt,
 			"url":         o.URL,
 		},
 		"labels":    labels,
@@ -207,6 +213,43 @@ func TestProcessNext_KnownIssue_UpdatesExistingTask(t *testing.T) {
 	assert.EqualValues(t, 5, updated.AssigneeGitlabUserID.Int64)
 }
 
+// An unparsable updated_at (issue #183) must not overwrite the
+// already-recorded task_gitlab_links.gitlab_updated_at baseline with NULL —
+// that baseline is what guard 2 (stale) is checked against, and losing it
+// would silently disable the guard for every later delivery.
+func TestProcessNext_UnparsableUpdatedAt_PreservesGitlabUpdatedAtBaseline(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Current title")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 7)
+	baseline := time.Date(2017, 9, 15, 16, 50, 55, 0, time.UTC)
+	_, err := f.q.MarkTaskGitlabLinkSyncedForTask(ctx, db.MarkTaskGitlabLinkSyncedForTaskParams{
+		TaskID:                tsk.ID,
+		GitlabUpdatedAt:       pgtype.Timestamptz{Time: baseline, Valid: true},
+		LastPushedFingerprint: "irrelevant-fingerprint",
+	})
+	require.NoError(t, err)
+
+	event := f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{
+		IID: 7, Title: "New title from an event with a broken timestamp",
+		UpdatedAtRaw: "not a real timestamp",
+	}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	got, ok := f.q.GetWebhookEvent(event.ID)
+	require.True(t, ok)
+	assert.Equal(t, "processed", got.Status, "an unparsable updated_at has no baseline to compare against, so it's not stale — just applied")
+
+	link, err := f.q.GetTaskGitlabLinkByTaskID(ctx, tsk.ID)
+	require.NoError(t, err)
+	require.True(t, link.GitlabUpdatedAt.Valid, "the existing baseline must survive an unparsable delivery")
+	assert.True(t, baseline.Equal(link.GitlabUpdatedAt.Time))
+}
+
 // Guard 2 ("stale"): an event whose payload updated_at is strictly before
 // task_gitlab_links.gitlab_updated_at must be skipped, never applied — this
 // is what makes ordering depend on GitLab's own timestamps rather than
@@ -245,6 +288,44 @@ func TestProcessNext_StaleEvent_SkippedAndTaskUnchanged(t *testing.T) {
 	unchanged, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
 	require.NoError(t, err)
 	assert.Equal(t, "Current title", unchanged.Title, "a stale event must never overwrite a newer applied state")
+}
+
+// GitLab webhook payloads serialize updated_at through Ruby's Time#to_s, not
+// the REST API's RFC3339 (issue #183). Before ParseHookTime, that format
+// failed to parse, silently zeroing the field and disabling guard 2 above —
+// this confirms the guard now fires on a hook-format delivery too, not just
+// the RFC3339 fixture every other test in this file uses.
+func TestProcessNext_StaleEvent_HookFormatTimestamp_SkippedAndTaskUnchanged(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Current title")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 7)
+	newer := time.Date(2017, 9, 15, 16, 50, 55, 0, time.UTC)
+	_, err := f.q.MarkTaskGitlabLinkSyncedForTask(ctx, db.MarkTaskGitlabLinkSyncedForTaskParams{
+		TaskID:                tsk.ID,
+		GitlabUpdatedAt:       pgtype.Timestamptz{Time: newer, Valid: true},
+		LastPushedFingerprint: "irrelevant-fingerprint",
+	})
+	require.NoError(t, err)
+
+	event := f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{
+		IID: 7, Title: "Stale title (arrived out of order)",
+		UpdatedAtRaw: "2017-09-15 15:50:55 UTC", // one hour before newer, in GitLab's hook format
+	}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	got, ok := f.q.GetWebhookEvent(event.ID)
+	require.True(t, ok)
+	assert.Equal(t, "skipped", got.Status)
+	assert.Equal(t, webhookapply.SkipReasonStale, got.SkipReason)
+
+	unchanged, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
+	require.NoError(t, err)
+	assert.Equal(t, "Current title", unchanged.Title, "a stale hook-format delivery must never overwrite a newer applied state")
 }
 
 // Guard 3 ("echo"): a delivery whose content fingerprint matches

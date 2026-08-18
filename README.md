@@ -1404,6 +1404,11 @@ synced; nothing is cached or materialized yet.
     human reading the Project view, not an AI-facing read.
   - Median/p90 use the nearest-rank method (no interpolation) — see
     `apps/api/internal/deliverymetrics`.
+  - `&interval=week|month|year` (issue #188) additionally buckets the same
+    stats into a `periods` time series, so "is this improving?" is readable
+    alongside "how is it now?" — see [Period bucketing](#period-bucketing-issue-188)
+    below; the rules there (cohort basis, UTC/ISO week, gap-fill, 52-period
+    cap) apply identically here, bucketing by `merge_requests.gitlab_created_at`.
 - Web: a stat row (throughput, pipeline success rate) on the "Delivery
   metrics" card on the Project single view (`/projects/[projectId]`), with
   `?from=`/`?to=` date filters held in the URL. The open→first-review/
@@ -1428,8 +1433,10 @@ task's whole pipeline: from creation, through an agent picking it up,
 through the merge request that closes it out, to the task being marked
 done.
 
-- `GET /api/v1/projects/{projectID}/flow-metrics?from=&to=` (`YYYY-MM-DD`,
-  both optional, bounding `tasks.created_at`) returns six stages, each as a
+- `GET /api/v1/projects/{projectID}/flow-metrics?from=&to=&interval=` (`from`/
+  `to` as `YYYY-MM-DD`, both optional, bounding `tasks.created_at`;
+  `interval` covered in [Period bucketing](#period-bucketing-issue-188)
+  below) returns six stages, each as a
   **median and p90** in hours (never a mean, same rationale as delivery
   metrics) over only the tasks that reached *both* ends of that stage — a
   task that hasn't reached a stage's end yet is excluded from it rather than
@@ -1521,6 +1528,54 @@ every other stage. Both are returned by the API but, like `waitingToStart`,
 are not part of the web stage-lead-time chart — that chart starts at
 `design`, per the [design/implementation split](#flow-metrics-issue-171)
 above. `blocked` is unaffected and stays its own separate chart.
+
+#### Period bucketing (issue #188)
+
+A single `?from=&to=` range says "how is it now?" but not "is it
+improving?" — `&interval=week|month|year`, accepted by both
+[Delivery metrics](#delivery-metrics-issue-113) and flow metrics above, adds
+a `periods` time series to the response without changing any existing
+field: **omitted, the response is byte-for-byte what it was before this
+issue**, `"interval"` is `null`, and `"periods"` is empty.
+
+- **Cohort basis, not event basis.** A period is chosen by when the row was
+  *created*, not by when the value being measured happened — the same
+  `?from=/?to=` bound each endpoint already filters by:
+  - Flow metrics' task-level stages (`waitingToStart`/`design`/
+    `implementation`/`reviewAndMerge`/`completion`/`blocked`): `tasks.created_at`.
+  - Flow metrics' backlog-level stages (`backlogWaitingToStart`/
+    `taskBreakdown`): `backlogs.created_at`.
+  - Delivery metrics (all fields): `merge_requests.gitlab_created_at`.
+
+  This means a period reports "how long did the cohort *created* in this
+  window end up taking", not "what happened during this window" — the most
+  recent periods are thinner on data because much of that cohort hasn't
+  finished yet. That's accepted deliberately (see issue #188): it keeps
+  every row in exactly one period and keeps each period's median/p90
+  computed from a consistent, non-overlapping sample.
+- **UTC, ISO week.** Every boundary is UTC, matching `timestamptz` storage
+  and every other aggregation here. A `week` bucket starts Monday 00:00 UTC
+  (so a Sunday timestamp belongs to the *previous* Monday's week); `month`
+  starts the 1st 00:00 UTC; `year` starts Jan 1 00:00 UTC. `end` on every
+  period is exclusive.
+- **Gap-filled.** Every bucket between the covered range's start and end is
+  present with `count: 0`, even ones with no data at all — so a chart can
+  render a flat/empty period instead of skipping straight to the next one
+  with data. The covered range is `from`→`to` when given; a missing bound
+  falls back to the earliest/latest bucket actually observed in the
+  response's own data.
+- **Capped at 52 periods.** An unbounded `?interval=week` could otherwise
+  return hundreds of rows. Once the covered range would exceed 52 buckets,
+  only the newest 52 are returned and the response's top-level
+  `"truncated"` is `true`.
+- An unrecognized `interval` value is a 400, the same treatment as a
+  malformed `from`/`to`.
+- Shared boundary math (`BucketStart`/`BucketEnd`/the gap-fill+cap
+  `Timeline`) lives in `apps/api/internal/metricsperiod`, used by both
+  `internal/flowmetrics` and `internal/deliverymetrics` — bucket-boundary
+  bugs are the kind worth fixing in one place, unlike the median/p90 helpers
+  those two packages still duplicate.
+- Web: not wired up yet — see issue #189.
 
 ## Current limitations
 

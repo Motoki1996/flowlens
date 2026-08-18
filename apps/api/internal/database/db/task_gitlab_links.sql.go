@@ -170,7 +170,7 @@ func (q *Queries) GetTaskGitlabLinkWithProjectPathByTaskID(ctx context.Context, 
 const markTaskGitlabLinkAppliedForTask = `-- name: MarkTaskGitlabLinkAppliedForTask :one
 
 UPDATE task_gitlab_links
-SET gitlab_updated_at = $2,
+SET gitlab_updated_at = COALESCE($2, gitlab_updated_at),
     sync_status = 'synced',
     last_error = ''
 WHERE task_id = $1
@@ -187,7 +187,10 @@ type MarkTaskGitlabLinkAppliedForTaskParams struct {
 // sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask (the
 // outbound counterpart), it never touches last_pushed_fingerprint — that
 // field records what FlowLens itself last pushed, and an inbound apply is by
-// definition not that.
+// definition not that. gitlab_updated_at is COALESCEd rather than written
+// unconditionally: a delivery whose updated_at didn't parse (issue #183)
+// passes NULL here, and that must never erase an already-recorded baseline
+// — doing so would silently disable the stale guard this column exists for.
 func (q *Queries) MarkTaskGitlabLinkAppliedForTask(ctx context.Context, arg MarkTaskGitlabLinkAppliedForTaskParams) (TaskGitlabLink, error) {
 	row := q.db.QueryRow(ctx, markTaskGitlabLinkAppliedForTask, arg.TaskID, arg.GitlabUpdatedAt)
 	var i TaskGitlabLink

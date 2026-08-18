@@ -29,6 +29,10 @@ SELECT * FROM merge_requests WHERE repository_id = $1 AND number = $2;
 -- already-imported merge request. first_reviewed_at and task_id are
 -- intentionally not touched here — see UpdateMergeRequestFirstReviewedAt
 -- and UpdateMergeRequestTaskID, which set them at most once each.
+-- gitlab_updated_at is COALESCEd rather than written unconditionally: a
+-- delivery whose updated_at didn't parse (issue #183) passes NULL, and that
+-- must never erase an already-recorded baseline (see the same reasoning on
+-- MarkTaskGitlabLinkAppliedForTask in task_gitlab_links.sql).
 
 -- name: UpdateMergeRequest :one
 UPDATE merge_requests
@@ -39,7 +43,7 @@ SET title = $2,
     author_avatar_url = $6,
     base_branch = $7,
     head_branch = $8,
-    gitlab_updated_at = $9,
+    gitlab_updated_at = COALESCE($9, gitlab_updated_at),
     merged_at = $10,
     closed_at = $11,
     html_url = $12,

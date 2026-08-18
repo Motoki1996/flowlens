@@ -2845,7 +2845,13 @@ func (f *FakeQuerier) MarkTaskGitlabLinkAppliedForTask(_ context.Context, arg db
 	if !ok {
 		return db.TaskGitlabLink{}, pgx.ErrNoRows
 	}
-	l.GitlabUpdatedAt = arg.GitlabUpdatedAt
+	if arg.GitlabUpdatedAt.Valid {
+		// Mirrors the real query's COALESCE(sqlc.narg('gitlab_updated_at'),
+		// gitlab_updated_at): a delivery whose updated_at didn't parse passes
+		// NULL here and must never erase an already-recorded baseline (issue
+		// #183).
+		l.GitlabUpdatedAt = arg.GitlabUpdatedAt
+	}
 	l.SyncStatus = "synced"
 	l.LastError = ""
 	f.taskGitlabLinksByTaskID[arg.TaskID] = l
@@ -3346,7 +3352,12 @@ func (f *FakeQuerier) UpdateMergeRequest(_ context.Context, arg db.UpdateMergeRe
 	m.AuthorAvatarUrl = arg.AuthorAvatarUrl
 	m.BaseBranch = arg.BaseBranch
 	m.HeadBranch = arg.HeadBranch
-	m.GitlabUpdatedAt = arg.GitlabUpdatedAt
+	if arg.GitlabUpdatedAt.Valid {
+		// Mirrors the real query's COALESCE($9, gitlab_updated_at): a
+		// delivery whose updated_at didn't parse passes NULL here and must
+		// never erase an already-recorded baseline (issue #183).
+		m.GitlabUpdatedAt = arg.GitlabUpdatedAt
+	}
 	m.MergedAt = arg.MergedAt
 	m.ClosedAt = arg.ClosedAt
 	m.HtmlUrl = arg.HtmlUrl

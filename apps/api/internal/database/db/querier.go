@@ -590,7 +590,10 @@ type Querier interface {
 	// sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask (the
 	// outbound counterpart), it never touches last_pushed_fingerprint — that
 	// field records what FlowLens itself last pushed, and an inbound apply is by
-	// definition not that.
+	// definition not that. gitlab_updated_at is COALESCEd rather than written
+	// unconditionally: a delivery whose updated_at didn't parse (issue #183)
+	// passes NULL here, and that must never erase an already-recorded baseline
+	// — doing so would silently disable the stale guard this column exists for.
 	MarkTaskGitlabLinkAppliedForTask(ctx context.Context, arg MarkTaskGitlabLinkAppliedForTaskParams) (TaskGitlabLink, error)
 	MarkTaskGitlabLinkFailedForTask(ctx context.Context, arg MarkTaskGitlabLinkFailedForTaskParams) (TaskGitlabLink, error)
 	// MarkTaskGitlabLinkPendingForTask is the other half of a sync retry
@@ -690,6 +693,10 @@ type Querier interface {
 	// already-imported merge request. first_reviewed_at and task_id are
 	// intentionally not touched here — see UpdateMergeRequestFirstReviewedAt
 	// and UpdateMergeRequestTaskID, which set them at most once each.
+	// gitlab_updated_at is COALESCEd rather than written unconditionally: a
+	// delivery whose updated_at didn't parse (issue #183) passes NULL, and that
+	// must never erase an already-recorded baseline (see the same reasoning on
+	// MarkTaskGitlabLinkAppliedForTask in task_gitlab_links.sql).
 	UpdateMergeRequest(ctx context.Context, arg UpdateMergeRequestParams) (MergeRequest, error)
 	// UpdateMergeRequestFirstReviewedAt records the first review activity
 	// (ADR-0011 §3) at most once: the WHERE guard means a later, later-timed

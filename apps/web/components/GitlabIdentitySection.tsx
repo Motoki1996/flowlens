@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { HelpCircleIcon, SquareArrowOutUpRightIcon } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import type { ApiError, GitlabIdentity } from "@/types";
@@ -9,6 +10,12 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+
+/** Strips a trailing slash so `${base}/api/v4/user` never doubles up. */
+function normalizeBaseUrl(baseUrl: string) {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
 
 async function parseError(res: Response, fallback: string) {
   const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -82,16 +89,49 @@ function RegisterIdentityForm({ onSaved }: { onSaved: () => void }) {
         />
       </div>
       <div>
-        <label htmlFor="gitlab-identity-user-id" className="text-foreground block text-sm font-medium">
-          GitLab user ID
-        </label>
-        <Input
-          id="gitlab-identity-user-id"
-          type="number"
-          value={gitlabUserId}
-          onChange={(e) => setGitlabUserId(e.target.value)}
-          className="mt-1"
-        />
+        <div className="flex items-center gap-1">
+          <label htmlFor="gitlab-identity-user-id" className="text-foreground block text-sm font-medium">
+            GitLab user ID
+          </label>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="How to find your GitLab user ID"
+              >
+                <HelpCircleIcon className="size-3.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 text-sm" align="start">
+              <p>
+                This is your numeric GitLab user ID, not your username. While logged in to your
+                GitLab instance, open <span className="font-mono text-xs">/api/v4/user</span> — the
+                JSON response&apos;s <span className="font-mono text-xs">id</span> field is it.
+              </p>
+            </PopoverContent>
+          </Popover>
+        </div>
+        <div className="mt-1 flex gap-2">
+          <Input
+            id="gitlab-identity-user-id"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            value={gitlabUserId}
+            onChange={(e) => setGitlabUserId(e.target.value)}
+          />
+          <Button type="button" variant="outline" size="sm" disabled={!baseUrl.trim()} asChild={!!baseUrl.trim()}>
+            {baseUrl.trim() ? (
+              <a href={`${normalizeBaseUrl(baseUrl)}/api/v4/user`} target="_blank" rel="noopener noreferrer">
+                Look up ID
+                <SquareArrowOutUpRightIcon className="size-3.5" />
+              </a>
+            ) : (
+              <>Look up ID</>
+            )}
+          </Button>
+        </div>
       </div>
       <div>
         <label htmlFor="gitlab-identity-username" className="text-foreground block text-sm font-medium">

@@ -56,6 +56,7 @@ type Querier interface {
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
 	CompleteRepositorySyncRun(ctx context.Context, arg CompleteRepositorySyncRunParams) (RepositorySyncRun, error)
 	CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error)
+	CountUsers(ctx context.Context) (int64, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
 	// caller to have already verified project ownership (e.g. via

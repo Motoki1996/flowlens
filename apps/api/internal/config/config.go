@@ -17,11 +17,43 @@ import (
 
 // Config holds all runtime settings for the API.
 type Config struct {
+	// Version is the build version stamped into the binary at link time
+	// (see the Makefile's -ldflags). It is reported by GET /version so a
+	// self-hosted operator can tell which release is running.
+	Version string
+
 	Env        string // "development" or "production"
 	Port       string
 	WebBaseURL string
 
 	DatabaseURL string
+
+	// RunMigrations applies the embedded schema migrations at startup.
+	// It defaults to true: a self-hosted deployment is meant to be a
+	// container you start, with no separate migrate step. Set it to false
+	// where migrations are run as their own deploy stage.
+	RunMigrations bool
+
+	// AllowSignup gates POST /auth/signup. It defaults to true, but a
+	// self-hosted instance reachable from a network you do not control
+	// should turn it off once its accounts exist, so that reaching the
+	// login page is not enough to create one. The very first account is
+	// always allowed regardless, otherwise a fresh instance started with
+	// signup off could never be bootstrapped.
+	AllowSignup bool
+
+	// TrustedProxyHops is how many reverse proxies sit in front of the API
+	// and can be trusted to have appended to X-Forwarded-For. It defaults
+	// to 0 — trust nothing, key rate limits on the socket address. The
+	// bundled compose file sets 1 for the Next.js proxy in front, and 2
+	// when a TLS terminator is added ahead of that.
+	TrustedProxyHops int
+
+	// MetricsToken, when set, requires GET /metrics to present it as a
+	// bearer token. Empty (the default) leaves the endpoint open, which is
+	// what the bundled compose file relies on: it never publishes the API
+	// port, so /metrics is only reachable from inside the Docker network.
+	MetricsToken string
 
 	SessionTTL time.Duration
 
@@ -57,11 +89,13 @@ func (c *Config) IsProduction() bool { return c.Env == "production" }
 
 // Load reads configuration from the environment. When a .env file exists
 // it is loaded first (existing environment variables take precedence).
-func Load() (*Config, error) {
+// version is the build stamp the caller was linked with.
+func Load(version string) (*Config, error) {
 	// Best-effort: a missing .env is fine (e.g. in Docker / production).
 	_ = godotenv.Load()
 
 	cfg := &Config{
+		Version:     version,
 		Env:         getEnv("APP_ENV", "development"),
 		Port:        getEnv("API_PORT", "8080"),
 		WebBaseURL:  getEnv("WEB_BASE_URL", "http://localhost:4000"),
@@ -71,6 +105,29 @@ func Load() (*Config, error) {
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("config: DATABASE_URL is required")
 	}
+
+	runMigrations, err := strconv.ParseBool(getEnv("RUN_MIGRATIONS", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid RUN_MIGRATIONS: %w", err)
+	}
+	cfg.RunMigrations = runMigrations
+
+	allowSignup, err := strconv.ParseBool(getEnv("ALLOW_SIGNUP", "true"))
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid ALLOW_SIGNUP: %w", err)
+	}
+	cfg.AllowSignup = allowSignup
+
+	cfg.MetricsToken = os.Getenv("METRICS_TOKEN")
+
+	trustedProxyHops, err := strconv.Atoi(getEnv("TRUSTED_PROXY_HOPS", "0"))
+	if err != nil {
+		return nil, fmt.Errorf("config: invalid TRUSTED_PROXY_HOPS: %w", err)
+	}
+	if trustedProxyHops < 0 {
+		return nil, fmt.Errorf("config: TRUSTED_PROXY_HOPS must not be negative, got %d", trustedProxyHops)
+	}
+	cfg.TrustedProxyHops = trustedProxyHops
 
 	ttlHours, err := strconv.Atoi(getEnv("SESSION_TTL_HOURS", "168"))
 	if err != nil {

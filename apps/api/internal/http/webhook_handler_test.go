@@ -92,6 +92,22 @@ func TestHandleGitlabWebhook_DuplicateDeliveryIsIdempotent(t *testing.T) {
 	assert.Len(t, q.WebhookEventsForLink(linkID), 1, "a redelivered X-Gitlab-Event-UUID must not create a second row")
 }
 
+func TestHandleGitlabWebhook_MissingEventUUIDDoesNotCollide(t *testing.T) {
+	// GitLab CE older than 14.8 never sends X-Gitlab-Event-UUID. Passing that
+	// empty string straight through as delivery_uuid would collide on
+	// UNIQUE(linked_gitlab_project_id, delivery_uuid) and silently drop every
+	// delivery after the first (issue #182).
+	s, q := newTestServer(t)
+	linkID := seedWebhookLink(t, s, q, testWebhookSecret)
+
+	rec1 := webhookRequest(t, s, linkID, testWebhookSecret, webhookevent.SupportedEventHeader, "", []byte(issueHookPayload))
+	rec2 := webhookRequest(t, s, linkID, testWebhookSecret, webhookevent.SupportedEventHeader, "", []byte(issueHookPayload))
+
+	assert.Equal(t, http.StatusOK, rec1.Code)
+	assert.Equal(t, http.StatusOK, rec2.Code)
+	assert.Len(t, q.WebhookEventsForLink(linkID), 2, "deliveries without X-Gitlab-Event-UUID must never be treated as duplicates of each other")
+}
+
 func TestHandleGitlabWebhook_UnsupportedEventIsRecordedAsSkipped(t *testing.T) {
 	s, q := newTestServer(t)
 	linkID := seedWebhookLink(t, s, q, testWebhookSecret)

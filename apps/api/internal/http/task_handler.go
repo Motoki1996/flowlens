@@ -525,6 +525,43 @@ func (s *Server) handleReopenTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// handleMarkTaskDesignStarted records the current time as the task's design
+// phase start (spec-driven development), scoped to the authenticated user
+// via its project. Always overwrites any earlier value.
+func (s *Server) handleMarkTaskDesignStarted(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	taskID, ok := taskIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "task not found")
+		return
+	}
+
+	t, err := s.tasks.MarkDesignStarted(r.Context(), u.ID, taskID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+// handleMarkTaskImplementationStarted is handleMarkTaskDesignStarted's
+// implementation-phase counterpart.
+func (s *Server) handleMarkTaskImplementationStarted(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	taskID, ok := taskIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "task not found")
+		return
+	}
+
+	t, err := s.tasks.MarkImplementationStarted(r.Context(), u.ID, taskID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
 // handleRetryTaskSync re-enqueues one task's most recent failed GitLab push,
 // scoped to the authenticated user via its project. It returns 409 unless
 // the task's current sync status is "failed".

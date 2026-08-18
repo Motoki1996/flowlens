@@ -812,6 +812,21 @@ func (f *FakeQuerier) SeedTaskWithCreatedAt(projectID, createdByUserID uuid.UUID
 	return t
 }
 
+// SeedTaskDesignImplementationStarted sets an existing task's
+// design_started_at/implementation_started_at directly, for tests (e.g.
+// internal/flowmetrics) that need precise control over the two
+// spec-driven-development phase markers instead of going through
+// MarkTaskDesignStarted/MarkTaskImplementationStarted's now(). Either
+// argument may be zero-valued (pgtype.Timestamptz{}) to leave that marker
+// unset.
+func (f *FakeQuerier) SeedTaskDesignImplementationStarted(taskID uuid.UUID, designStartedAt, implementationStartedAt pgtype.Timestamptz) db.Task {
+	t := f.tasksByID[taskID]
+	t.DesignStartedAt = designStartedAt
+	t.ImplementationStartedAt = implementationStartedAt
+	f.storeTask(t)
+	return t
+}
+
 func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title string, backlogID pgtype.UUID) db.Task {
 	t := db.Task{
 		ID:              uuid.New(),
@@ -1061,7 +1076,12 @@ func (f *FakeQuerier) ListTasksForFlowMetrics(_ context.Context, arg db.ListTask
 		if arg.Until.Valid && t.CreatedAt.Time.After(arg.Until.Time) {
 			continue
 		}
-		row := db.ListTasksForFlowMetricsRow{ID: t.ID, CreatedAt: t.CreatedAt}
+		row := db.ListTasksForFlowMetricsRow{
+			ID:                      t.ID,
+			CreatedAt:               t.CreatedAt,
+			DesignStartedAt:         t.DesignStartedAt,
+			ImplementationStartedAt: t.ImplementationStartedAt,
+		}
 		if mr, ok := f.earliestMergeRequestForTask(t.ID); ok {
 			row.MrGitlabCreatedAt = mr.GitlabCreatedAt
 			row.MrMergedAt = mr.MergedAt
@@ -1527,6 +1547,34 @@ func (f *FakeQuerier) ReopenTaskForOwner(_ context.Context, arg db.ReopenTaskFor
 	}
 	existing.Status = "open"
 	existing.ClosedAt = pgtype.Timestamptz{}
+	existing.UpdatedAt = now()
+	f.storeTask(existing)
+	return existing, nil
+}
+
+func (f *FakeQuerier) MarkTaskDesignStarted(_ context.Context, arg db.MarkTaskDesignStartedParams) (db.Task, error) {
+	existing, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	if !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	existing.DesignStartedAt = now()
+	existing.UpdatedAt = now()
+	f.storeTask(existing)
+	return existing, nil
+}
+
+func (f *FakeQuerier) MarkTaskImplementationStarted(_ context.Context, arg db.MarkTaskImplementationStartedParams) (db.Task, error) {
+	existing, ok := f.tasksByID[arg.ID]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	if !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	existing.ImplementationStartedAt = now()
 	existing.UpdatedAt = now()
 	f.storeTask(existing)
 	return existing, nil

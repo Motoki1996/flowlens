@@ -334,6 +334,12 @@ func (s *Server) Router() chi.Router {
 			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/sync-retry", s.handleRetryTaskSync)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Put("/tasks/{taskID}/ai-context", s.handleUpsertTaskAIContext)
 
+			// Spec-driven-development phase markers: an AI agent (or a human)
+			// calls these when it starts designing/implementing, so
+			// internal/flowmetrics can measure the two phases separately.
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/design-started", s.handleMarkTaskDesignStarted)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), taskResource).Post("/tasks/{taskID}/implementation-started", s.handleMarkTaskImplementationStarted)
+
 			// A task's activity log (issue #103): the return path for an
 			// agent that has been reading /tasks/{taskID}/context but had
 			// no way to report back what it did.

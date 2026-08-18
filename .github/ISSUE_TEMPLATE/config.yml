@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Motoki1996/flowlens/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Self-hosting guide
+    url: https://github.com/Motoki1996/flowlens/blob/main/docs/self-hosting.md
+    about: Install, upgrade, backup and hardening.

@@ -108,7 +108,7 @@ describe("TaskBoardSection", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     // Only progress travels: the PATCH must not carry status or priority.
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1",
+      "/api/v1/tasks/t1",
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ progress: "in_progress" }),

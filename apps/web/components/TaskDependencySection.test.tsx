@@ -83,7 +83,7 @@ describe("TaskDependencySection", () => {
       expect(screen.getByRole("link", { name: "Design the fix" })).toBeInTheDocument(),
     );
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/projects/p1/task-dependencies",
+      "/api/v1/projects/p1/task-dependencies",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ predecessorTaskId: "t2", successorTaskId: "t1" }),
@@ -100,7 +100,7 @@ describe("TaskDependencySection", () => {
 
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/projects/p1/task-dependencies",
+        "/api/v1/projects/p1/task-dependencies",
         expect.objectContaining({
           body: JSON.stringify({ predecessorTaskId: "t1", successorTaskId: "t3" }),
         }),
@@ -118,7 +118,7 @@ describe("TaskDependencySection", () => {
       expect(screen.queryByRole("link", { name: "Design the fix" })).not.toBeInTheDocument(),
     );
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/task-dependencies/d1",
+      "/api/v1/task-dependencies/d1",
       expect.objectContaining({ method: "DELETE" }),
     );
   });

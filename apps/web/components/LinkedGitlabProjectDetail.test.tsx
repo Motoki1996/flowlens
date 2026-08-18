@@ -103,7 +103,7 @@ describe("LinkedGitlabProjectDetail", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://localhost:8080/api/v1/linked-gitlab-projects/link-1");
+    expect(url).toBe("/api/v1/linked-gitlab-projects/link-1");
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body as string)).toEqual({
       syncScope: "labels",

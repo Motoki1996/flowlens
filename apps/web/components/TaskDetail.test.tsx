@@ -89,7 +89,7 @@ describe("TaskDetail", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Reopen" })).toBeInTheDocument());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1/close",
+      "/api/v1/tasks/t1/close",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -116,7 +116,7 @@ describe("TaskDetail", () => {
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/projects/p1/tasks"));
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1",
+      "/api/v1/tasks/t1",
       expect.objectContaining({ method: "DELETE" }),
     );
   });
@@ -158,7 +158,7 @@ describe("TaskDetail", () => {
       expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Sprint 2"),
     );
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+      "/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b2" }) }),
     );
   });
@@ -175,7 +175,7 @@ describe("TaskDetail", () => {
       expect(screen.getByRole("combobox", { name: "Backlog" })).toHaveTextContent("Unclassified"),
     );
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+      "/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: null }) }),
     );
   });
@@ -196,7 +196,7 @@ describe("TaskDetail", () => {
     expect(screen.getByText("urgent")).toBeInTheDocument();
 
     const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://localhost:8080/api/v1/tasks/t1");
+    expect(url).toBe("/api/v1/tasks/t1");
     expect(init.method).toBe("PATCH");
     // Only the fields the form shows are sent: position is absent from the
     // body, so the API leaves it alone rather than resetting it.
@@ -242,7 +242,7 @@ describe("TaskDetail", () => {
 
     await waitFor(() => expect(fetch).toHaveBeenCalled());
     const [url, init] = vi.mocked(fetch).mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://localhost:8080/api/v1/tasks/t1");
+    expect(url).toBe("/api/v1/tasks/t1");
     const body = JSON.parse(init.body as string);
     expect(body.assigneeGitlabUserId).toBe(7);
     expect(body.assigneeGitlabUsername).toBe("alice");
@@ -365,7 +365,7 @@ describe("TaskDetail", () => {
 
     await waitFor(() => expect(screen.getByText("Syncing…")).toBeInTheDocument());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1/sync-retry",
+      "/api/v1/tasks/t1/sync-retry",
       expect.objectContaining({ method: "POST" }),
     );
   });

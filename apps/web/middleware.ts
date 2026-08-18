@@ -25,5 +25,15 @@ export const config = {
   // Everything except the public auth screens, static assets, and Next.js
   // internals. The root "/" always redirects to /dashboard regardless of
   // auth, so it is left in scope on purpose.
-  matcher: ["/((?!login|signup|_next/static|_next/image|favicon.ico).*)"],
+  //
+  // api/auth/webhooks are excluded because they are not screens at all:
+  // next.config.ts rewrites them to the Go API, which does its own
+  // authentication and returns 401 to a caller without a session. Middleware
+  // runs before rewrites, so leaving them in scope would bounce them to
+  // /login instead — including POST /auth/login itself, which by definition
+  // has no session cookie yet, and the GitLab webhook receiver, which never
+  // has one.
+  matcher: [
+    "/((?!login|signup|api/|auth/|webhooks/|_next/static|_next/image|favicon.ico).*)",
+  ],
 };

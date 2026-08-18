@@ -105,7 +105,7 @@ describe("TaskActivitySection", () => {
     await waitFor(() => expect(screen.queryAllByText("Posting…")).toHaveLength(0));
     expect(screen.getByText("Shipped it.")).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1/comments",
+      "/api/v1/tasks/t1/comments",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ body: "Shipped it." }) }),
     );
   });
@@ -144,7 +144,7 @@ describe("TaskActivitySection", () => {
 
     await waitFor(() => expect(screen.getByText("No activity yet.")).toBeInTheDocument());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/task-comments/c1",
+      "/api/v1/task-comments/c1",
       expect.objectContaining({ method: "DELETE" }),
     );
   });

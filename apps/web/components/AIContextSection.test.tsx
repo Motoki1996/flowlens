@@ -43,7 +43,7 @@ describe("AIContextSection", () => {
     await waitFor(() => expect(screen.getByText("Ship the feature")).toBeInTheDocument());
 
     const [url, init] = vi.mocked(fetch).mock.calls[0];
-    expect(url).toBe("http://localhost:8080/api/v1/tasks/t1/ai-context");
+    expect(url).toBe("/api/v1/tasks/t1/ai-context");
     expect(JSON.parse(init?.body as string)).toEqual({
       acceptanceCriteria: "Ship the feature",
       aiContext: "",

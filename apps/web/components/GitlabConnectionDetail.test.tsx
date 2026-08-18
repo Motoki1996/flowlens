@@ -43,7 +43,7 @@ describe("GitlabConnectionDetail", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/projects/p1/gitlab-connection",
+      "/api/v1/projects/p1/gitlab-connection",
       expect.objectContaining({ method: "DELETE" }),
     );
   });

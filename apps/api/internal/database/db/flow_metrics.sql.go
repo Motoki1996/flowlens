@@ -253,7 +253,7 @@ func (q *Queries) ListTaskProgressEventsForFlowMetrics(ctx context.Context, arg 
 const listTasksForFlowMetrics = `-- name: ListTasksForFlowMetrics :many
 
 
-SELECT t.id, t.created_at, mr.gitlab_created_at AS mr_gitlab_created_at, mr.merged_at AS mr_merged_at
+SELECT t.id, t.created_at, t.design_started_at, t.implementation_started_at, mr.gitlab_created_at AS mr_gitlab_created_at, mr.merged_at AS mr_merged_at
 FROM tasks t
 LEFT JOIN LATERAL (
     SELECT m.gitlab_created_at, m.merged_at
@@ -279,10 +279,12 @@ type ListTasksForFlowMetricsParams struct {
 }
 
 type ListTasksForFlowMetricsRow struct {
-	ID                uuid.UUID          `json:"id"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	MrGitlabCreatedAt pgtype.Timestamptz `json:"mr_gitlab_created_at"`
-	MrMergedAt        pgtype.Timestamptz `json:"mr_merged_at"`
+	ID                      uuid.UUID          `json:"id"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	DesignStartedAt         pgtype.Timestamptz `json:"design_started_at"`
+	ImplementationStartedAt pgtype.Timestamptz `json:"implementation_started_at"`
+	MrGitlabCreatedAt       pgtype.Timestamptz `json:"mr_gitlab_created_at"`
+	MrMergedAt              pgtype.Timestamptz `json:"mr_merged_at"`
 }
 
 // Flow-metrics aggregation (issue #171): per-task stage lead times, sourced
@@ -298,6 +300,9 @@ type ListTasksForFlowMetricsRow struct {
 // task can have more than one merge request; the earliest by
 // gitlab_created_at is the one flow-metrics' implementation/review stages
 // measure against, since it's the one that closes the "in_progress" wait.
+// design_started_at/implementation_started_at (migration 000023) are the
+// explicit spec-driven-development phase markers the Design and
+// Implementation stages measure from instead of task_progress_events.
 func (q *Queries) ListTasksForFlowMetrics(ctx context.Context, arg ListTasksForFlowMetricsParams) ([]ListTasksForFlowMetricsRow, error) {
 	rows, err := q.db.Query(ctx, listTasksForFlowMetrics,
 		arg.ProjectID,
@@ -315,6 +320,8 @@ func (q *Queries) ListTasksForFlowMetrics(ctx context.Context, arg ListTasksForF
 		if err := rows.Scan(
 			&i.ID,
 			&i.CreatedAt,
+			&i.DesignStartedAt,
+			&i.ImplementationStartedAt,
 			&i.MrGitlabCreatedAt,
 			&i.MrMergedAt,
 		); err != nil {

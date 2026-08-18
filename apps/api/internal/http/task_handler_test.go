@@ -949,6 +949,64 @@ func TestHandleCloseTask_ForeignTaskGets404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+func TestHandleMarkTaskDesignStarted_SetsTimestamp(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/design-started", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got struct {
+		DesignStartedAt         *time.Time `json:"designStartedAt"`
+		ImplementationStartedAt *time.Time `json:"implementationStartedAt"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.NotNil(t, got.DesignStartedAt)
+	assert.Nil(t, got.ImplementationStartedAt)
+}
+
+func TestHandleMarkTaskDesignStarted_ForeignTaskGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	id := q.SeedTask(p.ID, owner.ID, "Fix bug").ID.String()
+
+	_, intruderToken := loginSession(t, s, q)
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/design-started", nil, intruderToken)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleMarkTaskImplementationStarted_SetsTimestamp(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/implementation-started", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var got struct {
+		DesignStartedAt         *time.Time `json:"designStartedAt"`
+		ImplementationStartedAt *time.Time `json:"implementationStartedAt"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Nil(t, got.DesignStartedAt)
+	require.NotNil(t, got.ImplementationStartedAt)
+}
+
+func TestHandleMarkTaskImplementationStarted_ForeignTaskGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	id := q.SeedTask(p.ID, owner.ID, "Fix bug").ID.String()
+
+	_, intruderToken := loginSession(t, s, q)
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+id+"/implementation-started", nil, intruderToken)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 func TestHandleRetryTaskSync_ReturnsConflictWhenNotFailed(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

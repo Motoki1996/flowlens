@@ -215,25 +215,27 @@ type SyncJob struct {
 }
 
 type Task struct {
-	ID                     uuid.UUID          `json:"id"`
-	ProjectID              uuid.UUID          `json:"project_id"`
-	BacklogID              pgtype.UUID        `json:"backlog_id"`
-	Title                  string             `json:"title"`
-	Description            string             `json:"description"`
-	Status                 string             `json:"status"`
-	ClosedAt               pgtype.Timestamptz `json:"closed_at"`
-	AssigneeGitlabUserID   pgtype.Int8        `json:"assignee_gitlab_user_id"`
-	AssigneeGitlabUsername string             `json:"assignee_gitlab_username"`
-	Labels                 []string           `json:"labels"`
-	DueOn                  pgtype.Date        `json:"due_on"`
-	Position               int32              `json:"position"`
-	CreatedByUserID        uuid.UUID          `json:"created_by_user_id"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	StartDate              pgtype.Date        `json:"start_date"`
-	Priority               string             `json:"priority"`
-	Progress               string             `json:"progress"`
-	SearchVector           interface{}        `json:"search_vector"`
+	ID                      uuid.UUID          `json:"id"`
+	ProjectID               uuid.UUID          `json:"project_id"`
+	BacklogID               pgtype.UUID        `json:"backlog_id"`
+	Title                   string             `json:"title"`
+	Description             string             `json:"description"`
+	Status                  string             `json:"status"`
+	ClosedAt                pgtype.Timestamptz `json:"closed_at"`
+	AssigneeGitlabUserID    pgtype.Int8        `json:"assignee_gitlab_user_id"`
+	AssigneeGitlabUsername  string             `json:"assignee_gitlab_username"`
+	Labels                  []string           `json:"labels"`
+	DueOn                   pgtype.Date        `json:"due_on"`
+	Position                int32              `json:"position"`
+	CreatedByUserID         uuid.UUID          `json:"created_by_user_id"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	StartDate               pgtype.Date        `json:"start_date"`
+	Priority                string             `json:"priority"`
+	Progress                string             `json:"progress"`
+	SearchVector            interface{}        `json:"search_vector"`
+	DesignStartedAt         pgtype.Timestamptz `json:"design_started_at"`
+	ImplementationStartedAt pgtype.Timestamptz `json:"implementation_started_at"`
 }
 
 type TaskAiContext struct {

@@ -1429,17 +1429,32 @@ through the merge request that closes it out, to the task being marked
 done.
 
 - `GET /api/v1/projects/{projectID}/flow-metrics?from=&to=` (`YYYY-MM-DD`,
-  both optional, bounding `tasks.created_at`) returns five stages, each as a
+  both optional, bounding `tasks.created_at`) returns six stages, each as a
   **median and p90** in hours (never a mean, same rationale as delivery
   metrics) over only the tasks that reached *both* ends of that stage — a
   task that hasn't reached a stage's end yet is excluded from it rather than
   counted as a zero duration:
   - **`waitingToStart`**: `tasks.created_at` → the task's first transition
     to `in_progress`.
-  - **`implementation`**: that first `in_progress` transition → the
-    earliest linked merge request's `gitlab_created_at`. A task with more
-    than one linked merge request (a follow-up MR, say) is measured against
-    the earliest one, since that's the one that actually closed the wait.
+  - **`design`**: `tasks.design_started_at` → `tasks.implementation_started_at`
+    (migration `000023`). Unlike every other stage here, these two
+    timestamps aren't derived from `task_progress_events` — they're written
+    directly by whoever starts that phase (an AI agent doing spec-driven
+    development, or a human) via `POST /api/v1/tasks/{taskID}/design-started`
+    and `POST /api/v1/tasks/{taskID}/implementation-started`. Both endpoints
+    are session- and bearer-token-writable (`write` scope), **always
+    overwrite** — unlike most task fields there is no "already set" guard,
+    so redoing the design after review feedback just moves the timestamp
+    forward — and are independent of each other: a task with
+    `implementation_started_at` but no `design_started_at` simply skipped
+    the design phase and is excluded from `design` (not counted as zero)
+    while still counting toward `implementation`. A task that never calls
+    either endpoint has no `design`/`implementation` sample at all — this
+    pair is opt-in, unlike every other stage, which needs no extra call.
+  - **`implementation`**: `tasks.implementation_started_at` → the earliest
+    linked merge request's `gitlab_created_at`. A task with more than one
+    linked merge request (a follow-up MR, say) is measured against the
+    earliest one, since that's the one that actually closed the wait.
   - **`reviewAndMerge`**: that merge request's `gitlab_created_at` →
     `merged_at` — one span, unlike delivery metrics' open→first-review/
     first-review→merge split; `first_reviewed_at` isn't used here.
@@ -1461,13 +1476,15 @@ done.
 - Median/p90 use the same nearest-rank method as delivery metrics —
   currently duplicated in `apps/api/internal/flowmetrics` rather than
   shared, since the two aggregations are still small and independent.
-- Web (issue #172): the same "Delivery metrics" card on the Project single
-  view now also charts these four stages (`waitingToStart`,
-  `implementation`, `reviewAndMerge`, `completion`) as a stacked horizontal
-  bar — a value-stream map, so the tallest segment reads as the bottleneck
-  at a glance. Median and p90 are drawn as separate rows rather than
-  averaged together, so "always slow" (both rows tall) is visually distinct
-  from "occasionally stuck" (only the p90 row is tall). `blocked` is charted
+- Web (issue #172, narrowed to Design-onward by the `design`/`implementation`
+  split above): the same "Delivery metrics" card on the Project single view
+  charts `design`, `implementation`, `reviewAndMerge` and `completion` as a
+  stacked horizontal bar — a value-stream map, so the tallest segment reads
+  as the bottleneck at a glance. `waitingToStart` and the two backlog-level
+  stages below are still returned by the API but are not part of this
+  chart. Median and p90 are drawn as separate rows rather than averaged
+  together, so "always slow" (both rows tall) is visually distinct from
+  "occasionally stuck" (only the p90 row is tall). `blocked` is charted
   separately from that stack, never folded into it, so blocked time is never
   double-counted against the stage it interrupted. It shares the card's
   `?from=`/`?to=` filters with delivery metrics.
@@ -1500,12 +1517,10 @@ rather than `tasks.created_at`:
   no breakdown work left to time after the transition.
 
 Both follow the same "both ends known, excluded rather than zero" rule as
-every other stage. Web: these two stages ride in the *same* stacked
-value-stream bar as the four task-level ones (six segments total), placed
-leftmost since they happen chronologically first — a backlog is waited on,
-then broken down into tasks, then a task is waited on, implemented,
-reviewed, and completed. `blocked` is unaffected and stays its own separate
-chart.
+every other stage. Both are returned by the API but, like `waitingToStart`,
+are not part of the web stage-lead-time chart — that chart starts at
+`design`, per the [design/implementation split](#flow-metrics-issue-171)
+above. `blocked` is unaffected and stays its own separate chart.
 
 ## Current limitations
 

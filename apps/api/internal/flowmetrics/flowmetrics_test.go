@@ -113,6 +113,7 @@ func TestService_Compute_NoData(t *testing.T) {
 
 	assert.Equal(t, 0, got.WaitingToStart.Count)
 	assert.Nil(t, got.WaitingToStart.Median)
+	assert.Equal(t, 0, got.Design.Count)
 	assert.Equal(t, 0, got.Implementation.Count)
 	assert.Equal(t, 0, got.ReviewAndMerge.Count)
 	assert.Equal(t, 0, got.Completion.Count)
@@ -122,13 +123,18 @@ func TestService_Compute_NoData(t *testing.T) {
 func TestService_Compute_SingleTaskFullPipeline(t *testing.T) {
 	f := newFixture(t)
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	designStarted := created.Add(1 * time.Hour)
 	startedWork := created.Add(3 * time.Hour)
-	mrOpened := startedWork.Add(5 * time.Hour)
+	implementationStarted := startedWork
+	mrOpened := implementationStarted.Add(5 * time.Hour)
 	merged := mrOpened.Add(2 * time.Hour)
 	done := merged.Add(1 * time.Hour)
 
 	task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", created)
 	f.q.SeedTaskProgressEvent(task.ID, "not_started", "in_progress", startedWork)
+	f.q.SeedTaskDesignImplementationStarted(task.ID,
+		pgtype.Timestamptz{Time: designStarted, Valid: true},
+		pgtype.Timestamptz{Time: implementationStarted, Valid: true})
 	f.linkMergeRequest(t, task.ID, 1, mrOpened, &merged)
 	f.q.SeedTaskProgressEvent(task.ID, "in_progress", "done", done)
 
@@ -137,6 +143,9 @@ func TestService_Compute_SingleTaskFullPipeline(t *testing.T) {
 
 	require.Equal(t, 1, got.WaitingToStart.Count)
 	assert.InDelta(t, 3.0, *got.WaitingToStart.Median, 0.001)
+
+	require.Equal(t, 1, got.Design.Count)
+	assert.InDelta(t, 2.0, *got.Design.Median, 0.001)
 
 	require.Equal(t, 1, got.Implementation.Count)
 	assert.InDelta(t, 5.0, *got.Implementation.Median, 0.001)
@@ -191,6 +200,31 @@ func TestService_Compute_TaskWithoutMergeRequestExcludedFromImplementationAndRev
 	assert.Equal(t, 0, got.Implementation.Count)
 	assert.Equal(t, 0, got.ReviewAndMerge.Count)
 	assert.Equal(t, 0, got.Completion.Count)
+}
+
+// A task that calls .../implementation-started but never .../design-started
+// (spec-driven development is optional, not mandatory) is excluded from
+// Design entirely rather than counted as a zero-duration design phase — the
+// same "both ends known" rule every other stage follows. Implementation is
+// unaffected: it only needs implementation_started_at, not design_started_at.
+func TestService_Compute_ImplementationStartedWithNoDesignStarted_ExcludedFromDesign(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	implementationStarted := created.Add(2 * time.Hour)
+	mrOpened := implementationStarted.Add(3 * time.Hour)
+
+	task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", created)
+	f.q.SeedTaskDesignImplementationStarted(task.ID,
+		pgtype.Timestamptz{},
+		pgtype.Timestamptz{Time: implementationStarted, Valid: true})
+	f.linkMergeRequest(t, task.ID, 1, mrOpened, nil)
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, got.Design.Count)
+	require.Equal(t, 1, got.Implementation.Count)
+	assert.InDelta(t, 3.0, *got.Implementation.Median, 0.001)
 }
 
 func TestService_Compute_BlockedSumsClosedOnHoldIntervalsAcrossRoundTrips(t *testing.T) {

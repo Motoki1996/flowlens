@@ -98,6 +98,12 @@ export interface Task {
   startDate: string | null;
   priority: Priority;
   progress: Progress;
+  // Explicit spec-driven-development phase markers, set via POST
+  // .../design-started and .../implementation-started rather than derived
+  // from progress transitions — see internal/flowmetrics' Design/
+  // Implementation stages. App-only, never synced to GitLab.
+  designStartedAt: string | null;
+  implementationStartedAt: string | null;
   position: number;
   createdByUserId: string;
   createdAt: string;
@@ -422,7 +428,12 @@ export interface FlowMetrics {
   taskBreakdown: DurationStats;
   /** tasks.created_at -> the task's first transition to in_progress. */
   waitingToStart: DurationStats;
-  /** First in_progress transition -> the earliest linked merge request's
+  /** task.designStartedAt -> task.implementationStartedAt — both explicit
+   *  caller-set timestamps (spec-driven development), not derived from
+   *  progress transitions. Excluded, not zero, for a task that never called
+   *  POST .../design-started or .../implementation-started. */
+  design: DurationStats;
+  /** task.implementationStartedAt -> the earliest linked merge request's
    *  gitlab_created_at. */
   implementation: DurationStats;
   /** That merge request's gitlab_created_at -> merged_at. */

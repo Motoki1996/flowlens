@@ -1,10 +1,20 @@
 // Package flowmetrics computes per-task stage lead times (issue #171),
 // built on top of the task_progress_events log #169 introduced and the
-// progress convention #170 asks agents to follow. It measures the five
-// stages a task moves through: waiting to start, AI-driven implementation,
+// progress convention #170 asks agents to follow. It measures the stages a
+// task moves through: waiting to start, spec-driven design, implementation,
 // review/merge, completion processing, and cumulative time blocked. It is
-// read-only and derives everything from task_progress_events and
-// merge_requests already recorded/synced — there is nothing to write.
+// read-only and derives everything from task_progress_events,
+// design_started_at/implementation_started_at and merge_requests already
+// recorded/synced — there is nothing to write.
+//
+// Design and Implementation are the two exceptions to "derived from
+// task_progress_events": they're measured from design_started_at and
+// implementation_started_at (migration 000023), explicit timestamps a
+// caller (an AI agent or a human) sets by calling POST
+// .../design-started and .../implementation-started when it starts that
+// phase, rather than from a progress transition. A task that never calls
+// either endpoint simply has no Design/Implementation sample — this is an
+// opt-in pair, unlike every other stage here, which needs no extra call.
 //
 // Like internal/deliverymetrics, every stage is reported as a median and
 // p90, never a mean, and only over tasks where both ends of that stage are
@@ -65,7 +75,12 @@ type Metrics struct {
 	TaskBreakdown StageStats `json:"taskBreakdown"`
 	// WaitingToStart is tasks.created_at -> the first in_progress transition.
 	WaitingToStart StageStats `json:"waitingToStart"`
-	// Implementation is the first in_progress transition -> the linked
+	// Design is the task's design_started_at -> implementation_started_at
+	// (migration 000023, both explicit caller-set timestamps, not derived
+	// from task_progress_events). Excluded, not zero, for a task that never
+	// called POST .../design-started or .../implementation-started.
+	Design StageStats `json:"design"`
+	// Implementation is the task's implementation_started_at -> the linked
 	// merge request's gitlab_created_at.
 	Implementation StageStats `json:"implementation"`
 	// ReviewAndMerge is the linked merge request's gitlab_created_at ->
@@ -144,6 +159,7 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 
 	var (
 		waitingToStart []float64
+		design         []float64
 		implementation []float64
 		reviewAndMerge []float64
 		completion     []float64
@@ -157,8 +173,11 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		if firstInProgress != nil && t.CreatedAt.Valid {
 			waitingToStart = append(waitingToStart, firstInProgress.Sub(t.CreatedAt.Time).Hours())
 		}
-		if firstInProgress != nil && t.MrGitlabCreatedAt.Valid {
-			implementation = append(implementation, t.MrGitlabCreatedAt.Time.Sub(*firstInProgress).Hours())
+		if t.DesignStartedAt.Valid && t.ImplementationStartedAt.Valid {
+			design = append(design, t.ImplementationStartedAt.Time.Sub(t.DesignStartedAt.Time).Hours())
+		}
+		if t.ImplementationStartedAt.Valid && t.MrGitlabCreatedAt.Valid {
+			implementation = append(implementation, t.MrGitlabCreatedAt.Time.Sub(t.ImplementationStartedAt.Time).Hours())
 		}
 		if t.MrGitlabCreatedAt.Valid && t.MrMergedAt.Valid {
 			reviewAndMerge = append(reviewAndMerge, t.MrMergedAt.Time.Sub(t.MrGitlabCreatedAt.Time).Hours())
@@ -182,6 +201,7 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		BacklogWaitingToStart: stageStats(backlogWaitingToStart),
 		TaskBreakdown:         stageStats(taskBreakdown),
 		WaitingToStart:        stageStats(waitingToStart),
+		Design:                stageStats(design),
 		Implementation:        stageStats(implementation),
 		ReviewAndMerge:        stageStats(reviewAndMerge),
 		Completion:            stageStats(completion),

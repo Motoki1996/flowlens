@@ -535,6 +535,9 @@ type Querier interface {
 	// task can have more than one merge request; the earliest by
 	// gitlab_created_at is the one flow-metrics' implementation/review stages
 	// measure against, since it's the one that closes the "in_progress" wait.
+	// design_started_at/implementation_started_at (migration 000023) are the
+	// explicit spec-driven-development phase markers the Design and
+	// Implementation stages measure from instead of task_progress_events.
 	ListTasksForFlowMetrics(ctx context.Context, arg ListTasksForFlowMetricsParams) ([]ListTasksForFlowMetricsRow, error)
 	// ListTasksForOwner backs the cross-project task collection (GET
 	// /api/v1/tasks, issue #76): every task across every project ownerID owns,
@@ -575,6 +578,13 @@ type Querier interface {
 	MarkSyncJobFailed(ctx context.Context, arg MarkSyncJobFailedParams) error
 	MarkSyncJobRetry(ctx context.Context, arg MarkSyncJobRetryParams) error
 	MarkSyncJobSucceeded(ctx context.Context, id uuid.UUID) error
+	// MarkTaskDesignStarted and MarkTaskImplementationStarted back the two
+	// spec-driven-development phase-marker endpoints (POST
+	// .../design-started, .../implementation-started): unlike every other task
+	// field, they always overwrite, no "already set" guard — calling the
+	// endpoint again (e.g. redoing the design) just moves the timestamp
+	// forward.
+	MarkTaskDesignStarted(ctx context.Context, arg MarkTaskDesignStartedParams) (Task, error)
 	// MarkTaskGitlabLinkAppliedForTask records a successful inbound apply
 	// (internal/webhookapply): only gitlab_updated_at advances and
 	// sync_status/last_error clear. Unlike MarkTaskGitlabLinkSyncedForTask (the
@@ -593,6 +603,7 @@ type Querier interface {
 	// that case.
 	MarkTaskGitlabLinkPendingForTask(ctx context.Context, taskID uuid.UUID) (TaskGitlabLink, error)
 	MarkTaskGitlabLinkSyncedForTask(ctx context.Context, arg MarkTaskGitlabLinkSyncedForTaskParams) (TaskGitlabLink, error)
+	MarkTaskImplementationStarted(ctx context.Context, arg MarkTaskImplementationStartedParams) (Task, error)
 	MarkWebhookEventFailed(ctx context.Context, arg MarkWebhookEventFailedParams) error
 	MarkWebhookEventProcessed(ctx context.Context, id uuid.UUID) error
 	MarkWebhookEventSkipped(ctx context.Context, arg MarkWebhookEventSkippedParams) error

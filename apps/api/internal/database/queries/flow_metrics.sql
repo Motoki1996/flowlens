@@ -12,9 +12,12 @@
 -- task can have more than one merge request; the earliest by
 -- gitlab_created_at is the one flow-metrics' implementation/review stages
 -- measure against, since it's the one that closes the "in_progress" wait.
+-- design_started_at/implementation_started_at (migration 000023) are the
+-- explicit spec-driven-development phase markers the Design and
+-- Implementation stages measure from instead of task_progress_events.
 
 -- name: ListTasksForFlowMetrics :many
-SELECT t.id, t.created_at, mr.gitlab_created_at AS mr_gitlab_created_at, mr.merged_at AS mr_merged_at
+SELECT t.id, t.created_at, t.design_started_at, t.implementation_started_at, mr.gitlab_created_at AS mr_gitlab_created_at, mr.merged_at AS mr_merged_at
 FROM tasks t
 LEFT JOIN LATERAL (
     SELECT m.gitlab_created_at, m.merged_at

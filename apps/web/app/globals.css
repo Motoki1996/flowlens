@@ -48,10 +48,11 @@
    * is slots 4↔5 (amber/green), which separate by ΔE 6.2 under protanopia —
    * inside the 6–8 floor band, so any chart using both must carry a legend or
    * direct labels rather than relying on hue alone. Slots 6-7 (violet/olive,
-   * issue #173) were added later for the two backlog-level flow-metrics
-   * stages and validated the same way against the six-segment stage-lead-time
-   * stack's actual adjacency order (chart-6, chart-7, chart-1..4) — clean,
-   * no floor-band caveats.
+   * issue #173) were added for the backlog-level flow-metrics stages
+   * (backlogWaitingToStart, taskBreakdown) that DeliveryMetricsSection's
+   * stage-lead-time chart no longer visualizes (it now starts at Design,
+   * slot 1) — kept defined and validated here in case a future chart needs
+   * them again, just currently unreferenced by any component.
    */
   --chart-1: #6366f1;
   --chart-2: #ef4a6a;

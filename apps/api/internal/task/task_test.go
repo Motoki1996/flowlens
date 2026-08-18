@@ -748,6 +748,42 @@ func TestService_Reopen_IsIdempotent(t *testing.T) {
 	assert.Nil(t, second.ClosedAt)
 }
 
+// Unlike Close/Reopen, MarkDesignStarted and MarkImplementationStarted are
+// not idempotent: a second call always overwrites, since redoing the design
+// after a review comment is a real, later start, not a no-op.
+func TestService_MarkDesignStarted_Overwrites(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	ctx := context.Background()
+
+	first, err := svc.MarkDesignStarted(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, first.DesignStartedAt)
+	assert.Nil(t, first.ImplementationStartedAt)
+
+	second, err := svc.MarkDesignStarted(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, second.DesignStartedAt)
+	assert.True(t, second.DesignStartedAt.After(*first.DesignStartedAt) || second.DesignStartedAt.Equal(*first.DesignStartedAt))
+}
+
+func TestService_MarkImplementationStarted_IndependentOfDesign(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	tsk := q.SeedTask(p.ID, owner, "Fix bug")
+	ctx := context.Background()
+
+	got, err := svc.MarkImplementationStarted(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.ImplementationStartedAt)
+	assert.Nil(t, got.DesignStartedAt)
+}
+
 func TestService_Delete_RemovesTask(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

@@ -178,49 +178,57 @@ func validateAIContextParams(params AIContextParams) error {
 
 // Task is the API-facing representation of a task.
 type Task struct {
-	ID                     uuid.UUID   `json:"id"`
-	ProjectID              uuid.UUID   `json:"projectId"`
-	BacklogID              *uuid.UUID  `json:"backlogId"`
-	Title                  string      `json:"title"`
-	Description            string      `json:"description"`
-	Status                 string      `json:"status"`
-	ClosedAt               *time.Time  `json:"closedAt"`
-	AssigneeGitlabUserID   *int64      `json:"assigneeGitlabUserId"`
-	AssigneeGitlabUsername string      `json:"assigneeGitlabUsername"`
-	Labels                 []string    `json:"labels"`
-	DueOn                  *time.Time  `json:"dueOn"`
-	StartDate              *time.Time  `json:"startDate"`
-	Priority               string      `json:"priority"`
-	Progress               string      `json:"progress"`
-	Position               int32       `json:"position"`
-	CreatedByUserID        uuid.UUID   `json:"createdByUserId"`
-	CreatedAt              time.Time   `json:"createdAt"`
-	UpdatedAt              time.Time   `json:"updatedAt"`
-	Gitlab                 *GitlabInfo `json:"gitlab"`
-	AIContext              AIContext   `json:"aiContext"`
+	ID                     uuid.UUID  `json:"id"`
+	ProjectID              uuid.UUID  `json:"projectId"`
+	BacklogID              *uuid.UUID `json:"backlogId"`
+	Title                  string     `json:"title"`
+	Description            string     `json:"description"`
+	Status                 string     `json:"status"`
+	ClosedAt               *time.Time `json:"closedAt"`
+	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
+	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
+	Labels                 []string   `json:"labels"`
+	DueOn                  *time.Time `json:"dueOn"`
+	StartDate              *time.Time `json:"startDate"`
+	Priority               string     `json:"priority"`
+	Progress               string     `json:"progress"`
+	// DesignStartedAt/ImplementationStartedAt are explicit spec-driven-development
+	// phase markers, set via POST .../design-started and .../implementation-started
+	// rather than derived from progress transitions — see internal/flowmetrics'
+	// Design/Implementation stages.
+	DesignStartedAt         *time.Time  `json:"designStartedAt"`
+	ImplementationStartedAt *time.Time  `json:"implementationStartedAt"`
+	Position                int32       `json:"position"`
+	CreatedByUserID         uuid.UUID   `json:"createdByUserId"`
+	CreatedAt               time.Time   `json:"createdAt"`
+	UpdatedAt               time.Time   `json:"updatedAt"`
+	Gitlab                  *GitlabInfo `json:"gitlab"`
+	AIContext               AIContext   `json:"aiContext"`
 }
 
 // fromRow maps a database row to the domain model.
 func fromRow(row db.Task) Task {
 	return Task{
-		ID:                     row.ID,
-		ProjectID:              row.ProjectID,
-		BacklogID:              uuidPtr(row.BacklogID),
-		Title:                  row.Title,
-		Description:            row.Description,
-		Status:                 row.Status,
-		ClosedAt:               timePtr(row.ClosedAt),
-		AssigneeGitlabUserID:   int64Ptr(row.AssigneeGitlabUserID),
-		AssigneeGitlabUsername: row.AssigneeGitlabUsername,
-		Labels:                 row.Labels,
-		DueOn:                  datePtr(row.DueOn),
-		StartDate:              datePtr(row.StartDate),
-		Priority:               row.Priority,
-		Progress:               row.Progress,
-		Position:               row.Position,
-		CreatedByUserID:        row.CreatedByUserID,
-		CreatedAt:              row.CreatedAt.Time,
-		UpdatedAt:              row.UpdatedAt.Time,
+		ID:                      row.ID,
+		ProjectID:               row.ProjectID,
+		BacklogID:               uuidPtr(row.BacklogID),
+		Title:                   row.Title,
+		Description:             row.Description,
+		Status:                  row.Status,
+		ClosedAt:                timePtr(row.ClosedAt),
+		AssigneeGitlabUserID:    int64Ptr(row.AssigneeGitlabUserID),
+		AssigneeGitlabUsername:  row.AssigneeGitlabUsername,
+		Labels:                  row.Labels,
+		DueOn:                   datePtr(row.DueOn),
+		StartDate:               datePtr(row.StartDate),
+		Priority:                row.Priority,
+		Progress:                row.Progress,
+		DesignStartedAt:         timePtr(row.DesignStartedAt),
+		ImplementationStartedAt: timePtr(row.ImplementationStartedAt),
+		Position:                row.Position,
+		CreatedByUserID:         row.CreatedByUserID,
+		CreatedAt:               row.CreatedAt.Time,
+		UpdatedAt:               row.UpdatedAt.Time,
 	}
 }
 
@@ -1389,6 +1397,50 @@ func (s *Service) Reopen(ctx context.Context, ownerID, taskID uuid.UUID) (Task, 
 		return Task{}, err
 	}
 	return result, nil
+}
+
+// MarkDesignStarted records the current time as the task's design phase
+// start (spec-driven development): unlike most task fields, this always
+// overwrites, so calling it again (e.g. redoing the design after a review
+// comment) just moves the timestamp forward. App-only, never synced to
+// GitLab.
+func (s *Service) MarkDesignStarted(ctx context.Context, ownerID, taskID uuid.UUID) (Task, error) {
+	current, err := s.Get(ctx, ownerID, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Task{}, err
+	}
+	row, err := s.q.MarkTaskDesignStarted(ctx, db.MarkTaskDesignStartedParams{ID: taskID, OwnerUserID: ownerID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrNotFound
+		}
+		return Task{}, fmt.Errorf("task: mark design started: %w", err)
+	}
+	return fromRow(row), nil
+}
+
+// MarkImplementationStarted is MarkDesignStarted's implementation-phase
+// counterpart. The two are independent: a task with an implementation
+// start but no design start simply skipped the design phase.
+func (s *Service) MarkImplementationStarted(ctx context.Context, ownerID, taskID uuid.UUID) (Task, error) {
+	current, err := s.Get(ctx, ownerID, taskID)
+	if err != nil {
+		return Task{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Task{}, err
+	}
+	row, err := s.q.MarkTaskImplementationStarted(ctx, db.MarkTaskImplementationStartedParams{ID: taskID, OwnerUserID: ownerID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Task{}, ErrNotFound
+		}
+		return Task{}, fmt.Errorf("task: mark implementation started: %w", err)
+	}
+	return fromRow(row), nil
 }
 
 // Delete removes the task and never touches GitLab, even for a linked task:

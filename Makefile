@@ -30,13 +30,17 @@ setup: ## Install dependencies for api and web, and create .env if missing.
 	cd $(API_DIR) && go mod download
 	cd $(WEB_DIR) && npm install
 
+# compose.yaml (the file self-hosters download) outranks docker-compose.yml
+# in Compose's own lookup order, so the dev stack is always named explicitly.
+DEV_COMPOSE := docker compose -f docker-compose.yml
+
 .PHONY: dev
 dev: ## Start the full stack (Postgres + API + Web) with hot reload.
-	docker compose up --build
+	$(DEV_COMPOSE) up --build
 
 .PHONY: down
 down: ## Stop the stack.
-	docker compose down
+	$(DEV_COMPOSE) down
 
 .PHONY: dev-container
 dev-container: ## Start API + Web natively inside the devcontainer (no Docker; "db" service must already be running).
@@ -81,12 +85,15 @@ build: ## Build the api binary and the web app.
 	cd $(API_DIR) && go build -o bin/api ./cmd/api
 	cd $(WEB_DIR) && npm run build
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+REGISTRY ?= ghcr.io/motoki1996
+
 .PHONY: build-images
-build-images: ## Build the production Docker images for api and web.
-	docker build -t flowlens-api:latest --target runtime $(API_DIR)
-	docker build -t flowlens-web:latest --target runner \
-		--build-arg NEXT_PUBLIC_API_BASE_URL=$(NEXT_PUBLIC_API_BASE_URL) \
-		$(WEB_DIR)
+build-images: ## Build the release images locally, tagged :dev so compose.yaml can run them.
+	docker build -t $(REGISTRY)/flowlens-api:dev --target runtime \
+		--build-arg VERSION=$(VERSION) $(API_DIR)
+	docker build -t $(REGISTRY)/flowlens-web:dev --target runner $(WEB_DIR)
+	@echo "Built. Run them with: FLOWLENS_VERSION=dev docker compose -f compose.yaml up -d"
 
 .PHONY: storybook
 storybook: ## Start Storybook for the web app (http://localhost:6006).

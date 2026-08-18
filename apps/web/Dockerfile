@@ -13,8 +13,12 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # NEXT_PUBLIC_* vars are inlined into the client bundle at build time, so
-# they must be passed as build args, not runtime environment.
-ARG NEXT_PUBLIC_API_BASE_URL
+# they cannot be changed on a running container. The published image is
+# therefore built without one: empty means the browser calls this server on
+# its own origin and the Next.js rewrites proxy through to the API (see
+# next.config.ts), which is what lets one image serve any hostname.
+# Pass it only when building a web image for an API on its own hostname.
+ARG NEXT_PUBLIC_API_BASE_URL=""
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
 RUN npm run build

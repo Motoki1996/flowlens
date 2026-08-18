@@ -1,0 +1,81 @@
+# FlowLens — self-hosted stack.
+#
+# This file is the distributed artifact: it pulls prebuilt images and needs
+# nothing from this repository, so a self-hoster's whole install is this
+# file plus a .env. See docs/self-hosting.md.
+#
+#   curl -O https://raw.githubusercontent.com/Motoki1996/flowlens/main/compose.yaml
+#   curl -o .env https://raw.githubusercontent.com/Motoki1996/flowlens/main/.env.example
+#   docker run --rm ghcr.io/motoki1996/flowlens-api:latest gen-key >> .env
+#   docker compose up -d
+#
+# To develop against the source instead, use docker-compose.yml (`make dev`).
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: flowlens
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: flowlens
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowlens -d flowlens"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # No published port: the API is reached through the web service, which
+  # proxies /api, /auth and /webhooks to it (apps/web/next.config.ts). That
+  # keeps the operational endpoints (/healthz, /version, /metrics) off the
+  # public origin and means there is no cross-origin request to configure.
+  api:
+    image: ${FLOWLENS_REGISTRY:-ghcr.io/motoki1996}/flowlens-api:${FLOWLENS_VERSION:-latest}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      API_PORT: "8080"
+      DATABASE_URL: postgres://flowlens:${POSTGRES_PASSWORD}@db:5432/flowlens?sslmode=disable
+      # Where this instance is reachable from GitLab and from a browser.
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:4000}
+      WEB_BASE_URL: ${APP_PUBLIC_URL:-http://localhost:4000}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?generate one with `docker run --rm ghcr.io/motoki1996/flowlens-api:latest gen-key >> .env`}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      # The API applies its own embedded migrations on startup.
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      # One proxy in front (the web service). Raise to 2 when a TLS
+      # terminator is added ahead of it — see compose.tls.yaml.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      SYNC_WORKER_ENABLED: ${SYNC_WORKER_ENABLED:-true}
+      SYNC_WORKER_POLL_INTERVAL: ${SYNC_WORKER_POLL_INTERVAL:-5s}
+      # Verification is off by default because FlowLens targets on-prem
+      # GitLab CE, typically behind a private CA. Prefer mounting that CA
+      # and naming it here, which turns verification back on.
+      GITLAB_TLS_INSECURE_SKIP_VERIFY: ${GITLAB_TLS_INSECURE_SKIP_VERIFY:-true}
+      GITLAB_CA_CERT_FILE: ${GITLAB_CA_CERT_FILE:-}
+    restart: unless-stopped
+
+  web:
+    image: ${FLOWLENS_REGISTRY:-ghcr.io/motoki1996}/flowlens-web:${FLOWLENS_VERSION:-latest}
+    depends_on:
+      - api
+    environment:
+      # Read at request time by the Server Components (apps/web/lib/api.ts).
+      # The browser's proxied calls use the destination baked into the image
+      # at build time, which is this same address — so keep the API service
+      # named `api`, or rebuild the web image. See docs/self-hosting.md.
+      API_INTERNAL_URL: http://api:8080
+    ports:
+      # FLOWLENS_BIND=127.0.0.1 keeps this off the host's public interfaces,
+      # which is what the TLS overlay wants once Caddy fronts it.
+      - "${FLOWLENS_BIND:-0.0.0.0}:${FLOWLENS_PORT:-4000}:4000"
+    restart: unless-stopped
+
+volumes:
+  db-data:

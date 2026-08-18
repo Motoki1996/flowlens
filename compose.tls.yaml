@@ -1,0 +1,30 @@
+# HTTPS overlay for compose.yaml, via Caddy's automatic certificates.
+#
+#   docker compose -f compose.yaml -f compose.tls.yaml up -d
+#
+# Required in .env:
+#   FLOWLENS_DOMAIN=flowlens.example.com
+#   APP_PUBLIC_URL=https://flowlens.example.com
+#   TRUSTED_PROXY_HOPS=2        # caddy, then the web service
+#   FLOWLENS_BIND=127.0.0.1     # stop publishing web:4000 to the world
+#
+# APP_ENV=production marks the session cookie Secure, so the app does not
+# work over plain HTTP once deployed for real — this file, or a reverse
+# proxy of your own, is not optional in production.
+services:
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from ${FLOWLENS_DOMAIN:?set FLOWLENS_DOMAIN in .env} --to web:4000
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:

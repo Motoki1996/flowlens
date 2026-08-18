@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/flowlens/api/internal/metricsperiod"
 	"github.com/flowlens/api/internal/task"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -227,6 +228,21 @@ func parseDateQueryParam(r *http.Request, name string) (*time.Time, error) {
 		return nil, fmt.Errorf("%s must be a YYYY-MM-DD date", name)
 	}
 	return &t, nil
+}
+
+// parseIntervalQueryParam reads ?interval= for the metrics endpoints (issue
+// #188): "week", "month", "year", or absent, meaning "don't bucket". An
+// unrecognized value is an error, same treatment as a malformed from/to.
+func parseIntervalQueryParam(r *http.Request) (*metricsperiod.Interval, error) {
+	v := r.URL.Query().Get("interval")
+	if v == "" {
+		return nil, nil
+	}
+	interval, ok := metricsperiod.ParseInterval(v)
+	if !ok {
+		return nil, fmt.Errorf("interval must be week, month, or year")
+	}
+	return &interval, nil
 }
 
 // isValidCrossProjectSort reports whether v is one of the sort values GET

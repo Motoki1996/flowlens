@@ -8,6 +8,7 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/deliverymetrics"
+	"github.com/flowlens/api/internal/metricsperiod"
 	"github.com/flowlens/api/internal/mrsync"
 	"github.com/flowlens/api/internal/project"
 	"github.com/google/uuid"
@@ -101,14 +102,14 @@ func TestService_Compute_ForeignProjectGetsNotFound(t *testing.T) {
 	f := newFixture(t)
 	intruder := f.q.SeedUser("mallory", "mallory@example.com")
 
-	_, err := f.svc.Compute(context.Background(), intruder.ID, f.project.ID, nil, nil)
+	_, err := f.svc.Compute(context.Background(), intruder.ID, f.project.ID, nil, nil, nil)
 	assert.ErrorIs(t, err, deliverymetrics.ErrNotFound)
 }
 
 func TestService_Compute_NoData(t *testing.T) {
 	f := newFixture(t)
 
-	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, got.OpenToFirstReview.Count)
@@ -125,7 +126,7 @@ func TestService_Compute_SingleMergeRequest(t *testing.T) {
 	merged := reviewed.Add(1 * time.Hour)
 	f.createMergeRequest(t, 1, "merged", created, &reviewed, &merged, "success")
 
-	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, got.OpenToFirstReview.Count)
@@ -153,7 +154,7 @@ func TestService_Compute_MedianAndP90WithOutlier(t *testing.T) {
 		f.createMergeRequest(t, int64(i+1), "opened", created, &reviewed, nil, "")
 	}
 
-	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 5, got.OpenToFirstReview.Count)
@@ -166,7 +167,7 @@ func TestService_Compute_ExcludesUnreviewedFromOpenToFirstReview(t *testing.T) {
 	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	f.createMergeRequest(t, 1, "opened", created, nil, nil, "")
 
-	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, got.OpenToFirstReview.Count)
@@ -180,7 +181,7 @@ func TestService_Compute_PipelineSuccessRateIgnoresUndecidedStatuses(t *testing.
 	f.createMergeRequest(t, 3, "opened", created, nil, nil, "running")
 	f.createMergeRequest(t, 4, "opened", created, nil, nil, "")
 
-	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.NotNil(t, got.PipelineSuccessRate)
@@ -195,11 +196,134 @@ func TestService_Compute_FiltersBySinceUntil(t *testing.T) {
 	f.createMergeRequest(t, 2, "merged", recent, nil, nil, "")
 
 	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, &since, nil)
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, &since, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, got.Throughput)
 }
+
+// Bucketing (issue #188). interval=nil is exercised by every test above;
+// these cover the periods behavior specifically.
+
+func TestService_Compute_IntervalNil_LeavesPeriodsEmpty(t *testing.T) {
+	f := newFixture(t)
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	f.createMergeRequest(t, 1, "merged", created, nil, nil, "")
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, nil)
+	require.NoError(t, err)
+
+	assert.Nil(t, got.Interval)
+	assert.False(t, got.Truncated)
+	assert.Empty(t, got.Periods)
+}
+
+func TestService_Compute_IntervalMonth_SplitsAcrossMonthBoundary(t *testing.T) {
+	f := newFixture(t)
+	jan := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 15, 0, 0, 0, 0, time.UTC)
+	f.createMergeRequest(t, 1, "merged", jan, nil, nil, "")
+	f.createMergeRequest(t, 2, "merged", feb, nil, nil, "")
+
+	month := metricsperiod.Month
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, &month)
+	require.NoError(t, err)
+
+	require.Equal(t, &month, got.Interval)
+	require.Len(t, got.Periods, 2)
+	assert.Equal(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), got.Periods[0].Start)
+	assert.Equal(t, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), got.Periods[0].End)
+	assert.Equal(t, 1, got.Periods[0].Throughput)
+	assert.Equal(t, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), got.Periods[1].Start)
+	assert.Equal(t, 1, got.Periods[1].Throughput)
+	assert.Equal(t, 2, got.Throughput, "the overall total is unaffected by bucketing")
+}
+
+func TestService_Compute_IntervalYear_SplitsAcrossYearBoundary(t *testing.T) {
+	f := newFixture(t)
+	f.createMergeRequest(t, 1, "merged", time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC), nil, nil, "")
+	f.createMergeRequest(t, 2, "merged", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), nil, nil, "")
+
+	year := metricsperiod.Year
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, &year)
+	require.NoError(t, err)
+
+	require.Len(t, got.Periods, 2)
+	assert.Equal(t, time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), got.Periods[0].Start)
+	assert.Equal(t, 1, got.Periods[0].Throughput)
+	assert.Equal(t, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), got.Periods[1].Start)
+	assert.Equal(t, 1, got.Periods[1].Throughput)
+}
+
+func TestService_Compute_IntervalWeek_SundayFallsInPreviousMondayWeek(t *testing.T) {
+	f := newFixture(t)
+	// 2026-03-15 is a Sunday; its ISO week starts Monday 2026-03-09.
+	sunday := time.Date(2026, 3, 15, 12, 0, 0, 0, time.UTC)
+	f.createMergeRequest(t, 1, "merged", sunday, nil, nil, "")
+
+	week := metricsperiod.Week
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, &week)
+	require.NoError(t, err)
+
+	require.Len(t, got.Periods, 1)
+	assert.Equal(t, time.Date(2026, 3, 9, 0, 0, 0, 0, time.UTC), got.Periods[0].Start)
+	assert.Equal(t, 1, got.Periods[0].Throughput)
+}
+
+func TestService_Compute_EmptyPeriodsAreZeroFilled(t *testing.T) {
+	f := newFixture(t)
+	f.createMergeRequest(t, 1, "merged", time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC), nil, nil, "")
+	f.createMergeRequest(t, 2, "merged", time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC), nil, nil, "")
+
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 3, 31, 0, 0, 0, 0, time.UTC)
+	month := metricsperiod.Month
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, &from, &to, &month)
+	require.NoError(t, err)
+
+	require.Len(t, got.Periods, 3)
+	assert.Equal(t, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC), got.Periods[1].Start)
+	assert.Equal(t, 0, got.Periods[1].Throughput)
+	assert.Equal(t, 0, got.Periods[1].OpenToFirstReview.Count)
+	assert.Nil(t, got.Periods[1].OpenToFirstReview.Median)
+}
+
+func TestService_Compute_OverCapTruncatesToNewestAndReportsTruncated(t *testing.T) {
+	f := newFixture(t)
+	from := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC) // 85 months apart, over the 52 cap
+
+	month := metricsperiod.Month
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, &from, &to, &month)
+	require.NoError(t, err)
+
+	require.Len(t, got.Periods, metricsperiod.MaxPeriods)
+	assert.True(t, got.Truncated)
+	assert.Equal(t, time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), got.Periods[len(got.Periods)-1].Start)
+}
+
+func TestService_Compute_PeriodMedianP90UsesOnlyThatPeriodsSamples(t *testing.T) {
+	f := newFixture(t)
+	// January: two fast reviews (1h). March: one very slow review (100h).
+	jan1 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	jan2 := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	mar := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	f.createMergeRequest(t, 1, "opened", jan1, timePtr(jan1.Add(1*time.Hour)), nil, "")
+	f.createMergeRequest(t, 2, "opened", jan2, timePtr(jan2.Add(1*time.Hour)), nil, "")
+	f.createMergeRequest(t, 3, "opened", mar, timePtr(mar.Add(100*time.Hour)), nil, "")
+
+	month := metricsperiod.Month
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, &month)
+	require.NoError(t, err)
+
+	require.Len(t, got.Periods, 3)
+	require.Equal(t, 2, got.Periods[0].OpenToFirstReview.Count)
+	assert.InDelta(t, 1.0, *got.Periods[0].OpenToFirstReview.Median, 0.001)
+	require.Equal(t, 1, got.Periods[2].OpenToFirstReview.Count)
+	assert.InDelta(t, 100.0, *got.Periods[2].OpenToFirstReview.Median, 0.001)
+}
+
+func timePtr(t time.Time) *time.Time { return &t }
 
 func TestService_Compute_ThroughputCountsOnlyMergedState(t *testing.T) {
 	f := newFixture(t)
@@ -208,7 +332,7 @@ func TestService_Compute_ThroughputCountsOnlyMergedState(t *testing.T) {
 	f.createMergeRequest(t, 2, "opened", created, nil, nil, "")
 	f.createMergeRequest(t, 3, "closed", created, nil, nil, "")
 
-	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil)
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, got.Throughput)

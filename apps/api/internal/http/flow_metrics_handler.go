@@ -15,6 +15,10 @@ import (
 // range (unbounded when omitted, bounding tasks.created_at). Session-only,
 // like handleGetProjectMetrics — a chart for a human reading the Project
 // single view, not part of the AI-facing bearer-token allowlist.
+//
+// ?interval=week|month|year (issue #188) additionally buckets the same
+// stats into a "periods" time series; omitted, it returns exactly what this
+// endpoint returned before #188.
 func (s *Server) handleGetProjectFlowMetrics(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	projectID, ok := projectIDFromURL(r)
@@ -33,8 +37,13 @@ func (s *Server) handleGetProjectFlowMetrics(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
 		return
 	}
+	interval, err := parseIntervalQueryParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err.Error())
+		return
+	}
 
-	metrics, err := s.flowMetrics.Compute(r.Context(), u.ID, projectID, from, to)
+	metrics, err := s.flowMetrics.Compute(r.Context(), u.ID, projectID, from, to, interval)
 	if err != nil {
 		switch {
 		case errors.Is(err, flowmetrics.ErrNotFound):

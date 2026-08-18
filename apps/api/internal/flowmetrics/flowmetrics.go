@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/metricsperiod"
 	"github.com/flowlens/api/internal/project"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -56,13 +57,10 @@ type StageStats struct {
 	P90    *float64 `json:"p90Hours"`
 }
 
-// Metrics is the aggregation Service.Compute returns: FlowLens's five
-// task-level work stages (issue #171) plus two backlog-level stages one
-// step earlier in the pipeline (issue #173).
-type Metrics struct {
-	From *time.Time `json:"from"`
-	To   *time.Time `json:"to"`
-
+// StageStatsSet is the eight stages reported both for the request's whole
+// range (Metrics itself) and for each bucket within it (Period), when
+// ?interval= is set — one shared field list so the two shapes can't drift.
+type StageStatsSet struct {
 	// BacklogWaitingToStart is backlogs.created_at -> a backlog's first
 	// in_progress transition. Bounded by [from, to] on backlogs.created_at,
 	// not tasks.created_at like every other stage here.
@@ -94,6 +92,35 @@ type Metrics struct {
 	Blocked StageStats `json:"blocked"`
 }
 
+// Period is one interval-sized bucket of StageStatsSet (issue #188),
+// assigned by the cohort time table describes: the task-level stages by
+// tasks.created_at, the backlog-level stages by backlogs.created_at — both
+// land in the same [Start, End) bucket, so one Period carries both.
+type Period struct {
+	// Start and End bound the bucket in UTC; End is exclusive.
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+	StageStatsSet
+}
+
+// Metrics is the aggregation Service.Compute returns: FlowLens's five
+// task-level work stages (issue #171) plus two backlog-level stages one
+// step earlier in the pipeline (issue #173).
+type Metrics struct {
+	From *time.Time `json:"from"`
+	To   *time.Time `json:"to"`
+
+	// Interval is the ?interval= the request asked to bucket Periods by, or
+	// nil when omitted — in which case Periods is empty and Truncated is
+	// false, and every other field is exactly what this endpoint returned
+	// before issue #188 added bucketing.
+	Interval  *metricsperiod.Interval `json:"interval"`
+	Truncated bool                    `json:"truncated"`
+	Periods   []Period                `json:"periods"`
+
+	StageStatsSet
+}
+
 // Service is the flow-metrics domain service. Read-only, like
 // deliverymetrics.Service: there is no write path here at all.
 type Service struct {
@@ -114,11 +141,29 @@ func toTimestamptz(v *time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: *v, Valid: true}
 }
 
+// bucketAcc accumulates one interval bucket's worth of raw stage samples,
+// mirroring the flat variables Compute also keeps for the unbucketed total.
+// Task-level stages are keyed by the task's own bucket (tasks.created_at);
+// the two backlog-level stages by the backlog's (backlogs.created_at) — both
+// share this one struct since they land in the same [Start, End) bucket.
+type bucketAcc struct {
+	backlogWaitingToStart, taskBreakdown                   []float64
+	waitingToStart, design, implementation, reviewAndMerge []float64
+	completion, blocked                                    []float64
+}
+
 // Compute returns projectID's flow metrics for tasks created in [from, to]
 // (either bound may be nil, meaning unbounded). It returns ErrNotFound if
 // projectID does not exist or the caller isn't a member, mirroring
 // deliverymetrics.Service.Compute.
-func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, from, to *time.Time) (Metrics, error) {
+//
+// When interval is non-nil, the response also carries Periods: the same
+// eight stages broken into interval-sized buckets of each stage's own
+// cohort time (tasks.created_at or backlogs.created_at), gap-filled across
+// the covered range and capped at metricsperiod.MaxPeriods (newest kept,
+// Truncated reported). interval nil leaves Periods empty and every other
+// field exactly as it was before issue #188.
+func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, from, to *time.Time, interval *metricsperiod.Interval) (Metrics, error) {
 	err := s.projects.Authorize(ctx, ownerID, projectID, project.RoleViewer)
 	switch {
 	case err == nil:
@@ -157,6 +202,9 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		eventsByTask[e.TaskID] = append(eventsByTask[e.TaskID], e)
 	}
 
+	buckets := make(map[time.Time]*bucketAcc)
+	var observed []time.Time
+
 	var (
 		waitingToStart []float64
 		design         []float64
@@ -170,43 +218,115 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		firstInProgress := firstOccurrence(taskEvents, "in_progress")
 		firstDone := firstOccurrence(taskEvents, "done")
 
+		var bucket *bucketAcc
+		if interval != nil && t.CreatedAt.Valid {
+			observed = append(observed, t.CreatedAt.Time)
+			bucket = getBucket(buckets, metricsperiod.BucketStart(t.CreatedAt.Time, *interval))
+		}
+
 		if firstInProgress != nil && t.CreatedAt.Valid {
-			waitingToStart = append(waitingToStart, firstInProgress.Sub(t.CreatedAt.Time).Hours())
+			v := firstInProgress.Sub(t.CreatedAt.Time).Hours()
+			waitingToStart = append(waitingToStart, v)
+			if bucket != nil {
+				bucket.waitingToStart = append(bucket.waitingToStart, v)
+			}
 		}
 		if t.DesignStartedAt.Valid && t.ImplementationStartedAt.Valid {
-			design = append(design, t.ImplementationStartedAt.Time.Sub(t.DesignStartedAt.Time).Hours())
+			v := t.ImplementationStartedAt.Time.Sub(t.DesignStartedAt.Time).Hours()
+			design = append(design, v)
+			if bucket != nil {
+				bucket.design = append(bucket.design, v)
+			}
 		}
 		if t.ImplementationStartedAt.Valid && t.MrGitlabCreatedAt.Valid {
-			implementation = append(implementation, t.MrGitlabCreatedAt.Time.Sub(t.ImplementationStartedAt.Time).Hours())
+			v := t.MrGitlabCreatedAt.Time.Sub(t.ImplementationStartedAt.Time).Hours()
+			implementation = append(implementation, v)
+			if bucket != nil {
+				bucket.implementation = append(bucket.implementation, v)
+			}
 		}
 		if t.MrGitlabCreatedAt.Valid && t.MrMergedAt.Valid {
-			reviewAndMerge = append(reviewAndMerge, t.MrMergedAt.Time.Sub(t.MrGitlabCreatedAt.Time).Hours())
+			v := t.MrMergedAt.Time.Sub(t.MrGitlabCreatedAt.Time).Hours()
+			reviewAndMerge = append(reviewAndMerge, v)
+			if bucket != nil {
+				bucket.reviewAndMerge = append(bucket.reviewAndMerge, v)
+			}
 		}
 		if t.MrMergedAt.Valid && firstDone != nil {
-			completion = append(completion, firstDone.Sub(t.MrMergedAt.Time).Hours())
+			v := firstDone.Sub(t.MrMergedAt.Time).Hours()
+			completion = append(completion, v)
+			if bucket != nil {
+				bucket.completion = append(bucket.completion, v)
+			}
 		}
 		if hours, ok := blockedHours(taskEvents); ok {
 			blocked = append(blocked, hours)
+			if bucket != nil {
+				bucket.blocked = append(bucket.blocked, hours)
+			}
 		}
 	}
 
-	backlogWaitingToStart, taskBreakdown, err := s.computeBacklogStages(ctx, projectID, ownerID, since, until)
+	backlogWaitingToStart, taskBreakdown, err := s.computeBacklogStages(ctx, projectID, ownerID, since, until, interval, buckets, &observed)
 	if err != nil {
 		return Metrics{}, err
 	}
 
-	return Metrics{
-		From:                  from,
-		To:                    to,
-		BacklogWaitingToStart: stageStats(backlogWaitingToStart),
-		TaskBreakdown:         stageStats(taskBreakdown),
-		WaitingToStart:        stageStats(waitingToStart),
-		Design:                stageStats(design),
-		Implementation:        stageStats(implementation),
-		ReviewAndMerge:        stageStats(reviewAndMerge),
-		Completion:            stageStats(completion),
-		Blocked:               stageStats(blocked),
-	}, nil
+	metrics := Metrics{
+		From: from,
+		To:   to,
+		StageStatsSet: StageStatsSet{
+			BacklogWaitingToStart: stageStats(backlogWaitingToStart),
+			TaskBreakdown:         stageStats(taskBreakdown),
+			WaitingToStart:        stageStats(waitingToStart),
+			Design:                stageStats(design),
+			Implementation:        stageStats(implementation),
+			ReviewAndMerge:        stageStats(reviewAndMerge),
+			Completion:            stageStats(completion),
+			Blocked:               stageStats(blocked),
+		},
+	}
+
+	if interval != nil {
+		starts, truncated := metricsperiod.Timeline(*interval, from, to, observed)
+		periods := make([]Period, len(starts))
+		for i, start := range starts {
+			b := buckets[start]
+			if b == nil {
+				b = &bucketAcc{}
+			}
+			periods[i] = Period{
+				Start: start,
+				End:   metricsperiod.BucketEnd(start, *interval),
+				StageStatsSet: StageStatsSet{
+					BacklogWaitingToStart: stageStats(b.backlogWaitingToStart),
+					TaskBreakdown:         stageStats(b.taskBreakdown),
+					WaitingToStart:        stageStats(b.waitingToStart),
+					Design:                stageStats(b.design),
+					Implementation:        stageStats(b.implementation),
+					ReviewAndMerge:        stageStats(b.reviewAndMerge),
+					Completion:            stageStats(b.completion),
+					Blocked:               stageStats(b.blocked),
+				},
+			}
+		}
+		metrics.Interval = interval
+		metrics.Truncated = truncated
+		metrics.Periods = periods
+	}
+
+	return metrics, nil
+}
+
+// getBucket returns buckets[key], creating and storing a fresh *bucketAcc
+// first if absent.
+func getBucket(buckets map[time.Time]*bucketAcc, key time.Time) *bucketAcc {
+	b := buckets[key]
+	if b == nil {
+		b = &bucketAcc{}
+		buckets[key] = b
+	}
+	return b
 }
 
 // computeBacklogStages returns the raw per-backlog hour samples for the two
@@ -217,7 +337,13 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 // already had a task filed under it before going in_progress is excluded
 // from taskBreakdown entirely, per the issue's own rule — there was no
 // breakdown work to time after the transition.
-func (s *Service) computeBacklogStages(ctx context.Context, projectID, ownerID uuid.UUID, since, until pgtype.Timestamptz) (backlogWaitingToStart, taskBreakdown []float64, err error) {
+//
+// When interval is non-nil, each backlog's samples are also folded into
+// buckets (keyed by the backlog's own metricsperiod.BucketStart) and its
+// created_at appended to *observed, the same bucketing Compute's task loop
+// does — the two share one bucket map since both stage families land in the
+// same [Start, End) periods.
+func (s *Service) computeBacklogStages(ctx context.Context, projectID, ownerID uuid.UUID, since, until pgtype.Timestamptz, interval *metricsperiod.Interval, buckets map[time.Time]*bucketAcc, observed *[]time.Time) (backlogWaitingToStart, taskBreakdown []float64, err error) {
 	backlogs, err := s.q.ListBacklogsForFlowMetrics(ctx, db.ListBacklogsForFlowMetricsParams{
 		ProjectID:   projectID,
 		OwnerUserID: ownerID,
@@ -269,11 +395,26 @@ func (s *Service) computeBacklogStages(ctx context.Context, projectID, ownerID u
 		if firstInProgress == nil {
 			continue
 		}
+
+		var bucket *bucketAcc
+		if interval != nil && b.CreatedAt.Valid {
+			*observed = append(*observed, b.CreatedAt.Time)
+			bucket = getBucket(buckets, metricsperiod.BucketStart(b.CreatedAt.Time, *interval))
+		}
+
 		if b.CreatedAt.Valid {
-			backlogWaitingToStart = append(backlogWaitingToStart, firstInProgress.Sub(b.CreatedAt.Time).Hours())
+			v := firstInProgress.Sub(b.CreatedAt.Time).Hours()
+			backlogWaitingToStart = append(backlogWaitingToStart, v)
+			if bucket != nil {
+				bucket.backlogWaitingToStart = append(bucket.backlogWaitingToStart, v)
+			}
 		}
 		if earliestTask, ok := earliestTaskByBacklog[b.ID]; ok && earliestTask.After(*firstInProgress) {
-			taskBreakdown = append(taskBreakdown, earliestTask.Sub(*firstInProgress).Hours())
+			v := earliestTask.Sub(*firstInProgress).Hours()
+			taskBreakdown = append(taskBreakdown, v)
+			if bucket != nil {
+				bucket.taskBreakdown = append(bucket.taskBreakdown, v)
+			}
 		}
 	}
 	return backlogWaitingToStart, taskBreakdown, nil

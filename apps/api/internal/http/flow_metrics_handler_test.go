@@ -69,3 +69,31 @@ func TestHandleGetProjectFlowMetrics_RejectsInvalidFromQuery(t *testing.T) {
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/flow-metrics?from=not-a-date", nil, token)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestHandleGetProjectFlowMetrics_RejectsInvalidInterval(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/flow-metrics?interval=decade", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetProjectFlowMetrics_IntervalMonth_ReturnsPeriods(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	created := time.Now().Add(-3 * time.Hour)
+	task := q.SeedTaskWithCreatedAt(p.ID, ownerID, "Task", created)
+	q.SeedTaskProgressEvent(task.ID, "not_started", "in_progress", created.Add(time.Hour))
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/flow-metrics?interval=month", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "month", body["interval"])
+	periods, ok := body["periods"].([]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, periods)
+}

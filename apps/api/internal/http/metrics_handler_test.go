@@ -67,3 +67,30 @@ func TestHandleGetProjectMetrics_RejectsInvalidFromQuery(t *testing.T) {
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/metrics?from=not-a-date", nil, token)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
+
+func TestHandleGetProjectMetrics_RejectsInvalidInterval(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/metrics?interval=decade", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestHandleGetProjectMetrics_IntervalMonth_ReturnsPeriods(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	repo := seedRepository(t, q, p)
+	q.SeedMergeRequest(repo.ID, 1, 1, "Merged one", "merged")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/metrics?interval=month", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "month", body["interval"])
+	periods, ok := body["periods"].([]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, periods)
+}

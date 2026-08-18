@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis, type LegendPayload } from "recharts";
 import type { DeliveryMetrics, FlowMetrics } from "@/types";
 import { fromDateParam, toDateParam } from "@/lib/dates";
 import { DateField } from "@/components/DateField";
@@ -41,6 +41,16 @@ const stageChartConfig = {
 const blockedChartConfig = {
   blocked: { label: "Blocked (on hold)", color: "var(--chart-5)" },
 } satisfies ChartConfig;
+
+/** recharts 3's <Legend> defaults to sorting entries alphabetically by label
+ *  (`itemSorter: "value"`), which scrambles this value-stream chart's
+ *  left-to-right stage order (e.g. "Completion" sorts before "Design"). Sort
+ *  by each entry's position in stageChartConfig instead, so the legend always
+ *  reads in the same order the bars are stacked. */
+const stageKeys = Object.keys(stageChartConfig);
+function stageLegendItemSorter(item: LegendPayload) {
+  return stageKeys.indexOf(String(item.dataKey));
+}
 
 /** formatHours renders a duration the way a human reads lead time: minutes
  *  under an hour, hours under two days, days beyond that. Every place a
@@ -212,7 +222,7 @@ export function DeliveryMetricsSection({
                     <ChartTooltip
                       content={<ChartTooltipContent formatter={(value) => formatHours(value as number)} />}
                     />
-                    <ChartLegend content={<ChartLegendContent />} />
+                    <ChartLegend content={<ChartLegendContent />} itemSorter={stageLegendItemSorter} />
                     <Bar dataKey="design" stackId="stage" fill="var(--color-design)" />
                     <Bar dataKey="implementation" stackId="stage" fill="var(--color-implementation)" />
                     <Bar dataKey="reviewAndMerge" stackId="stage" fill="var(--color-reviewAndMerge)" />

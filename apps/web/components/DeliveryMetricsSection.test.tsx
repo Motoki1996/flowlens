@@ -100,6 +100,31 @@ describe("DeliveryMetricsSection", () => {
     expect(screen.queryByText("Waiting to start")).not.toBeInTheDocument();
   });
 
+  it("orders the stage lead-time legend to match the stack order, not recharts' default", () => {
+    const flowMetrics = makeFlowMetrics({
+      design: { count: 1, medianHours: 3, p90Hours: 3 },
+      implementation: { count: 1, medianHours: 6, p90Hours: 6 },
+      reviewAndMerge: { count: 1, medianHours: 2, p90Hours: 2 },
+      completion: { count: 1, medianHours: 0.5, p90Hours: 0.5 },
+    });
+    const { container } = render(<DeliveryMetricsSection metrics={makeMetrics({})} flowMetrics={flowMetrics} />);
+
+    const legendItems = container.querySelectorAll(".recharts-legend-wrapper > div > div");
+    expect(Array.from(legendItems).map((item) => item.textContent)).toEqual([
+      "Design",
+      "Implementation",
+      "Review & merge",
+      "Completion",
+    ]);
+    // Each swatch's color must still track its own stage, not just its new position.
+    expect(Array.from(legendItems).map((item) => item.querySelector("div")?.style.backgroundColor)).toEqual([
+      "var(--color-design)",
+      "var(--color-implementation)",
+      "var(--color-reviewAndMerge)",
+      "var(--color-completion)",
+    ]);
+  });
+
   it("shows a separate blocked-time chart only when blocked time was recorded", () => {
     const { rerender } = render(
       <DeliveryMetricsSection

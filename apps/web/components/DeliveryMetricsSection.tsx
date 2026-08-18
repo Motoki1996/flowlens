@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis, type LegendPayload } from "recharts";
 import type { DeliveryMetrics, FlowMetrics } from "@/types";
 import { fromDateParam, toDateParam } from "@/lib/dates";
 import { DateField } from "@/components/DateField";
@@ -48,7 +48,7 @@ const blockedChartConfig = {
  *  by each entry's position in stageChartConfig instead, so the legend always
  *  reads in the same order the bars are stacked. */
 const stageKeys = Object.keys(stageChartConfig);
-function stageLegendItemSorter(item: { dataKey?: string | number }) {
+function stageLegendItemSorter(item: LegendPayload) {
   return stageKeys.indexOf(String(item.dataKey));
 }
 

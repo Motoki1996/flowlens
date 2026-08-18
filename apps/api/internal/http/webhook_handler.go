@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/flowlens/api/internal/webhookevent"
 )
 
@@ -105,9 +107,22 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 		status, skipReason, respStatus = webhookevent.StatusSkipped, webhookevent.SkipReasonUnsupportedEvent, http.StatusAccepted
 	}
 
+	deliveryUUID := r.Header.Get("X-Gitlab-Event-UUID")
+	if deliveryUUID == "" {
+		// GitLab added this header in 14.8; on-prem GitLab CE older than that
+		// never sends it. Leaving it empty would collide on the
+		// UNIQUE(linked_gitlab_project_id, delivery_uuid) constraint — unlike
+		// SQL NULL, '' equals '' — so every delivery after the first would be
+		// silently dropped as a duplicate. Minting one here disables
+		// dedup for these deliveries, but that's unavoidable without the
+		// header; double-apply is still caught by the later echo/stale guard
+		// in internal/webhookapply.
+		deliveryUUID = uuid.NewString()
+	}
+
 	err = s.webhookEvents.Record(r.Context(), webhookevent.RecordParams{
 		LinkedGitlabProjectID: linkID,
-		DeliveryUUID:          r.Header.Get("X-Gitlab-Event-UUID"),
+		DeliveryUUID:          deliveryUUID,
 		EventName:             eventName,
 		ObjectKind:            payload.ObjectKind,
 		GitlabIssueIID:        payload.issueIID(),

@@ -10,9 +10,9 @@
   "shutdownAction": "stopCompose",
   "remoteUser": "vscode",
   "postCreateCommand": "bash .devcontainer/postCreate.sh",
-  "forwardPorts": [3000, 8080, 55432],
+  "forwardPorts": [4000, 8080, 55432],
   "portsAttributes": {
-    "3000": { "label": "web" },
+    "4000": { "label": "web" },
     "8080": { "label": "api" },
     "55432": { "label": "postgres" }
   },

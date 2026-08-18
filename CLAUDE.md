@@ -92,7 +92,7 @@ The repo also has a GitHub Actions path (`.github/workflows/claude.yml`) trigger
 
 ## Local ports (important)
 
-Container Postgres is published on host port **55432** to avoid clashing with a local Postgres on 5432. Inside Docker the API reaches it as `db:5432`. Web on 3000, API on 8080.
+Container Postgres is published on host port **55432** to avoid clashing with a local Postgres on 5432. Inside Docker the API reaches it as `db:5432`. Web on 4000, API on 8080.
 
 Dev Container note: `.env` records the host port, but the Makefile keeps the environment's `DATABASE_URL` (`db:5432`, exported by compose) in preference to it, so `make migrate` works unchanged inside the container. `make dev` needs Docker, which isn't available inside the devcontainer itself — use `make dev-container` there instead, which runs the API (`air`) and Web (`npm run dev`) natively against the sibling `db` service.
 

@@ -64,7 +64,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Env:         getEnv("APP_ENV", "development"),
 		Port:        getEnv("API_PORT", "8080"),
-		WebBaseURL:  getEnv("WEB_BASE_URL", "http://localhost:3000"),
+		WebBaseURL:  getEnv("WEB_BASE_URL", "http://localhost:4000"),
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 	}
 

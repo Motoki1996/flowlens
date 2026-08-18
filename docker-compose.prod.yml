@@ -66,7 +66,7 @@ services:
       # Server-only: read at runtime, never exposed to the browser.
       API_INTERNAL_URL: http://api:8080
     ports:
-      - "3000:3000"
+      - "4000:4000"
     restart: unless-stopped
 
 volumes:

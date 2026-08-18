@@ -23,7 +23,7 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=4000
 ENV HOSTNAME=0.0.0.0
 
 # `output: "standalone"` in next.config.ts traces only the files the server
@@ -32,6 +32,6 @@ COPY --from=build /app/public ./public
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 
-EXPOSE 3000
+EXPOSE 4000
 USER node
 CMD ["node", "server.js"]

@@ -34,7 +34,7 @@ services:
       API_PORT: "8080"
       # Inside the compose network the DB host is the service name "db".
       DATABASE_URL: postgres://flowlens:flowlens@db:5432/flowlens?sslmode=disable
-      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:4000}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env (base64, 32 bytes — e.g. openssl rand -base64 32)}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
@@ -70,7 +70,7 @@ services:
       # The browser reaches the API via the host-published port.
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
     ports:
-      - "3000:3000"
+      - "4000:4000"
     volumes:
       - ./apps/web:/app
       - /app/node_modules

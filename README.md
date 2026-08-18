@@ -106,7 +106,7 @@ Requires Docker and an editor with Dev Containers support (VS Code + the
    This starts the API (`air`, hot reload) and web (`npm run dev`) natively
    inside the container — `docker compose` (used by `make dev`) isn't
    available there. `Ctrl+C` stops both. The forwarded ports expose the web
-   app on 3000 and the API on 8080.
+   app on 4000 and the API on 8080.
 
 Inside the container Postgres is reachable at `db:5432` (the app picks this up
 from the container environment). `.env` points at the host port instead
@@ -151,7 +151,7 @@ In another terminal, apply migrations:
 make migrate
 ```
 
-Then open <http://localhost:3000>, sign up with a username/password, and
+Then open <http://localhost:4000>, sign up with a username/password, and
 create your first project. To connect it to a GitLab CE instance and sync
 issues, see [GitLab CE connection & sync](#gitlab-ce-connection--sync).
 
@@ -250,7 +250,7 @@ way from `.env`.
 
 ```bash
 docker compose -f docker-compose.prod.yml up --build
-curl -i http://localhost:3000/login   # expect 200
+curl -i http://localhost:4000/login   # expect 200
 ```
 
 ## GitLab CE connection & sync

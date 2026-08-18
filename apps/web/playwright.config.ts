@@ -1,9 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// Ports distinct from `make dev`'s 8080/3000 so `make test-e2e` can run
+// Ports distinct from `make dev`'s 8080/4000 so `make test-e2e` can run
 // alongside an already-running dev stack instead of colliding with it.
 const API_PORT = 8081;
-const WEB_PORT = 3100;
+const WEB_PORT = 4100;
 const API_URL = `http://localhost:${API_PORT}`;
 const WEB_URL = `http://localhost:${WEB_PORT}`;
 
@@ -55,7 +55,7 @@ export default defineConfig({
       },
     },
     {
-      // Not `npm run dev -- -p ...`: that script already hardcodes `-p 3000`,
+      // Not `npm run dev -- -p ...`: that script already hardcodes `-p 4000`,
       // and appending a second `-p` is fragile. Invoke next directly instead.
       command: `npx next dev -p ${WEB_PORT}`,
       url: WEB_URL,

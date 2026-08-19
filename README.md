@@ -1,16 +1,40 @@
 # FlowLens
 
-A task tracker whose tasks stay 1:1 with GitLab CE issues, plus (in a later
-phase) a view of your team's software delivery process — where merge
-requests get stuck, review latency, CI results, and lead time to merge.
+A self-hosted task tracker — backlogs, tasks, board, Gantt timeline, and
+delivery metrics — that can optionally keep every task 1:1 with a GitLab CE
+issue, and read your merge request and CI data to show where delivery
+actually gets stuck.
 
-> **Status:** Local username/password login and the task-tracker / GitLab CE
-> Issue-sync MVP are implemented: projects, backlogs, tasks, a per-project
-> GitLab connection, linked GitLab projects, bidirectional sync, and an
-> AI-facing task context API. See
-> [GitLab CE connection & sync](#gitlab-ce-connection--sync) below. Merge
-> request / CI delivery-flow visualization is not built yet (see
-> [Roadmap](#roadmap)).
+It runs standalone: **GitLab is optional.** Connect it and tasks and issues
+stay in sync both ways; leave it unconnected and FlowLens is a task tracker
+with nothing else to configure.
+
+```bash
+curl -O https://raw.githubusercontent.com/Motoki1996/flowlens/main/compose.yaml
+curl -o .env https://raw.githubusercontent.com/Motoki1996/flowlens/main/.env.example
+docker run --rm ghcr.io/motoki1996/flowlens-api:latest gen-key >> .env
+docker compose up -d          # http://localhost:4000
+```
+
+Set `POSTGRES_PASSWORD` and pin `FLOWLENS_VERSION` in `.env` first. Full
+install, upgrade, backup and hardening instructions are in
+[**docs/self-hosting.md**](docs/self-hosting.md).
+
+## What you get
+
+- **Tasks and backlogs** with priority, a four-stage progress state,
+  start/due dates, dependencies, drag-and-drop ordering, and an activity log.
+- **Four ways to look at them** — List, Board (by progress), Timeline
+  (Gantt), and a cross-project view — plus a dashboard of what is overdue,
+  due soon, waiting to start, or failing to sync.
+- **An API built for AI agents.** Project-scoped bearer tokens and a task
+  context endpoint that carries acceptance criteria and allowed/forbidden
+  change scope — fields GitLab has nowhere to put. FlowLens does not write
+  code; it is the source of truth an agent reads from and reports back to.
+- **Optional GitLab CE sync.** Bidirectional issue sync through a Postgres
+  outbox and webhooks, read-only merge request and pipeline import, and
+  delivery metrics (review latency median/p90, pipeline success rate, merge
+  throughput) computed over what it synced.
 
 ## Problem
 
@@ -157,7 +181,10 @@ issues, see [GitLab CE connection & sync](#gitlab-ce-connection--sync).
 
 ## Environment variables
 
-All variables are documented in [`.env.example`](.env.example). Key ones:
+All variables are documented in [`.env.example`](.env.example), and the ones
+that matter for a self-hosted install are tabulated in
+[docs/self-hosting.md](docs/self-hosting.md#configuration-reference). Key
+ones for development:
 
 | Variable                     | Purpose                                          |
 | ---------------------------- | ------------------------------------------------ |
@@ -169,15 +196,17 @@ All variables are documented in [`.env.example`](.env.example). Key ones:
 | `SYNC_WORKER_POLL_INTERVAL`  | Sync worker poll interval (default `5s`)         |
 | `WEB_BASE_URL`               | Public URL of the web app, used for CORS         |
 | `API_INTERNAL_URL`           | URL the web server uses to reach the API         |
-| `NEXT_PUBLIC_API_BASE_URL`   | URL the browser uses to reach the API            |
+| `ALLOW_SIGNUP`               | Whether new accounts can be registered (default `true`) |
+| `TRUSTED_PROXY_HOPS`         | Proxies trusted to have appended to `X-Forwarded-For`, which the per-IP rate limiters key on |
+| `RUN_MIGRATIONS`             | Apply the embedded migrations at startup (default `true`) |
+| `NEXT_PUBLIC_API_BASE_URL`   | URL the browser uses to reach the API. Empty by default — the browser calls the web app's own origin and Next.js proxies through to the API |
 
 > The container Postgres is published on host port **55432** to avoid
 > clashing with a local Postgres on 5432. Inside Docker the API reaches it
 > as `db:5432`.
 
 Secrets live only in `.env`, which is git-ignored. Never commit real
-credentials. In production these come from the container environment and,
-later, Azure Key Vault.
+credentials; in production they come from the container environment.
 
 ## How to run
 
@@ -186,13 +215,13 @@ later, Azure Key Vault.
 | `make setup`        | Create `.env`, install Go and web dependencies      |
 | `make dev`          | Start Postgres + API + Web (hot reload, via Docker Compose) |
 | `make dev-container` | Start API + Web natively inside the Dev Container (no Docker; `db` service must already be running) |
-| `make migrate`      | Apply database migrations                           |
+| `make migrate`      | Apply database migrations by hand (the API also applies them on startup) |
 | `make generate`     | Regenerate sqlc query code                          |
 | `make test`         | Run Go and web unit tests                            |
 | `make test-integration` | Run Go integration tests (needs running Postgres) |
 | `make lint`         | Lint Go and web                                      |
 | `make build`        | Build the API binary and the web app                |
-| `make build-images` | Build the production Docker images (API + web)      |
+| `make build-images` | Build the release images locally, tagged `:dev`     |
 | `make down`         | Stop the stack                                       |
 
 ## Testing
@@ -209,49 +238,64 @@ make test
 
 ## Deploy
 
-Both apps have a multi-stage production Dockerfile (`apps/api/Dockerfile`,
-`apps/web/Dockerfile`) with a minimal, non-root runtime stage —
-`apps/api/Dockerfile`'s `runtime` target and `apps/web/Dockerfile`'s `runner`
-target, built on `output: "standalone"` in `next.config.ts` so only the
-files the Next.js server actually needs (no `devDependencies`, no
-unbundled `node_modules`) end up in the image.
+Self-hosting — install, upgrade, backup, hardening, air-gapped networks —
+has its own guide: [**docs/self-hosting.md**](docs/self-hosting.md). The
+short version is at the top of this file.
 
-`docker-compose.prod.yml` runs the full stack from those images:
+What the deployment is made of:
 
-```bash
-cp .env.example .env   # fill in real values, see below
-docker compose -f docker-compose.prod.yml up --build
-```
+- **Prebuilt multi-arch images** (amd64 + arm64) on
+  `ghcr.io/motoki1996/flowlens-{api,web}`, published by
+  [`.github/workflows/release.yml`](.github/workflows/release.yml) on a
+  `v*` tag. Both are minimal, non-root runtime stages —
+  `apps/api/Dockerfile`'s `runtime` target, and `apps/web/Dockerfile`'s
+  `runner` target built on `output: "standalone"` so only the files the
+  Next.js server actually needs are in the image.
+- **[`compose.yaml`](compose.yaml)**, the file a self-hoster downloads. It
+  pulls those images and needs nothing else from this repository.
+  [`compose.tls.yaml`](compose.tls.yaml) overlays HTTPS via Caddy.
+- **Self-applying schema.** The API embeds its migrations
+  (`apps/api/migrations/embed.go`) and applies them on startup, so there is
+  no separate migrate step and no `migrate` CLI on the host. Set
+  `RUN_MIGRATIONS=false` where migrations are their own deploy stage.
 
-Or build the images without starting them:
-
-```bash
-make build-images
-```
-
-### Build-time vs. runtime environment variables
-
-This is the one thing to get right when deploying the web app: Next.js
-inlines `NEXT_PUBLIC_*` variables into the client JavaScript bundle at
-`next build` time — they cannot be changed by setting a different value on
-the running container afterwards. Everything else is read at runtime.
-
-| Variable                   | When it's needed              | Why |
-| --------------------------- | ------------------------------ | --- |
-| `NEXT_PUBLIC_API_BASE_URL`  | **Build time** (Docker build arg) | Baked into the browser bundle — the URL the *browser* uses to call the API. Rebuild the web image to change it. |
-| `API_INTERNAL_URL`          | Runtime (container env)        | Server-only (never sent to the browser) — the URL the Next.js *server* uses to call the API, e.g. `http://api:8080` inside Compose. See `apps/web/lib/config.ts` for the client/server split. |
-| `WEB_BASE_URL`, `ENCRYPTION_KEY`, `DATABASE_URL`, ... | Runtime (container env) | Read by the API process on startup, same as local dev — see [Environment variables](#environment-variables). |
-
-`docker-compose.prod.yml` passes `NEXT_PUBLIC_API_BASE_URL` as a `build.args`
-entry for exactly this reason, and `make build-images` forwards it the same
-way from `.env`.
-
-### Verifying an image locally
+To run images you built yourself:
 
 ```bash
-docker compose -f docker-compose.prod.yml up --build
-curl -i http://localhost:4000/login   # expect 200
+make build-images                                     # tags them :dev
+FLOWLENS_VERSION=dev docker compose -f compose.yaml up -d
 ```
+
+### One origin, and why
+
+The browser only ever talks to the web app's origin. The Next.js server
+proxies `/api`, `/auth` and `/webhooks` through to the Go API
+(`apps/web/next.config.ts`), and `compose.yaml` does not publish the API
+port at all.
+
+This is not just tidiness. `NEXT_PUBLIC_*` variables are inlined into the
+client bundle at `next build` time and cannot be changed on a running
+container — so a web image built with an absolute API URL would only ever
+work for the hostname it was built for, and every self-hoster would have to
+rebuild it. Same-origin means one published image serves everyone. It also
+means there is no CORS to configure, no `SameSite=Lax` cross-site problem to
+work around, and the operational endpoints (`/healthz`, `/version`,
+`/metrics`) are not exposed on the public origin.
+
+Next.js resolves rewrites at build time too, so the destination
+(`API_INTERNAL_URL`, default `http://api:8080`) is likewise baked into the
+image. That is fine here for the reason the public URL is not: it is an
+address on the internal Docker network, and it is the same for every
+self-hoster running the bundled `compose.yaml`. Reaching the API at some
+other address means rebuilding the web image with `API_INTERNAL_URL` set —
+which is what `make dev` and the e2e suite do. Server Components are
+unaffected either way: `lib/api.ts` reads `API_INTERNAL_URL` at request
+time.
+
+Setting `NEXT_PUBLIC_API_BASE_URL` is still supported for putting the API on
+its own hostname. Then it is a build arg, `WEB_BASE_URL` must match it for
+CORS, and both origins have to stay on one registrable domain for the
+session cookie to be sent.
 
 ## GitLab CE connection & sync
 
@@ -1643,5 +1687,9 @@ issue**, `"interval"` is `null`, and `"periods"` is empty.
    [Backlog-level stages](#backlog-level-stages-waiting-to-start-and-task-breakdown-issue-173).
 8. **Automation:** webhooks (with duplicate-delivery handling) and scheduled
    sync via Azure Service Bus.
-9. **Azure deployment:** Container Apps, Azure Database for PostgreSQL, Key
-   Vault, Application Insights.
+9. **Self-hosting (done):** prebuilt multi-arch images on GHCR, a
+   download-and-run `compose.yaml`, migrations applied by the API itself,
+   and an upgrade path that is `pull` + restart — see
+   [docs/self-hosting.md](docs/self-hosting.md).
+10. **Managed deployment:** Azure Container Apps, Azure Database for
+    PostgreSQL, Key Vault, Application Insights.

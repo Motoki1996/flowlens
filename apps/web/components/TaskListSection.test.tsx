@@ -573,11 +573,11 @@ describe("TaskListSection", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+      "/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b1" }) }),
     );
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t2/assign-backlog",
+      "/api/v1/tasks/t2/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b1" }) }),
     );
   });
@@ -608,7 +608,7 @@ describe("TaskListSection", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+      "/api/v1/tasks/t1/assign-backlog",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: null }) }),
     );
   });
@@ -691,11 +691,11 @@ describe("TaskListSection", () => {
 
       await waitFor(() => expect(refresh).toHaveBeenCalled());
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/t1",
+        "/api/v1/tasks/t1",
         expect.objectContaining({ method: "PATCH", body: JSON.stringify({ priority: "urgent" }) }),
       );
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/t2",
+        "/api/v1/tasks/t2",
         expect.objectContaining({ method: "PATCH", body: JSON.stringify({ priority: "urgent" }) }),
       );
       expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
@@ -714,7 +714,7 @@ describe("TaskListSection", () => {
 
       await waitFor(() => expect(refresh).toHaveBeenCalled());
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/t1",
+        "/api/v1/tasks/t1",
         expect.objectContaining({ method: "PATCH", body: JSON.stringify({ progress: "on_hold" }) }),
       );
     });
@@ -730,7 +730,7 @@ describe("TaskListSection", () => {
 
       await waitFor(() => expect(refresh).toHaveBeenCalled());
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/t1/close",
+        "/api/v1/tasks/t1/close",
         expect.objectContaining({ method: "POST" }),
       );
     });
@@ -746,7 +746,7 @@ describe("TaskListSection", () => {
 
       await waitFor(() => expect(refresh).toHaveBeenCalled());
       expect(fetch).toHaveBeenCalledWith(
-        "http://localhost:8080/api/v1/tasks/t1/reopen",
+        "/api/v1/tasks/t1/reopen",
         expect.objectContaining({ method: "POST" }),
       );
     });
@@ -912,7 +912,7 @@ describe("TaskListSection", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/projects/p1/tasks",
+      "/api/v1/projects/p1/tasks",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -943,7 +943,7 @@ describe("TaskListSection", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/projects/p1/tasks",
+      "/api/v1/projects/p1/tasks",
       expect.objectContaining({ body: expect.stringContaining('"backlogId":"b1"') }),
     );
   });
@@ -1015,7 +1015,7 @@ describe("TaskListSection", () => {
     const titles = screen.getAllByText(/^(First|Second)$/).map((el) => el.textContent);
     expect(titles).toEqual(["Second", "First"]);
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/projects/p1/tasks/order",
+      "/api/v1/projects/p1/tasks/order",
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ backlogId: "b1", taskIds: ["t2", "t1"] }),
@@ -1109,7 +1109,7 @@ describe("TaskListSection", () => {
       // updates optimistically rather than triggering a router.refresh().
       await waitFor(() =>
         expect(fetch).toHaveBeenCalledWith(
-          "http://localhost:8080/api/v1/tasks/t1/assign-backlog",
+          "/api/v1/tasks/t1/assign-backlog",
           expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b2" }) }),
         ),
       );

@@ -36,6 +36,14 @@ services:
       DATABASE_URL: postgres://flowlens:flowlens@db:5432/flowlens?sslmode=disable
       WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:4000}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-168}
+      # The API applies its own embedded migrations on startup, so a fresh
+      # clone needs no separate `make migrate`.
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      # The browser reaches the API through the web service's proxy, so
+      # one hop is trusted for the per-IP rate limiters (see
+      # internal/http/ratelimit.go).
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env (base64, 32 bytes — e.g. openssl rand -base64 32)}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-}
       SYNC_WORKER_ENABLED: ${SYNC_WORKER_ENABLED:-true}
@@ -65,10 +73,13 @@ services:
     depends_on:
       - api
     environment:
-      # Server components reach the API via the compose network.
+      # Server components reach the API via the compose network, and this
+      # is also the rewrite destination the browser's calls are proxied to
+      # (apps/web/next.config.ts).
       API_INTERNAL_URL: http://api:8080
-      # The browser reaches the API via the host-published port.
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+      # Empty is the shipped default: the browser calls this origin and the
+      # rewrites proxy through. Set it only to test a separate API origin.
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
     ports:
       - "4000:4000"
     volumes:

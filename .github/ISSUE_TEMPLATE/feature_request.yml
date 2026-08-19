@@ -1,0 +1,18 @@
+name: Feature request
+description: Suggest a capability FlowLens does not have
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that FlowLens makes hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: >
+        Optional. If it involves a screen, note which object it belongs to —
+        screens here are designed per object (docs/ui-design.md).

@@ -21,7 +21,11 @@ services:
       # api and web both run inside this container, so they reach each
       # other over localhost.
       API_INTERNAL_URL: http://localhost:8080
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+      # Empty is the shipped default: the browser calls the web app's own
+      # origin and Next.js proxies through to the API (apps/web/lib/config.ts).
+      # Exporting an absolute URL here would also mask that default from the
+      # web test suite, which would then pass in here and fail in CI.
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
     volumes:
       # Same rule as build.context above: relative paths resolve from the
       # project directory (the repo root), NOT from this file's location —

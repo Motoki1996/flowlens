@@ -100,6 +100,8 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		sessions:         auth.NewSessionService(q, time.Hour),
 		cookies:          cookieManager{secure: false},
 		webBaseURL:       "http://localhost:3000",
+		version:          "test",
+		allowSignup:      true,
 		sessionTTL:       time.Hour,
 		cipher:           cipher,
 	}, q

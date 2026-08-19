@@ -70,7 +70,7 @@ func (s *Server) handleGitlabWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.webhookLimiter.Allow(clientIP(r) + ":" + linkID.String()) {
+	if !s.webhookLimiter.Allow(s.clientIP(r) + ":" + linkID.String()) {
 		webhookEventsReceivedTotal.WithLabelValues(webhookMetricFailed).Inc()
 		writeError(w, http.StatusTooManyRequests, "rate_limited", "too many requests")
 		return

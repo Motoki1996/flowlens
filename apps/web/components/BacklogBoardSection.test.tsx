@@ -94,7 +94,7 @@ describe("BacklogBoardSection", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/backlogs/b1",
+      "/api/v1/backlogs/b1",
       expect.objectContaining({ method: "PATCH" }),
     );
     // The backlog PATCH overwrites every editable column, so the body has to

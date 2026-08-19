@@ -33,9 +33,28 @@ type loginRequest struct {
 
 // handleSignup creates a local account and starts a session for it.
 func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimiter.Allow(clientIP(r)) {
+	if !s.authLimiter.Allow(s.clientIP(r)) {
 		writeTooManyRequests(w, authRateLimitWindow)
 		return
+	}
+
+	ctx := r.Context()
+
+	// ALLOW_SIGNUP=false closes registration on an instance whose accounts
+	// already exist, so that reaching the login page is not enough to
+	// create one. The first account is exempt: a fresh instance brought up
+	// with signup already off would otherwise have no way in at all.
+	if !s.allowSignup {
+		count, err := s.users.Count(ctx)
+		if err != nil {
+			slog.Error("count users", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+			return
+		}
+		if count > 0 {
+			writeError(w, http.StatusForbidden, "signup_disabled", "signup is disabled on this instance")
+			return
+		}
 	}
 
 	var req signupRequest
@@ -48,7 +67,6 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
 	u, err := s.users.SignUp(ctx, user.SignUpInput{
 		Username: req.Username,
 		Email:    req.Email,
@@ -79,7 +97,7 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 // handleLogin verifies credentials and starts a session.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if !s.authLimiter.Allow(clientIP(r)) {
+	if !s.authLimiter.Allow(s.clientIP(r)) {
 		writeTooManyRequests(w, authRateLimitWindow)
 		return
 	}

@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -66,4 +67,43 @@ func clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// clientIP resolves the address the per-IP rate limiters key on, honouring
+// X-Forwarded-For when the API is behind a known number of trusted proxies.
+//
+// This matters for the default self-hosted topology: the bundled compose
+// file proxies the browser through the Next.js server, so every request
+// arrives from one container address and, keyed on RemoteAddr alone, the
+// login limiter would be shared by every user at once — one person's failed
+// attempts would lock out the whole instance.
+//
+// Counting hops from the right is what makes the header safe to use. Each
+// trusted proxy appends the address it saw, so the entry trustedProxyHops
+// from the end is the one written by the outermost trusted proxy, and
+// anything a client forged sits to the left of it and is ignored. A hop
+// count that does not match the real topology is therefore the failure mode
+// to avoid, which is why it is configured explicitly and defaults to 0 —
+// no proxy trusted, RemoteAddr only.
+func (s *Server) clientIP(r *http.Request) string {
+	if s.trustedProxyHops <= 0 {
+		return clientIP(r)
+	}
+
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded == "" {
+		return clientIP(r)
+	}
+
+	parts := strings.Split(forwarded, ",")
+	idx := len(parts) - s.trustedProxyHops
+	if idx < 0 {
+		// Fewer entries than configured hops: the request did not traverse
+		// the expected chain, so trust none of it.
+		return clientIP(r)
+	}
+	if addr := strings.TrimSpace(parts[idx]); addr != "" {
+		return addr
+	}
+	return clientIP(r)
 }

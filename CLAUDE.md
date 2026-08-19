@@ -17,13 +17,14 @@ Run from the repo root (Makefile targets load `.env` automatically):
 | Command | Purpose |
 | --- | --- |
 | `make dev` | Start full stack (Postgres + API + Web, hot reload) via Docker Compose |
-| `make migrate` | Apply migrations (`make migrate-down` rolls back one; `make migrate-create name=x` scaffolds) |
+| `make migrate` | Apply migrations by hand (`make migrate-down` rolls back one; `make migrate-create name=x` scaffolds). The API also applies its embedded migrations on startup unless `RUN_MIGRATIONS=false` |
 | `make generate` | Regenerate sqlc query code — **run after editing any `.up.sql` schema or `internal/database/queries/*.sql`** |
 | `make test` | Go + web unit tests |
 | `make test-integration` | Go integration tests, gated by the `integration` build tag; needs a running Postgres with migrations applied |
 | `make test-e2e` | Playwright browser e2e tests (`apps/web/e2e`); needs a running Postgres with migrations applied, starts its own API+web |
 | `make lint` | golangci-lint + ESLint |
 | `make build` | Build API binary and web app |
+| `make build-images` | Build the release images locally, tagged `:dev` so `compose.yaml` can run them |
 
 Running a single test:
 - Go: `cd apps/api && go test ./internal/auth/ -run TestName`
@@ -44,6 +45,8 @@ The repo also has a GitHub Actions path (`.github/workflows/claude.yml`) trigger
 
 **When designing or changing any web UI, follow [`docs/ui-design.md`](docs/ui-design.md)** — screens are designed object-first (OOUI), not task-first.
 
+**When changing anything a self-hoster touches — `compose.yaml`, `.env.example`, a new environment variable, the release workflow, or a migration — update [`docs/self-hosting.md`](docs/self-hosting.md) in the same change.** It is the install/upgrade contract, not background reading, and a variable that exists but is undocumented there is a support burden. Schema migrations must stay backward compatible (new columns nullable or defaulted; a removal split across two releases), because the documented upgrade is `docker compose pull && up -d` against a live database.
+
 **When writing or changing tests, follow [`docs/testing.md`](docs/testing.md)** — the layered strategy (integration / domain / HTTP), Fakes over Mocks, table-driven cases, and the other rules that keep the suite small and maintainable.
 
 ## Architecture
@@ -60,13 +63,14 @@ The repo also has a GitHub Actions path (`.github/workflows/claude.yml`) trigger
 - `internal/gitlab` — `gitlab.Client` interface, HTTP impl, and `FakeClient` for tests. **All GitLab CE calls go through this interface**; not yet wired into any handler — reserved for the future per-user MR/pipeline sync feature
 - `internal/database` — pgx pool + sqlc-generated code in `internal/database/db` (do not hand-edit generated files)
 - `internal/config` — env loading/validation
+- `migrations/` — the golang-migrate SQL files, also embedded into the binary (`embed.go`) and applied at startup by `internal/database.Migrate`
 - `cmd/api` — entry point, wiring, graceful shutdown
 
 ### Web (`apps/web`) — Next.js App Router
 - React Server Components by default; Client Components only where interactive (e.g. logout button)
 - Screens are structured per object (collection view / single view) — see the UI conventions below
 - `lib/api.ts` — thin server-side API client that forwards the session cookie
-- `lib/config.ts` — client-safe config kept separate so client components never import server-only modules
+- `lib/config.ts` — client-safe config kept separate so client components never import server-only modules. `API_PUBLIC_URL` defaults to `""`: browser calls are **same-origin**, and `next.config.ts` rewrites proxy `/api`, `/auth` and `/webhooks` to the Go API. That is what lets one prebuilt web image serve any hostname — `NEXT_PUBLIC_*` is inlined at build time and cannot be changed on a running container. Do not reintroduce an absolute default. Note rewrites are *also* resolved at build time (serialised into `routes-manifest.json`), so the destination `API_INTERNAL_URL` (default `http://api:8080`, the compose service name) is baked into the image as well — acceptable only because it is an internal address identical for every self-hoster. `lib/api.ts`'s own use of `API_INTERNAL_URL` for Server Components *is* read at request time
 
 ### Database
 - Schema owned by `golang-migrate` in `apps/api/migrations`. sqlc reads **only `*.up.sql`** (see `sqlc.yaml`) as the schema source, plus hand-written queries in `internal/database/queries`
@@ -90,6 +94,27 @@ The repo also has a GitHub Actions path (`.github/workflows/claude.yml`) trigger
 - **Outbound TLS to GitLab skips certificate verification by default** (`GITLAB_TLS_INSECURE_SKIP_VERIFY=true`), because FlowLens targets on-prem GitLab CE behind a private CA; `GITLAB_CA_CERT_FILE` takes precedence and turns verification back on. The policy is a value (`gitlab.TLSPolicy`) built once in `cmd/api/main.go` and injected into both `NewServer` and the sync workers — it is **not** a global, so a future GitHub client gets its own (verified) policy. See the "TLS for a self-hosted instance" section in [`README.md`](README.md).
 - The planned "connect GitLab" feature stores the access token **per app project, not per user** ([ADR-0008](docs/decisions/0008-why-per-project-gitlab-connection.md)), encrypted at rest with AES-256-GCM. No such storage exists yet.
 
+## Self-hosting
+
+FlowLens is distributed as prebuilt multi-arch images on
+`ghcr.io/motoki1996/flowlens-{api,web}`, published by
+`.github/workflows/release.yml` on a `v*` tag. A self-hoster downloads
+`compose.yaml` plus `.env.example` and runs `docker compose up -d`; no
+clone, no toolchain, no migrate step. `compose.yaml` publishes only the web
+service, so `/healthz`, `/version` and `/metrics` are not on the public
+origin. Full procedure: [`docs/self-hosting.md`](docs/self-hosting.md).
+
+Note `compose.yaml` outranks `docker-compose.yml` in Compose's own lookup
+order, which is why the `dev`/`down` Makefile targets name the dev file
+explicitly.
+
+Self-hosting-specific settings: `RUN_MIGRATIONS`, `ALLOW_SIGNUP` (the first
+account is always allowed so a fresh instance can be bootstrapped),
+`METRICS_TOKEN`, `TRUSTED_PROXY_HOPS` (what the per-IP rate limiters key on
+behind the proxy — see `internal/http/ratelimit.go`), `FLOWLENS_REGISTRY`
+(mirror for closed networks). The API binary also has two subcommands used
+before any config exists: `gen-key` and `version`.
+
 ## Local ports (important)
 
 Container Postgres is published on host port **55432** to avoid clashing with a local Postgres on 5432. Inside Docker the API reaches it as `db:5432`. Web on 4000, API on 8080.
@@ -99,5 +124,8 @@ Dev Container note: `.env` records the host port, but the Makefile keeps the env
 ## Further docs
 
 `docs/architecture.md` for detail; `docs/ui-design.md` for the OOUI rules every web screen follows; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first, OOUI, outbox worker, per-project GitLab connection).
+
+`docs/self-hosting.md` is the install/upgrade contract for self-hosters;
+`CONTRIBUTING.md` and `SECURITY.md` are the OSS entry points.
 
 `docs/plans/` holds **time-limited** implementation plans, not conventions — read [`docs/plans/README.md`](docs/plans/README.md) before adding one, and delete a plan once its work ships. There is no plan in flight right now; the issue-sync MVP plan shipped and was deleted once `README.md`/`docs/ui-design.md` absorbed what survived it.

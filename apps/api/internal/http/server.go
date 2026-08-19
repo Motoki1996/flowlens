@@ -67,6 +67,10 @@ type Server struct {
 	sessions         *auth.SessionService
 	cookies          cookieManager
 	webBaseURL       string
+	version          string
+	metricsToken     string
+	trustedProxyHops int
+	allowSignup      bool
 	sessionTTL       time.Duration
 	cipher           *crypto.Cipher
 }
@@ -118,6 +122,10 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		sessions:         auth.NewSessionService(queries, cfg.SessionTTL),
 		cookies:          cookieManager{secure: cfg.IsProduction()},
 		webBaseURL:       cfg.WebBaseURL,
+		version:          cfg.Version,
+		metricsToken:     cfg.MetricsToken,
+		trustedProxyHops: cfg.TrustedProxyHops,
+		allowSignup:      cfg.AllowSignup,
 		sessionTTL:       cfg.SessionTTL,
 		cipher:           cipher,
 	}, nil
@@ -134,7 +142,8 @@ func (s *Server) Router() chi.Router {
 	// operational endpoints scraped by infrastructure rather than used by
 	// callers — issue #96).
 	r.Get("/healthz", s.handleHealth)
-	r.Handle("/metrics", metricsHandler)
+	r.Get("/version", s.handleVersion)
+	r.Handle("/metrics", s.requireMetricsToken(metricsHandler))
 
 	// Local auth endpoints (JSON, unauthenticated).
 	r.Post("/auth/signup", s.handleSignup)

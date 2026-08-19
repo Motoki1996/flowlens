@@ -11,3 +11,6 @@ SELECT * FROM users WHERE username = $1 OR email = $1;
 
 -- name: GetUserByID :one
 SELECT * FROM users WHERE id = $1;
+
+-- name: CountUsers :one
+SELECT COUNT(*) FROM users;

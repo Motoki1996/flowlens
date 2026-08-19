@@ -156,7 +156,7 @@ describe("BacklogListSection", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/projects/p1/backlogs",
+      "/api/v1/projects/p1/backlogs",
       expect.objectContaining({ method: "POST" }),
     );
   });
@@ -237,7 +237,7 @@ describe("BacklogListSection", () => {
 
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/backlogs/b1",
+      "/api/v1/backlogs/b1",
       expect.objectContaining({ method: "PATCH" }),
     );
   });
@@ -297,7 +297,7 @@ describe("BacklogListSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm delete" }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/backlogs/b1",
+      "/api/v1/backlogs/b1",
       expect.objectContaining({ method: "DELETE" }),
     );
   });
@@ -314,7 +314,7 @@ describe("BacklogListSection", () => {
       .map((el) => el.textContent);
     expect(names).toEqual(["Icebox", "Sprint 1"]);
     expect(fetch).toHaveBeenCalledWith(
-      "http://localhost:8080/api/v1/projects/p1/backlogs/order",
+      "/api/v1/projects/p1/backlogs/order",
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ backlogIds: ["b2", "b1"] }),

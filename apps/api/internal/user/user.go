@@ -96,6 +96,13 @@ func (s *Service) SignUp(ctx context.Context, in SignUpInput) (User, error) {
 }
 
 // Authenticate verifies a username-or-email + password pair.
+// Count returns how many accounts exist. It backs the "the first account
+// is always allowed" carve-out in the signup handler, so that an instance
+// started with ALLOW_SIGNUP=false can still be bootstrapped.
+func (s *Service) Count(ctx context.Context) (int64, error) {
+	return s.q.CountUsers(ctx)
+}
+
 func (s *Service) Authenticate(ctx context.Context, identifier, password string) (User, error) {
 	row, err := s.q.GetUserByUsernameOrEmail(ctx, identifier)
 	if err != nil {

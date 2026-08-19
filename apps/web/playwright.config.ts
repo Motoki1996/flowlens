@@ -52,6 +52,12 @@ export default defineConfig({
         SESSION_TTL_HOURS: process.env.SESSION_TTL_HOURS ?? "168",
         ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? "",
         SYNC_WORKER_ENABLED: "false",
+        // The suite's precondition is a database that is already migrated
+        // (docs/testing.md), so leave the startup migration to the deploy
+        // path it exists for rather than racing the harness here.
+        RUN_MIGRATIONS: "false",
+        // The web server below proxies the browser through to this API.
+        TRUSTED_PROXY_HOPS: "1",
       },
     },
     {
@@ -62,7 +68,10 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       env: {
         API_INTERNAL_URL: API_URL,
-        NEXT_PUBLIC_API_BASE_URL: API_URL,
+        // NEXT_PUBLIC_API_BASE_URL is deliberately unset, so the browser
+        // calls this origin and next.config.ts's rewrites proxy through to
+        // the API. That is the shipped self-hosted topology, so it is the
+        // one the e2e suite should exercise.
       },
     },
   ],

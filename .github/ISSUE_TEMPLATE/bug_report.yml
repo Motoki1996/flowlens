@@ -1,0 +1,35 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: FlowLens version
+      description: "From GET /version, or `docker run --rm ghcr.io/motoki1996/flowlens-api:<tag> version`."
+      placeholder: v1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is it running
+      options:
+        - Self-hosted with compose.yaml (prebuilt images)
+        - Self-hosted, images or orchestration of my own
+        - Local development (make dev)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`docker compose logs api` is usually the useful one. Redact tokens before pasting."
+      render: shell

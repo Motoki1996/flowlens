@@ -245,6 +245,10 @@ func (f *FakeQuerier) GetUserByID(_ context.Context, id uuid.UUID) (db.User, err
 	return u, nil
 }
 
+func (f *FakeQuerier) CountUsers(_ context.Context) (int64, error) {
+	return int64(len(f.usersByID)), nil
+}
+
 func (f *FakeQuerier) CreateSession(_ context.Context, arg db.CreateSessionParams) (db.Session, error) {
 	s := db.Session{
 		ID:        uuid.New(),

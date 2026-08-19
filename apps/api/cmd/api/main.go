@@ -3,7 +3,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,9 +29,36 @@ import (
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/webhookapply"
 	"github.com/flowlens/api/internal/webhookevent"
+	"github.com/flowlens/api/migrations"
 )
 
+// version is stamped at link time (see the Makefile's -ldflags). "dev" is
+// what an un-stamped local `go build` reports.
+var version = "dev"
+
 func main() {
+	// Two subcommands run before any configuration is loaded, because they
+	// exist precisely for an operator who has no configuration yet: the
+	// self-hosting quickstart generates ENCRYPTION_KEY with `gen-key`
+	// against this same image (docs/self-hosting.md), so requiring a
+	// DATABASE_URL to produce a random key would be circular.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "gen-key":
+			if err := genKey(os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, "gen-key:", err)
+				os.Exit(1)
+			}
+			return
+		case "version":
+			fmt.Println(version)
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %q (known: gen-key, version)\n", os.Args[1])
+			os.Exit(2)
+		}
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
@@ -37,10 +68,30 @@ func main() {
 	}
 }
 
+// genKey prints a ready-to-paste ENCRYPTION_KEY line: a fresh AES-256 key,
+// base64-encoded the way config.Load expects to read it back.
+func genKey(w io.Writer) error {
+	key := make([]byte, crypto.KeySize)
+	if _, err := rand.Read(key); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "ENCRYPTION_KEY=%s\n", base64.StdEncoding.EncodeToString(key))
+	return err
+}
+
 func run() error {
-	cfg, err := config.Load()
+	cfg, err := config.Load(version)
 	if err != nil {
 		return err
+	}
+	slog.Info("flowlens api starting", "version", cfg.Version, "env", cfg.Env)
+
+	// Bring the schema up before opening the pool the API serves from, so
+	// no handler can observe a half-migrated database.
+	if cfg.RunMigrations {
+		if err := database.Migrate(cfg.DatabaseURL, migrations.FS); err != nil {
+			return err
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

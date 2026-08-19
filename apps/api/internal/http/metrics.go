@@ -1,8 +1,10 @@
 package http
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -70,3 +72,28 @@ func metricsMiddleware(next http.Handler) http.Handler {
 // metricsHandler serves Prometheus text-format metrics, mounted
 // unauthenticated at /metrics next to /healthz.
 var metricsHandler = promhttp.Handler()
+
+// requireMetricsToken guards /metrics with METRICS_TOKEN when one is set.
+//
+// The endpoint is open by default, and the bundled compose file relies on
+// that: it never publishes the API port, so /metrics is reachable only from
+// inside the Docker network (docs/self-hosting.md). A deployment that does
+// expose the API directly sets METRICS_TOKEN and has its scraper send it,
+// since the series carry route names and traffic volumes that need not be
+// public.
+func (s *Server) requireMetricsToken(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.metricsToken == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		const prefix = "Bearer "
+		header := r.Header.Get("Authorization")
+		if !strings.HasPrefix(header, prefix) ||
+			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, prefix)), []byte(s.metricsToken)) != 1 {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "metrics require a bearer token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

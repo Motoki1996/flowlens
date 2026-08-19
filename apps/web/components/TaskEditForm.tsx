@@ -11,10 +11,12 @@ import type {
   ApiError,
   Backlog,
   Priority,
+  Size,
   Progress,
   Task,
 } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
+import { SIZE_OPTIONS, SIZE_POINTS } from "@/lib/size";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -86,6 +88,7 @@ export function TaskEditForm({
   const [startDate, setStartDate] = useState(fromApiDate(task.startDate));
   const [dueOn, setDueOn] = useState(fromApiDate(task.dueOn));
   const [priority, setPriority] = useState<Priority>(task.priority);
+  const [size, setSize] = useState<Size>(task.size);
   const [progress, setProgress] = useState<Progress>(task.progress);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -164,6 +167,7 @@ export function TaskEditForm({
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
+          size,
           progress,
         }),
       });
@@ -302,6 +306,26 @@ export function TaskEditForm({
             <SelectItem value="urgent">Urgent</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+      <div>
+        <label htmlFor="edit-task-size" className="text-foreground block text-sm font-medium">
+          Size
+        </label>
+        <Select value={size} onValueChange={(value) => setSize(value as Size)}>
+          <SelectTrigger id="edit-task-size" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SIZE_OPTIONS.map((option) => (
+              <SelectItem key={option.size} value={option.size}>
+                {option.label} ({SIZE_POINTS[option.size]} pts)
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-muted-foreground mt-1 text-xs">
+          Weights this task in the project&apos;s velocity. Not synced to GitLab.
+        </p>
       </div>
       <div>
         <label htmlFor="edit-task-progress" className="text-foreground block text-sm font-medium">

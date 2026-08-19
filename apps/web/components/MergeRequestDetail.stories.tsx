@@ -49,6 +49,7 @@ const task: Task = {
   startDate: null,
   priority: "medium",
   progress: "in_progress",
+  size: "m",
   designStartedAt: null,
   implementationStartedAt: null,
   position: 0,

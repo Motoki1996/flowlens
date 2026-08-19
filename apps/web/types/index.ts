@@ -36,6 +36,14 @@ export type Priority = "low" | "medium" | "high" | "urgent";
 // both ways, while progress never does and neither value writes the other.
 export type Progress = "not_started" | "in_progress" | "on_hold" | "done";
 
+// Size is a task's coarse estimate of how much work it is, used to weight
+// velocity so throughput measures work finished rather than merely tasks
+// finished. Task-only (a backlog's size would just be the sum of its tasks'),
+// app-only, and never synced to GitLab. Deliberately a five-value T-shirt
+// scale rather than a points field; the numeric weights (xs=1 .. xl=8) live
+// server-side in apps/api/internal/velocity. "m" is the default.
+export type Size = "xs" | "s" | "m" | "l" | "xl";
+
 export interface Backlog {
   id: string;
   projectId: string;
@@ -102,6 +110,7 @@ export interface Task {
   startDate: string | null;
   priority: Priority;
   progress: Progress;
+  size: Size;
   // Explicit spec-driven-development phase markers, set via POST
   // .../design-started and .../implementation-started rather than derived
   // from progress transitions — see internal/flowmetrics' Design/
@@ -520,10 +529,18 @@ export interface VelocityPeriod {
    *  including the pre-migration-000020 gap task_progress_events can't
    *  backfill. */
   completedByUnknown: number;
+  /** `completed` weighted by each task's size; the three By* fields below
+   *  split it by the same actor rule the counts use and always sum to it. */
+  completedPoints: number;
+  completedPointsByUser: number;
+  completedPointsByAgent: number;
+  completedPointsByUnknown: number;
   /** Simple average of `completed` over this period and up to 3 preceding
    *  ones (fewer once fewer exist) — the value actually meant to be read,
-   *  since a single period's count is too noisy to act on alone. */
+   *  since a single period's count is too noisy to act on alone.
+   *  movingAveragePoints is the same window over completedPoints. */
   movingAverage: number;
+  movingAveragePoints: number;
   /** False for a still-running period (typically the most recent one) — a
    *  partial bucket that reads low by construction, not a real slowdown. */
   complete: boolean;
@@ -552,4 +569,18 @@ export interface Velocity {
   /** openTaskCount / averageVelocity; null whenever averageVelocity is null
    *  or 0. */
   forecastPeriods: number | null;
+  /** The point-denominated counterparts of the three fields above, by
+   *  identical rules (averageVelocityPoints also excludes still-running
+   *  periods). Once sizes are actually set these are the more trustworthy
+   *  forecast, since they account for the remaining work being unusually
+   *  large or small rather than assuming an average-sized task. */
+  openTaskPoints: number;
+  averageVelocityPoints: number | null;
+  forecastPeriodsByPoints: number | null;
+  /** Fraction (0..1) of the completed tasks counted here whose size is
+   *  something other than the default "m". Every task predating the size
+   *  column reads as "m", so while this is 0 the point series is just a 3x
+   *  copy of the count series and the UI says so rather than presenting it
+   *  as new information. */
+  sizedTaskRatio: number;
 }

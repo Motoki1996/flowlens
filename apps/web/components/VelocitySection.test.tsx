@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import type { Velocity, VelocityPeriod } from "@/types";
 import { VelocitySection } from "./VelocitySection";
 
@@ -11,7 +11,12 @@ function makePeriod(overrides: Partial<VelocityPeriod>): VelocityPeriod {
     completedByUser: 0,
     completedByAgent: 0,
     completedByUnknown: 0,
+    completedPoints: 0,
+    completedPointsByUser: 0,
+    completedPointsByAgent: 0,
+    completedPointsByUnknown: 0,
     movingAverage: 0,
+    movingAveragePoints: 0,
     complete: true,
     ...overrides,
   };
@@ -27,6 +32,10 @@ function makeVelocity(overrides: Partial<Velocity>): Velocity {
     openTaskCount: 0,
     averageVelocity: null,
     forecastPeriods: null,
+    openTaskPoints: 0,
+    averageVelocityPoints: null,
+    forecastPeriodsByPoints: null,
+    sizedTaskRatio: 0,
     ...overrides,
   };
 }
@@ -65,7 +74,7 @@ describe("VelocitySection", () => {
     });
     render(<VelocitySection velocity={velocity} />);
     expect(screen.getByText("9.5 tasks/week")).toBeInTheDocument();
-    expect(screen.getByText("34 open ≈ 3.6 weeks left")).toBeInTheDocument();
+    expect(screen.getByText("34 tasks open ≈ 3.6 weeks left")).toBeInTheDocument();
     expect(screen.queryByText("No completed tasks yet.")).not.toBeInTheDocument();
   });
 
@@ -78,7 +87,7 @@ describe("VelocitySection", () => {
     });
     render(<VelocitySection velocity={velocity} />);
     expect(screen.getByText("Not enough completed tasks yet")).toBeInTheDocument();
-    expect(screen.getByText("5 open — no forecast yet")).toBeInTheDocument();
+    expect(screen.getByText("5 tasks open — no forecast yet")).toBeInTheDocument();
   });
 
   it("draws one bar per period including still-running ones, and dims the incomplete period's bars", () => {
@@ -121,6 +130,98 @@ describe("VelocitySection", () => {
       "Unknown",
       "Moving average",
     ]);
+  });
+
+  // The Tasks/Points tab switches bars, moving average and both stats
+  // together. Points come from the API already size-weighted; the UI never
+  // multiplies anything itself.
+  it("switches the stats and the chart to the size-weighted point series", () => {
+    const velocity = makeVelocity({
+      averageVelocity: 2,
+      forecastPeriods: 5,
+      openTaskCount: 10,
+      averageVelocityPoints: 11,
+      forecastPeriodsByPoints: 4,
+      openTaskPoints: 44,
+      sizedTaskRatio: 0.8,
+      periods: [
+        makePeriod({
+          completed: 2,
+          completedByUser: 1,
+          completedByAgent: 1,
+          movingAverage: 2,
+          completedPoints: 11,
+          completedPointsByUser: 3,
+          completedPointsByAgent: 8,
+          movingAveragePoints: 11,
+        }),
+      ],
+    });
+    render(<VelocitySection velocity={velocity} />);
+
+    expect(screen.getByText("2.0 tasks/week")).toBeInTheDocument();
+    expect(screen.getByText("10 tasks open ≈ 5.0 weeks left")).toBeInTheDocument();
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((t) => t.textContent)).toEqual(["Tasks", "Points"]);
+    fireEvent.click(tabs[1]);
+
+    expect(screen.getByText("11.0 points/week")).toBeInTheDocument();
+    expect(screen.getByText("44 points open ≈ 4.0 weeks left")).toBeInTheDocument();
+    expect(screen.queryByText("2.0 tasks/week")).not.toBeInTheDocument();
+  });
+
+  // Every task defaults to size M, so with nothing sized the point series is
+  // arithmetically 3x the counts. Presenting that as a second measurement
+  // would be a lie, so the card says so — but only on the Points tab.
+  it("warns that points carry no information while no completed task has been sized", () => {
+    const velocity = makeVelocity({
+      sizedTaskRatio: 0,
+      averageVelocity: 1,
+      averageVelocityPoints: 3,
+      periods: [makePeriod({ completed: 1, completedByUser: 1, completedPoints: 3, completedPointsByUser: 3 })],
+    });
+    render(<VelocitySection velocity={velocity} />);
+
+    expect(screen.queryByText(/has been given a size yet/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole("tab")[1]);
+    expect(screen.getByText(/has been given a size yet/)).toBeInTheDocument();
+  });
+
+  it("does not warn about sizes once some completed task has been sized", () => {
+    const velocity = makeVelocity({
+      sizedTaskRatio: 0.25,
+      averageVelocityPoints: 4,
+      periods: [makePeriod({ completed: 1, completedByUser: 1, completedPoints: 5, completedPointsByUser: 5 })],
+    });
+    render(<VelocitySection velocity={velocity} />);
+
+    fireEvent.click(screen.getAllByRole("tab")[1]);
+    expect(screen.queryByText(/has been given a size yet/)).not.toBeInTheDocument();
+  });
+
+  // A null average is "no complete period to average yet", which is not the
+  // same as a velocity of zero and must never render as a number.
+  it("shows placeholders on the Points tab too when the point average is null", () => {
+    const velocity = makeVelocity({
+      averageVelocity: null,
+      forecastPeriods: null,
+      averageVelocityPoints: null,
+      forecastPeriodsByPoints: null,
+      openTaskCount: 4,
+      openTaskPoints: 15,
+      periods: [makePeriod({ completed: 1, completedByUser: 1, completedPoints: 3, complete: false })],
+    });
+    render(<VelocitySection velocity={velocity} />);
+
+    fireEvent.click(screen.getAllByRole("tab")[1]);
+    expect(screen.getByText("Not enough completed tasks yet")).toBeInTheDocument();
+    expect(screen.getByText("15 points open — no forecast yet")).toBeInTheDocument();
+  });
+
+  it("offers no unit tab at all when there is nothing to chart", () => {
+    render(<VelocitySection velocity={makeVelocity({})} />);
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
   });
 
   it("shows a truncated-periods note when the API reports truncated", () => {

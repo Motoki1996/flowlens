@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -13,6 +14,7 @@ import {
 import type { MetricsInterval, Velocity, VelocityPeriod } from "@/types";
 import { periodLabel } from "@/lib/dates";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MetricTabs } from "@/components/MetricTabs";
 import {
   ChartContainer,
   ChartLegend,
@@ -23,11 +25,11 @@ import {
 } from "@/components/ui/chart";
 
 /** The three actor buckets a completed task falls into (issue #195), stacked
- *  bottom-to-top in this order — see globals.css's --chart-N comment. Reused
- *  from slots 1-3 (already used by DeliveryMetricsSection's own, separate
- *  stage chart; a chart's colors only need to be internally consistent, not
- *  globally unique — see GanttChart/TaskTimelineSection's own reuse of
- *  slot 1). */
+ *  bottom-to-top in this order — see app/globals.css's --chart-N assignment
+ *  comment. Reused from slots 1-3 (already used by DeliveryMetricsSection's
+ *  own, separate stage chart; a chart's colors only need to be internally
+ *  consistent, not globally unique — see GanttChart/TaskTimelineSection's own
+ *  reuse of slot 1). */
 const velocityChartConfig = {
   completedByUser: { label: "User", color: "var(--chart-1)" },
   completedByAgent: { label: "Agent", color: "var(--chart-2)" },
@@ -55,24 +57,39 @@ function barOpacity(entry: { complete: boolean }): number {
   return entry.complete ? 1 : INCOMPLETE_PERIOD_OPACITY;
 }
 
-/** formatVelocity renders averageVelocity the way the issue's own copy does:
- *  "9.5 tasks/week", pluralized by interval — or a placeholder once there is
- *  no complete period to average yet. */
-function formatVelocity(averageVelocity: number | null, interval: MetricsInterval): string {
+/** Unit switches the whole card between counting tasks and counting
+ *  size-weighted points. Both come from the same response — the server has
+ *  already applied the weights (apps/api/internal/velocity), so this never
+ *  multiplies anything itself. */
+type Unit = "tasks" | "points";
+
+const UNIT_TABS: ReadonlyArray<{ key: Unit; label: string }> = [
+  { key: "tasks", label: "Tasks" },
+  { key: "points", label: "Points" },
+];
+
+const UNIT_NOUN: Record<Unit, string> = { tasks: "tasks", points: "points" };
+
+/** formatVelocity renders averageVelocity as "9.5 tasks/week" — or a
+ *  placeholder once there is no complete period to average yet, which is
+ *  different from a velocity of zero and must not be shown as a number. */
+function formatVelocity(averageVelocity: number | null, interval: MetricsInterval, unit: Unit): string {
   if (averageVelocity == null) return "Not enough completed tasks yet";
-  return `${averageVelocity.toFixed(1)} tasks/${interval}`;
+  return `${averageVelocity.toFixed(1)} ${UNIT_NOUN[unit]}/${interval}`;
 }
 
-/** formatForecast renders forecastPeriods + openTaskCount together: "34 open
- *  ≈ 3.6 weeks left" — null whenever averageVelocity is null or 0, in which
- *  case a forecast can't be made. */
+/** formatForecast renders the forecast alongside what is left: "34 open ≈ 3.6
+ *  weeks left". null whenever the matching average is null or zero, in which
+ *  case no forecast can honestly be made. */
 function formatForecast(
   forecastPeriods: number | null,
-  openTaskCount: number,
+  openTotal: number,
   interval: MetricsInterval,
+  unit: Unit,
 ): string {
-  if (forecastPeriods == null) return `${openTaskCount} open — no forecast yet`;
-  return `${openTaskCount} open ≈ ${forecastPeriods.toFixed(1)} ${interval}s left`;
+  const remaining = `${openTotal} ${UNIT_NOUN[unit]} open`;
+  if (forecastPeriods == null) return `${remaining} — no forecast yet`;
+  return `${remaining} ≈ ${forecastPeriods.toFixed(1)} ${interval}s left`;
 }
 
 const PERIOD_CHART_HEIGHT = 220;
@@ -93,6 +110,16 @@ const PERIOD_CHART_HEIGHT = 220;
  * bucketing" when omitted from the URL), the velocity API always buckets
  * (defaulting to "week" server-side) — periods are the metric here, not an
  * optional add-on — so this chart always draws one bar per period.
+ *
+ * The Tasks/Points tab switches which of the two series the whole card reads
+ * (bars, moving average and both stats together, never a mix). Points weight
+ * each task by its size, so they answer "how much work finished" where the
+ * raw count answers "how many items finished" — a count can be inflated for
+ * free by splitting tasks smaller. Both arrive pre-weighted from the API.
+ * When no completed task in range has been given a size, the point series is
+ * necessarily a flat 3x copy of the counts (every task defaults to size M),
+ * and the card says so rather than passing a rescaled duplicate off as a
+ * second opinion.
  */
 export function VelocitySection({
   velocity,
@@ -101,23 +128,41 @@ export function VelocitySection({
   velocity: Velocity | null;
   error?: boolean;
 }) {
+  const [unit, setUnit] = useState<Unit>("tasks");
+
   const periods: VelocityPeriod[] = velocity?.periods ?? [];
   const hasData = periods.length > 0;
   const interval = velocity?.interval ?? "week";
+  const points = unit === "points";
 
   const chartData = periods.map((period) => ({
     row: periodLabel(period, interval),
-    completedByUser: period.completedByUser,
-    completedByAgent: period.completedByAgent,
-    completedByUnknown: period.completedByUnknown,
-    movingAverage: period.movingAverage,
+    completedByUser: points ? period.completedPointsByUser : period.completedByUser,
+    completedByAgent: points ? period.completedPointsByAgent : period.completedByAgent,
+    completedByUnknown: points ? period.completedPointsByUnknown : period.completedByUnknown,
+    movingAverage: points ? period.movingAveragePoints : period.movingAverage,
     complete: period.complete,
   }));
+
+  const averageVelocity = points ? velocity?.averageVelocityPoints ?? null : velocity?.averageVelocity ?? null;
+  const forecastPeriods = points ? velocity?.forecastPeriodsByPoints ?? null : velocity?.forecastPeriods ?? null;
+  const openTotal = (points ? velocity?.openTaskPoints : velocity?.openTaskCount) ?? 0;
+
+  // Every task starts at size M, so before anyone sizes anything the points
+  // series carries no information the task count doesn't. Saying so is the
+  // difference between an honest chart and one that implies a second
+  // measurement it doesn't have.
+  const nothingSized = !!velocity && velocity.sizedTaskRatio === 0;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base font-medium">Velocity</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="text-base font-medium">Velocity</CardTitle>
+          {hasData && !error ? (
+            <MetricTabs label="Unit" tabs={UNIT_TABS} value={unit} onChange={setUnit} />
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
         {error ? (
@@ -130,16 +175,23 @@ export function VelocitySection({
               <div>
                 <dt className="text-muted-foreground">Average velocity (last complete periods)</dt>
                 <dd className="text-foreground font-medium">
-                  {formatVelocity(velocity!.averageVelocity, interval)}
+                  {formatVelocity(averageVelocity, interval, unit)}
                 </dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Forecast</dt>
                 <dd className="text-foreground font-medium">
-                  {formatForecast(velocity!.forecastPeriods, velocity!.openTaskCount, interval)}
+                  {formatForecast(forecastPeriods, openTotal, interval, unit)}
                 </dd>
               </div>
             </dl>
+
+            {points && nothingSized ? (
+              <p className="text-muted-foreground text-xs">
+                No completed task in this range has been given a size yet, so points are just the task count
+                &times; 3 (every task starts at size M). Set sizes on tasks to make this differ from Tasks.
+              </p>
+            ) : null}
 
             {velocity!.truncated ? (
               <p className="text-muted-foreground text-xs">Showing the most recent 52 periods only.</p>

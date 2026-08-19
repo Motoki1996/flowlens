@@ -1120,6 +1120,58 @@ creating or editing one never reads or writes the other. Priority is no longer
 the board's axis — see [Task & backlog progress](#task--backlog-progress)
 below — but it stays a badge on every board card.
 
+### Task size
+
+A task carries a `size` — one of `xs`, `s`, `m`, `l`, `xl`, defaulting to
+`m`, the exact middle of the five — a coarse estimate of how much work it is.
+Its purpose is to weight [Velocity](#velocity-issue-195): a raw completed-task
+count can be inflated for free by splitting tasks smaller, and size is what
+lets throughput measure the work finished rather than merely the items
+finished. Like `priority`, it is **app-only and never synced to GitLab**
+(GitLab CE issues have no size field; weight is an EE feature), and an issue
+imported from GitLab starts at `m` for a human to size afterwards.
+
+**This is deliberately not a story-point field.** Issue #195 rejected
+estimates on the grounds that they rot when a human has to re-enter a number
+on every task, and that reasoning still stands: `size` is a five-value
+T-shirt scale, and the numeric weights it maps to —
+`xs`=1, `s`=2, `m`=3, `l`=5, `xl`=8 — live in
+`apps/api/internal/velocity`, not in the schema and not in anyone's typing.
+The steps are Fibonacci-ish rather than linear because uncertainty grows
+faster than size does. There is still no sprint/timebox concept, and no
+"points per sprint" figure.
+
+**Backlogs deliberately have no size**, unlike `priority` and `progress`
+which both objects carry: a backlog's priority is genuinely independent of
+its tasks', but its size would just be the sum of theirs, and a hand-entered
+one could only ever contradict them.
+
+- `POST`/`PATCH` on `/api/v1/projects/{projectID}/tasks` and
+  `/api/v1/tasks/{taskID}` accept `size`, under the same partial-update
+  contract as the rest of the task: a body without `size` leaves the stored
+  value alone, while an absent `size` on create or an explicit empty string
+  on either resets it to `m`. Any other value is rejected with 400
+  `invalid_size`.
+- `GET .../tasks` and `GET /api/v1/tasks` accept `?size=xs|s|m|l|xl` to
+  narrow the list and `?sort=size` to order biggest-first (`xl` → `xs`),
+  falling back to the manual position order to break ties — the same shape
+  `?priority=`/`?sort=priority` already has, and equally independent of the
+  drag-reorder `position` field.
+- `GET /api/v1/tasks/{taskID}/context` reports `size`, so an agent picking up
+  a task knows how large the work is expected to be before it starts.
+
+In the web app, size is a select on the task single view's edit form
+(labelled with its point weight, e.g. "L (5 pts)"), a badge on task rows and
+the task single view, and a filter plus a sort option on the task collection.
+The badge is deliberately neutral at every size rather than escalating in
+colour the way priority does: size is not urgency, and a red XL would read as
+a problem when it only means "this is big".
+
+**Every task predating this feature reads as `m`.** That cannot be
+backfilled, and it means points-based velocity is exactly 3x the task count
+until sizes are actually set — see the `sizedTaskRatio` field and the note
+the Velocity card shows on its Points tab.
+
 ### Task & backlog progress
 
 A task and a backlog each also carry a `progress` — one of `not_started`,
@@ -1660,14 +1712,20 @@ issue**, `"interval"` is `null`, and `"periods"` is empty.
 Throughput — completed tasks per period — as distinct from
 [Delivery metrics](#delivery-metrics-issue-113) and
 [Flow metrics](#flow-metrics-issue-171), which both measure how long one
-item took, not how many finished in a window. FlowLens deliberately has no
-story-point/estimate concept (there's no sprint/timebox construct a "points
-per sprint" figure could hang off, and asking an AI-agent-driven team to
-hand-enter estimates every task isn't worth the input cost), so velocity is
-a raw completed-task count — split by `task_progress_events.actor_kind`
-into user/agent/unknown, a breakdown no story-point tool can give, since
-"how much throughput did the agent actually produce" only means something
-once agents are doing the work.
+item took, not how many finished in a window. It is reported two ways at
+once: a raw completed-task count, and a total weighted by each task's
+[size](#task-size). Both are split by `task_progress_events.actor_kind` into
+user/agent/unknown, a breakdown no story-point tool can give, since "how
+much throughput did the agent actually produce" only means something once
+agents are doing the work.
+
+The two units answer different questions and neither is redundant: a count
+alone can be inflated for free by splitting tasks smaller, while points
+alone hide whether the work arrived as a few large items or many small ones.
+There is still deliberately no story-point/estimate concept — no sprint or
+timebox for a "points per sprint" figure to hang off, and no number anyone
+types per task; `size` is a five-value T-shirt scale and the weights
+(`xs`=1 … `xl`=8) live in `internal/velocity`.
 
 - A task's **completion time** is `min(its first progress='done'
   transition's occurred_at, tasks.closed_at)`, whichever is non-nil; a task
@@ -1705,6 +1763,8 @@ once agents are doing the work.
   - `complete`: `false` for a still-running period (typically the most
     recent one), so a chart can tell a partial bucket apart from a
     finished one.
+  - `completedPoints`, split the same three ways and by the same actor rule,
+    weighting each completed task by its size.
   - The response also reports `openTaskCount` (current
     `status='open' AND progress<>'done'` count, regardless of `from`/`to`),
     `averageVelocity` (the mean `completed` over the most recent up to 4
@@ -1713,6 +1773,18 @@ once agents are doing the work.
     complete yet), and `forecastPeriods` (`openTaskCount / averageVelocity`,
     `null` whenever that's `null` or `0`): how many more periods, at the
     recent pace, the remaining open tasks would take.
+  - `openTaskPoints`, `averageVelocityPoints` and `forecastPeriodsByPoints`
+    are the point-denominated counterparts of those three, by identical
+    rules — `averageVelocityPoints` also excludes still-running periods.
+    Once sizes are actually set, the point forecast is the more trustworthy
+    of the two, since it accounts for the remaining work being unusually
+    large or small instead of assuming an average-sized task.
+  - `sizedTaskRatio` (0..1) is the fraction of the completed tasks counted
+    whose size is something other than the default `m`. Every task predating
+    the `size` column reads as `m`, so while this is `0` the point series is
+    arithmetically 3x the count series and carries no extra information —
+    the web card says so rather than presenting a rescaled duplicate as a
+    second opinion.
 - Web (issue #196): a "Velocity" card on the Project single view, placed
   immediately *before* the "Delivery metrics" card so velocity reads
   alongside lead time rather than as a screen of its own — there is
@@ -1727,6 +1799,12 @@ once agents are doing the work.
     `completedByUnknown`, in that order both in the stack and in the legend.
     `movingAverage` is overlaid as a line on the same chart, since a single
     period's bar is too noisy to read on its own.
+  - A `Tasks`/`Points` tab switches bars, moving average and both stats
+    together (never a mix) between the count and the size-weighted series.
+    Both arrive pre-weighted from the API; the client never multiplies
+    anything itself. On the Points tab, a project where no completed task has
+    been sized yet gets a one-line note saying the series is just the task
+    count x 3.
   - A still-running period (`complete: false`) draws its bars at reduced
     opacity, so a partial bucket is never misread as a slowdown.
   - `averageVelocity`/`forecastPeriods` are shown as a small stat row (e.g.

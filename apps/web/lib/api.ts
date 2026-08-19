@@ -25,6 +25,7 @@ import type {
   Priority,
   Progress,
   Project,
+  Size,
   ProjectMember,
   SyncJob,
   SyncRun,
@@ -207,7 +208,8 @@ export type ProjectTasksFilter = {
   status?: TaskStatus;
   priority?: Priority;
   progress?: Progress;
-  sort?: "dueOn" | "priority" | "progress" | "updatedAt";
+  size?: Size;
+  sort?: "dueOn" | "priority" | "progress" | "size" | "updatedAt";
   // "me": only tasks assigned to the caller's own registered GitLab identity
   // for this project's GitLab connection (issue #102, extended to this
   // screen by issue #146). Omitted means no filter.
@@ -230,6 +232,7 @@ export const getTasks = cache(
     if (filter.status) params.set("status", filter.status);
     if (filter.priority) params.set("priority", filter.priority);
     if (filter.progress) params.set("progress", filter.progress);
+    if (filter.size) params.set("size", filter.size);
     if (filter.sort) params.set("sort", filter.sort);
     if (filter.assignee) params.set("assignee", filter.assignee);
     if (filter.q) params.set("q", filter.q);
@@ -256,11 +259,12 @@ export type AllTasksFilter = {
   status?: TaskStatus;
   priority?: Priority;
   progress?: Progress;
+  size?: Size;
   dueBefore?: string;
   dueAfter?: string;
   startedBefore?: string;
   projectIds?: string[];
-  sort?: "dueOn" | "priority" | "progress" | "updatedAt";
+  sort?: "dueOn" | "priority" | "progress" | "size" | "updatedAt";
   limit?: number;
   // "me": only tasks assigned to the caller's own registered GitLab identity
   // for that task's project (issue #102). Omitted means no filter.
@@ -281,6 +285,7 @@ export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TaskWith
   if (filter.status) params.set("status", filter.status);
   if (filter.priority) params.set("priority", filter.priority);
   if (filter.progress) params.set("progress", filter.progress);
+  if (filter.size) params.set("size", filter.size);
   if (filter.dueBefore) params.set("dueBefore", filter.dueBefore);
   if (filter.dueAfter) params.set("dueAfter", filter.dueAfter);
   if (filter.startedBefore) params.set("startedBefore", filter.startedBefore);

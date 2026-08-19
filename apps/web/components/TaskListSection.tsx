@@ -15,6 +15,7 @@ import type {
   ApiError,
   Backlog,
   Priority,
+  Size,
   Progress,
   Task,
   TaskDependency,
@@ -22,6 +23,7 @@ import type {
 } from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
+import { SIZE_OPTIONS, SIZE_LABELS, SIZE_POINTS } from "@/lib/size";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +42,7 @@ import { DateField } from "@/components/DateField";
 import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { SizeBadge } from "@/components/SizeBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskBoardSection } from "@/components/TaskBoardSection";
@@ -61,7 +64,7 @@ const TaskTimelineSection = dynamic(
 // (issue #76's `?sort=dueOn|priority|updatedAt` on `GET /api/v1/tasks`, see
 // AllTasksSection) so the two screens don't disagree on what "sort by
 // priority" means.
-type TaskSort = "manual" | "dueOn" | "priority" | "progress" | "updatedAt";
+type TaskSort = "manual" | "dueOn" | "priority" | "progress" | "size" | "updatedAt";
 
 /** The `?due=` values (issue #148): a task's dueStatus (lib/dashboard.ts)
  *  narrowed to the three a person would filter by — "later" isn't offered
@@ -116,6 +119,7 @@ const FILTER_DEFAULTS = {
   status: "open",
   progress: "all",
   priority: "all",
+  size: "all",
   due: "all",
   sort: "manual",
 } as const;
@@ -194,6 +198,10 @@ function NewTaskForm({
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [priority, setPriority] = useState<Priority>("medium");
+  // Sizing at creation time, not only in the edit form: a size nobody sets
+  // leaves every task at the default, which makes points-based velocity a
+  // flat multiple of the task count and the whole feature inert.
+  const [size, setSize] = useState<Size>("m");
   const [progress, setProgress] = useState<Progress>("not_started");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -229,6 +237,7 @@ function NewTaskForm({
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
+          size,
           progress,
         }),
       });
@@ -310,6 +319,23 @@ function NewTaskForm({
             {PRIORITY_COLUMNS.map((option) => (
               <SelectItem key={option.priority} value={option.priority}>
                 {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div>
+        <label htmlFor="new-task-size" className="text-foreground block text-sm font-medium">
+          Size
+        </label>
+        <Select value={size} onValueChange={(value) => setSize(value as Size)}>
+          <SelectTrigger id="new-task-size" className="mt-1 w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SIZE_OPTIONS.map((option) => (
+              <SelectItem key={option.size} value={option.size}>
+                {option.label} ({SIZE_POINTS[option.size]} pts)
               </SelectItem>
             ))}
           </SelectContent>
@@ -427,6 +453,7 @@ export function TaskListSection({
   sort = "manual",
   progressFilter,
   priorityFilter,
+  sizeFilter,
   assigneeMe = false,
   assigneeAvailability = "available",
   today,
@@ -457,6 +484,8 @@ export function TaskListSection({
   progressFilter?: Progress;
   /** The applied `?priority=`; undefined means all of them, same as progress. */
   priorityFilter?: Priority;
+  /** The applied `?size=`; undefined means all of them, same as priority. */
+  sizeFilter?: Size;
   /** True when `?assignee=me` is set (issue #146, extending issue #102's
    *  cross-project toggle to this project-scoped collection): only tasks
    *  assigned to the caller's own registered GitLab identity. Held in the
@@ -642,6 +671,10 @@ export function TaskListSection({
     updateQuery({ priority: value === FILTER_DEFAULTS.priority ? undefined : value });
   }
 
+  function changeSizeFilter(value: "all" | Size) {
+    updateQuery({ size: value === FILTER_DEFAULTS.size ? undefined : value });
+  }
+
   function changeAssigneeMe(checked: boolean) {
     updateQuery({ assignee: checked ? "me" : undefined });
   }
@@ -673,6 +706,7 @@ export function TaskListSection({
     statusFilter !== FILTER_DEFAULTS.status ||
     Boolean(progressFilter) ||
     Boolean(priorityFilter) ||
+    Boolean(sizeFilter) ||
     assigneeMe ||
     sort !== FILTER_DEFAULTS.sort ||
     Boolean(labelFilter) ||
@@ -707,6 +741,9 @@ export function TaskListSection({
     }
     if (progressFilter) {
       return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} tasks.`;
+    }
+    if (sizeFilter) {
+      return `No ${SIZE_LABELS[sizeFilter]} tasks.`;
     }
     if (priorityFilter) {
       return `No ${PRIORITY_LABELS[priorityFilter].toLowerCase()} priority tasks.`;
@@ -1049,6 +1086,19 @@ export function TaskListSection({
                   ))}
                 </SelectContent>
               </Select>
+              <Select value={sizeFilter ?? "all"} onValueChange={(value) => changeSizeFilter(value as "all" | Size)}>
+                <SelectTrigger size="sm" aria-label="Size" className="w-32">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All sizes</SelectItem>
+                  {SIZE_OPTIONS.map((option) => (
+                    <SelectItem key={option.size} value={option.size}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Select value={dueFilter ?? "all"} onValueChange={changeDueFilter}>
                 <SelectTrigger size="sm" aria-label="Due date" className="w-36">
                   <SelectValue />
@@ -1079,6 +1129,7 @@ export function TaskListSection({
                   <SelectItem value="dueOn">Due date</SelectItem>
                   <SelectItem value="priority">Priority</SelectItem>
                   <SelectItem value="progress">Progress</SelectItem>
+                  <SelectItem value="size">Size</SelectItem>
                   <SelectItem value="updatedAt">Recently updated</SelectItem>
                 </SelectContent>
               </Select>
@@ -1462,6 +1513,7 @@ export function TaskListSection({
                                   {task.dueOn ? <DueDateLabel dueOn={task.dueOn} now={now} /> : null}
                                   <PriorityBadge priority={task.priority} />
                                   <ProgressBadge progress={task.progress} />
+                                  <SizeBadge size={task.size} />
                                   {/* Closed is the one status worth a badge —
                                       open is the default nearly every task is
                                       in, so stating it on every row was pure

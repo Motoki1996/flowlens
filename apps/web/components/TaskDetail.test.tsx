@@ -43,6 +43,7 @@ function makeTask(overrides: Partial<Task>): Task {
     startDate: null,
     priority: "medium",
     progress: "not_started",
+    size: "m",
     designStartedAt: null,
     implementationStartedAt: null,
     position: 0,
@@ -211,6 +212,7 @@ describe("TaskDetail", () => {
       dueOn: "2026-02-01T00:00:00Z",
       priority: "medium",
       progress: "not_started",
+      size: "m",
     });
   });
 

@@ -27,6 +27,7 @@ import { TaskDependencySection } from "@/components/TaskDependencySection";
 import { TaskEditForm } from "@/components/TaskEditForm";
 import { TaskMergeRequestsSection } from "@/components/TaskMergeRequestsSection";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { SizeBadge } from "@/components/SizeBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 
@@ -365,9 +366,9 @@ export function TaskDetail({
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
-                {/* Priority and progress are FlowLens's own axes, not the
-                    GitLab issue state, so they sit with the other attributes
-                    rather than beside the title. */}
+                {/* Priority, progress and size are FlowLens's own axes, not
+                    the GitLab issue state, so they sit with the other
+                    attributes rather than beside the title. */}
                 <div>
                   <dt className="text-muted-foreground">Priority</dt>
                   <dd className="text-foreground">
@@ -378,6 +379,12 @@ export function TaskDetail({
                   <dt className="text-muted-foreground">Progress</dt>
                   <dd className="text-foreground">
                     <ProgressBadge progress={task.progress} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Size</dt>
+                  <dd className="text-foreground">
+                    <SizeBadge size={task.size} />
                   </dd>
                 </div>
                 <div>

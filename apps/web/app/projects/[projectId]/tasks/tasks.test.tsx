@@ -91,6 +91,7 @@ describe("TasksPage", () => {
         labels: [],
         priority: "medium",
         progress: "in_progress",
+        size: "m",
       },
     ]);
     render(
@@ -100,6 +101,7 @@ describe("TasksPage", () => {
           backlog: "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21",
           status: "all",
           progress: "in_progress",
+          size: "m",
           priority: "high",
           assignee: "me",
           sort: "priority",
@@ -112,6 +114,7 @@ describe("TasksPage", () => {
       backlogId: "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21",
       status: undefined,
       progress: "in_progress",
+      size: "m",
       priority: "high",
       assignee: "me",
       sort: "priority",
@@ -241,6 +244,7 @@ describe("TasksPage", () => {
           labels: [],
           priority: "medium",
           progress: "not_started",
+          size: "m",
           dueOn: "2026-08-04",
         },
       ]);

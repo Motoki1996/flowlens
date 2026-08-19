@@ -8,6 +8,7 @@ upgrade, back up, and harden. The only prerequisite is Docker with Compose
 - [Putting it on a real hostname](#putting-it-on-a-real-hostname)
 - [Upgrading](#upgrading)
 - [Backup and restore](#backup-and-restore)
+- [Recovering a lost password](#recovering-a-lost-password)
 - [Hardening](#hardening)
 - [Closed networks and air-gapped installs](#closed-networks-and-air-gapped-installs)
 - [Configuration reference](#configuration-reference)
@@ -143,6 +144,33 @@ instance before you need it.
 Running against a managed Postgres instead of the bundled container is
 supported and recommended for anything you care about: point `DATABASE_URL`
 at it (with `sslmode=require`), and remove the `db` service.
+
+## Recovering a lost password
+
+Anyone can change their own password from **Settings → Password** while
+they are signed in. There is no reset-by-email flow — FlowLens has no mail
+transport, and an air-gapped instance would have nowhere to send to — so an
+account that is locked out is recovered by you, against the database.
+
+```bash
+# 1. Produce a hash. Read from stdin, so the password never reaches your
+#    shell history or the process list. -i is required for that to work.
+docker compose run --rm -i api hash-password
+# type the new password, press Enter; a $2a$… hash is printed
+
+# 2. Install it.
+docker compose exec -T db psql -U flowlens flowlens \
+  -c "UPDATE users SET password_hash = '<the hash>' WHERE username = 'someone';"
+
+# 3. Cut any session that account still has open, so a stolen one does not
+#    outlive the reset.
+docker compose exec -T db psql -U flowlens flowlens \
+  -c "DELETE FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = 'someone');"
+```
+
+Tell the person to change it again from Settings once they are back in:
+step 2 means you have seen their password, and step 1 enforces only the
+same 8-character minimum signup does.
 
 ## Hardening
 

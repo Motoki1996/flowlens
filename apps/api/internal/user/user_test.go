@@ -147,3 +147,65 @@ func sortedKeys(m map[string]any) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+func TestService_ChangePassword_ReplacesTheHash(t *testing.T) {
+	q := dbtest.New()
+	svc := user.NewService(q)
+	ctx := context.Background()
+
+	u, err := svc.SignUp(ctx, user.SignUpInput{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
+	require.NoError(t, err)
+	before, err := q.GetUserByID(ctx, u.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.ChangePassword(ctx, u.ID, "hunter22", "correct-horse"))
+
+	// The new password authenticates and the old one no longer does — the
+	// property that matters, checked through the service rather than by
+	// comparing hashes.
+	_, err = svc.Authenticate(ctx, "octocat", "correct-horse")
+	assert.NoError(t, err)
+	_, err = svc.Authenticate(ctx, "octocat", "hunter22")
+	assert.ErrorIs(t, err, user.ErrInvalidCredentials)
+
+	after, err := q.GetUserByID(ctx, u.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, before.PasswordHash, after.PasswordHash)
+	assert.NotContains(t, after.PasswordHash, "correct-horse")
+}
+
+func TestService_ChangePassword_Rejects(t *testing.T) {
+	tests := []struct {
+		name    string
+		current string
+		next    string
+		wantErr error
+	}{
+		{"wrong current password", "not-my-password", "correct-horse", user.ErrInvalidCredentials},
+		{"empty current password", "", "correct-horse", user.ErrInvalidCredentials},
+		{"new password too short", "hunter22", "short", user.ErrPasswordTooShort},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := user.NewService(q)
+			ctx := context.Background()
+			u, err := svc.SignUp(ctx, user.SignUpInput{Username: "octocat", Email: "octocat@example.com", Password: "hunter22"})
+			require.NoError(t, err)
+
+			err = svc.ChangePassword(ctx, u.ID, tt.current, tt.next)
+			assert.ErrorIs(t, err, tt.wantErr)
+
+			// A rejected change must leave the old password working.
+			_, err = svc.Authenticate(ctx, "octocat", "hunter22")
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestService_ChangePassword_UnknownUser(t *testing.T) {
+	svc := user.NewService(dbtest.New())
+
+	err := svc.ChangePassword(context.Background(), uuid.New(), "hunter22", "correct-horse")
+	assert.ErrorIs(t, err, user.ErrNotFound)
+}

@@ -69,6 +69,17 @@ func (s *SessionService) Authenticate(ctx context.Context, rawToken string) (use
 	return user.FromRow(row.User), nil
 }
 
+// RevokeAll deletes every session the user holds. A password change calls
+// it (issue #210) and then issues a fresh session, so a session stolen
+// elsewhere is cut and the caller's own token is rotated rather than
+// surviving the change.
+func (s *SessionService) RevokeAll(ctx context.Context, userID uuid.UUID) error {
+	if err := s.q.DeleteSessionsByUserID(ctx, userID); err != nil {
+		return fmt.Errorf("auth: revoke all sessions: %w", err)
+	}
+	return nil
+}
+
 // Revoke deletes a session by its raw token. Revoking an unknown token is
 // not an error (logout is idempotent).
 func (s *SessionService) Revoke(ctx context.Context, rawToken string) error {

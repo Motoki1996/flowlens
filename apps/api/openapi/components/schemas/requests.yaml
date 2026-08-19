@@ -23,6 +23,13 @@ PutGitlabIdentityRequest:
     gitlabUsername: { type: string }
   required: [gitlabBaseUrl, gitlabUserId, gitlabUsername]
 
+ChangePasswordRequest:
+  type: object
+  properties:
+    currentPassword: { type: string }
+    newPassword: { type: string, minLength: 8 }
+  required: [currentPassword, newPassword]
+
 CreateProjectRequest:
   type: object
   properties:

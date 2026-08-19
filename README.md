@@ -861,6 +861,33 @@ not create or store one — and that only one `/flowlens:work` runs at a
 time: there is no task-claiming endpoint yet, so concurrent agents can
 race onto the same task.
 
+### Changing your password
+
+Every account can change its own password from **Settings → Password**, or
+directly against the API. The route is session-only: a project API token
+can never call it, since a token must not be able to take over the account
+it acts as (see [What a token can't reach](#what-a-token-cant-reach)
+above).
+
+```bash
+curl -X PUT "$API_BASE_URL/api/v1/me/password" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: flowlens_session=$SESSION_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -d '{"currentPassword": "…", "newPassword": "…"}'
+```
+
+A successful change (`204`) **revokes every session the user holds** and
+issues a fresh one in the same response. Changing a password is what
+someone does when they think a session of theirs is in the wrong hands, so
+no older token survives it — including the one that made the call, which is
+replaced rather than kept, so the caller stays signed in.
+
+There is no password-reset email flow: FlowLens has no mail transport and
+targets closed networks. An account whose password is lost is recovered by
+an operator, with `flowlens-api hash-password` — see
+[Recovering a lost password](docs/self-hosting.md#recovering-a-lost-password).
+
 ### Project membership
 
 A project can have more than one user, each with a role — `owner`,

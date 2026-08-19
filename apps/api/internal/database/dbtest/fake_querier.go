@@ -254,6 +254,20 @@ func (f *FakeQuerier) CountUsers(_ context.Context) (int64, error) {
 	return int64(len(f.usersByID)), nil
 }
 
+func (f *FakeQuerier) UpdateUserPassword(_ context.Context, arg db.UpdateUserPasswordParams) error {
+	u, ok := f.usersByID[arg.ID]
+	if !ok {
+		return pgx.ErrNoRows
+	}
+	u.PasswordHash = arg.PasswordHash
+	// All three indexes hold copies of the same row, so a write has to land
+	// in each of them or a later lookup by username/email reads the old hash.
+	f.usersByUsername[u.Username] = u
+	f.usersByEmail[u.Email] = u
+	f.usersByID[u.ID] = u
+	return nil
+}
+
 func (f *FakeQuerier) CreateSession(_ context.Context, arg db.CreateSessionParams) (db.Session, error) {
 	s := db.Session{
 		ID:        uuid.New(),
@@ -280,6 +294,15 @@ func (f *FakeQuerier) GetUserBySessionToken(_ context.Context, tokenHash string)
 
 func (f *FakeQuerier) DeleteSessionByTokenHash(_ context.Context, tokenHash string) error {
 	delete(f.sessions, tokenHash)
+	return nil
+}
+
+func (f *FakeQuerier) DeleteSessionsByUserID(_ context.Context, userID uuid.UUID) error {
+	for k, s := range f.sessions {
+		if s.UserID == userID {
+			delete(f.sessions, k)
+		}
+	}
 	return nil
 }
 

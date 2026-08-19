@@ -16,6 +16,7 @@ endif
 
 API_DIR := apps/api
 WEB_DIR := apps/web
+AGENT_KIT_DIR := packages/agent-kit
 MIGRATIONS := $(API_DIR)/migrations
 DATABASE_URL ?= postgres://flowlens:flowlens@localhost:55432/flowlens?sslmode=disable
 
@@ -29,6 +30,7 @@ setup: ## Install dependencies for api and web, and create .env if missing.
 	@test -f .env || (cp .env.example .env && echo "Created .env from .env.example")
 	cd $(API_DIR) && go mod download
 	cd $(WEB_DIR) && npm install
+	cd $(AGENT_KIT_DIR) && npm install
 
 # compose.yaml (the file self-hosters download) outranks docker-compose.yml
 # in Compose's own lookup order, so the dev stack is always named explicitly.
@@ -64,9 +66,10 @@ generate: ## Generate type-safe DB code from SQL (sqlc) and bundle the OpenAPI s
 	cd $(WEB_DIR) && npx @redocly/cli bundle ../api/openapi/openapi.yaml -o ../api/openapi/openapi.bundled.yaml
 
 .PHONY: test
-test: ## Run api and web unit tests.
+test: ## Run api, web and agent-kit unit tests.
 	cd $(API_DIR) && go test ./...
 	cd $(WEB_DIR) && npm test -- --run
+	cd $(AGENT_KIT_DIR) && npm test
 
 .PHONY: test-integration
 test-integration: ## Run api integration tests (requires a running Postgres).

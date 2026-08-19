@@ -71,6 +71,18 @@ AvailableGitlabProject:
     name: { type: string }
     webUrl: { type: string }
 
+ProgressSyncSettings:
+  type: object
+  properties:
+    projectId: { type: string, format: uuid }
+    enabled:
+      type: boolean
+      description: >-
+        Opt-in (issue #202, off by default): when true, closing a task's
+        linked GitLab issue also moves the task's progress to 'done'.
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+
 NotificationSettings:
   type: object
   properties:

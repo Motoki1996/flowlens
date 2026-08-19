@@ -136,6 +136,13 @@ type NotificationSetting struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ProgressSyncSetting struct {
+	ProjectID uuid.UUID          `json:"project_id"`
+	Enabled   bool               `json:"enabled"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Project struct {
 	ID          uuid.UUID          `json:"id"`
 	OwnerUserID uuid.UUID          `json:"owner_user_id"`

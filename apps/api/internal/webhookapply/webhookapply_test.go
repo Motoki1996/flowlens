@@ -540,6 +540,120 @@ func TestProcessNext_CloseThenReopen_TableDriven(t *testing.T) {
 	}
 }
 
+// Progress sync on issue close (issue #202) is opt-in per project, and only
+// fires on a genuine open->closed transition.
+func TestProcessNext_ProgressSyncOnClose_SettingOff_LeavesProgressAlone(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Task")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 60)
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{IID: 60, Title: "Task", State: "closed"}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	got, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
+	require.NoError(t, err)
+	assert.Equal(t, task.StatusClosed, got.Status)
+	assert.Equal(t, task.ProgressNotStarted, got.Progress)
+
+	events, err := f.q.ListTaskProgressEventsByTask(ctx, tsk.ID)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+}
+
+func TestProcessNext_ProgressSyncOnClose_SettingOn_MovesProgressToDone(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	_, err := f.q.UpsertProgressSyncSettings(ctx, db.UpsertProgressSyncSettingsParams{ProjectID: f.projectID, Enabled: true})
+	require.NoError(t, err)
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Task")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 61)
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{IID: 61, Title: "Task", State: "closed"}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	got, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
+	require.NoError(t, err)
+	assert.Equal(t, task.StatusClosed, got.Status)
+	assert.Equal(t, task.ProgressDone, got.Progress)
+
+	events, err := f.q.ListTaskProgressEventsByTask(ctx, tsk.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, task.ActorKindGitlab, events[0].ActorKind)
+	assert.Equal(t, task.ProgressNotStarted, events[0].FromProgress)
+	assert.Equal(t, task.ProgressDone, events[0].ToProgress)
+}
+
+// A redelivered "closed" webhook for a task already closed must never
+// append a second progress event.
+func TestProcessNext_ProgressSyncOnClose_DuplicateDelivery_NoDuplicateEvent(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	_, err := f.q.UpsertProgressSyncSettings(ctx, db.UpsertProgressSyncSettingsParams{ProjectID: f.projectID, Enabled: true})
+	require.NoError(t, err)
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Task")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 62)
+
+	base := time.Now()
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{IID: 62, Title: "Task", State: "closed", UpdatedAt: base}))
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	// A second, later delivery of the same close.
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{IID: 62, Title: "Task", State: "closed", UpdatedAt: base.Add(time.Minute)}))
+	claimed, err = f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	events, err := f.q.ListTaskProgressEventsByTask(ctx, tsk.ID)
+	require.NoError(t, err)
+	assert.Len(t, events, 1)
+}
+
+// Reopening the GitLab issue must never revert progress: the sync is
+// one-directional (closed -> done only).
+func TestProcessNext_ProgressSyncOnClose_Reopen_DoesNotRevertProgress(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	_, err := f.q.UpsertProgressSyncSettings(ctx, db.UpsertProgressSyncSettingsParams{ProjectID: f.projectID, Enabled: true})
+	require.NoError(t, err)
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Task")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 63)
+
+	base := time.Now()
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{IID: 63, Title: "Task", State: "closed", UpdatedAt: base}))
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{IID: 63, Title: "Task", State: "opened", UpdatedAt: base.Add(time.Minute)}))
+	claimed, err = f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	got, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
+	require.NoError(t, err)
+	assert.Equal(t, task.StatusOpen, got.Status)
+	assert.Equal(t, task.ProgressDone, got.Progress, "progress must stay done after reopen")
+
+	events, err := f.q.ListTaskProgressEventsByTask(ctx, tsk.ID)
+	require.NoError(t, err)
+	assert.Len(t, events, 1, "reopen must not append its own progress event")
+}
+
 // The worker processes webhook_events oldest received first.
 func TestProcessNext_OldestPendingEventClaimedFirst(t *testing.T) {
 	f := newFixture(t, linkedproject.ScopeAll, nil)

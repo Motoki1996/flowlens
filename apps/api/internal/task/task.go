@@ -70,9 +70,11 @@ const (
 // synced to GitLab per the 000011 migration. It is deliberately separate from
 // Status: that is the GitLab issue state (open/closed) and syncs both ways,
 // while progress is FlowLens's own and neither value ever writes the other —
-// a task closed on GitLab keeps whatever progress it had. SortProgress is the
-// Sort value that orders by progress rank, running not_started first through
-// done, so the order reads as the work advancing.
+// a task closed on GitLab keeps whatever progress it had. The one deliberate,
+// opt-in exception is internal/progresssync (issue #202): a project can turn
+// on moving progress to ProgressDone when its GitLab issue closes.
+// SortProgress is the Sort value that orders by progress rank, running
+// not_started first through done, so the order reads as the work advancing.
 const (
 	ProgressNotStarted = "not_started"
 	ProgressInProgress = "in_progress"
@@ -103,13 +105,18 @@ const (
 	SortSize = "size"
 )
 
-// Actor kind values Update accepts to attribute a task_progress_events row
-// (issue #169), the same vocabulary task_comments.author_kind (and
-// taskcomment.AuthorKindUser/AuthorKindAgent) already uses, minus 'gitlab':
-// progress is app-only and never moves via the GitLab sync path.
+// Actor kind values that attribute a task_progress_events row.
+// ActorKindUser/ActorKindAgent (issue #169) are the vocabulary
+// task_comments.author_kind (and taskcomment.AuthorKindUser/AuthorKindAgent)
+// already uses, and are the only ones Update accepts: a session or bearer
+// caller is always a user or an agent, never GitLab. ActorKindGitlab
+// (issue #202) is written only by internal/progresssync, when a project has
+// opted into moving progress to done on a GitLab issue close — progress
+// otherwise stays app-only and never moves via the GitLab sync path.
 const (
-	ActorKindUser  = "user"
-	ActorKindAgent = "agent"
+	ActorKindUser   = "user"
+	ActorKindAgent  = "agent"
+	ActorKindGitlab = "gitlab"
 )
 
 // Sort values accepted by ListForOwner's CrossProjectFilter.Sort, alongside

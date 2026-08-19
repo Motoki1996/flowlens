@@ -235,6 +235,71 @@ func TestHandleImport_StaleIssue_DoesNotOverwriteNewerLocalState(t *testing.T) {
 	assert.Equal(t, original.Title, tasks[0].Title, "a stale delivery must not overwrite the task's title")
 }
 
+// Progress sync on issue close (issue #202) must also work through the
+// periodic resync path, not just inbound webhooks.
+func TestHandleResync_ProgressSyncOnClose_SettingOff_LeavesProgressAlone(t *testing.T) {
+	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{issue(1, "task", "opened", time.Now())}}
+	f := newFixture(t, fake)
+	f.runImport(t, true)
+
+	fake.Issues = []gitlab.Issue{issue(1, "task", "closed", time.Now().Add(time.Hour))}
+	f.runResync(t, true)
+
+	tasks := f.tasksInProject(t)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "closed", tasks[0].Status)
+	assert.Equal(t, "not_started", tasks[0].Progress)
+
+	events, err := f.q.ListTaskProgressEventsByTask(context.Background(), tasks[0].ID)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+}
+
+func TestHandleResync_ProgressSyncOnClose_SettingOn_MovesProgressToDone(t *testing.T) {
+	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{issue(1, "task", "opened", time.Now())}}
+	f := newFixture(t, fake)
+	f.runImport(t, true)
+
+	_, err := f.q.UpsertProgressSyncSettings(context.Background(), db.UpsertProgressSyncSettingsParams{ProjectID: f.project.ID, Enabled: true})
+	require.NoError(t, err)
+
+	fake.Issues = []gitlab.Issue{issue(1, "task", "closed", time.Now().Add(time.Hour))}
+	f.runResync(t, true)
+
+	tasks := f.tasksInProject(t)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, "closed", tasks[0].Status)
+	assert.Equal(t, "done", tasks[0].Progress)
+
+	events, err := f.q.ListTaskProgressEventsByTask(context.Background(), tasks[0].ID)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "gitlab", events[0].ActorKind)
+	assert.Equal(t, "done", events[0].ToProgress)
+}
+
+// A second resync run over an already-closed issue (import/resync's own
+// idempotent re-run guarantee) must never append a second progress event.
+func TestHandleResync_ProgressSyncOnClose_RunTwice_NoDuplicateEvent(t *testing.T) {
+	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{issue(1, "task", "opened", time.Now())}}
+	f := newFixture(t, fake)
+	f.runImport(t, true)
+
+	_, err := f.q.UpsertProgressSyncSettings(context.Background(), db.UpsertProgressSyncSettingsParams{ProjectID: f.project.ID, Enabled: true})
+	require.NoError(t, err)
+
+	fake.Issues = []gitlab.Issue{issue(1, "task", "closed", time.Now().Add(time.Hour))}
+	f.runResync(t, true)
+	f.runResync(t, true)
+
+	tasks := f.tasksInProject(t)
+	require.Len(t, tasks, 1)
+
+	events, err := f.q.ListTaskProgressEventsByTask(context.Background(), tasks[0].ID)
+	require.NoError(t, err)
+	assert.Len(t, events, 1)
+}
+
 func TestService_TriggerResync_ConflictWhenRunAlreadyInProgress(t *testing.T) {
 	f := newFixture(t, &gitlab.FakeClient{})
 	ctx := context.Background()

@@ -844,6 +844,28 @@ func (f *FakeQuerier) SeedTaskDesignImplementationStarted(taskID uuid.UUID, desi
 	return t
 }
 
+// SeedTaskClosedAt sets an existing task's status to 'closed' and closed_at
+// to closedAt directly, for tests (e.g. internal/velocity) that need a
+// task closed the way a GitLab-side issue close would, without going
+// through progress at all.
+func (f *FakeQuerier) SeedTaskClosedAt(taskID uuid.UUID, closedAt time.Time) db.Task {
+	t := f.tasksByID[taskID]
+	t.Status = "closed"
+	t.ClosedAt = pgtype.Timestamptz{Time: closedAt, Valid: true}
+	f.storeTask(t)
+	return t
+}
+
+// SeedTaskProgress sets an existing task's progress directly, for tests
+// (e.g. internal/velocity's CountOpenTasksForVelocity coverage) that need a
+// task's progress without going through a real transition/event.
+func (f *FakeQuerier) SeedTaskProgress(taskID uuid.UUID, progress string) db.Task {
+	t := f.tasksByID[taskID]
+	t.Progress = progress
+	f.storeTask(t)
+	return t
+}
+
 func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title string, backlogID pgtype.UUID) db.Task {
 	t := db.Task{
 		ID:              uuid.New(),
@@ -1148,6 +1170,63 @@ func (f *FakeQuerier) ListTaskProgressEventsForFlowMetrics(_ context.Context, ar
 		return items[i].OccurredAt.Time.Before(items[j].OccurredAt.Time)
 	})
 	return items, nil
+}
+
+// ListTaskCompletionsForVelocity mirrors the SQL: one row per project task,
+// carrying closed_at and the first done-transition's occurred_at/actor_kind
+// (empty string when there is no such event), letting internal/velocity
+// resolve each task's completion time in Go the same way the real query's
+// caller does.
+func (f *FakeQuerier) ListTaskCompletionsForVelocity(_ context.Context, arg db.ListTaskCompletionsForVelocityParams) ([]db.ListTaskCompletionsForVelocityRow, error) {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return []db.ListTaskCompletionsForVelocityRow{}, nil
+	}
+	items := []db.ListTaskCompletionsForVelocityRow{}
+	for _, t := range f.tasks {
+		if t.ProjectID != arg.ProjectID {
+			continue
+		}
+		row := db.ListTaskCompletionsForVelocityRow{
+			TaskID:   t.ID,
+			ClosedAt: t.ClosedAt,
+		}
+		if occurredAt, actorKind, ok := f.firstDoneEvent(t.ID); ok {
+			row.DoneOccurredAt = pgtype.Timestamptz{Time: occurredAt, Valid: true}
+			row.DoneActorKind = actorKind
+		}
+		items = append(items, row)
+	}
+	return items, nil
+}
+
+// firstDoneEvent returns the occurred_at/actor_kind of taskID's earliest
+// transition to progress='done', mirroring the real query's ORDER BY
+// occurred_at ASC LIMIT 1 lateral join.
+func (f *FakeQuerier) firstDoneEvent(taskID uuid.UUID) (occurredAt time.Time, actorKind string, ok bool) {
+	for _, e := range f.taskProgressEvents {
+		if e.TaskID != taskID || e.ToProgress != "done" || !e.OccurredAt.Valid {
+			continue
+		}
+		if !ok || e.OccurredAt.Time.Before(occurredAt) {
+			occurredAt, actorKind, ok = e.OccurredAt.Time, e.ActorKind, true
+		}
+	}
+	return occurredAt, actorKind, ok
+}
+
+// CountOpenTasksForVelocity mirrors the SQL: projectID's tasks with
+// status='open' AND progress<>'done', gated by ownerUserID's membership.
+func (f *FakeQuerier) CountOpenTasksForVelocity(_ context.Context, arg db.CountOpenTasksForVelocityParams) (int64, error) {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return 0, nil
+	}
+	var count int64
+	for _, t := range f.tasks {
+		if t.ProjectID == arg.ProjectID && t.Status == "open" && t.Progress != "done" {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // backlogsInFlowMetricsRange returns the IDs of projectID's backlogs that
@@ -1785,12 +1864,20 @@ func (f *FakeQuerier) ListTaskProgressEventsByTask(_ context.Context, taskID uui
 // internal/flowmetrics) can control occurred_at precisely instead of
 // getting CreateTaskProgressEvent's now().
 func (f *FakeQuerier) SeedTaskProgressEvent(taskID uuid.UUID, fromProgress, toProgress string, occurredAt time.Time) db.TaskProgressEvent {
+	return f.SeedTaskProgressEventWithActor(taskID, fromProgress, toProgress, occurredAt, "agent")
+}
+
+// SeedTaskProgressEventWithActor is SeedTaskProgressEvent with an explicit
+// actor_kind, for tests (e.g. internal/velocity's user/agent/unknown
+// breakdown) that need to control which actor a transition is attributed
+// to instead of always getting "agent".
+func (f *FakeQuerier) SeedTaskProgressEventWithActor(taskID uuid.UUID, fromProgress, toProgress string, occurredAt time.Time, actorKind string) db.TaskProgressEvent {
 	e := db.TaskProgressEvent{
 		ID:           uuid.New(),
 		TaskID:       taskID,
 		FromProgress: fromProgress,
 		ToProgress:   toProgress,
-		ActorKind:    "agent",
+		ActorKind:    actorKind,
 		OccurredAt:   pgtype.Timestamptz{Time: occurredAt, Valid: true},
 	}
 	f.taskProgressEvents = append(f.taskProgressEvents, e)

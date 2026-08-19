@@ -28,6 +28,7 @@ import (
 	"github.com/flowlens/api/internal/taskcomment"
 	"github.com/flowlens/api/internal/taskdependency"
 	"github.com/flowlens/api/internal/user"
+	"github.com/flowlens/api/internal/velocity"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -54,6 +55,7 @@ type Server struct {
 	mergeRequests    *mergerequest.Service
 	deliveryMetrics  *deliverymetrics.Service
 	flowMetrics      *flowmetrics.Service
+	velocity         *velocity.Service
 	gitlabConns      *gitlabconn.Service
 	gitlabIdentities *gitlabidentity.Service
 	linkedProjects   *linkedproject.Service
@@ -109,6 +111,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		mergeRequests:    mergerequest.NewService(queries, projects),
 		deliveryMetrics:  deliverymetrics.NewService(queries, projects),
 		flowMetrics:      flowmetrics.NewService(queries, projects),
+		velocity:         velocity.NewService(queries, projects),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(queries),
 		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
@@ -245,6 +248,11 @@ func (s *Server) Router() chi.Router {
 				// introduced. Same session-only, chart-for-a-human scoping
 				// as /metrics above.
 				projects.Get("/{projectID}/flow-metrics", s.handleGetProjectFlowMetrics)
+
+				// Velocity (issue #195): completed-task throughput per
+				// period, split by user/agent. Same session-only, chart-for
+				// -a-human scoping as /metrics and /flow-metrics above.
+				projects.Get("/{projectID}/velocity", s.handleGetProjectVelocity)
 			})
 
 			protected.Route("/api-tokens", func(tokens chi.Router) {

@@ -29,6 +29,7 @@ import (
 	"github.com/flowlens/api/internal/taskcomment"
 	"github.com/flowlens/api/internal/taskdependency"
 	"github.com/flowlens/api/internal/user"
+	"github.com/flowlens/api/internal/velocity"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -88,6 +89,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		mergeRequests:    mergerequest.NewService(q, projects),
 		deliveryMetrics:  deliverymetrics.NewService(q, projects),
 		flowMetrics:      flowmetrics.NewService(q, projects),
+		velocity:         velocity.NewService(q, projects),
 		gitlabConns:      gitlabConns,
 		gitlabIdentities: gitlabidentity.NewService(q),
 		linkedProjects:   linkedproject.NewService(q, txRunner, projects, gitlabConns, cipher, appPublicURL),

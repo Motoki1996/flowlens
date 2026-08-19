@@ -56,6 +56,13 @@ type Querier interface {
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
 	CompleteRepositorySyncRun(ctx context.Context, arg CompleteRepositorySyncRunParams) (RepositorySyncRun, error)
 	CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error)
+	// CountOpenTasksForVelocity returns projectID's current count of
+	// not-yet-completed tasks (status='open' AND progress<>'done'), used to
+	// forecast how many periods the remaining work will take at the recent
+	// velocity. Always the current count, regardless of any ?from=/?to= the
+	// request passed.
+	//
+	CountOpenTasksForVelocity(ctx context.Context, arg CountOpenTasksForVelocityParams) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
@@ -490,6 +497,27 @@ type Querier interface {
 	ListProjectMembersWithUser(ctx context.Context, projectID uuid.UUID) ([]ListProjectMembersWithUserRow, error)
 	ListProjectsByMember(ctx context.Context, userID uuid.UUID) ([]Project, error)
 	ListTaskCommentsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskComment, error)
+	// Velocity aggregation (issue #195): throughput (completed tasks per
+	// period), not lead time — see internal/velocity for how the two queries
+	// below are combined into a completion time per task and bucketed.
+	// ListTaskCompletionsForVelocity returns one row per in-project task,
+	// carrying both possible completion signals so internal/velocity can pick
+	// the earlier of the two (never both): tasks.closed_at (set when a linked
+	// GitLab issue closes, which never touches tasks.progress — see
+	// UpsertTaskFromGitlabIssue in tasks.sql) and the occurred_at/actor_kind of
+	// the task's *first* transition to progress='done' (task_progress_events
+	// only exists from migration 000020 on, so a task done before that has no
+	// such row and is only reachable via closed_at). since/until are
+	// deliberately not applied here: a completion time is derived from two
+	// columns in Go, so filtering has to happen after that derivation, not in
+	// SQL.
+	//
+	// done_actor_kind is COALESCEd to '' rather than left NULL: sqlc's static
+	// nullability inference doesn't see through the LATERAL join and would
+	// otherwise generate a non-nullable Go string that panics scanning a real
+	// NULL. internal/velocity only reads it when done_occurred_at is valid, so
+	// the '' case (no done transition) is never looked at.
+	ListTaskCompletionsForVelocity(ctx context.Context, arg ListTaskCompletionsForVelocityParams) ([]ListTaskCompletionsForVelocityRow, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
 	ListTaskProgressEventsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskProgressEvent, error)
 	// ListTaskProgressEventsForFlowMetrics returns every task_progress_events

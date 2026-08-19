@@ -363,6 +363,22 @@ TaskDependency:
     successorTaskId: { type: string, format: uuid }
     createdAt: { type: string, format: date-time }
 
+BulkCreateTasksResponse:
+  type: object
+  properties:
+    tasks:
+      type: array
+      items: { $ref: '#/BulkCreatedTask' }
+    dependencies:
+      type: array
+      items: { $ref: '#/TaskDependency' }
+
+BulkCreatedTask:
+  type: object
+  properties:
+    ref: { type: string, description: The request's ref for this task (BulkCreateTaskItem.ref). }
+    task: { $ref: '#/Task' }
+
 TaskComment:
   type: object
   properties:

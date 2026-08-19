@@ -1087,6 +1087,71 @@ func TestHandleReorderTasks_ForeignProjectGets404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
+func TestHandleBulkCreateTasks(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	body := bulkCreateTasksRequest{
+		Tasks: []bulkTaskRequest{
+			{Ref: "t1", Title: "Design"},
+			{Ref: "t2", Title: "Implement", Priority: "high"},
+		},
+		Dependencies: []bulkDependencyRequest{
+			{PredecessorRef: "t1", SuccessorRef: "t2"},
+		},
+	}
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks/bulk", body, token)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	var resp struct {
+		Tasks []struct {
+			Ref  string         `json:"ref"`
+			Task map[string]any `json:"task"`
+		} `json:"tasks"`
+		Dependencies []map[string]any `json:"dependencies"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Tasks, 2)
+	require.Len(t, resp.Dependencies, 1)
+	assert.Equal(t, "Design", resp.Tasks[0].Task["title"])
+}
+
+func TestHandleBulkCreateTasks_RejectsCyclicDependency(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	body := bulkCreateTasksRequest{
+		Tasks: []bulkTaskRequest{
+			{Ref: "t1", Title: "A"},
+			{Ref: "t2", Title: "B"},
+		},
+		Dependencies: []bulkDependencyRequest{
+			{PredecessorRef: "t1", SuccessorRef: "t2"},
+			{PredecessorRef: "t2", SuccessorRef: "t1"},
+		},
+	}
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks/bulk", body, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	// All-or-nothing rollback needs a real transaction to observe — see
+	// TestBulkCreate_AllOrNothing_RealPostgres in internal/task's
+	// integration tests; dbtest.FakeTxRunner runs its closure directly
+	// against the fake with no rollback semantics, so it can't verify that
+	// here.
+}
+
+func TestHandleBulkCreateTasks_ForeignProjectGets404(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+
+	_, intruderToken := loginSession(t, s, q)
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks/bulk",
+		bulkCreateTasksRequest{Tasks: []bulkTaskRequest{{Ref: "t1", Title: "A"}}}, intruderToken)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
 func TestHandleListTasks_RejectsInvalidSizeQuery(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

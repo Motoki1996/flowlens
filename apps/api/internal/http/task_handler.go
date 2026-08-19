@@ -59,6 +59,32 @@ type reorderTasksRequest struct {
 	TaskIDs   []uuid.UUID `json:"taskIds"`
 }
 
+// bulkCreateTasksRequest is POST .../tasks/bulk's body: a batch of tasks
+// (each keyed by a request-scoped ref) plus dependencies between them,
+// created together in one transaction. See task.BulkCreateParams.
+type bulkCreateTasksRequest struct {
+	Tasks        []bulkTaskRequest       `json:"tasks"`
+	Dependencies []bulkDependencyRequest `json:"dependencies"`
+}
+
+type bulkTaskRequest struct {
+	Ref         string                      `json:"ref"`
+	Title       string                      `json:"title"`
+	Description string                      `json:"description"`
+	BacklogID   *uuid.UUID                  `json:"backlogId"`
+	Labels      []string                    `json:"labels"`
+	DueOn       *time.Time                  `json:"dueOn"`
+	StartDate   *time.Time                  `json:"startDate"`
+	Priority    string                      `json:"priority"`
+	Size        string                      `json:"size"`
+	AIContext   *upsertTaskAIContextRequest `json:"aiContext"`
+}
+
+type bulkDependencyRequest struct {
+	PredecessorRef string `json:"predecessorRef"`
+	SuccessorRef   string `json:"successorRef"`
+}
+
 type upsertTaskAIContextRequest struct {
 	AcceptanceCriteria string `json:"acceptanceCriteria"`
 	AIContext          string `json:"aiContext"`
@@ -420,6 +446,67 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
+// handleBulkCreateTasks creates a batch of tasks and the dependencies
+// between them in one all-or-nothing transaction (issue #201): either every
+// task, dependency and outbox sync job commits, or none of it does. See
+// task.Service.BulkCreate.
+func (s *Server) handleBulkCreateTasks(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	projectID, ok := projectIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+
+	var req bulkCreateTasksRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
+		return
+	}
+
+	params := task.BulkCreateParams{
+		Tasks:        make([]task.BulkTaskParams, len(req.Tasks)),
+		Dependencies: make([]task.BulkDependencyParams, len(req.Dependencies)),
+	}
+	for i, t := range req.Tasks {
+		bt := task.BulkTaskParams{
+			Ref: t.Ref,
+			CreateParams: task.CreateParams{
+				Title:       t.Title,
+				Description: t.Description,
+				BacklogID:   t.BacklogID,
+				Labels:      t.Labels,
+				DueOn:       t.DueOn,
+				StartDate:   t.StartDate,
+				Priority:    t.Priority,
+				Size:        t.Size,
+			},
+		}
+		if t.AIContext != nil {
+			bt.AIContext = &task.AIContextParams{
+				AcceptanceCriteria: t.AIContext.AcceptanceCriteria,
+				AIContext:          t.AIContext.AIContext,
+				AllowedScope:       t.AIContext.AllowedScope,
+				ForbiddenScope:     t.AIContext.ForbiddenScope,
+			}
+		}
+		params.Tasks[i] = bt
+	}
+	for i, d := range req.Dependencies {
+		params.Dependencies[i] = task.BulkDependencyParams{
+			PredecessorRef: d.PredecessorRef,
+			SuccessorRef:   d.SuccessorRef,
+		}
+	}
+
+	result, err := s.tasks.BulkCreate(r.Context(), u.ID, projectID, params)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
 // handleGetTask returns one task, scoped to the authenticated user via its
 // project.
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
@@ -655,31 +742,65 @@ func (s *Server) handleUpsertTaskAIContext(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, aiContext)
 }
 
-// writeTaskError maps a task domain error to its HTTP response.
+// writeTaskError maps a task domain error to its HTTP response. A
+// *task.BulkError (from BulkCreate) is unwrapped first so the offending
+// ref, if any, is appended to the message; the inner error still drives the
+// status code and error code exactly as it would outside a bulk request.
 func writeTaskError(w http.ResponseWriter, err error) {
+	var bulkErr *task.BulkError
+	if errors.As(err, &bulkErr) {
+		status, code, message := taskErrorDetails(bulkErr.Err)
+		if bulkErr.Ref != "" {
+			message = fmt.Sprintf("%s (ref %q)", message, bulkErr.Ref)
+		}
+		writeError(w, status, code, message)
+		return
+	}
+	status, code, message := taskErrorDetails(err)
+	writeError(w, status, code, message)
+}
+
+// taskErrorDetails maps a task domain error to the HTTP status, error code
+// and message writeTaskError (and writeTaskError's bulk-request path)
+// responds with.
+func taskErrorDetails(err error) (status int, code, message string) {
 	switch {
 	case errors.Is(err, task.ErrInvalidTitle):
-		writeError(w, http.StatusBadRequest, "invalid_title", "title must be 1-255 characters")
+		return http.StatusBadRequest, "invalid_title", "title must be 1-255 characters"
 	case errors.Is(err, task.ErrInvalidSize):
-		writeError(w, http.StatusBadRequest, "invalid_size", "size must be one of xs, s, m, l, xl")
+		return http.StatusBadRequest, "invalid_size", "size must be one of xs, s, m, l, xl"
 	case errors.Is(err, task.ErrInvalidPriority):
-		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
+		return http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent"
 	case errors.Is(err, task.ErrInvalidProgress):
-		writeError(w, http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done")
+		return http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done"
 	case errors.Is(err, task.ErrBacklogNotInProject):
-		writeError(w, http.StatusBadRequest, "invalid_backlog", "backlog belongs to a different project")
+		return http.StatusBadRequest, "invalid_backlog", "backlog belongs to a different project"
 	case errors.Is(err, task.ErrAIContextFieldTooLong):
-		writeError(w, http.StatusBadRequest, "ai_context_field_too_long", "AI context fields must be at most 20000 characters")
+		return http.StatusBadRequest, "ai_context_field_too_long", "AI context fields must be at most 20000 characters"
 	case errors.Is(err, task.ErrSyncNotFailed):
-		writeError(w, http.StatusConflict, "sync_not_failed", "gitlab sync is not currently failed")
+		return http.StatusConflict, "sync_not_failed", "gitlab sync is not currently failed"
 	case errors.Is(err, task.ErrTaskIDsMismatch):
-		writeError(w, http.StatusBadRequest, "task_ids_mismatch", "taskIds must exactly match the current tasks in that backlog")
+		return http.StatusBadRequest, "task_ids_mismatch", "taskIds must exactly match the current tasks in that backlog"
+	case errors.Is(err, task.ErrBulkTasksEmpty):
+		return http.StatusBadRequest, "bulk_tasks_empty", "tasks must include at least one task"
+	case errors.Is(err, task.ErrBulkTooManyTasks):
+		return http.StatusBadRequest, "bulk_too_many_tasks", "tasks must not exceed 100"
+	case errors.Is(err, task.ErrBulkRefEmpty):
+		return http.StatusBadRequest, "bulk_ref_empty", "every task must have a non-empty ref"
+	case errors.Is(err, task.ErrBulkDuplicateRef):
+		return http.StatusBadRequest, "bulk_duplicate_ref", "task refs must be unique within the request"
+	case errors.Is(err, task.ErrBulkUnknownRef):
+		return http.StatusBadRequest, "bulk_unknown_ref", "dependency references a ref not present in tasks"
+	case errors.Is(err, task.ErrBulkSelfDependency):
+		return http.StatusBadRequest, "bulk_self_dependency", "a task cannot depend on itself"
+	case errors.Is(err, task.ErrBulkCyclicDependency):
+		return http.StatusBadRequest, "bulk_cyclic_dependency", "would create a cyclic dependency"
 	case errors.Is(err, task.ErrNotFound):
-		writeError(w, http.StatusNotFound, "not_found", "task not found")
+		return http.StatusNotFound, "not_found", "task not found"
 	case errors.Is(err, task.ErrForbidden):
-		writeError(w, http.StatusForbidden, "forbidden", "insufficient project role")
+		return http.StatusForbidden, "forbidden", "insufficient project role"
 	default:
 		slog.Error("task request", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return http.StatusInternalServerError, "internal_error", "internal server error"
 	}
 }

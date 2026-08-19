@@ -615,63 +615,74 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 
 	var result Task
 	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
-		assigneeID := params.AssigneeGitlabUserID
-		assigneeUsername := params.AssigneeGitlabUsername
-
-		link, hasLink, err := resolveLinkedGitlabProject(ctx, q, ownerID, projectID, params.BacklogID)
-		if err != nil {
-			return fmt.Errorf("task: create: %w", err)
-		}
-		if hasLink && assigneeID == nil {
-			assigneeID, assigneeUsername, err = defaultAssignee(ctx, q, ownerID, projectID)
-			if err != nil {
-				return fmt.Errorf("task: create: %w", err)
-			}
-		}
-
-		row, err := q.CreateTask(ctx, db.CreateTaskParams{
-			ProjectID:              projectID,
-			BacklogID:              toUUID(params.BacklogID),
-			Title:                  title,
-			Description:            params.Description,
-			AssigneeGitlabUserID:   toInt8(assigneeID),
-			AssigneeGitlabUsername: assigneeUsername,
-			Labels:                 normalizeLabels(params.Labels),
-			DueOn:                  toDate(params.DueOn),
-			StartDate:              toDate(params.StartDate),
-			Priority:               priority,
-			Progress:               progress,
-			Size:                   size,
-			CreatedByUserID:        ownerID,
-		})
-		if err != nil {
-			return fmt.Errorf("task: create: %w", err)
-		}
-		result = fromRow(row)
-
-		if !hasLink {
-			return nil
-		}
-		payload, err := json.Marshal(issuesync.CreatePayload{
-			LinkedGitlabProjectID: link.ID,
-			IssuePayload:          BuildGitlabIssuePayload(result),
-		})
-		if err != nil {
-			return fmt.Errorf("task: create: encode sync payload: %w", err)
-		}
-		taskID := result.ID
-		if _, err := syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{
-			ProjectID: projectID,
-			TaskID:    &taskID,
-			Kind:      issuesync.KindIssueCreate,
-			Payload:   payload,
-		}); err != nil {
-			return fmt.Errorf("task: create: enqueue sync job: %w", err)
-		}
-		return nil
+		var err error
+		result, err = createTaskInTx(ctx, q, ownerID, projectID, title, priority, progress, size, params)
+		return err
 	})
 	if err != nil {
 		return Task{}, err
+	}
+	return result, nil
+}
+
+// createTaskInTx does the actual insert-plus-outbox-enqueue work shared by
+// Create and BulkCreate: both call it once per task from inside their own
+// RunInTx closure, so a bulk request's whole batch commits or rolls back
+// together. Callers are responsible for normalizing title/priority/
+// progress/size and validating the backlog beforehand — this only writes.
+func createTaskInTx(ctx context.Context, q db.Querier, ownerID, projectID uuid.UUID, title, priority, progress, size string, params CreateParams) (Task, error) {
+	assigneeID := params.AssigneeGitlabUserID
+	assigneeUsername := params.AssigneeGitlabUsername
+
+	link, hasLink, err := resolveLinkedGitlabProject(ctx, q, ownerID, projectID, params.BacklogID)
+	if err != nil {
+		return Task{}, fmt.Errorf("task: create: %w", err)
+	}
+	if hasLink && assigneeID == nil {
+		assigneeID, assigneeUsername, err = defaultAssignee(ctx, q, ownerID, projectID)
+		if err != nil {
+			return Task{}, fmt.Errorf("task: create: %w", err)
+		}
+	}
+
+	row, err := q.CreateTask(ctx, db.CreateTaskParams{
+		ProjectID:              projectID,
+		BacklogID:              toUUID(params.BacklogID),
+		Title:                  title,
+		Description:            params.Description,
+		AssigneeGitlabUserID:   toInt8(assigneeID),
+		AssigneeGitlabUsername: assigneeUsername,
+		Labels:                 normalizeLabels(params.Labels),
+		DueOn:                  toDate(params.DueOn),
+		StartDate:              toDate(params.StartDate),
+		Priority:               priority,
+		Progress:               progress,
+		Size:                   size,
+		CreatedByUserID:        ownerID,
+	})
+	if err != nil {
+		return Task{}, fmt.Errorf("task: create: %w", err)
+	}
+	result := fromRow(row)
+
+	if !hasLink {
+		return result, nil
+	}
+	payload, err := json.Marshal(issuesync.CreatePayload{
+		LinkedGitlabProjectID: link.ID,
+		IssuePayload:          BuildGitlabIssuePayload(result),
+	})
+	if err != nil {
+		return Task{}, fmt.Errorf("task: create: encode sync payload: %w", err)
+	}
+	taskID := result.ID
+	if _, err := syncpkg.Enqueue(ctx, q, syncpkg.EnqueueParams{
+		ProjectID: projectID,
+		TaskID:    &taskID,
+		Kind:      issuesync.KindIssueCreate,
+		Payload:   payload,
+	}); err != nil {
+		return Task{}, fmt.Errorf("task: create: enqueue sync job: %w", err)
 	}
 	return result, nil
 }

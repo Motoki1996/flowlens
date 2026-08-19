@@ -1969,6 +1969,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/bulk:
+    post:
+      summary: Bulk-create tasks and dependencies
+      description: |
+        Creates every task and dependency in the request in one all-or-nothing transaction (issue #201) — either everything commits or nothing does. Requires write scope for a bearer token. See BulkCreateTasksRequest for ref-based dependency wiring.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BulkCreateTasksRequest'
+      responses:
+        '201':
+          description: The created tasks and dependencies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkCreateTasksResponse'
+        '400':
+          description: Invalid input (validation failure, unknown ref, or a cyclic dependency)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/projects/{projectID}/task-dependencies:
     get:
       summary: List a project's task dependencies
@@ -3878,6 +3927,104 @@ components:
           description: That bucket's full, newly-ordered task ID list.
       required:
         - taskIds
+    UpsertTaskAIContextRequest:
+      type: object
+      properties:
+        acceptanceCriteria:
+          type: string
+        aiContext:
+          type: string
+        allowedScope:
+          type: string
+        forbiddenScope:
+          type: string
+    BulkCreateTaskItem:
+      type: object
+      properties:
+        ref:
+          type: string
+          description: Request-scoped temporary ID for this task
+          unique within the request.: null
+        title:
+          type: string
+        description:
+          type: string
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        labels:
+          type: array
+          items:
+            type: string
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        size:
+          type: string
+          enum:
+            - xs
+            - s
+            - m
+            - l
+            - xl
+        aiContext:
+          $ref: '#/components/schemas/UpsertTaskAIContextRequest'
+      required:
+        - ref
+        - title
+    BulkCreateDependencyItem:
+      type: object
+      description: |
+        predecessorRef and successorRef must each name a ref from this same request's tasks — a bulk dependency can only connect two tasks created in the same request, not an already-existing task (use POST .../task-dependencies for that).
+      properties:
+        predecessorRef:
+          type: string
+        successorRef:
+          type: string
+      required:
+        - predecessorRef
+        - successorRef
+    BulkCreateTasksRequest:
+      type: object
+      description: |
+        Creates every task and dependency in one all-or-nothing transaction (issue #201). Each task's ref is a request-scoped temporary ID, valid only within this request, used to wire up dependencies between tasks that have no real ID yet.
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkCreateTaskItem'
+          minItems: 1
+          maxItems: 100
+        dependencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkCreateDependencyItem'
+      required:
+        - tasks
+    BulkCreatedTask:
+      type: object
+      properties:
+        ref:
+          type: string
+          description: The request's ref for this task (BulkCreateTaskItem.ref).
+        task:
+          $ref: '#/components/schemas/Task'
     TaskDependency:
       type: object
       properties:
@@ -3893,6 +4040,17 @@ components:
         createdAt:
           type: string
           format: date-time
+    BulkCreateTasksResponse:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BulkCreatedTask'
+        dependencies:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskDependency'
     CreateTaskDependencyRequest:
       type: object
       properties:
@@ -4092,17 +4250,6 @@ components:
             - 'null'
           format: uuid
           description: null unassigns the task from any backlog.
-    UpsertTaskAIContextRequest:
-      type: object
-      properties:
-        acceptanceCriteria:
-          type: string
-        aiContext:
-          type: string
-        allowedScope:
-          type: string
-        forbiddenScope:
-          type: string
     CreateTaskCommentRequest:
       type: object
       properties:

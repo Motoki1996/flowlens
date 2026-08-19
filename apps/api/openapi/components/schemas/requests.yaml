@@ -200,6 +200,54 @@ UpsertTaskAIContextRequest:
     allowedScope: { type: string }
     forbiddenScope: { type: string }
 
+BulkCreateTasksRequest:
+  type: object
+  description: >
+    Creates every task and dependency in one all-or-nothing transaction
+    (issue #201). Each task's ref is a request-scoped temporary ID, valid
+    only within this request, used to wire up dependencies between tasks
+    that have no real ID yet.
+  properties:
+    tasks:
+      type: array
+      items: { $ref: '#/BulkCreateTaskItem' }
+      minItems: 1
+      maxItems: 100
+    dependencies:
+      type: array
+      items: { $ref: '#/BulkCreateDependencyItem' }
+  required: [tasks]
+
+BulkCreateTaskItem:
+  type: object
+  properties:
+    ref: { type: string, description: Request-scoped temporary ID for this task, unique within the request. }
+    title: { type: string }
+    description: { type: string }
+    backlogId: { type: [string, "null"], format: uuid }
+    labels:
+      type: array
+      items: { type: string }
+    dueOn: { type: [string, "null"], format: date-time }
+    startDate: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    size: { type: string, enum: [xs, s, m, l, xl] }
+    aiContext:
+      $ref: '#/UpsertTaskAIContextRequest'
+  required: [ref, title]
+
+BulkCreateDependencyItem:
+  type: object
+  description: >
+    predecessorRef and successorRef must each name a ref from this same
+    request's tasks — a bulk dependency can only connect two tasks created
+    in the same request, not an already-existing task (use
+    POST .../task-dependencies for that).
+  properties:
+    predecessorRef: { type: string }
+    successorRef: { type: string }
+  required: [predecessorRef, successorRef]
+
 CreateTaskDependencyRequest:
   type: object
   properties:

@@ -45,6 +45,7 @@ func TestTokenAuthorization_CrossProjectResourceGets404(t *testing.T) {
 		{"DELETE foreign dependency", http.MethodDelete, "/api/v1/task-dependencies/" + dep.ID.String()},
 		{"GET foreign project", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String()},
 		{"GET foreign project's tasks", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String() + "/tasks"},
+		{"POST foreign project bulk create tasks", http.MethodPost, "/api/v1/projects/" + otherProject.ID.String() + "/tasks/bulk"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,6 +76,7 @@ func TestTokenAuthorization_ReadOnlyTokenGets403OnWrite(t *testing.T) {
 		{"DELETE task", http.MethodDelete, "/api/v1/tasks/" + tsk.ID.String()},
 		{"POST task close", http.MethodPost, "/api/v1/tasks/" + tsk.ID.String() + "/close"},
 		{"POST create task", http.MethodPost, "/api/v1/projects/" + p.ID.String() + "/tasks"},
+		{"POST bulk create tasks", http.MethodPost, "/api/v1/projects/" + p.ID.String() + "/tasks/bulk"},
 		{"PATCH backlog", http.MethodPatch, "/api/v1/backlogs/" + backlogRow.ID.String()},
 		{"DELETE backlog", http.MethodDelete, "/api/v1/backlogs/" + backlogRow.ID.String()},
 	}

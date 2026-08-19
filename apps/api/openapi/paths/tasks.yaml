@@ -130,6 +130,53 @@ order:
           application/json:
             schema: { $ref: '../components/schemas/error.yaml#/Error' }
 
+bulk:
+  post:
+    summary: Bulk-create tasks and dependencies
+    description: >
+      Creates every task and dependency in the request in one all-or-nothing
+      transaction (issue #201) — either everything commits or nothing does.
+      Requires write scope for a bearer token. See BulkCreateTasksRequest
+      for ref-based dependency wiring.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/BulkCreateTasksRequest'
+    responses:
+      "201":
+        description: The created tasks and dependencies
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/BulkCreateTasksResponse' }
+      "400":
+        description: Invalid input (validation failure, unknown ref, or a cyclic dependency)
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
 taskDependencies:
   get:
     summary: List a project's task dependencies

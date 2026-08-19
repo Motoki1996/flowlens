@@ -1,0 +1,27 @@
+healthz:
+  get:
+    summary: Liveness / readiness probe
+    tags: [system]
+    security: []
+    responses:
+      "200":
+        description: API and database healthy
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/domain.yaml#/Health'
+      "503":
+        description: Database unreachable
+
+version:
+  get:
+    summary: Build version
+    tags: [system]
+    security: []
+    responses:
+      "200":
+        description: The running API's version
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/domain.yaml#/Version'

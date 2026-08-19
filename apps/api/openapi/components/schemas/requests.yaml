@@ -1,0 +1,214 @@
+SignupRequest:
+  type: object
+  properties:
+    username: { type: string }
+    email: { type: string, format: email }
+    password: { type: string, minLength: 8 }
+  required: [username, email, password]
+
+LoginRequest:
+  type: object
+  properties:
+    identifier:
+      type: string
+      description: Username or email.
+    password: { type: string }
+  required: [identifier, password]
+
+PutGitlabIdentityRequest:
+  type: object
+  properties:
+    gitlabBaseUrl: { type: string }
+    gitlabUserId: { type: integer, format: int64 }
+    gitlabUsername: { type: string }
+  required: [gitlabBaseUrl, gitlabUserId, gitlabUsername]
+
+CreateProjectRequest:
+  type: object
+  properties:
+    name: { type: string }
+    description: { type: string }
+  required: [name]
+
+UpdateProjectRequest:
+  type: object
+  properties:
+    name: { type: string }
+    description: { type: string }
+
+PutGitlabConnectionRequest:
+  type: object
+  properties:
+    baseUrl: { type: string }
+    token: { type: string }
+  required: [baseUrl, token]
+
+PutNotificationSettingsRequest:
+  type: object
+  properties:
+    webhookUrl: { type: string }
+    enabled: { type: boolean }
+    sendHour:
+      type: integer
+      minimum: 0
+      maximum: 23
+  required: [webhookUrl, enabled, sendHour]
+
+CreateLinkedGitlabProjectRequest:
+  type: object
+  properties:
+    gitlabProjectId: { type: integer, format: int64 }
+    syncScope: { type: string }
+    syncLabels:
+      type: array
+      items: { type: string }
+  required: [gitlabProjectId]
+
+UpdateLinkedGitlabProjectRequest:
+  type: object
+  properties:
+    syncScope: { type: string }
+    syncLabels:
+      type: array
+      items: { type: string }
+    isDefault: { type: boolean }
+
+CreateSyncRunRequest:
+  type: object
+  properties:
+    full:
+      type: boolean
+      description: Full re-fetch of every issue vs. an incremental diff since the last successful sync.
+
+CreateAPITokenRequest:
+  type: object
+  properties:
+    name: { type: string }
+    scopes:
+      type: array
+      items: { type: string, enum: [read, write] }
+    expiresAt: { type: [string, "null"], format: date-time }
+  required: [name, scopes]
+
+AddProjectMemberRequest:
+  type: object
+  properties:
+    identifier:
+      type: string
+      description: Username or email of the user to add.
+    role: { type: string, enum: [owner, member, viewer] }
+  required: [identifier, role]
+
+UpdateProjectMemberRequest:
+  type: object
+  properties:
+    role: { type: string, enum: [owner, member, viewer] }
+  required: [role]
+
+CreateBacklogRequest:
+  type: object
+  properties:
+    name: { type: string }
+    description: { type: string }
+    startDate: { type: [string, "null"], format: date-time }
+    dueOn: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+  required: [name]
+
+UpdateBacklogRequest:
+  type: object
+  description: Every field is optional-if-omitted (the update leaves it unchanged); send null to clear a nullable field.
+  properties:
+    name: { type: string }
+    description: { type: string }
+    position: { type: integer }
+    startDate: { type: [string, "null"], format: date-time }
+    dueOn: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+
+ReorderBacklogsRequest:
+  type: object
+  properties:
+    backlogIds:
+      type: array
+      items: { type: string, format: uuid }
+      description: The project's full, newly-ordered backlog ID list.
+  required: [backlogIds]
+
+CreateTaskRequest:
+  type: object
+  properties:
+    title: { type: string }
+    description: { type: string }
+    backlogId: { type: [string, "null"], format: uuid }
+    assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
+    assigneeGitlabUsername: { type: string }
+    labels:
+      type: array
+      items: { type: string }
+    dueOn: { type: [string, "null"], format: date-time }
+    startDate: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+  required: [title]
+
+UpdateTaskRequest:
+  type: object
+  description: Every field is optional-if-omitted (the update leaves it unchanged); send null to clear a nullable field.
+  properties:
+    title: { type: string }
+    description: { type: string }
+    backlogId: { type: [string, "null"], format: uuid }
+    assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
+    assigneeGitlabUsername: { type: string }
+    labels:
+      type: array
+      items: { type: string }
+    dueOn: { type: [string, "null"], format: date-time }
+    startDate: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+
+AssignTaskBacklogRequest:
+  type: object
+  properties:
+    backlogId:
+      type: [string, "null"]
+      format: uuid
+      description: null unassigns the task from any backlog.
+
+ReorderTasksRequest:
+  type: object
+  properties:
+    backlogId:
+      type: [string, "null"]
+      format: uuid
+      description: null targets the Unclassified group.
+    taskIds:
+      type: array
+      items: { type: string, format: uuid }
+      description: That bucket's full, newly-ordered task ID list.
+  required: [taskIds]
+
+UpsertTaskAIContextRequest:
+  type: object
+  properties:
+    acceptanceCriteria: { type: string }
+    aiContext: { type: string }
+    allowedScope: { type: string }
+    forbiddenScope: { type: string }
+
+CreateTaskDependencyRequest:
+  type: object
+  properties:
+    predecessorTaskId: { type: string, format: uuid }
+    successorTaskId: { type: string, format: uuid }
+  required: [predecessorTaskId, successorTaskId]
+
+CreateTaskCommentRequest:
+  type: object
+  properties:
+    body: { type: string }
+  required: [body]

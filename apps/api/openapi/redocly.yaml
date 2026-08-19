@@ -1,0 +1,10 @@
+# Config for `redocly lint`/`redocly bundle` (make generate).
+extends:
+  - recommended
+rules:
+  # /api/v1/projects/ (trailing slash) is a real, intentional path: chi's
+  # router mounts POST there via a sub-route (server.go's
+  # protected.Route("/projects", ...)), distinct from the flat GET at
+  # /api/v1/projects registered elsewhere. See openapi.yaml's comment next
+  # to this path and internal/http/openapi_drift_test.go for the full story.
+  no-path-trailing-slash: off

@@ -1,0 +1,67 @@
+me:
+  get:
+    summary: Get the authenticated user
+    tags: [users]
+    security:
+      - cookieAuth: []
+    responses:
+      "200":
+        description: The current user
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/domain.yaml#/User'
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+gitlabIdentities:
+  get:
+    summary: List the caller's own GitLab identities
+    description: One per GitLab base URL, used to match ?assignee=me against a task's assignee.
+    tags: [users]
+    security:
+      - cookieAuth: []
+    responses:
+      "200":
+        description: The caller's GitLab identities
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/GitlabIdentity' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  put:
+    summary: Register (or replace) the caller's GitLab identity for a base URL
+    tags: [users]
+    security:
+      - cookieAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/PutGitlabIdentityRequest'
+    responses:
+      "200":
+        description: The saved identity
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/domain.yaml#/GitlabIdentity'
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }

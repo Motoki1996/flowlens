@@ -1,0 +1,541 @@
+Health:
+  type: object
+  properties:
+    status: { type: string, example: ok }
+    database: { type: string, example: ok }
+
+Version:
+  type: object
+  properties:
+    version: { type: string }
+
+User:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    username: { type: string }
+    email: { type: string, format: email }
+    displayName: { type: string }
+  required: [id, username, email, displayName]
+
+GitlabIdentity:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    gitlabBaseUrl: { type: string }
+    gitlabUserId: { type: integer, format: int64 }
+    gitlabUsername: { type: string }
+
+Project:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    name: { type: string }
+    description: { type: string }
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+    failedSyncTaskCount:
+      type: integer
+      format: int64
+      description: Present only on GET /projects?failedSync=true results.
+
+GitlabConnection:
+  type: object
+  description: >
+    A project's GitLab CE connection. The access token itself is never
+    returned — only tokenLastFour and the verification status.
+  properties:
+    projectId: { type: string, format: uuid }
+    baseUrl: { type: string }
+    tokenLastFour: { type: string }
+    tokenGitlabUserId: { type: [integer, "null"], format: int64 }
+    tokenGitlabUsername: { type: string }
+    verified: { type: boolean }
+    lastVerifiedAt: { type: [string, "null"], format: date-time }
+    lastVerifyError: { type: string }
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+
+GitlabConnectionTestResult:
+  type: object
+  properties:
+    verified: { type: boolean }
+    error: { type: string }
+
+AvailableGitlabProject:
+  type: object
+  description: One GitLab project the connection's token can see, offered for linking.
+  properties:
+    id: { type: integer, format: int64 }
+    pathWithNamespace: { type: string }
+    name: { type: string }
+    webUrl: { type: string }
+
+NotificationSettings:
+  type: object
+  properties:
+    projectId: { type: string, format: uuid }
+    webhookUrl: { type: string }
+    enabled: { type: boolean }
+    sendHour:
+      type: integer
+      description: UTC hour (0-23) the daily digest is sent.
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+
+LinkedGitlabProject:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    gitlabConnectionId: { type: string, format: uuid }
+    gitlabProjectId: { type: integer, format: int64 }
+    pathWithNamespace: { type: string }
+    name: { type: string }
+    webUrl: { type: string }
+    syncScope:
+      type: string
+      description: What subset of issues to sync (e.g. all, or filtered by label).
+    syncLabels:
+      type: array
+      items: { type: string }
+    isDefault:
+      type: boolean
+      description: Whether this is the project's default GitLab project for new tasks.
+    initialImportStatus: { type: string }
+    lastSyncedAt: { type: [string, "null"], format: date-time }
+    webhookStatus: { type: string }
+    webhookRegisteredAt: { type: [string, "null"], format: date-time }
+    webhookError: { type: string }
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+
+GitlabMember:
+  type: object
+  description: One member of a linked GitLab project, for the task assignee picker.
+  properties:
+    id: { type: integer, format: int64 }
+    username: { type: string }
+    name: { type: string }
+    avatarUrl: { type: string }
+
+GitlabLabel:
+  type: object
+  description: One label of a linked GitLab project, for the task label picker.
+  properties:
+    name: { type: string }
+    color: { type: string }
+
+APIToken:
+  type: object
+  description: >
+    A project-scoped API token (ADR-0009). The raw bearer value is present
+    only in the response body of POST .../api-tokens — every other response
+    carries just tokenPrefix.
+  properties:
+    id: { type: string, format: uuid }
+    projectId: { type: string, format: uuid }
+    name: { type: string }
+    scopes:
+      type: array
+      items: { type: string, enum: [read, write] }
+    tokenPrefix: { type: string }
+    lastUsedAt: { type: [string, "null"], format: date-time }
+    expiresAt: { type: [string, "null"], format: date-time }
+    createdAt: { type: string, format: date-time }
+    token:
+      type: string
+      description: The raw bearer secret. Present only in the create response, never again.
+
+ProjectMember:
+  type: object
+  properties:
+    userId: { type: string, format: uuid }
+    username: { type: string }
+    displayName: { type: string }
+    role: { type: string, enum: [owner, member, viewer] }
+    isProjectOwner: { type: boolean }
+    createdAt: { type: string, format: date-time }
+
+ProjectMemberCandidate:
+  type: object
+  description: One hit from the invite form's user search (?q=, min 2 characters).
+  properties:
+    userId: { type: string, format: uuid }
+    username: { type: string }
+    displayName: { type: string }
+
+SyncJob:
+  type: object
+  description: A permanently-failed (or in-progress) outbox sync job.
+  properties:
+    id: { type: string, format: uuid }
+    projectId: { type: string, format: uuid }
+    taskId: { type: [string, "null"], format: uuid }
+    kind: { type: string }
+    status: { type: string }
+    attempts: { type: integer }
+    lastError: { type: string }
+    runAfter: { type: string, format: date-time }
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+
+SyncRun:
+  type: object
+  description: One issue-sync run (manual or scheduled) against a linked GitLab project.
+  properties:
+    id: { type: string, format: uuid }
+    linkedGitlabProjectId: { type: string, format: uuid }
+    kind: { type: string }
+    status: { type: string }
+    issuesSeen: { type: integer }
+    issuesCreated: { type: integer }
+    issuesUpdated: { type: integer }
+    startedAt: { type: [string, "null"], format: date-time }
+    completedAt: { type: [string, "null"], format: date-time }
+    errorMessage: { type: string }
+    createdAt: { type: string, format: date-time }
+
+WebhookEvent:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    linkedGitlabProjectId: { type: string, format: uuid }
+    eventName: { type: string }
+    objectKind: { type: string }
+    gitlabIssueIid: { type: [integer, "null"], format: int64 }
+    status: { type: string }
+    skipReason: { type: string }
+    errorMessage: { type: string }
+    receivedAt: { type: string, format: date-time }
+    processedAt: { type: [string, "null"], format: date-time }
+
+WebhookEventDetail:
+  allOf:
+    - $ref: '#/WebhookEvent'
+    - type: object
+      properties:
+        payload:
+          description: The raw webhook payload, as received from GitLab.
+
+WebhookEventsPage:
+  type: object
+  properties:
+    events:
+      type: array
+      items: { $ref: '#/WebhookEvent' }
+    nextPage:
+      type: integer
+      description: 0 when there is no next page.
+
+Backlog:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    projectId: { type: string, format: uuid }
+    name: { type: string }
+    description: { type: string }
+    position: { type: integer }
+    startDate: { type: [string, "null"], format: date-time }
+    dueOn: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+    defaultLinkedGitlabProjectId: { type: [string, "null"], format: uuid }
+    baseBranch: { type: string }
+
+TaskGitlabInfo:
+  type: object
+  properties:
+    syncStatus: { type: string }
+    lastError: { type: string }
+    lastSyncedAt: { type: [string, "null"], format: date-time }
+    issueIid: { type: [integer, "null"], format: int64 }
+    webUrl: { type: string }
+
+TaskAIContext:
+  type: object
+  properties:
+    acceptanceCriteria: { type: string }
+    aiContext: { type: string }
+    allowedScope: { type: string }
+    forbiddenScope: { type: string }
+    updatedAt: { type: [string, "null"], format: date-time }
+
+Task:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    projectId: { type: string, format: uuid }
+    backlogId: { type: [string, "null"], format: uuid }
+    title: { type: string }
+    description: { type: string }
+    status:
+      type: string
+      enum: [open, closed]
+      description: The GitLab issue state, synced both ways. Never the same axis as progress.
+    closedAt: { type: [string, "null"], format: date-time }
+    assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
+    assigneeGitlabUsername: { type: string }
+    labels:
+      type: array
+      items: { type: string }
+    dueOn: { type: [string, "null"], format: date-time }
+    startDate: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+    size: { type: string, enum: [xs, s, m, l, xl] }
+    designStartedAt: { type: [string, "null"], format: date-time }
+    implementationStartedAt: { type: [string, "null"], format: date-time }
+    position: { type: integer }
+    createdByUserId: { type: string, format: uuid }
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+    gitlab:
+      anyOf:
+        - $ref: '#/TaskGitlabInfo'
+        - type: 'null'
+    aiContext: { $ref: '#/TaskAIContext' }
+
+TaskWithProject:
+  allOf:
+    - $ref: '#/Task'
+    - type: object
+      properties:
+        projectName: { type: string }
+
+TaskGitlabContext:
+  allOf:
+    - $ref: '#/TaskGitlabInfo'
+    - type: object
+      properties:
+        projectPath: { type: string }
+
+TaskContext:
+  type: object
+  description: >
+    The AI-facing combined view of a task, its backlog's base branch and its
+    GitLab context, returned by GET /tasks/{taskID}/context and
+    GET /projects/{projectID}/tasks/context.
+  properties:
+    id: { type: string, format: uuid }
+    projectId: { type: string, format: uuid }
+    backlogId: { type: [string, "null"], format: uuid }
+    title: { type: string }
+    description: { type: string }
+    status: { type: string, enum: [open, closed] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+    progressGuidance: { type: string }
+    size: { type: string, enum: [xs, s, m, l, xl] }
+    assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
+    assigneeGitlabUsername: { type: string }
+    labels:
+      type: array
+      items: { type: string }
+    dueOn: { type: [string, "null"], format: date-time }
+    updatedAt: { type: string, format: date-time }
+    baseBranch: { type: string }
+    gitlab:
+      anyOf:
+        - $ref: '#/TaskGitlabContext'
+        - type: 'null'
+    acceptanceCriteria: { type: string }
+    aiContext: { type: string }
+    allowedScope: { type: string }
+    forbiddenScope: { type: string }
+    recentComments:
+      type: array
+      items: { $ref: '#/TaskComment' }
+
+TaskContextPage:
+  type: object
+  properties:
+    tasks:
+      type: array
+      items: { $ref: '#/TaskContext' }
+    nextPage:
+      type: integer
+      description: 0 when there is no next page.
+
+TaskDependency:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    predecessorTaskId: { type: string, format: uuid }
+    successorTaskId: { type: string, format: uuid }
+    createdAt: { type: string, format: date-time }
+
+TaskComment:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    taskId: { type: string, format: uuid }
+    authorUserId: { type: [string, "null"], format: uuid }
+    authorTokenId: { type: [string, "null"], format: uuid }
+    authorKind:
+      type: string
+      enum: [user, agent, gitlab]
+      description: Who said it — a human user, a project API token, or (future) GitLab discussion sync.
+    body: { type: string }
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+
+MergeRequest:
+  type: object
+  properties:
+    id: { type: string, format: uuid }
+    repositoryId: { type: string, format: uuid }
+    gitlabMergeRequestId: { type: integer, format: int64 }
+    number: { type: integer }
+    title: { type: string }
+    state: { type: string }
+    isDraft: { type: boolean }
+    authorGitlabUsername: { type: string }
+    authorAvatarUrl: { type: string }
+    baseBranch: { type: string }
+    headBranch: { type: string }
+    additions: { type: integer }
+    deletions: { type: integer }
+    changedFiles: { type: integer }
+    gitlabCreatedAt: { type: [string, "null"], format: date-time }
+    gitlabUpdatedAt: { type: [string, "null"], format: date-time }
+    mergedAt: { type: [string, "null"], format: date-time }
+    closedAt: { type: [string, "null"], format: date-time }
+    htmlUrl: { type: string }
+    createdAt: { type: string, format: date-time }
+    updatedAt: { type: string, format: date-time }
+    firstReviewedAt: { type: [string, "null"], format: date-time }
+    pipelineStatus: { type: string }
+    pipelineId: { type: [integer, "null"], format: int64 }
+    pipelineUpdatedAt: { type: [string, "null"], format: date-time }
+
+DurationStats:
+  type: object
+  properties:
+    count: { type: integer }
+    medianHours: { type: [number, "null"] }
+    p90Hours: { type: [number, "null"] }
+
+SizeStats:
+  type: object
+  properties:
+    count: { type: integer }
+    median: { type: [number, "null"] }
+    p90: { type: [number, "null"] }
+
+DeliveryPeriodStats:
+  type: object
+  properties:
+    openToFirstReview: { $ref: '#/DurationStats' }
+    firstReviewToMerge: { $ref: '#/DurationStats' }
+    additions: { $ref: '#/SizeStats' }
+    deletions: { $ref: '#/SizeStats' }
+    changedFiles: { $ref: '#/SizeStats' }
+    pipelineSuccessRate: { type: [number, "null"] }
+    throughput: { type: integer }
+
+DeliveryPeriod:
+  allOf:
+    - type: object
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+    - $ref: '#/DeliveryPeriodStats'
+
+DeliveryMetrics:
+  description: GET /projects/{projectID}/metrics response.
+  allOf:
+    - type: object
+      properties:
+        from: { type: [string, "null"], format: date-time }
+        to: { type: [string, "null"], format: date-time }
+        interval:
+          type: [string, "null"]
+          enum: [week, month, year, null]
+        truncated: { type: boolean }
+        periods:
+          type: array
+          items: { $ref: '#/DeliveryPeriod' }
+    - $ref: '#/DeliveryPeriodStats'
+
+FlowStageStats:
+  type: object
+  properties:
+    count: { type: integer }
+    medianHours: { type: [number, "null"] }
+    p90Hours: { type: [number, "null"] }
+
+FlowStageStatsSet:
+  type: object
+  description: The eight flow stages (issue #171/#173).
+  properties:
+    backlogWaitingToStart: { $ref: '#/FlowStageStats' }
+    taskBreakdown: { $ref: '#/FlowStageStats' }
+    waitingToStart: { $ref: '#/FlowStageStats' }
+    design: { $ref: '#/FlowStageStats' }
+    implementation: { $ref: '#/FlowStageStats' }
+    reviewAndMerge: { $ref: '#/FlowStageStats' }
+    completion: { $ref: '#/FlowStageStats' }
+    blocked: { $ref: '#/FlowStageStats' }
+
+FlowPeriod:
+  allOf:
+    - type: object
+      properties:
+        start: { type: string, format: date-time }
+        end: { type: string, format: date-time }
+    - $ref: '#/FlowStageStatsSet'
+
+FlowMetrics:
+  description: GET /projects/{projectID}/flow-metrics response.
+  allOf:
+    - type: object
+      properties:
+        from: { type: [string, "null"], format: date-time }
+        to: { type: [string, "null"], format: date-time }
+        interval:
+          type: [string, "null"]
+          enum: [week, month, year, null]
+        truncated: { type: boolean }
+        periods:
+          type: array
+          items: { $ref: '#/FlowPeriod' }
+    - $ref: '#/FlowStageStatsSet'
+
+VelocityPeriod:
+  type: object
+  properties:
+    start: { type: string, format: date-time }
+    end: { type: string, format: date-time }
+    completed: { type: integer }
+    completedByUser: { type: integer }
+    completedByAgent: { type: integer }
+    completedByUnknown: { type: integer }
+    completedPoints: { type: integer }
+    completedPointsByUser: { type: integer }
+    completedPointsByAgent: { type: integer }
+    completedPointsByUnknown: { type: integer }
+    movingAverage: { type: number }
+    movingAveragePoints: { type: number }
+    complete:
+      type: boolean
+      description: True once this bucket's end has passed.
+
+VelocityMetrics:
+  description: GET /projects/{projectID}/velocity response.
+  type: object
+  properties:
+    from: { type: [string, "null"], format: date-time }
+    to: { type: [string, "null"], format: date-time }
+    interval:
+      type: string
+      enum: [week, month, year]
+    truncated: { type: boolean }
+    periods:
+      type: array
+      items: { $ref: '#/VelocityPeriod' }
+    openTaskCount: { type: integer }
+    averageVelocity: { type: [number, "null"] }
+    forecastPeriods: { type: [number, "null"] }
+    openTaskPoints: { type: integer }
+    averageVelocityPoints: { type: [number, "null"] }
+    forecastPeriodsByPoints: { type: [number, "null"] }
+    sizedTaskRatio: { type: number }

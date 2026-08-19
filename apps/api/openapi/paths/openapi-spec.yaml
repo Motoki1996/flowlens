@@ -1,0 +1,23 @@
+openapiYaml:
+  get:
+    summary: This OpenAPI document (YAML)
+    tags: [system]
+    security: []
+    responses:
+      "200":
+        description: The bundled OpenAPI 3.1 document
+        content:
+          application/yaml:
+            schema: { type: string }
+
+openapiJson:
+  get:
+    summary: This OpenAPI document (JSON)
+    tags: [system]
+    security: []
+    responses:
+      "200":
+        description: The bundled OpenAPI 3.1 document, converted to JSON
+        content:
+          application/json:
+            schema: { type: object }

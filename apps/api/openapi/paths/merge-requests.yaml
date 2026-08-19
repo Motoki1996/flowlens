@@ -1,0 +1,85 @@
+list:
+  get:
+    summary: List a project's merge requests
+    description: Read-only — FlowLens never writes a merge request back to GitLab.
+    tags: [merge-requests]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - in: query
+        name: state
+        schema: { type: string }
+      - in: query
+        name: author
+        schema: { type: string }
+      - in: query
+        name: taskId
+        schema: { type: string, format: uuid }
+      - in: query
+        name: since
+        schema: { type: string, format: date-time }
+      - in: query
+        name: until
+        schema: { type: string, format: date-time }
+      - in: query
+        name: sort
+        schema: { type: string, enum: [updated] }
+    responses:
+      "200":
+        description: Matching merge requests
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/MergeRequest' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+get:
+  get:
+    summary: Get a merge request
+    tags: [merge-requests]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/mergeRequestID'
+    responses:
+      "200":
+        description: The merge request
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/MergeRequest' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+components:
+  parameters:
+    projectID:
+      in: path
+      name: projectID
+      required: true
+      schema: { type: string, format: uuid }
+    mergeRequestID:
+      in: path
+      name: mergeRequestID
+      required: true
+      schema: { type: string, format: uuid }

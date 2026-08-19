@@ -1,0 +1,4277 @@
+openapi: 3.1.0
+info:
+  title: FlowLens API
+  version: 0.2.0
+  description: |
+    FlowLens's Go API: local username/password auth, the project/backlog/ task tracker kept 1:1 with GitLab CE issues, project-scoped API tokens for AI agents (ADR-0009), the GitLab webhook receiver, and read-only merge-request/CI sync and delivery/flow/velocity metrics (ADR-0011). See README.md for the full feature narrative.
+servers:
+  - url: http://localhost:8080
+    description: Local development (API container)
+security:
+  - cookieAuth: []
+paths:
+  /healthz:
+    get:
+      summary: Liveness / readiness probe
+      tags:
+        - system
+      security: []
+      responses:
+        '200':
+          description: API and database healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Database unreachable
+  /version:
+    get:
+      summary: Build version
+      tags:
+        - system
+      security: []
+      responses:
+        '200':
+          description: The running API's version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Version'
+  /openapi.yaml:
+    get:
+      summary: This OpenAPI document (YAML)
+      tags:
+        - system
+      security: []
+      responses:
+        '200':
+          description: The bundled OpenAPI 3.1 document
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /openapi.json:
+    get:
+      summary: This OpenAPI document (JSON)
+      tags:
+        - system
+      security: []
+      responses:
+        '200':
+          description: The bundled OpenAPI 3.1 document, converted to JSON
+          content:
+            application/json:
+              schema:
+                type: object
+  /auth/signup:
+    post:
+      summary: Create a local account
+      description: Creates a user and starts a session for it. Rejected with 403 when signups are disabled and this isn't the instance's first account.
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: Account created, session cookie set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Username or email already taken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/login:
+    post:
+      summary: Log in
+      description: Verifies credentials with bcrypt and issues a session cookie plus a CSRF cookie.
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Logged in, session cookie set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /auth/logout:
+    post:
+      summary: Log out
+      description: Revokes the current session and clears the session/CSRF cookies.
+      tags:
+        - auth
+      security: []
+      responses:
+        '204':
+          description: Logged out
+  /webhooks/gitlab/{linkID}:
+    post:
+      summary: GitLab CE webhook receiver
+      description: |
+        Receives Issue Hook / Merge Request Hook / Pipeline Hook payloads for one linked GitLab project. Authenticated by the per-link webhook secret header (X-Gitlab-Token), not by session or bearer token.
+      tags:
+        - webhooks
+      security: []
+      parameters:
+        - in: path
+          name: linkID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '202':
+          description: Event accepted for processing
+        '401':
+          description: Missing or invalid webhook token
+        '404':
+          description: Unknown link
+        '429':
+          description: Rate limited
+  /api/v1/me:
+    get:
+      summary: Get the authenticated user
+      tags:
+        - users
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: The current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/me/gitlab-identities:
+    get:
+      summary: List the caller's own GitLab identities
+      description: One per GitLab base URL, used to match ?assignee=me against a task's assignee.
+      tags:
+        - users
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: The caller's GitLab identities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GitlabIdentity'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      summary: Register (or replace) the caller's GitLab identity for a base URL
+      tags:
+        - users
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutGitlabIdentityRequest'
+      responses:
+        '200':
+          description: The saved identity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitlabIdentity'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks:
+    get:
+      summary: Cross-project task collection
+      description: |
+        Every task across every project the caller owns or is a member of (issue #76). Session-only — a project API token is scoped to a single project and has no notion of "every project I own".
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum:
+              - open
+              - closed
+        - in: query
+          name: priority
+          schema:
+            type: string
+            enum:
+              - low
+              - medium
+              - high
+              - urgent
+        - in: query
+          name: progress
+          schema:
+            type: string
+            enum:
+              - not_started
+              - in_progress
+              - on_hold
+              - done
+        - in: query
+          name: sort
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matching tasks, each carrying its project's name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskWithProject'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects:
+    get:
+      summary: List projects
+      description: |
+        Session: every project the caller owns or is a member of, optionally filtered to ?failedSync=true (used by /dashboard). Bearer token: always returns exactly the token's own single project.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: failedSync
+          schema:
+            type: boolean
+          description: Session-only. Restricts to projects with at least one permanently-failed sync job.
+      responses:
+        '200':
+          description: Matching projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/:
+    post:
+      summary: Create a project
+      description: Session-only — a bearer token cannot create a project (issue
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectRequest'
+      responses:
+        '201':
+          description: The created project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}:
+    get:
+      summary: Get a project
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: The project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      summary: Update a project
+      description: Session-only.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: The updated project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete a project
+      description: Session-only — a bearer token cannot destroy its own project (issue
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/gitlab-connection:
+    put:
+      summary: Save (create or replace) a project's GitLab connection
+      description: Session-only. The token is verified against GitLab before being stored, encrypted at rest.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutGitlabConnectionRequest'
+      responses:
+        '200':
+          description: The saved connection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitlabConnection'
+        '400':
+          description: Invalid input, or the token could not be verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: Get a project's GitLab connection
+      description: Session-only. Never returns the raw access token.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: The connection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitlabConnection'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete a project's GitLab connection
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/gitlab-connection/test:
+    post:
+      summary: Test a project's GitLab connection
+      description: Re-verifies the stored token against GitLab CE without changing anything.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GitlabConnectionTestResult'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/gitlab-connection/available-projects:
+    get:
+      summary: List GitLab projects the connection's token can see
+      description: Feeds the "link a GitLab project" picker.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: search
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Candidate GitLab projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AvailableGitlabProject'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/notification-settings:
+    put:
+      summary: Save (create or replace) a project's daily digest notification settings
+      description: Owner-only.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutNotificationSettingsRequest'
+      responses:
+        '200':
+          description: The saved settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not the project owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: Get a project's notification settings
+      description: Owner-only.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: The settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationSettings'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not the project owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found (no settings saved yet)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/linked-gitlab-projects:
+    get:
+      summary: List a project's linked GitLab projects
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: Linked GitLab projects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LinkedGitlabProject'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Link a GitLab project
+      description: Creates the link, starts an initial import, and (if APP_PUBLIC_URL is set) registers a webhook.
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLinkedGitlabProjectRequest'
+      responses:
+        '201':
+          description: The created link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkedGitlabProject'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/linked-gitlab-projects/{linkID}:
+    get:
+      summary: Get one of a project's linked GitLab projects
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/linkID'
+      responses:
+        '200':
+          description: The link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkedGitlabProject'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/api-tokens:
+    get:
+      summary: List a project's API tokens
+      description: Never carries the raw token value — only tokenPrefix. Session-only.
+      tags:
+        - api-tokens
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: The project's tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APIToken'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Issue a new API token
+      description: Session-only (a token cannot mint another token — privilege escalation, issue
+      tags:
+        - api-tokens
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPITokenRequest'
+      responses:
+        '201':
+          description: The created token, including its one-time raw value
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIToken'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/members:
+    get:
+      summary: List a project's members
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: The project's members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectMember'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Add a member to a project
+      description: Owner-only.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddProjectMemberRequest'
+      responses:
+        '201':
+          description: The added member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMember'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not the project owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/members/{userID}:
+    patch:
+      summary: Change a project member's role
+      description: Owner-only.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/userID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectMemberRequest'
+      responses:
+        '200':
+          description: The updated member
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMember'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not the project owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Remove a member from a project
+      description: Owner-only.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/userID'
+      responses:
+        '204':
+          description: Removed
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not the project owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/member-candidates:
+    get:
+      summary: Search users to invite to a project
+      description: Candidates are limited to people the caller already shares a project with. ?q= must be at least 2 characters.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: Matching candidates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectMemberCandidate'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/sync-jobs:
+    get:
+      summary: List a project's permanently-failed sync jobs
+      tags:
+        - sync-jobs
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: Failed sync jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SyncJob'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/metrics:
+    get:
+      summary: Delivery-flow metrics dashboard
+      description: Open-to-first-review / first-review-to-merge lead time, MR size distribution, pipeline success rate and merge throughput, computed over already-synced merge requests.
+      tags:
+        - metrics
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+        - $ref: '#/components/parameters/interval'
+      responses:
+        '200':
+          description: Delivery metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryMetrics'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/flow-metrics:
+    get:
+      summary: Stage-level flow metrics
+      description: Waiting-to-start/design/implementation/review-and-merge/completion/blocked lead times, built on task_progress_events.
+      tags:
+        - metrics
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+        - $ref: '#/components/parameters/interval'
+      responses:
+        '200':
+          description: Flow metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FlowMetrics'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/velocity:
+    get:
+      summary: Velocity (completed-task throughput)
+      description: Tasks completed per period, split by user/agent/unknown actor, plus a size-weighted points series. Defaults ?interval= to week.
+      tags:
+        - metrics
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/from'
+        - $ref: '#/components/parameters/to'
+        - $ref: '#/components/parameters/interval'
+      responses:
+        '200':
+          description: Velocity
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VelocityMetrics'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/api-tokens/{tokenID}:
+    delete:
+      summary: Revoke an API token
+      description: Session-only.
+      tags:
+        - api-tokens
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: tokenID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Revoked
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/sync-jobs/{jobID}/retry:
+    post:
+      summary: Retry a permanently-failed sync job
+      description: Session-only.
+      tags:
+        - sync-jobs
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: jobID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The retried job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncJob'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}:
+    patch:
+      summary: Update a linked GitLab project
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLinkedGitlabProjectRequest'
+      responses:
+        '200':
+          description: The updated link
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkedGitlabProject'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete a linked GitLab project
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook:
+    post:
+      summary: (Re-)register the GitLab webhook for a linked project
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+      responses:
+        '200':
+          description: The updated link, with its new webhook status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LinkedGitlabProject'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}/sync-runs:
+    post:
+      summary: Start a manual re-sync
+      description: Session-only create. Returns 409 if a sync run is already in progress for this link.
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSyncRunRequest'
+      responses:
+        '201':
+          description: The started sync run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncRun'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: A sync run is already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: List a linked GitLab project's sync runs
+      description: Session or bearer token (read scope).
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+      responses:
+        '200':
+          description: Sync runs, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SyncRun'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook-events:
+    get:
+      summary: List a linked GitLab project's recorded webhook events
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: A page of webhook events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEventsPage'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook-events/{eventID}:
+    get:
+      summary: Get one recorded webhook event, including its raw payload
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+        - $ref: '#/components/parameters/eventID'
+      responses:
+        '200':
+          description: The event detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEventDetail'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook-events/{eventID}/retry:
+    post:
+      summary: Retry a failed webhook event's processing
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+        - $ref: '#/components/parameters/eventID'
+      responses:
+        '200':
+          description: The retried event
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEvent'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}/members:
+    get:
+      summary: List a linked GitLab project's members
+      description: Feeds a task's assignee picker.
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+        - in: query
+          name: search
+          schema:
+            type: string
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GitlabMember'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/linked-gitlab-projects/{linkID}/labels:
+    get:
+      summary: List a linked GitLab project's existing labels
+      description: Feeds a task's label picker.
+      tags:
+        - linked-gitlab-projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/linkID'
+      responses:
+        '200':
+          description: Labels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  labels:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GitlabLabel'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/backlogs:
+    get:
+      summary: List a project's backlogs
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: priority
+          schema:
+            type: string
+            enum:
+              - low
+              - medium
+              - high
+              - urgent
+        - in: query
+          name: progress
+          schema:
+            type: string
+            enum:
+              - not_started
+              - in_progress
+              - on_hold
+              - done
+        - in: query
+          name: sort
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The project's backlogs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Backlog'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Create a backlog
+      description: Requires write scope for a bearer token.
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBacklogRequest'
+      responses:
+        '201':
+          description: The created backlog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backlog'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/backlogs/order:
+    patch:
+      summary: Bulk-reorder a project's backlogs
+      description: All-or-nothing; the ID list must be exactly the project's current backlogs. Requires write scope for a bearer token.
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderBacklogsRequest'
+      responses:
+        '200':
+          description: The reordered backlogs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Backlog'
+        '400':
+          description: Invalid input (ID list mismatch)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/backlogs/{backlogID}:
+    get:
+      summary: Get a backlog
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/backlogID'
+      responses:
+        '200':
+          description: The backlog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backlog'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      summary: Update a backlog
+      description: Requires write scope for a bearer token.
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/backlogID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBacklogRequest'
+      responses:
+        '200':
+          description: The updated backlog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backlog'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete a backlog
+      description: Requires write scope for a bearer token.
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/backlogID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks:
+    get:
+      summary: List a project's tasks
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: backlogId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum:
+              - open
+              - closed
+        - in: query
+          name: priority
+          schema:
+            type: string
+            enum:
+              - low
+              - medium
+              - high
+              - urgent
+        - in: query
+          name: progress
+          schema:
+            type: string
+            enum:
+              - not_started
+              - in_progress
+              - on_hold
+              - done
+        - in: query
+          name: sort
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Matching tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Create a task
+      description: |
+        Requires write scope for a bearer token. Resolves its GitLab issue destination (backlog's own link -> project's default link -> nowhere) only at creation time; task_gitlab_links is authoritative afterward.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '201':
+          description: The created task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/order:
+    patch:
+      summary: Bulk-reorder one backlog bucket's tasks
+      description: All-or-nothing; taskIds must be exactly that bucket's current tasks. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderTasksRequest'
+      responses:
+        '200':
+          description: The reordered tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid input (ID list mismatch)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/task-dependencies:
+    get:
+      summary: List a project's task dependencies
+      tags:
+        - task-dependencies
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: Task dependencies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskDependency'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Create a task dependency
+      description: Cycle-checked in the application layer. Requires write scope for a bearer token.
+      tags:
+        - task-dependencies
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskDependencyRequest'
+      responses:
+        '201':
+          description: The created dependency
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskDependency'
+        '400':
+          description: Invalid input, or would create a cycle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/task-dependencies/{dependencyID}:
+    delete:
+      summary: Delete a task dependency
+      description: Requires write scope for a bearer token.
+      tags:
+        - task-dependencies
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/dependencyID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/context:
+    get:
+      summary: List a project's AI-facing task contexts
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: page
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: A page of task contexts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskContextPage'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}:
+    get:
+      summary: Get a task
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: The task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      summary: Update a task
+      description: Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete a task
+      description: Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/close:
+    post:
+      summary: Close a task
+      description: Syncs to GitLab's issue state both ways. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: The closed task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/reopen:
+    post:
+      summary: Reopen a task
+      description: Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: The reopened task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/assign-backlog:
+    post:
+      summary: Assign (or unassign) a task's backlog
+      description: Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignTaskBacklogRequest'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/sync-retry:
+    post:
+      summary: Retry a task's failed GitLab sync
+      description: Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: The task, with sync retried
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/ai-context:
+    put:
+      summary: Save (create or replace) a task's AI context
+      description: Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertTaskAIContextRequest'
+      responses:
+        '200':
+          description: The saved AI context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskAIContext'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/design-started:
+    post:
+      summary: Mark a task's design phase as started
+      description: Spec-driven-development phase marker, feeds flow-metrics' Design stage. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/implementation-started:
+    post:
+      summary: Mark a task's implementation phase as started
+      description: Spec-driven-development phase marker, feeds flow-metrics' Implementation stage. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/comments:
+    get:
+      summary: List a task's activity-log comments
+      tags:
+        - task-comments
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: Comments, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskComment'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Post a comment to a task's activity log
+      description: authorKind is "user" for a session caller, "agent" for a project API token. Requires write scope for a bearer token.
+      tags:
+        - task-comments
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskCommentRequest'
+      responses:
+        '201':
+          description: The created comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskComment'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/task-comments/{commentID}:
+    delete:
+      summary: Delete a task comment
+      description: Own comment only. Requires write scope for a bearer token.
+      tags:
+        - task-comments
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/commentID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope, or not the comment's own author
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/tasks/{taskID}/context:
+    get:
+      summary: Get a task's AI-facing context
+      description: |
+        The primary read for an AI agent working a task: description, acceptance criteria, allowed/forbidden scope, backlog base branch, GitLab issue state, and recent comments. Already project-scoped through the bearer token itself, so no separate ownership check against {taskID} is needed on top.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/taskID'
+      responses:
+        '200':
+          description: The task's context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskContext'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/merge-requests:
+    get:
+      summary: List a project's merge requests
+      description: Read-only — FlowLens never writes a merge request back to GitLab.
+      tags:
+        - merge-requests
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: state
+          schema:
+            type: string
+        - in: query
+          name: author
+          schema:
+            type: string
+        - in: query
+          name: taskId
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: since
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: until
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum:
+              - updated
+      responses:
+        '200':
+          description: Matching merge requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MergeRequest'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/merge-requests/{mergeRequestID}:
+    get:
+      summary: Get a merge request
+      tags:
+        - merge-requests
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/mergeRequestID'
+      responses:
+        '200':
+          description: The merge request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MergeRequest'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: flowlens_session
+      description: |
+        Session cookie set at login. Every session-authenticated mutation must also echo the flowlens_csrf cookie's value in the X-CSRF-Token header (internal/http/middleware.go's requireCSRF) — not expressible as a second apiKey scheme referencing the same request, so it is documented here instead of modeled.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Authorization: Bearer <project API token> (ADR-0009). Scoped to read/write and to a fixed route allowlist — only routes under the "shared" security option in this document accept a bearer token at all. No CSRF header is required or checked for bearer requests.
+  schemas:
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        database:
+          type: string
+          example: ok
+    Version:
+      type: object
+      properties:
+        version:
+          type: string
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+      required:
+        - id
+        - username
+        - email
+        - displayName
+    Error:
+      type: object
+      description: The standard error envelope returned by every non-2xx response (internal/http/response.go's writeError).
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: not_found
+            message:
+              type: string
+              example: not found
+          required:
+            - code
+            - message
+      required:
+        - error
+    SignupRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+      required:
+        - username
+        - email
+        - password
+    LoginRequest:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: Username or email.
+        password:
+          type: string
+      required:
+        - identifier
+        - password
+    GitlabIdentity:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        gitlabBaseUrl:
+          type: string
+        gitlabUserId:
+          type: integer
+          format: int64
+        gitlabUsername:
+          type: string
+    PutGitlabIdentityRequest:
+      type: object
+      properties:
+        gitlabBaseUrl:
+          type: string
+        gitlabUserId:
+          type: integer
+          format: int64
+        gitlabUsername:
+          type: string
+      required:
+        - gitlabBaseUrl
+        - gitlabUserId
+        - gitlabUsername
+    TaskGitlabInfo:
+      type: object
+      properties:
+        syncStatus:
+          type: string
+        lastError:
+          type: string
+        lastSyncedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        issueIid:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        webUrl:
+          type: string
+    TaskAIContext:
+      type: object
+      properties:
+        acceptanceCriteria:
+          type: string
+        aiContext:
+          type: string
+        allowedScope:
+          type: string
+        forbiddenScope:
+          type: string
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+            - open
+            - closed
+          description: The GitLab issue state, synced both ways. Never the same axis as progress.
+        closedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        assigneeGitlabUserId:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        assigneeGitlabUsername:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+        size:
+          type: string
+          enum:
+            - xs
+            - s
+            - m
+            - l
+            - xl
+        designStartedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        implementationStartedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        position:
+          type: integer
+        createdByUserId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        gitlab:
+          anyOf:
+            - $ref: '#/components/schemas/TaskGitlabInfo'
+            - type: 'null'
+        aiContext:
+          $ref: '#/components/schemas/TaskAIContext'
+    TaskWithProject:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          properties:
+            projectName:
+              type: string
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        failedSyncTaskCount:
+          type: integer
+          format: int64
+          description: Present only on GET /projects?failedSync=true results.
+    CreateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+      required:
+        - name
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    GitlabConnection:
+      type: object
+      description: |
+        A project's GitLab CE connection. The access token itself is never returned — only tokenLastFour and the verification status.
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        baseUrl:
+          type: string
+        tokenLastFour:
+          type: string
+        tokenGitlabUserId:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        tokenGitlabUsername:
+          type: string
+        verified:
+          type: boolean
+        lastVerifiedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        lastVerifyError:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    PutGitlabConnectionRequest:
+      type: object
+      properties:
+        baseUrl:
+          type: string
+        token:
+          type: string
+      required:
+        - baseUrl
+        - token
+    GitlabConnectionTestResult:
+      type: object
+      properties:
+        verified:
+          type: boolean
+        error:
+          type: string
+    AvailableGitlabProject:
+      type: object
+      description: One GitLab project the connection's token can see, offered for linking.
+      properties:
+        id:
+          type: integer
+          format: int64
+        pathWithNamespace:
+          type: string
+        name:
+          type: string
+        webUrl:
+          type: string
+    NotificationSettings:
+      type: object
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        webhookUrl:
+          type: string
+        enabled:
+          type: boolean
+        sendHour:
+          type: integer
+          description: UTC hour (0-23) the daily digest is sent.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    PutNotificationSettingsRequest:
+      type: object
+      properties:
+        webhookUrl:
+          type: string
+        enabled:
+          type: boolean
+        sendHour:
+          type: integer
+          minimum: 0
+          maximum: 23
+      required:
+        - webhookUrl
+        - enabled
+        - sendHour
+    LinkedGitlabProject:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        gitlabConnectionId:
+          type: string
+          format: uuid
+        gitlabProjectId:
+          type: integer
+          format: int64
+        pathWithNamespace:
+          type: string
+        name:
+          type: string
+        webUrl:
+          type: string
+        syncScope:
+          type: string
+          description: What subset of issues to sync (e.g. all, or filtered by label).
+        syncLabels:
+          type: array
+          items:
+            type: string
+        isDefault:
+          type: boolean
+          description: Whether this is the project's default GitLab project for new tasks.
+        initialImportStatus:
+          type: string
+        lastSyncedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        webhookStatus:
+          type: string
+        webhookRegisteredAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        webhookError:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateLinkedGitlabProjectRequest:
+      type: object
+      properties:
+        gitlabProjectId:
+          type: integer
+          format: int64
+        syncScope:
+          type: string
+        syncLabels:
+          type: array
+          items:
+            type: string
+      required:
+        - gitlabProjectId
+    APIToken:
+      type: object
+      description: |
+        A project-scoped API token (ADR-0009). The raw bearer value is present only in the response body of POST .../api-tokens — every other response carries just tokenPrefix.
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+            enum:
+              - read
+              - write
+        tokenPrefix:
+          type: string
+        lastUsedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        token:
+          type: string
+          description: The raw bearer secret. Present only in the create response, never again.
+    CreateAPITokenRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+            enum:
+              - read
+              - write
+        expiresAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+      required:
+        - name
+        - scopes
+    ProjectMember:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+            - viewer
+        isProjectOwner:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    AddProjectMemberRequest:
+      type: object
+      properties:
+        identifier:
+          type: string
+          description: Username or email of the user to add.
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+            - viewer
+      required:
+        - identifier
+        - role
+    UpdateProjectMemberRequest:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+            - viewer
+      required:
+        - role
+    ProjectMemberCandidate:
+      type: object
+      description: One hit from the invite form's user search (?q=, min 2 characters).
+      properties:
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        displayName:
+          type: string
+    SyncJob:
+      type: object
+      description: A permanently-failed (or in-progress) outbox sync job.
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        taskId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        kind:
+          type: string
+        status:
+          type: string
+        attempts:
+          type: integer
+        lastError:
+          type: string
+        runAfter:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    DurationStats:
+      type: object
+      properties:
+        count:
+          type: integer
+        medianHours:
+          type:
+            - number
+            - 'null'
+        p90Hours:
+          type:
+            - number
+            - 'null'
+    SizeStats:
+      type: object
+      properties:
+        count:
+          type: integer
+        median:
+          type:
+            - number
+            - 'null'
+        p90:
+          type:
+            - number
+            - 'null'
+    DeliveryPeriodStats:
+      type: object
+      properties:
+        openToFirstReview:
+          $ref: '#/components/schemas/DurationStats'
+        firstReviewToMerge:
+          $ref: '#/components/schemas/DurationStats'
+        additions:
+          $ref: '#/components/schemas/SizeStats'
+        deletions:
+          $ref: '#/components/schemas/SizeStats'
+        changedFiles:
+          $ref: '#/components/schemas/SizeStats'
+        pipelineSuccessRate:
+          type:
+            - number
+            - 'null'
+        throughput:
+          type: integer
+    DeliveryPeriod:
+      allOf:
+        - type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+        - $ref: '#/components/schemas/DeliveryPeriodStats'
+    DeliveryMetrics:
+      description: GET /projects/{projectID}/metrics response.
+      allOf:
+        - type: object
+          properties:
+            from:
+              type:
+                - string
+                - 'null'
+              format: date-time
+            to:
+              type:
+                - string
+                - 'null'
+              format: date-time
+            interval:
+              type:
+                - string
+                - 'null'
+              enum:
+                - week
+                - month
+                - year
+                - null
+            truncated:
+              type: boolean
+            periods:
+              type: array
+              items:
+                $ref: '#/components/schemas/DeliveryPeriod'
+        - $ref: '#/components/schemas/DeliveryPeriodStats'
+    FlowStageStats:
+      type: object
+      properties:
+        count:
+          type: integer
+        medianHours:
+          type:
+            - number
+            - 'null'
+        p90Hours:
+          type:
+            - number
+            - 'null'
+    FlowStageStatsSet:
+      type: object
+      description: The eight flow stages (issue
+      properties:
+        backlogWaitingToStart:
+          $ref: '#/components/schemas/FlowStageStats'
+        taskBreakdown:
+          $ref: '#/components/schemas/FlowStageStats'
+        waitingToStart:
+          $ref: '#/components/schemas/FlowStageStats'
+        design:
+          $ref: '#/components/schemas/FlowStageStats'
+        implementation:
+          $ref: '#/components/schemas/FlowStageStats'
+        reviewAndMerge:
+          $ref: '#/components/schemas/FlowStageStats'
+        completion:
+          $ref: '#/components/schemas/FlowStageStats'
+        blocked:
+          $ref: '#/components/schemas/FlowStageStats'
+    FlowPeriod:
+      allOf:
+        - type: object
+          properties:
+            start:
+              type: string
+              format: date-time
+            end:
+              type: string
+              format: date-time
+        - $ref: '#/components/schemas/FlowStageStatsSet'
+    FlowMetrics:
+      description: GET /projects/{projectID}/flow-metrics response.
+      allOf:
+        - type: object
+          properties:
+            from:
+              type:
+                - string
+                - 'null'
+              format: date-time
+            to:
+              type:
+                - string
+                - 'null'
+              format: date-time
+            interval:
+              type:
+                - string
+                - 'null'
+              enum:
+                - week
+                - month
+                - year
+                - null
+            truncated:
+              type: boolean
+            periods:
+              type: array
+              items:
+                $ref: '#/components/schemas/FlowPeriod'
+        - $ref: '#/components/schemas/FlowStageStatsSet'
+    VelocityPeriod:
+      type: object
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+        completed:
+          type: integer
+        completedByUser:
+          type: integer
+        completedByAgent:
+          type: integer
+        completedByUnknown:
+          type: integer
+        completedPoints:
+          type: integer
+        completedPointsByUser:
+          type: integer
+        completedPointsByAgent:
+          type: integer
+        completedPointsByUnknown:
+          type: integer
+        movingAverage:
+          type: number
+        movingAveragePoints:
+          type: number
+        complete:
+          type: boolean
+          description: True once this bucket's end has passed.
+    VelocityMetrics:
+      description: GET /projects/{projectID}/velocity response.
+      type: object
+      properties:
+        from:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        to:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        interval:
+          type: string
+          enum:
+            - week
+            - month
+            - year
+        truncated:
+          type: boolean
+        periods:
+          type: array
+          items:
+            $ref: '#/components/schemas/VelocityPeriod'
+        openTaskCount:
+          type: integer
+        averageVelocity:
+          type:
+            - number
+            - 'null'
+        forecastPeriods:
+          type:
+            - number
+            - 'null'
+        openTaskPoints:
+          type: integer
+        averageVelocityPoints:
+          type:
+            - number
+            - 'null'
+        forecastPeriodsByPoints:
+          type:
+            - number
+            - 'null'
+        sizedTaskRatio:
+          type: number
+    UpdateLinkedGitlabProjectRequest:
+      type: object
+      properties:
+        syncScope:
+          type: string
+        syncLabels:
+          type: array
+          items:
+            type: string
+        isDefault:
+          type: boolean
+    SyncRun:
+      type: object
+      description: One issue-sync run (manual or scheduled) against a linked GitLab project.
+      properties:
+        id:
+          type: string
+          format: uuid
+        linkedGitlabProjectId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        status:
+          type: string
+        issuesSeen:
+          type: integer
+        issuesCreated:
+          type: integer
+        issuesUpdated:
+          type: integer
+        startedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        completedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        errorMessage:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    CreateSyncRunRequest:
+      type: object
+      properties:
+        full:
+          type: boolean
+          description: Full re-fetch of every issue vs. an incremental diff since the last successful sync.
+    WebhookEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        linkedGitlabProjectId:
+          type: string
+          format: uuid
+        eventName:
+          type: string
+        objectKind:
+          type: string
+        gitlabIssueIid:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        status:
+          type: string
+        skipReason:
+          type: string
+        errorMessage:
+          type: string
+        receivedAt:
+          type: string
+          format: date-time
+        processedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    WebhookEventsPage:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEvent'
+        nextPage:
+          type: integer
+          description: 0 when there is no next page.
+    WebhookEventDetail:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEvent'
+        - type: object
+          properties:
+            payload:
+              description: The raw webhook payload, as received from GitLab.
+    GitlabMember:
+      type: object
+      description: One member of a linked GitLab project, for the task assignee picker.
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        name:
+          type: string
+        avatarUrl:
+          type: string
+    GitlabLabel:
+      type: object
+      description: One label of a linked GitLab project, for the task label picker.
+      properties:
+        name:
+          type: string
+        color:
+          type: string
+    Backlog:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        position:
+          type: integer
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+        defaultLinkedGitlabProjectId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        baseBranch:
+          type: string
+    CreateBacklogRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+      required:
+        - name
+    ReorderBacklogsRequest:
+      type: object
+      properties:
+        backlogIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: The project's full, newly-ordered backlog ID list.
+      required:
+        - backlogIds
+    UpdateBacklogRequest:
+      type: object
+      description: Every field is optional-if-omitted (the update leaves it unchanged); send null to clear a nullable field.
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        position:
+          type: integer
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+    CreateTaskRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        assigneeGitlabUserId:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        assigneeGitlabUsername:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+      required:
+        - title
+    ReorderTasksRequest:
+      type: object
+      properties:
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: null targets the Unclassified group.
+        taskIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: That bucket's full, newly-ordered task ID list.
+      required:
+        - taskIds
+    TaskDependency:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        predecessorTaskId:
+          type: string
+          format: uuid
+        successorTaskId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+    CreateTaskDependencyRequest:
+      type: object
+      properties:
+        predecessorTaskId:
+          type: string
+          format: uuid
+        successorTaskId:
+          type: string
+          format: uuid
+      required:
+        - predecessorTaskId
+        - successorTaskId
+    TaskGitlabContext:
+      allOf:
+        - $ref: '#/components/schemas/TaskGitlabInfo'
+        - type: object
+          properties:
+            projectPath:
+              type: string
+    TaskComment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        authorUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        authorTokenId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        authorKind:
+          type: string
+          enum:
+            - user
+            - agent
+            - gitlab
+          description: Who said it — a human user, a project API token, or (future) GitLab discussion sync.
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TaskContext:
+      type: object
+      description: |
+        The AI-facing combined view of a task, its backlog's base branch and its GitLab context, returned by GET /tasks/{taskID}/context and GET /projects/{projectID}/tasks/context.
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum:
+            - open
+            - closed
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+        progressGuidance:
+          type: string
+        size:
+          type: string
+          enum:
+            - xs
+            - s
+            - m
+            - l
+            - xl
+        assigneeGitlabUserId:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        assigneeGitlabUsername:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        baseBranch:
+          type: string
+        gitlab:
+          anyOf:
+            - $ref: '#/components/schemas/TaskGitlabContext'
+            - type: 'null'
+        acceptanceCriteria:
+          type: string
+        aiContext:
+          type: string
+        allowedScope:
+          type: string
+        forbiddenScope:
+          type: string
+        recentComments:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskComment'
+    TaskContextPage:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskContext'
+        nextPage:
+          type: integer
+          description: 0 when there is no next page.
+    UpdateTaskRequest:
+      type: object
+      description: Every field is optional-if-omitted (the update leaves it unchanged); send null to clear a nullable field.
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        assigneeGitlabUserId:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        assigneeGitlabUsername:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+    AssignTaskBacklogRequest:
+      type: object
+      properties:
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: null unassigns the task from any backlog.
+    UpsertTaskAIContextRequest:
+      type: object
+      properties:
+        acceptanceCriteria:
+          type: string
+        aiContext:
+          type: string
+        allowedScope:
+          type: string
+        forbiddenScope:
+          type: string
+    CreateTaskCommentRequest:
+      type: object
+      properties:
+        body:
+          type: string
+      required:
+        - body
+    MergeRequest:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repositoryId:
+          type: string
+          format: uuid
+        gitlabMergeRequestId:
+          type: integer
+          format: int64
+        number:
+          type: integer
+        title:
+          type: string
+        state:
+          type: string
+        isDraft:
+          type: boolean
+        authorGitlabUsername:
+          type: string
+        authorAvatarUrl:
+          type: string
+        baseBranch:
+          type: string
+        headBranch:
+          type: string
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        changedFiles:
+          type: integer
+        gitlabCreatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        gitlabUpdatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        mergedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        closedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        htmlUrl:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        firstReviewedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        pipelineStatus:
+          type: string
+        pipelineId:
+          type:
+            - integer
+            - 'null'
+          format: int64
+        pipelineUpdatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+  parameters:
+    projectID:
+      in: path
+      name: projectID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    linkID:
+      in: path
+      name: linkID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    userID:
+      in: path
+      name: userID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    from:
+      in: query
+      name: from
+      schema:
+        type: string
+        format: date-time
+    to:
+      in: query
+      name: to
+      schema:
+        type: string
+        format: date-time
+    interval:
+      in: query
+      name: interval
+      schema:
+        type: string
+        enum:
+          - all
+          - week
+          - month
+          - year
+    eventID:
+      in: path
+      name: eventID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    backlogID:
+      in: path
+      name: backlogID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    dependencyID:
+      in: path
+      name: dependencyID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    taskID:
+      in: path
+      name: taskID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    commentID:
+      in: path
+      name: commentID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    mergeRequestID:
+      in: path
+      name: mergeRequestID
+      required: true
+      schema:
+        type: string
+        format: uuid

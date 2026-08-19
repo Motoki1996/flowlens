@@ -1,0 +1,28 @@
+syncJobRetry:
+  post:
+    summary: Retry a permanently-failed sync job
+    description: Session-only.
+    tags: [sync-jobs]
+    security:
+      - cookieAuth: []
+    parameters:
+      - in: path
+        name: jobID
+        required: true
+        schema: { type: string, format: uuid }
+    responses:
+      "200":
+        description: The retried job
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/SyncJob' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }

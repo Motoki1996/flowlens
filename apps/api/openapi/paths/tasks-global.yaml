@@ -1,0 +1,36 @@
+allTasks:
+  get:
+    summary: Cross-project task collection
+    description: >
+      Every task across every project the caller owns or is a member of
+      (issue #76). Session-only — a project API token is scoped to a
+      single project and has no notion of "every project I own".
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+    parameters:
+      - in: query
+        name: status
+        schema: { type: string, enum: [open, closed] }
+      - in: query
+        name: priority
+        schema: { type: string, enum: [low, medium, high, urgent] }
+      - in: query
+        name: progress
+        schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
+      - in: query
+        name: sort
+        schema: { type: string }
+    responses:
+      "200":
+        description: Matching tasks, each carrying its project's name
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/TaskWithProject' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }

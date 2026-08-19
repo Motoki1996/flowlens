@@ -54,6 +54,10 @@ export interface Backlog {
   // task is created: moving a task between backlogs afterwards never moves an
   // issue that already exists.
   defaultLinkedGitlabProjectId: string | null;
+  // The branch tasks in this backlog are meant to branch from during
+  // development (e.g. "main", "release/2.4"). Optional — "" means not set.
+  // App-only, never synced to GitLab.
+  baseBranch: string;
   // The backlog's total and closed task counts, aggregated server-side
   // (issue #144) so the Backlog collection doesn't need to fetch every task
   // itself just to show a count and a completion ratio.

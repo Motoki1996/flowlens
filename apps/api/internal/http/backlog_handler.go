@@ -24,12 +24,17 @@ type createBacklogRequest struct {
 	// their GitLab issue created; omitted or null leaves it on the project's
 	// default link.
 	DefaultLinkedGitlabProjectID *uuid.UUID `json:"defaultLinkedGitlabProjectId"`
+	// BaseBranch is the branch tasks in this backlog are meant to branch
+	// from; omitted leaves it unset.
+	BaseBranch string `json:"baseBranch"`
 }
 
-// The dates, priority and progress are Optional so PATCH stays a partial
-// update for them: a body without "startDate"/"priority"/"progress" keeps the
-// stored value, and an explicit null clears a date (priority and progress
-// have no null case — see backlog.normalizePriority/normalizeProgress).
+// The dates, priority, progress and base branch are Optional so PATCH stays
+// a partial update for them: a body without
+// "startDate"/"priority"/"progress"/"baseBranch" keeps the stored value, and
+// an explicit null clears a date (priority and progress have no null case —
+// see backlog.normalizePriority/normalizeProgress — and an explicit empty
+// string clears baseBranch instead, since it has no null case either).
 // Name/description/position predate that and are still overwritten
 // wholesale.
 type updateBacklogRequest struct {
@@ -43,6 +48,7 @@ type updateBacklogRequest struct {
 	// Optional like the dates, and nullable the same way: an explicit null
 	// falls the backlog back to the project's default link.
 	DefaultLinkedGitlabProjectID optional.Optional[*uuid.UUID] `json:"defaultLinkedGitlabProjectId"`
+	BaseBranch                   optional.Optional[string]     `json:"baseBranch"`
 }
 
 // reorderBacklogsRequest carries a project's full, newly-ordered backlog ID
@@ -188,6 +194,7 @@ func (s *Server) handleCreateBacklog(w http.ResponseWriter, r *http.Request) {
 		Priority:                     req.Priority,
 		Progress:                     req.Progress,
 		DefaultLinkedGitlabProjectID: req.DefaultLinkedGitlabProjectID,
+		BaseBranch:                   req.BaseBranch,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -246,6 +253,7 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		Priority:                     req.Priority,
 		Progress:                     req.Progress,
 		DefaultLinkedGitlabProjectID: req.DefaultLinkedGitlabProjectID,
+		BaseBranch:                   req.BaseBranch,
 	}, actorKind)
 	if err != nil {
 		writeBacklogError(w, err)
@@ -283,6 +291,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
 	case errors.Is(err, backlog.ErrInvalidProgress):
 		writeError(w, http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done")
+	case errors.Is(err, backlog.ErrInvalidBaseBranch):
+		writeError(w, http.StatusBadRequest, "invalid_base_branch", "baseBranch must be a valid git branch name, at most 255 characters")
 	case errors.Is(err, backlog.ErrLinkNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_linked_gitlab_project", "defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	case errors.Is(err, backlog.ErrBacklogIDsMismatch):

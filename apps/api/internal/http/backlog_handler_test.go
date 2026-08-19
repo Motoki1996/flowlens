@@ -232,6 +232,47 @@ func TestHandleCreateBacklog_RejectsInvalidPriority(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestHandleCreateBacklog_StoresBaseBranch(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Sprint 1", BaseBranch: "main"}, token)
+	require.Equal(t, http.StatusCreated, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "main", body["baseBranch"])
+}
+
+func TestHandleCreateBacklog_RejectsInvalidBaseBranch(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/backlogs",
+		createBacklogRequest{Name: "Sprint 1", BaseBranch: "bad branch"}, token)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	errBody, _ := body["error"].(map[string]any)
+	assert.Equal(t, "invalid_base_branch", errBody["code"])
+}
+
+func TestHandleUpdateBacklog_UpdatesBaseBranch(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+b.ID.String(),
+		map[string]any{"name": "Sprint 1", "baseBranch": "develop"}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "develop", body["baseBranch"])
+}
+
 func TestHandleGetBacklog(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, ownerToken := loginSession(t, s, q)

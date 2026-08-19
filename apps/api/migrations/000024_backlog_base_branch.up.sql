@@ -1,0 +1,12 @@
+-- A backlog can name the branch its tasks are meant to branch from during
+-- development (e.g. "main", "develop", "release/2.4"), so an AI agent or
+-- human working a task knows where to start without asking. Purely a
+-- convention FlowLens stores and surfaces: it is never read from or written
+-- to GitLab, unlike merge_requests.base_branch, which is a fact synced
+-- *from* GitLab about an actual merge request.
+--
+-- TEXT NOT NULL DEFAULT '' rather than NULLable, matching description: an
+-- empty string is "not set", so UPDATE always overwrites the column and
+-- Optional only has to distinguish "absent from the PATCH body" (keep the
+-- current value) from "explicitly sent" (write it, blank or not).
+ALTER TABLE backlogs ADD COLUMN base_branch TEXT NOT NULL DEFAULT '';

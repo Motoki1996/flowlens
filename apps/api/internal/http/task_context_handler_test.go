@@ -168,6 +168,49 @@ func TestHandleGetTaskContext_IncludesAIContextAndGitlabProjectPath(t *testing.T
 	assert.Equal(t, link.PathWithNamespace, gitlabBody["projectPath"])
 }
 
+// baseBranch (internal/backlog) is resolved through the task's backlog, so
+// an AI agent working the task knows what branch to start from.
+func TestHandleGetTaskContext_IncludesBacklogBaseBranch(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	tsk := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Fix bug")
+
+	patchRec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+b.ID.String(),
+		map[string]any{"name": b.Name, "baseBranch": "release/2.4"}, token)
+	require.Equal(t, http.StatusOK, patchRec.Code)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String()+"/context", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "release/2.4", body["baseBranch"])
+}
+
+// A task with no backlog, or one whose backlog has no base branch set,
+// reports "" rather than omitting the field or erroring.
+func TestHandleGetTaskContext_BaseBranchEmptyWhenUnfiledOrUnset(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	unfiled := q.SeedTask(p.ID, ownerID, "Unfiled task")
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+unfiled.ID.String()+"/context", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "", body["baseBranch"])
+
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	filed := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Filed task")
+	rec = doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+filed.ID.String()+"/context", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "", body["baseBranch"])
+}
+
 func TestHandleGetTaskContext_IncludesProgressAndGuidance(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

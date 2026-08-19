@@ -56,6 +56,7 @@ const backlog: Backlog = {
   priority: "medium",
   progress: "not_started",
   defaultLinkedGitlabProjectId: null,
+  baseBranch: "",
   taskCount: 0,
   closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
@@ -105,7 +106,8 @@ describe("BacklogDetail", () => {
 
   it("shows the planned period, or says it is unset", () => {
     const { rerender } = render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
-    expect(screen.getAllByText("Not set")).toHaveLength(2);
+    // Start date, due date, and base branch each say "Not set" when unset.
+    expect(screen.getAllByText("Not set")).toHaveLength(3);
 
     rerender(
       <BacklogDetail
@@ -137,6 +139,20 @@ describe("BacklogDetail", () => {
     );
     expect(screen.getByText("group/other")).toBeInTheDocument();
     expect(screen.queryByText("(project default)")).not.toBeInTheDocument();
+  });
+
+  it("shows the base branch, or says it is unset", () => {
+    const { rerender } = render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
+    expect(screen.getByText("Base branch")).toBeInTheDocument();
+
+    rerender(
+      <BacklogDetail
+        backlog={{ ...backlog, baseBranch: "release/2.4" }}
+        project={project}
+        tasks={[]}
+      />,
+    );
+    expect(screen.getByText("release/2.4")).toBeInTheDocument();
   });
 
   it("omits the GitLab destination for a project with no linked GitLab project", () => {

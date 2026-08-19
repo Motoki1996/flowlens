@@ -66,6 +66,9 @@ type Querier interface {
 	// issues, overriding the project's default link (000021). NULL means "use the
 	// project default". internal/backlog checks the link belongs to this project's
 	// GitLab connection before writing it — the schema cannot.
+	//
+	// base_branch (000024) is the branch tasks in this backlog are meant to
+	// branch from; app-only, never synced to GitLab.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
 	CreateBacklogProgressEvent(ctx context.Context, arg CreateBacklogProgressEventParams) (BacklogProgressEvent, error)
 	// gitlab_sync_runs records one project.import / project.resync execution
@@ -219,6 +222,10 @@ type Querier interface {
 	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
 	FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunParams) (GitlabSyncRun, error)
 	FailRepositorySyncRun(ctx context.Context, arg FailRepositorySyncRunParams) (RepositorySyncRun, error)
+	// GetBacklogBaseBranch is the lightweight lookup internal/task's Context
+	// uses to resolve a task's backlog's base_branch without pulling in the rest
+	// of the backlog row.
+	GetBacklogBaseBranch(ctx context.Context, id uuid.UUID) (string, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	// The backlog-scoped half of GetDefaultLinkedGitlabProjectForOwner:
 	// internal/task resolves a new task's issue destination from its backlog
@@ -672,10 +679,10 @@ type Querier interface {
 	// clears any earlier registration error.
 	SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error)
 	SetTaskCommentGitlabNoteID(ctx context.Context, arg SetTaskCommentGitlabNoteIDParams) error
-	// UpdateBacklogForOwner overwrites every editable column, so start_date/due_on
-	// and default_linked_gitlab_project_id must arrive already resolved: backlog.Service
-	// reads the current row first and fills in whatever the PATCH body left out
-	// (see its Update).
+	// UpdateBacklogForOwner overwrites every editable column, so start_date/due_on,
+	// default_linked_gitlab_project_id and base_branch must arrive already
+	// resolved: backlog.Service reads the current row first and fills in
+	// whatever the PATCH body left out (see its Update).
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
 	// Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.

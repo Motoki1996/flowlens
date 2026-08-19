@@ -22,6 +22,7 @@ on:
 jobs:
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       postgres:
@@ -75,7 +76,13 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: apps/web
-        run: npx playwright install --with-deps chromium
+        # No --with-deps: ubuntu-latest already ships every shared library
+        # Chromium needs. --with-deps only adds CJK/Cyrillic fonts via apt,
+        # and that apt fetch has been observed taking 9+ minutes (a flaky
+        # mirror, not the Playwright CDN) while the actual browser download
+        # takes seconds. smoke.spec.ts types ASCII only and does no visual
+        # comparison, so those fonts aren't needed here.
+        run: npx playwright install chromium
 
       - name: Run e2e tests
         working-directory: apps/web

@@ -1655,6 +1655,68 @@ issue**, `"interval"` is `null`, and `"periods"` is empty.
     row, not both at once — see [Flow metrics](#flow-metrics-issue-171)'s
     Median/p90 tab above.
 
+### Velocity (issue #195)
+
+Throughput — completed tasks per period — as distinct from
+[Delivery metrics](#delivery-metrics-issue-113) and
+[Flow metrics](#flow-metrics-issue-171), which both measure how long one
+item took, not how many finished in a window. FlowLens deliberately has no
+story-point/estimate concept (there's no sprint/timebox construct a "points
+per sprint" figure could hang off, and asking an AI-agent-driven team to
+hand-enter estimates every task isn't worth the input cost), so velocity is
+a raw completed-task count — split by `task_progress_events.actor_kind`
+into user/agent/unknown, a breakdown no story-point tool can give, since
+"how much throughput did the agent actually produce" only means something
+once agents are doing the work.
+
+- A task's **completion time** is `min(its first progress='done'
+  transition's occurred_at, tasks.closed_at)`, whichever is non-nil; a task
+  with neither is not completed and is never counted. Both signals have to
+  be checked: `tasks.progress` is app-only and GitLab sync never writes it,
+  so a task closed on the GitLab side alone never reaches `progress='done'`
+  and would be invisible if only `task_progress_events` were read;
+  conversely `tasks.status` can stay `open` after `progress` reaches
+  `done` (they're separate axes that never write each other), so
+  `closed_at` alone would miss those. Each task counts at most once, at
+  the earlier of the two — a tie prefers the `done` transition, since it
+  alone carries an actor. `task_progress_events` only exists from migration
+  `000020` on (issue #169); a task done before that migration shipped has
+  no event row and is only reachable via `closed_at`, with no actor
+  breakdown — that gap can't be backfilled and is expected, not a bug.
+- `GET /api/v1/projects/{projectID}/velocity?from=&to=&interval=` (`from`/
+  `to` as `YYYY-MM-DD`, both optional) buckets tasks by their **completion
+  time**, not their `created_at` — the opposite cohort basis from delivery/
+  flow metrics above, since this endpoint answers "how much finished in
+  this window", not "how is the cohort created in this window doing".
+  `from`/`to` bound completion time the same way. `interval` follows
+  [Period bucketing](#period-bucketing-issue-188)'s UTC/ISO-week
+  boundaries, gap-fill and 52-period cap, but **defaults to `week`** when
+  omitted rather than "don't bucket" — periods are the metric here, not an
+  optional add-on. Session-only, not on the bearer-token allowlist, like
+  the other two metrics endpoints. Each period reports:
+  - `completed`, split into `completedByUser`/`completedByAgent`/
+    `completedByUnknown` (always summing back to `completed`) —
+    `completedByUnknown` covers a `closed_at`-only completion (no actor to
+    read) and the pre-migration-000020 gap above.
+  - `movingAverage`: the simple average of `completed` over this period and
+    up to 3 preceding ones (fewer once fewer exist) — a single period's
+    count is too noisy to act on alone; this is the value meant to
+    actually be read.
+  - `complete`: `false` for a still-running period (typically the most
+    recent one), so a chart can tell a partial bucket apart from a
+    finished one.
+  - The response also reports `openTaskCount` (current
+    `status='open' AND progress<>'done'` count, regardless of `from`/`to`),
+    `averageVelocity` (the mean `completed` over the most recent up to 4
+    **complete** periods — excluding any still-running period, which would
+    otherwise understate velocity by construction — `null` if none is
+    complete yet), and `forecastPeriods` (`openTaskCount / averageVelocity`,
+    `null` whenever that's `null` or `0`): how many more periods, at the
+    recent pace, the remaining open tasks would take.
+- Web visualization is a follow-up (issue #196), the same split
+  [Flow metrics](#flow-metrics-issue-171) had between #171 (API) and #172
+  (web).
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault

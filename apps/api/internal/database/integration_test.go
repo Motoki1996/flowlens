@@ -569,6 +569,7 @@ func TestDeletingLinkedGitlabProjectKeepsTasksButRemovesTheGitlabLink(t *testing
 		Labels:          []string{},
 		Priority:        "medium",
 		Progress:        "not_started",
+		Size:            "m",
 		CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
@@ -614,6 +615,7 @@ func TestDeletingTaskCascadesItsProgressEvents(t *testing.T) {
 		Labels:          []string{},
 		Priority:        "medium",
 		Progress:        "in_progress",
+		Size:            "m",
 		CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
@@ -725,17 +727,17 @@ func TestListTasksForMember(t *testing.T) {
 	later := time.Now().AddDate(0, 0, 10)
 
 	inAlpha, err := q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: alpha.ID, Title: "In alpha, due soon", Labels: []string{}, Priority: "urgent", Progress: "not_started",
+		ProjectID: alpha.ID, Title: "In alpha, due soon", Labels: []string{}, Priority: "urgent", Progress: "not_started", Size: "m",
 		DueOn: pgtype.Date{Time: soon, Valid: true}, CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 	inBeta, err := q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: beta.ID, Title: "In beta, due later", Labels: []string{}, Priority: "low", Progress: "in_progress",
+		ProjectID: beta.ID, Title: "In beta, due later", Labels: []string{}, Priority: "low", Progress: "in_progress", Size: "m",
 		DueOn: pgtype.Date{Time: later, Valid: true}, CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 	_, err = q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: theirs.ID, Title: "Not the owner's", Labels: []string{}, Priority: "urgent", Progress: "not_started", CreatedByUserID: intruder.ID,
+		ProjectID: theirs.ID, Title: "Not the owner's", Labels: []string{}, Priority: "urgent", Progress: "not_started", Size: "m", CreatedByUserID: intruder.ID,
 	})
 	require.NoError(t, err)
 
@@ -810,6 +812,81 @@ func TestListTasksForMember(t *testing.T) {
 // 'simple'-config generated column the 000016 migration adds — against a
 // real Postgres, since neither FakeQuerier's substring approximation nor a
 // domain test can prove the tsvector match or the GIN index actually work.
+// The size filter and ORDER BY CASE rank exist only in SQL — the fake
+// querier reimplements them, so this pins the real query's behaviour rather
+// than trusting the two to agree. Sorting runs biggest-first, matching
+// priority's direction, with the manual position order as the tiebreak.
+func TestListTasksByProject_SizeFilterAndSort(t *testing.T) {
+	q := testDB(t)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("Sized-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	// Inserted in a deliberately jumbled order so a passing sort can't be
+	// insertion order in disguise.
+	for _, tc := range []struct{ title, size string }{
+		{"Middling", "m"},
+		{"Huge", "xl"},
+		{"Tiny", "xs"},
+		{"Large", "l"},
+		{"Small", "s"},
+	} {
+		_, err = q.CreateTask(ctx, db.CreateTaskParams{
+			ProjectID: p.ID, Title: tc.title, Labels: []string{},
+			Priority: "medium", Progress: "not_started", Size: tc.size,
+			CreatedByUserID: owner.ID,
+		})
+		require.NoError(t, err)
+	}
+
+	t.Run("an empty size filter returns every task", func(t *testing.T) {
+		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
+			ProjectID: p.ID, OwnerUserID: owner.ID,
+		})
+		require.NoError(t, err)
+		assert.Len(t, rows, 5)
+	})
+
+	t.Run("a size filter narrows to that size alone", func(t *testing.T) {
+		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
+			ProjectID: p.ID, OwnerUserID: owner.ID, Size: "xl",
+		})
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		assert.Equal(t, "Huge", rows[0].Title)
+	})
+
+	t.Run("sort_by_size ranks biggest first", func(t *testing.T) {
+		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
+			ProjectID: p.ID, OwnerUserID: owner.ID, SortBySize: true,
+		})
+		require.NoError(t, err)
+		require.Len(t, rows, 5)
+		got := make([]string, len(rows))
+		for i, r := range rows {
+			got[i] = r.Size
+		}
+		assert.Equal(t, []string{"xl", "l", "m", "s", "xs"}, got)
+	})
+
+	t.Run("size defaults to m when the caller omits it", func(t *testing.T) {
+		created, err := q.CreateTask(ctx, db.CreateTaskParams{
+			ProjectID: p.ID, Title: "Unsized", Labels: []string{},
+			Priority: "medium", Progress: "not_started", Size: "m",
+			CreatedByUserID: owner.ID,
+		})
+		require.NoError(t, err)
+		assert.Equal(t, "m", created.Size)
+	})
+}
+
 func TestTasksSearchVector(t *testing.T) {
 	pool := testPool(t)
 	q := db.New(pool)
@@ -825,19 +902,19 @@ func TestTasksSearchVector(t *testing.T) {
 	})
 
 	titleHit, err := q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: p.ID, Title: "Fix login bug", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+		ProjectID: p.ID, Title: "Fix login bug", Labels: []string{}, Priority: "medium", Progress: "not_started", Size: "m", CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 	descriptionHit, err := q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: p.ID, Title: "Unrelated", Description: "investigate login timeout", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+		ProjectID: p.ID, Title: "Unrelated", Description: "investigate login timeout", Labels: []string{}, Priority: "medium", Progress: "not_started", Size: "m", CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 	japanese, err := q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: p.ID, Title: "ログイン画面の修正", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+		ProjectID: p.ID, Title: "ログイン画面の修正", Labels: []string{}, Priority: "medium", Progress: "not_started", Size: "m", CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 	_, err = q.CreateTask(ctx, db.CreateTaskParams{
-		ProjectID: p.ID, Title: "Something else entirely", Labels: []string{}, Priority: "medium", Progress: "not_started", CreatedByUserID: owner.ID,
+		ProjectID: p.ID, Title: "Something else entirely", Labels: []string{}, Priority: "medium", Progress: "not_started", Size: "m", CreatedByUserID: owner.ID,
 	})
 	require.NoError(t, err)
 

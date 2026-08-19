@@ -11,7 +11,7 @@ import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { toDateParam } from "@/lib/dates";
 import { TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
-import type { Priority, Progress, TaskStatus } from "@/types";
+import type { Priority, Progress, Size, TaskStatus } from "@/types";
 
 const STATUSES = ["all", "open", "closed"] as const;
 type StatusFilter = (typeof STATUSES)[number];
@@ -19,11 +19,12 @@ type StatusFilter = (typeof STATUSES)[number];
 const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
 
 const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
+const SIZES = ["xs", "s", "m", "l", "xl"] as const;
 
 // "manual" is the API's own position order, which it expresses by the absence
-// of ?sort= rather than a named value; the other four are the ones both Task
+// of ?sort= rather than a named value; the other five are the ones both Task
 // collections accept (see parseTaskListFilter, internal/http/task_handler.go).
-const SORTS = ["dueOn", "priority", "progress", "updatedAt"] as const;
+const SORTS = ["dueOn", "priority", "progress", "size", "updatedAt"] as const;
 type NamedSort = (typeof SORTS)[number];
 type Sort = "manual" | NamedSort;
 
@@ -70,6 +71,7 @@ export default async function TasksPage({
     status?: string;
     progress?: string;
     priority?: string;
+    size?: string;
     assignee?: string;
     sort?: string;
     view?: string;
@@ -92,6 +94,8 @@ export default async function TasksPage({
   const priority = PRIORITIES.includes(priorityParam as Priority)
     ? (priorityParam as Priority)
     : undefined;
+  const sizeParam = resolvedSearchParams?.size;
+  const size = SIZES.includes(sizeParam as Size) ? (sizeParam as Size) : undefined;
   const sortParam = resolvedSearchParams?.sort;
   const sort: Sort = SORTS.includes(sortParam as NamedSort) ? (sortParam as NamedSort) : "manual";
   const viewParam = resolvedSearchParams?.view;
@@ -127,6 +131,7 @@ export default async function TasksPage({
         status: status === "all" ? undefined : (status as TaskStatus),
         progress,
         priority,
+        size,
         sort: sort === "manual" ? undefined : sort,
         assignee: assigneeMe ? "me" : undefined,
         q: search,
@@ -180,6 +185,7 @@ export default async function TasksPage({
       statusFilter={status}
       progressFilter={progress}
       priorityFilter={priority}
+      sizeFilter={size}
       assigneeMe={assigneeMe}
       assigneeAvailability={assigneeAvailability}
       sort={sort}

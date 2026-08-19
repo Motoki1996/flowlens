@@ -1,0 +1,29 @@
+-- A task's size: a coarse, ordinal estimate of how much work it is, used to
+-- weight velocity (internal/velocity) so throughput reflects the amount of
+-- work finished rather than just the number of tasks finished. Without it,
+-- velocity can be inflated for free by splitting tasks smaller.
+--
+-- Issue #195 deliberately shipped velocity as a raw completed-task count and
+-- deferred this, on the grounds that story points are data a human has to
+-- re-enter every task or it rots. This column is the narrower version of
+-- that idea it explicitly left open: a five-value T-shirt scale, not a
+-- points field. The numeric weights velocity multiplies by (xs=1, s=2, m=3,
+-- l=5, xl=8) live in Go, in internal/velocity, NOT here -- a CHECK plus a
+-- weighting CASE in SQL would be two places to keep in step.
+--
+-- App-only, exactly like priority (migration 000010): GitLab CE issues have
+-- no size/weight field (weight is EE), so this never syncs to GitLab, and
+-- UpsertTaskFromGitlabIssue never writes it. Deliberately NOT added to
+-- backlogs, unlike priority/progress: a backlog's priority is genuinely
+-- independent of its tasks', but a backlog's size is just the sum of its
+-- tasks' sizes, and a hand-entered one would only ever contradict them.
+--
+-- NOT NULL DEFAULT 'm' (the exact middle of the five) means every task
+-- always has a size to weight and sort by, with no NULL case in ORDER BY --
+-- the same convention priority uses. Note the consequence for velocity:
+-- every task that existed before this migration reads as 'm', so
+-- points-based velocity is exactly 3x the task count until sizes are
+-- actually set. That is expected, is surfaced in the UI, and cannot be
+-- backfilled.
+ALTER TABLE tasks ADD COLUMN size TEXT NOT NULL DEFAULT 'm'
+    CHECK (size IN ('xs', 's', 'm', 'l', 'xl'));

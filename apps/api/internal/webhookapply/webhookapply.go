@@ -520,7 +520,10 @@ func (s *Service) applyAsNewTask(ctx context.Context, q db.Querier, event db.Web
 		DueOn:                  toDate(fields.DueDate),
 		Priority:               task.PriorityMedium,
 		Progress:               task.ProgressNotStarted,
-		CreatedByUserID:        ownerID,
+		// GitLab carries no size concept, so an imported issue starts at the
+		// default like priority/progress do; a human sizes it here.
+		Size:            task.SizeM,
+		CreatedByUserID: ownerID,
 	})
 	if err != nil {
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("create task: %w", err))

@@ -4,6 +4,8 @@ package dbtest
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -596,6 +598,25 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 
 // priorityRank mirrors the SQL query's CASE expression: urgent > high >
 // medium > low > anything else.
+// sizeRank mirrors the ORDER BY CASE in ListTasksByProject/
+// ListTasksForMember: biggest first, the same direction priorityRank runs.
+func sizeRank(size string) int {
+	switch size {
+	case "xl":
+		return 5
+	case "l":
+		return 4
+	case "m":
+		return 3
+	case "s":
+		return 2
+	case "xs":
+		return 1
+	default:
+		return 0
+	}
+}
+
 func priorityRank(priority string) int {
 	switch priority {
 	case "urgent":
@@ -857,11 +878,22 @@ func (f *FakeQuerier) SeedTaskClosedAt(taskID uuid.UUID, closedAt time.Time) db.
 }
 
 // SeedTaskProgress sets an existing task's progress directly, for tests
-// (e.g. internal/velocity's CountOpenTasksForVelocity coverage) that need a
-// task's progress without going through a real transition/event.
+// (e.g. internal/velocity's open-task coverage) that need a task's progress
+// without going through a real transition/event.
 func (f *FakeQuerier) SeedTaskProgress(taskID uuid.UUID, progress string) db.Task {
 	t := f.tasksByID[taskID]
 	t.Progress = progress
+	f.storeTask(t)
+	return t
+}
+
+// SeedTaskSize sets an existing task's size directly, for tests (e.g.
+// internal/velocity's point-weighting coverage) that need a size without
+// going through the update path. Every seeded task starts at 'm', the
+// column's default.
+func (f *FakeQuerier) SeedTaskSize(taskID uuid.UUID, size string) db.Task {
+	t := f.tasksByID[taskID]
+	t.Size = size
 	f.storeTask(t)
 	return t
 }
@@ -876,6 +908,7 @@ func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title strin
 		Labels:          []string{},
 		Priority:        "medium",
 		Progress:        "not_started",
+		Size:            "m",
 		Position:        f.nextTaskPosition(projectID, backlogID),
 		CreatedByUserID: createdByUserID,
 		CreatedAt:       now(),
@@ -929,6 +962,7 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 		StartDate:              arg.StartDate,
 		Priority:               arg.Priority,
 		Progress:               arg.Progress,
+		Size:                   arg.Size,
 		Position:               f.nextTaskPosition(arg.ProjectID, arg.BacklogID),
 		CreatedByUserID:        arg.CreatedByUserID,
 		CreatedAt:              now(),
@@ -1001,6 +1035,12 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.Progress != "" && t.Progress != arg.Progress {
 			continue
 		}
+		if arg.Size != "" && t.Size != arg.Size {
+			continue
+		}
+		if arg.Size != "" && t.Size != arg.Size {
+			continue
+		}
 		if arg.AssigneeMe && !f.matchesAssigneeMe(t.AssigneeGitlabUserID, arg.OwnerUserID, t.ProjectID) {
 			continue
 		}
@@ -1018,6 +1058,11 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.SortByProgress {
 			if ri, rj := progressRank(items[i].Progress), progressRank(items[j].Progress); ri != rj {
 				return ri < rj
+			}
+		}
+		if arg.SortBySize {
+			if ri, rj := sizeRank(items[i].Size), sizeRank(items[j].Size); ri != rj {
+				return ri > rj
 			}
 		}
 		return items[i].Position < items[j].Position
@@ -1188,6 +1233,7 @@ func (f *FakeQuerier) ListTaskCompletionsForVelocity(_ context.Context, arg db.L
 		}
 		row := db.ListTaskCompletionsForVelocityRow{
 			TaskID:   t.ID,
+			Size:     t.Size,
 			ClosedAt: t.ClosedAt,
 		}
 		if occurredAt, actorKind, ok := f.firstDoneEvent(t.ID); ok {
@@ -1214,19 +1260,25 @@ func (f *FakeQuerier) firstDoneEvent(taskID uuid.UUID) (occurredAt time.Time, ac
 	return occurredAt, actorKind, ok
 }
 
-// CountOpenTasksForVelocity mirrors the SQL: projectID's tasks with
-// status='open' AND progress<>'done', gated by ownerUserID's membership.
-func (f *FakeQuerier) CountOpenTasksForVelocity(_ context.Context, arg db.CountOpenTasksForVelocityParams) (int64, error) {
+// CountOpenTasksBySizeForVelocity mirrors the SQL: projectID's tasks with
+// status='open' AND progress<>'done', gated by ownerUserID's membership,
+// grouped by size. Like the real query it leaves the size->points weighting
+// to internal/velocity rather than summing here.
+func (f *FakeQuerier) CountOpenTasksBySizeForVelocity(_ context.Context, arg db.CountOpenTasksBySizeForVelocityParams) ([]db.CountOpenTasksBySizeForVelocityRow, error) {
 	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
-		return 0, nil
+		return []db.CountOpenTasksBySizeForVelocityRow{}, nil
 	}
-	var count int64
+	bySize := map[string]int64{}
 	for _, t := range f.tasks {
 		if t.ProjectID == arg.ProjectID && t.Status == "open" && t.Progress != "done" {
-			count++
+			bySize[t.Size]++
 		}
 	}
-	return count, nil
+	items := []db.CountOpenTasksBySizeForVelocityRow{}
+	for _, size := range slices.Sorted(maps.Keys(bySize)) {
+		items = append(items, db.CountOpenTasksBySizeForVelocityRow{Size: size, Count: bySize[size]})
+	}
+	return items, nil
 }
 
 // backlogsInFlowMetricsRange returns the IDs of projectID's backlogs that
@@ -1421,6 +1473,7 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 			StartDate:              t.StartDate,
 			Priority:               t.Priority,
 			Progress:               t.Progress,
+			Size:                   t.Size,
 			Position:               t.Position,
 			CreatedByUserID:        t.CreatedByUserID,
 			CreatedAt:              t.CreatedAt,
@@ -1438,6 +1491,10 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 		case "progress":
 			if ri, rj := progressRank(items[i].Progress), progressRank(items[j].Progress); ri != rj {
 				return ri < rj
+			}
+		case "size":
+			if ri, rj := sizeRank(items[i].Size), sizeRank(items[j].Size); ri != rj {
+				return ri > rj
 			}
 		case "updatedAt":
 			if !items[i].UpdatedAt.Time.Equal(items[j].UpdatedAt.Time) {
@@ -1574,6 +1631,7 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	existing.StartDate = arg.StartDate
 	existing.Priority = arg.Priority
 	existing.Progress = arg.Progress
+	existing.Size = arg.Size
 	existing.Position = arg.Position
 	existing.UpdatedAt = now()
 

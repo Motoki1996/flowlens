@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Bar,
@@ -15,6 +15,7 @@ import {
 import type { DeliveryMetrics, DeliveryPeriod, FlowMetrics, FlowPeriod, MetricsInterval } from "@/types";
 import { fromDateParam, periodLabel, toDateParam } from "@/lib/dates";
 import { DateField } from "@/components/DateField";
+import { MetricTabs } from "@/components/MetricTabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -92,6 +93,10 @@ function formatPercent(ratio: number | null): string {
 
 type StatTab = "median" | "p90";
 
+/** Stage lead time and Blocked time switch between Median and p90 together,
+ *  off one piece of state on purpose (issue #189): the two charts share one
+ *  "way of reading" the distribution, so letting them switch independently
+ *  would invite misreading one against the other's stat. */
 const STAT_TABS: ReadonlyArray<{ key: StatTab; label: string }> = [
   { key: "median", label: "Median" },
   { key: "p90", label: "p90" },
@@ -99,54 +104,6 @@ const STAT_TABS: ReadonlyArray<{ key: StatTab; label: string }> = [
 
 function statValue(stats: { medianHours: number | null; p90Hours: number | null }, statTab: StatTab): number {
   return (statTab === "median" ? stats.medianHours : stats.p90Hours) ?? 0;
-}
-
-/** StatTabs switches Stage lead time and Blocked time between their Median
- *  and p90 view at once — a single piece of state on purpose (issue #189):
- *  the two charts share one "way of reading" the distribution, so letting
- *  them switch independently would invite misreading one against the
- *  other's stat. Not held in the URL, since it's a view preference on
- *  already-fetched data, not a filter on what was fetched. A small
- *  hand-rolled tablist (role="tablist"/"tab"/aria-selected, arrow-key
- *  roving tabindex) rather than @radix-ui/react-tabs, which isn't a
- *  dependency of this repo yet. */
-function StatTabs({ value, onChange }: { value: StatTab; onChange: (next: StatTab) => void }) {
-  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
-
-  function handleKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
-    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-    event.preventDefault();
-    const next =
-      event.key === "ArrowRight" ? (index + 1) % STAT_TABS.length : (index - 1 + STAT_TABS.length) % STAT_TABS.length;
-    onChange(STAT_TABS[next].key);
-    tabRefs.current[next]?.focus();
-  }
-
-  return (
-    <div role="tablist" aria-label="Statistic" className="border-border inline-flex gap-0.5 rounded-md border p-0.5">
-      {STAT_TABS.map((tab, index) => (
-        <button
-          key={tab.key}
-          ref={(el) => {
-            tabRefs.current[index] = el;
-          }}
-          type="button"
-          role="tab"
-          aria-selected={value === tab.key}
-          tabIndex={value === tab.key ? 0 : -1}
-          onClick={() => onChange(tab.key)}
-          onKeyDown={(event) => handleKeyDown(event, index)}
-          className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${
-            value === tab.key
-              ? "bg-accent text-accent-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {tab.label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 const PERIOD_ROW_HEIGHT = 28;
@@ -389,7 +346,7 @@ export function DeliveryMetricsSection({
             <div>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-foreground text-sm font-medium">Stage lead time</h3>
-                <StatTabs value={statTab} onChange={setStatTab} />
+                <MetricTabs label="Statistic" tabs={STAT_TABS} value={statTab} onChange={setStatTab} />
               </div>
               {hasStageData ? (
                 <ChartContainer

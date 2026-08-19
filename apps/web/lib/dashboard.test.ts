@@ -19,6 +19,7 @@ function makeTask(overrides: Partial<TaskWithProject>): TaskWithProject {
     startDate: null,
     priority: "medium",
     progress: "not_started",
+    size: "m",
     designStartedAt: null,
     implementationStartedAt: null,
     position: 0,

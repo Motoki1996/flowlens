@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countOpenTasksForVelocity = `-- name: CountOpenTasksForVelocity :one
-SELECT COUNT(*) FROM tasks t
+const countOpenTasksBySizeForVelocity = `-- name: CountOpenTasksBySizeForVelocity :many
+SELECT t.size, COUNT(*) AS count FROM tasks t
 WHERE t.project_id = $1
   AND t.status = 'open'
   AND t.progress <> 'done'
@@ -21,28 +21,53 @@ WHERE t.project_id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = $2
   )
+GROUP BY t.size
 `
 
-type CountOpenTasksForVelocityParams struct {
+type CountOpenTasksBySizeForVelocityParams struct {
 	ProjectID   uuid.UUID `json:"project_id"`
 	OwnerUserID uuid.UUID `json:"owner_user_id"`
 }
 
-// CountOpenTasksForVelocity returns projectID's current count of
-// not-yet-completed tasks (status='open' AND progress<>'done'), used to
-// forecast how many periods the remaining work will take at the recent
-// velocity. Always the current count, regardless of any ?from=/?to= the
-// request passed.
-func (q *Queries) CountOpenTasksForVelocity(ctx context.Context, arg CountOpenTasksForVelocityParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countOpenTasksForVelocity, arg.ProjectID, arg.OwnerUserID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+type CountOpenTasksBySizeForVelocityRow struct {
+	Size  string `json:"size"`
+	Count int64  `json:"count"`
+}
+
+// CountOpenTasksBySizeForVelocity returns projectID's current count of
+// not-yet-completed tasks (status='open' AND progress<>'done') grouped by
+// size, used to forecast how many periods the remaining work will take at
+// the recent velocity. Always the current counts, regardless of any
+// ?from=/?to= the request passed.
+//
+// It groups by size rather than returning a bare COUNT(*) plus a
+// SUM(CASE size ...) so that the size->points weight table lives in exactly
+// one place, internal/velocity.sizePoints. Summing here would mean the same
+// weights written twice, in Go and in SQL, free to drift apart. The total
+// open count is just the sum of these rows' counts.
+func (q *Queries) CountOpenTasksBySizeForVelocity(ctx context.Context, arg CountOpenTasksBySizeForVelocityParams) ([]CountOpenTasksBySizeForVelocityRow, error) {
+	rows, err := q.db.Query(ctx, countOpenTasksBySizeForVelocity, arg.ProjectID, arg.OwnerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountOpenTasksBySizeForVelocityRow{}
+	for rows.Next() {
+		var i CountOpenTasksBySizeForVelocityRow
+		if err := rows.Scan(&i.Size, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTaskCompletionsForVelocity = `-- name: ListTaskCompletionsForVelocity :many
 
-SELECT t.id AS task_id, t.closed_at, done.occurred_at AS done_occurred_at, COALESCE(done.actor_kind, '') AS done_actor_kind
+SELECT t.id AS task_id, t.size, t.closed_at, done.occurred_at AS done_occurred_at, COALESCE(done.actor_kind, '') AS done_actor_kind
 FROM tasks t
 LEFT JOIN LATERAL (
     SELECT e.occurred_at, e.actor_kind
@@ -65,6 +90,7 @@ type ListTaskCompletionsForVelocityParams struct {
 
 type ListTaskCompletionsForVelocityRow struct {
 	TaskID         uuid.UUID          `json:"task_id"`
+	Size           string             `json:"size"`
 	ClosedAt       pgtype.Timestamptz `json:"closed_at"`
 	DoneOccurredAt pgtype.Timestamptz `json:"done_occurred_at"`
 	DoneActorKind  string             `json:"done_actor_kind"`
@@ -101,6 +127,7 @@ func (q *Queries) ListTaskCompletionsForVelocity(ctx context.Context, arg ListTa
 		var i ListTaskCompletionsForVelocityRow
 		if err := rows.Scan(
 			&i.TaskID,
+			&i.Size,
 			&i.ClosedAt,
 			&i.DoneOccurredAt,
 			&i.DoneActorKind,

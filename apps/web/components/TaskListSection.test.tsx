@@ -31,6 +31,7 @@ function makeTask(overrides: Partial<Task>): Task {
     startDate: null,
     priority: "medium",
     progress: "not_started",
+    size: "m",
     designStartedAt: null,
     implementationStartedAt: null,
     position: 0,
@@ -267,6 +268,40 @@ describe("TaskListSection", () => {
     fireEvent.click(await screen.findByRole("option", { name: "All priorities" }));
 
     expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+  });
+
+  it("pushes ?size= alongside the other filters rather than replacing them", async () => {
+    currentSearchParams = new URLSearchParams("status=all");
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Size" }));
+    fireEvent.click(await screen.findByRole("option", { name: "XL" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/tasks?status=all&size=xl");
+  });
+
+  it("drops ?size= back out of the query string when it returns to All sizes", async () => {
+    currentSearchParams = new URLSearchParams("size=xl");
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} sizeFilter="xl" />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Size" }));
+    fireEvent.click(await screen.findByRole("option", { name: "All sizes" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
+  });
+
+  it("reports an empty result from the size filter", () => {
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} statusFilter="all" sizeFilter="xs" />);
+    expect(screen.getByText("No XS tasks.")).toBeInTheDocument();
+  });
+
+  it("pushes ?sort=size, leaving the ordering to the API", async () => {
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Size" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/tasks?sort=size");
   });
 
   it("reports an empty result from the priority filter", () => {
@@ -923,11 +958,33 @@ describe("TaskListSection", () => {
           startDate: "2026-08-15T00:00:00Z",
           dueOn: null,
           priority: "medium",
+          size: "m",
           progress: "not_started",
         }),
       }),
     );
     expect(screen.queryByRole("form", { name: "New task" })).not.toBeInTheDocument();
+  });
+
+  // Size is settable at creation time, not only from the edit form: if the
+  // only way to size a task is to go back and edit it, nothing gets sized and
+  // points-based velocity stays a flat multiple of the task count.
+  it("creates a task with the size picked in the form", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New task" }));
+    fireEvent.change(withinNewTaskForm().getByLabelText("Title"), { target: { value: "Big job" } });
+
+    fireEvent.click(withinNewTaskForm().getByRole("combobox", { name: "Size" }));
+    fireEvent.click(await screen.findByRole("option", { name: "XL (8 pts)" }));
+
+    fireEvent.click(withinNewTaskForm().getByRole("button", { name: "Create task" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.size).toBe("xl");
   });
 
   it("creates a task in the backlog picked from the combobox", async () => {

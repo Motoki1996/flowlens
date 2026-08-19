@@ -36,6 +36,7 @@ var (
 	ErrInvalidTitle          = errors.New("task: title must be 1-255 characters")
 	ErrInvalidPriority       = errors.New("task: priority must be one of low, medium, high, urgent")
 	ErrInvalidProgress       = errors.New("task: progress must be one of not_started, in_progress, on_hold, done")
+	ErrInvalidSize           = errors.New("task: size must be one of xs, s, m, l, xl")
 	ErrNotFound              = errors.New("task: not found")
 	ErrBacklogNotInProject   = errors.New("task: backlog belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
@@ -79,6 +80,27 @@ const (
 	ProgressDone       = "done"
 
 	SortProgress = "progress"
+)
+
+// Size values, a coarse ordinal estimate of how much work a task is, app-only
+// and never synced to GitLab (GitLab CE issues have no size field — weight is
+// EE), per the 000025 migration. It exists to weight velocity
+// (internal/velocity) so throughput measures work finished rather than merely
+// tasks finished, which splitting tasks smaller would otherwise inflate for
+// free. Deliberately a five-value T-shirt scale rather than a points field:
+// issue #195 rejected story points as data a human has to re-enter every task
+// or it rots, and the numeric weights velocity multiplies by live in
+// internal/velocity, not here. SizeM is the default, the exact middle of the
+// five. SortSize is the Sort value that orders by size rank, biggest first,
+// the same direction SortPriority runs.
+const (
+	SizeXS = "xs"
+	SizeS  = "s"
+	SizeM  = "m"
+	SizeL  = "l"
+	SizeXL = "xl"
+
+	SortSize = "size"
 )
 
 // Actor kind values Update accepts to attribute a task_progress_events row
@@ -192,6 +214,7 @@ type Task struct {
 	StartDate              *time.Time `json:"startDate"`
 	Priority               string     `json:"priority"`
 	Progress               string     `json:"progress"`
+	Size                   string     `json:"size"`
 	// DesignStartedAt/ImplementationStartedAt are explicit spec-driven-development
 	// phase markers, set via POST .../design-started and .../implementation-started
 	// rather than derived from progress transitions — see internal/flowmetrics'
@@ -223,6 +246,7 @@ func fromRow(row db.Task) Task {
 		StartDate:               datePtr(row.StartDate),
 		Priority:                row.Priority,
 		Progress:                row.Progress,
+		Size:                    row.Size,
 		DesignStartedAt:         timePtr(row.DesignStartedAt),
 		ImplementationStartedAt: timePtr(row.ImplementationStartedAt),
 		Position:                row.Position,
@@ -324,6 +348,8 @@ type CreateParams struct {
 	Priority string
 	// Progress defaults to ProgressNotStarted when empty.
 	Progress string
+	// Size defaults to SizeM when empty.
+	Size string
 }
 
 // UpdateParams holds the fields accepted when updating a task. A nil
@@ -351,6 +377,9 @@ type UpdateParams struct {
 	// Progress follows the same absent/explicit-empty rule as Priority,
 	// resetting to ProgressNotStarted when explicitly empty.
 	Progress Optional[string]
+	// Size follows the same absent/explicit-empty rule as Priority,
+	// resetting to SizeM when explicitly empty.
+	Size     Optional[string]
 	Position Optional[int32]
 }
 
@@ -369,6 +398,7 @@ type resolvedUpdate struct {
 	StartDate              *time.Time
 	Priority               string
 	Progress               string
+	Size                   string
 	Position               int32
 }
 
@@ -384,6 +414,7 @@ func (p UpdateParams) resolve(current Task) resolvedUpdate {
 		StartDate:              p.StartDate.Or(current.StartDate),
 		Priority:               p.Priority.Or(current.Priority),
 		Progress:               p.Progress.Or(current.Progress),
+		Size:                   p.Size.Or(current.Size),
 		Position:               p.Position.Or(current.Position),
 	}
 }
@@ -488,6 +519,20 @@ func normalizePriority(raw string) (string, error) {
 	}
 }
 
+// normalizeSize defaults an empty raw to SizeM — the exact middle of the
+// five — following normalizePriority's absent/explicit-empty rule, and
+// otherwise rejects anything outside the fixed set.
+func normalizeSize(raw string) (string, error) {
+	switch raw {
+	case "":
+		return SizeM, nil
+	case SizeXS, SizeS, SizeM, SizeL, SizeXL:
+		return raw, nil
+	default:
+		return "", ErrInvalidSize
+	}
+}
+
 // normalizeProgress defaults an empty raw to ProgressNotStarted, following
 // normalizePriority's absent/explicit-empty rule, and otherwise rejects
 // anything outside the fixed set.
@@ -560,6 +605,10 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 	if err != nil {
 		return Task{}, err
 	}
+	size, err := normalizeSize(params.Size)
+	if err != nil {
+		return Task{}, err
+	}
 	if err := s.validateBacklog(ctx, ownerID, projectID, params.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -592,6 +641,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 			StartDate:              toDate(params.StartDate),
 			Priority:               priority,
 			Progress:               progress,
+			Size:                   size,
 			CreatedByUserID:        ownerID,
 		})
 		if err != nil {
@@ -702,13 +752,14 @@ type ListFilter struct {
 	Status     string     // "open" | "closed" | "" (no filter)
 	Priority   string     // one of the Priority* constants, or "" (no filter)
 	Progress   string     // one of the Progress* constants, or "" (no filter)
+	Size       string     // one of the Size* constants, or "" (no filter)
 	// Sort is "" (position ASC, created_at ASC, the manual/DnD order),
 	// SortPriority (priority rank DESC), SortProgress (progress rank ASC,
-	// not_started first), SortDueOn (due date ASC, tasks
-	// with no due date last) or SortUpdatedAt (most recently updated
-	// first) — the same three the cross-project collection accepts, so the
-	// two lists don't disagree on what a sort value means. Each keeps the
-	// manual order as its tiebreak.
+	// not_started first), SortSize (size rank DESC, biggest first),
+	// SortDueOn (due date ASC, tasks with no due date last) or
+	// SortUpdatedAt (most recently updated first) — the same set the
+	// cross-project collection accepts, so the two lists don't disagree on
+	// what a sort value means. Each keeps the manual order as its tiebreak.
 	Sort string
 	// AssigneeMe, when true, only returns tasks assigned to the caller's own
 	// GitLab identity for this project's GitLab connection (issue #102). A
@@ -743,10 +794,12 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		Status:         filter.Status,
 		Priority:       filter.Priority,
 		Progress:       filter.Progress,
+		Size:           filter.Size,
 		AssigneeMe:     filter.AssigneeMe,
 		Q:              filter.Query,
 		SortByPriority: filter.Sort == SortPriority,
 		SortByProgress: filter.Sort == SortProgress,
+		SortBySize:     filter.Sort == SortSize,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("task: list: %w", err)
@@ -803,12 +856,13 @@ type CrossProjectFilter struct {
 	Status        string      // "open" | "closed" | "" (no filter)
 	Priority      string      // one of the Priority* constants, or "" (no filter)
 	Progress      string      // one of the Progress* constants, or "" (no filter)
+	Size          string      // one of the Size* constants, or "" (no filter)
 	DueBefore     *time.Time  // non-nil: only tasks due on or before this date
 	DueAfter      *time.Time  // non-nil: only tasks due on or after this date
 	StartedBefore *time.Time  // non-nil: only tasks whose start date has arrived (start_date <= this date)
 	ProjectIDs    []uuid.UUID // non-empty: only these projects, still scoped to the caller's own
-	// Sort is one of SortDueOn (default), SortPriority, SortProgress or
-	// SortUpdatedAt.
+	// Sort is one of SortDueOn (default), SortPriority, SortProgress,
+	// SortSize or SortUpdatedAt.
 	Sort string
 	// Limit caps the number of tasks returned; non-positive defaults to
 	// DefaultCrossProjectLimit, and anything above MaxCrossProjectLimit is
@@ -850,6 +904,7 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 		OwnerUserID:   ownerID,
 		Status:        filter.Status,
 		Priority:      filter.Priority,
+		Size:          filter.Size,
 		Progress:      filter.Progress,
 		DueBefore:     toDate(filter.DueBefore),
 		DueAfter:      toDate(filter.DueAfter),
@@ -891,6 +946,7 @@ func fromCrossProjectRow(row db.ListTasksForMemberRow) TaskWithProject {
 			StartDate:              row.StartDate,
 			Priority:               row.Priority,
 			Progress:               row.Progress,
+			Size:                   row.Size,
 			Position:               row.Position,
 			CreatedByUserID:        row.CreatedByUserID,
 			CreatedAt:              row.CreatedAt,
@@ -1108,6 +1164,11 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 		return Task{}, err
 	}
 	resolved.Progress = progress
+	size, err := normalizeSize(resolved.Size)
+	if err != nil {
+		return Task{}, err
+	}
+	resolved.Size = size
 	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, resolved.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -1130,6 +1191,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			StartDate:              toDate(resolved.StartDate),
 			Priority:               resolved.Priority,
 			Progress:               resolved.Progress,
+			Size:                   resolved.Size,
 			Position:               resolved.Position,
 		})
 		if err != nil {
@@ -1561,14 +1623,18 @@ const ProgressGuidance = `Update this task's progress as you work, via PATCH /ap
 // external AI integration parses this contract, so its field names and
 // nesting must stay stable regardless of what Task does.
 type Context struct {
-	ID                     uuid.UUID  `json:"id"`
-	ProjectID              uuid.UUID  `json:"projectId"`
-	BacklogID              *uuid.UUID `json:"backlogId"`
-	Title                  string     `json:"title"`
-	Description            string     `json:"description"`
-	Status                 string     `json:"status"`
-	Progress               string     `json:"progress"`
-	ProgressGuidance       string     `json:"progressGuidance"`
+	ID               uuid.UUID  `json:"id"`
+	ProjectID        uuid.UUID  `json:"projectId"`
+	BacklogID        *uuid.UUID `json:"backlogId"`
+	Title            string     `json:"title"`
+	Description      string     `json:"description"`
+	Status           string     `json:"status"`
+	Progress         string     `json:"progress"`
+	ProgressGuidance string     `json:"progressGuidance"`
+	// Size is the task's coarse size estimate (one of the Size* constants),
+	// surfaced so an agent knows how large the work is expected to be before
+	// it starts. App-only, never synced to GitLab.
+	Size                   string     `json:"size"`
 	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
 	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
 	Labels                 []string   `json:"labels"`
@@ -1597,6 +1663,7 @@ func toContext(t Task, gc *GitlabContext, ai AIContext, baseBranch string) Conte
 		Status:                 t.Status,
 		Progress:               t.Progress,
 		ProgressGuidance:       ProgressGuidance,
+		Size:                   t.Size,
 		AssigneeGitlabUserID:   t.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: t.AssigneeGitlabUsername,
 		Labels:                 t.Labels,

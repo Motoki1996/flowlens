@@ -441,7 +441,10 @@ func (s *Service) applyAsNewTask(ctx context.Context, link db.LinkedGitlabProjec
 			DueOn:                  toDate(fields.DueDate),
 			Priority:               task.PriorityMedium,
 			Progress:               task.ProgressNotStarted,
-			CreatedByUserID:        project.OwnerUserID,
+			// GitLab carries no size concept, so an imported issue starts at
+			// the default like priority/progress do; a human sizes it here.
+			Size:            task.SizeM,
+			CreatedByUserID: project.OwnerUserID,
 		})
 		if err != nil {
 			return fmt.Errorf("create task: %w", err)

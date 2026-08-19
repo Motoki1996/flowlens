@@ -2,15 +2,15 @@ import { parseArgs } from "node:util";
 
 import { runInit } from "./init.js";
 
-const USAGE = `Usage: agent-kit init --url <flowlens-url> --project <projectId> [--force]
+const USAGE = `Usage: agent-kit init --url <flowlens-url> [--force]
 
 Installs the FlowLens Claude Code skill and slash commands (.claude/skills/flowlens,
-.claude/commands/flowlens) into the current repository, and fetches the connected
-instance's OpenAPI spec into .flowlens/ (gitignored).
+.claude/commands/flowlens) into the current repository. If FLOWLENS_API_TOKEN is set
+and the instance at --url is reachable, also resolves the token's project and writes
+its OpenAPI spec + config into .flowlens/ (both committed, refreshed on every run).
 
 Options:
   --url <url>        Base URL of the FlowLens instance to connect to
-  --project <id>      Project ID tasks/backlogs will be read from and written to
   --force              Overwrite skill/command files that already exist
   -h, --help           Show this message
 `;
@@ -21,8 +21,8 @@ function statusLabel(status) {
       return "created";
     case "overwritten":
       return "overwritten (--force)";
-    case "appended":
-      return "updated";
+    case "removed":
+      return "removed";
     case "skipped":
       return "skipped (already exists; pass --force to overwrite)";
     default:
@@ -47,7 +47,6 @@ export async function runCli(argv) {
     args: rest,
     options: {
       url: { type: "string" },
-      project: { type: "string" },
       force: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
@@ -58,14 +57,17 @@ export async function runCli(argv) {
     return 0;
   }
 
-  if (!values.url || !values.project) {
-    process.stderr.write(`--url and --project are required\n\n${USAGE}`);
+  if (!values.url) {
+    process.stderr.write(`--url is required\n\n${USAGE}`);
     return 1;
   }
 
-  const results = await runInit({ url: values.url, project: values.project, force: values.force });
+  const { results, warnings } = await runInit({ url: values.url, force: values.force });
   for (const { path, status } of results) {
     process.stdout.write(`  ${path}: ${statusLabel(status)}\n`);
+  }
+  for (const warning of warnings) {
+    process.stderr.write(`  warning: ${warning}\n`);
   }
   return 0;
 }

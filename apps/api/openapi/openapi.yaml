@@ -126,6 +126,8 @@ paths:
     $ref: './paths/tasks.yaml#/list'
   /api/v1/projects/{projectID}/tasks/order:
     $ref: './paths/tasks.yaml#/order'
+  /api/v1/projects/{projectID}/tasks/bulk:
+    $ref: './paths/tasks.yaml#/bulk'
   /api/v1/projects/{projectID}/task-dependencies:
     $ref: './paths/tasks.yaml#/taskDependencies'
   /api/v1/task-dependencies/{dependencyID}:

@@ -765,6 +765,7 @@ allowlist of the regular task-tracker routes:
 | PATCH, DELETE | `/backlogs/{backlogID}` | `write` |
 | GET | `/projects/{projectID}/tasks` | `read` |
 | POST | `/projects/{projectID}/tasks` | `write` |
+| POST | `/projects/{projectID}/tasks/bulk` | `write` |
 | GET | `/tasks/{taskID}` | `read` |
 | PATCH, DELETE | `/tasks/{taskID}` | `write` |
 | POST | `/tasks/{taskID}/close`, `/reopen`, `/assign-backlog`, `/sync-retry` | `write` |
@@ -1288,6 +1289,45 @@ drag-and-drop, not a dedicated library — no new frontend dependency was
 available to add when this shipped; swapping in a library like `@dnd-kit`
 later is a UI-only change, since it would still call the same `.../order`
 endpoints.
+
+### Bulk task creation
+
+A spec-driven breakdown of a backlog typically produces 10-30 tasks and the
+dependencies between them at once (issue #201). Creating those one `POST
+/tasks` at a time is unsafe for that: each call creates a GitLab issue in the
+same transaction as the task write (see "GitLab CE connection & sync"
+above), so a failure partway through a manual loop leaves a half-decomposed
+backlog with no way to unwind the issues already created, and dependencies
+can't be wired up at all until every task's ID exists.
+
+`POST /api/v1/projects/{projectID}/tasks/bulk` creates a whole batch of tasks
+and the dependencies between them in one request and one transaction:
+either every task, every dependency and every `issue.create` outbox job
+commits, or none of it does. Requires write scope for a bearer token, the
+same as `POST /tasks`.
+
+- Request body: `{tasks: [...], dependencies: [...]}`. Each task carries a
+  `ref` — a temporary ID valid only within that request, since the tasks
+  don't have real IDs yet — plus the same fields `POST /tasks` accepts
+  (`title` required; `description`, `backlogId`, `labels`, `dueOn`,
+  `startDate`, `priority`, `size`) and an optional inline `aiContext`
+  (`acceptanceCriteria`, `aiContext`, `allowedScope`, `forbiddenScope`,
+  upserted alongside the task). Up to 100 tasks per request.
+- Each dependency is `{predecessorRef, successorRef}`, naming two `ref`s
+  from the same request's `tasks` — a bulk dependency can only connect two
+  tasks created in the same batch, not an existing task by ID. The
+  single-dependency endpoint (`POST /task-dependencies`) already covers
+  existing-to-existing edges; wiring together the batch just created is
+  bulk's whole purpose, so that's the only case it supports.
+- Every task and dependency is validated before anything is written — an
+  empty or duplicate `ref`, an invalid field, a `ref` a dependency doesn't
+  recognize, a self-dependency, or a dependency that would create a cycle
+  (checked against the new batch's own edges, the same reachability check
+  `POST /task-dependencies` uses) all fail the whole request with 400 and
+  name the offending `ref` in the error message. Nothing is written on any
+  failure.
+- Response: `{tasks: [{ref, task}], dependencies: [...]}`, so a caller can
+  resolve its own `ref`s to the tasks' real IDs.
 
 ### GitLab user identity
 

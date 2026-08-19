@@ -1713,9 +1713,27 @@ once agents are doing the work.
     complete yet), and `forecastPeriods` (`openTaskCount / averageVelocity`,
     `null` whenever that's `null` or `0`): how many more periods, at the
     recent pace, the remaining open tasks would take.
-- Web visualization is a follow-up (issue #196), the same split
-  [Flow metrics](#flow-metrics-issue-171) had between #171 (API) and #172
-  (web).
+- Web (issue #196): a "Velocity" card on the Project single view, placed
+  immediately *before* the "Delivery metrics" card so velocity reads
+  alongside lead time rather than as a screen of its own — there is
+  deliberately no standalone `/velocity` screen, since throughput alone is
+  easy to game (splitting tasks smaller inflates it for free) and only means
+  something read next to lead time staying flat or improving. It shares
+  "Delivery metrics"' `?from=&to=&interval=` URL filter rather than exposing
+  a second selector; unlike that card, it always draws one bar per period
+  (defaulting to `week` when `interval` is omitted, per the API default
+  above).
+  - A stacked bar per period: `completedByUser`/`completedByAgent`/
+    `completedByUnknown`, in that order both in the stack and in the legend.
+    `movingAverage` is overlaid as a line on the same chart, since a single
+    period's bar is too noisy to read on its own.
+  - A still-running period (`complete: false`) draws its bars at reduced
+    opacity, so a partial bucket is never misread as a slowdown.
+  - `averageVelocity`/`forecastPeriods` are shown as a small stat row (e.g.
+    "9.5 tasks/week" / "34 open ≈ 3.6 weeks left"); either being `null` shows
+    a placeholder instead of a number.
+  - A project with no completed tasks yet shows "No completed tasks yet."
+    instead of an empty chart.
 
 ## Current limitations
 

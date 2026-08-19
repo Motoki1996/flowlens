@@ -1,3 +1,5 @@
+import type { MetricsInterval } from "@/types";
+
 /** formatDateValue renders a Date the way every task screen shows dates. */
 export function formatDateValue(date: Date) {
   return date.toLocaleDateString(undefined, {
@@ -57,4 +59,27 @@ export function fromDateParam(param: string | undefined): Date | undefined {
   if (!m) return undefined;
   const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+/** isoWeekLabel renders a bucket's UTC start (already the ISO week's Monday
+ *  00:00 — see apps/api/internal/metricsperiod.BucketStart) as "YYYY-Www",
+ *  per the standard ISO 8601 week-numbering algorithm. */
+function isoWeekLabel(start: Date): string {
+  const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  const isoWeekday = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - isoWeekday);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+/** periodLabel renders one bucket's start as the Y/X-axis category a
+ *  period-bucketed chart is keyed by: "2026-W07" / "2026-02" / "2026". Shared
+ *  by DeliveryMetricsSection (issue #188) and VelocitySection (issue #196)
+ *  so the two never drift on how a period reads. */
+export function periodLabel(period: { start: string }, interval: MetricsInterval): string {
+  const start = new Date(period.start);
+  if (interval === "year") return String(start.getUTCFullYear());
+  if (interval === "month") return `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`;
+  return isoWeekLabel(start);
 }

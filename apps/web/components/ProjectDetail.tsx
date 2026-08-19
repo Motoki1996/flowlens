@@ -16,6 +16,7 @@ import type {
   Project,
   ProjectMember,
   SyncJob,
+  Velocity,
 } from "@/types";
 import { Card, CardHeader, CardDescription, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,6 +27,7 @@ import { ApiTokenSection } from "@/components/ApiTokenSection";
 import { DeliveryMetricsSection } from "@/components/DeliveryMetricsSection";
 import { FailedSyncJobSection } from "@/components/FailedSyncJobSection";
 import { ProjectMemberSection } from "@/components/ProjectMemberSection";
+import { VelocitySection } from "@/components/VelocitySection";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -227,7 +229,9 @@ export function ProjectDetail({
   currentUserId,
   metrics = null,
   flowMetrics = null,
+  velocity = null,
   metricsError = false,
+  velocityError = false,
   metricsFrom,
   metricsTo,
   metricsInterval,
@@ -251,7 +255,10 @@ export function ProjectDetail({
   /** Per-task stage lead-time metrics (issue #171); null when they failed
    *  to load. */
   flowMetrics?: FlowMetrics | null;
+  /** Completed-task throughput (issue #195); null when it failed to load. */
+  velocity?: Velocity | null;
   metricsError?: boolean;
+  velocityError?: boolean;
   metricsFrom?: string;
   metricsTo?: string;
   metricsInterval?: MetricsInterval;
@@ -331,6 +338,10 @@ export function ProjectDetail({
           name="GitLab connection"
           summary={gitlabSummary(gitlabConnection, linkedProjectCount)}
         />
+      </div>
+
+      <div className="mt-8">
+        <VelocitySection velocity={velocity} error={velocityError} />
       </div>
 
       <div className="mt-8">

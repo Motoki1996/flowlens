@@ -13,7 +13,7 @@ import {
   type LegendPayload,
 } from "recharts";
 import type { DeliveryMetrics, DeliveryPeriod, FlowMetrics, FlowPeriod, MetricsInterval } from "@/types";
-import { fromDateParam, toDateParam } from "@/lib/dates";
+import { fromDateParam, periodLabel, toDateParam } from "@/lib/dates";
 import { DateField } from "@/components/DateField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -88,27 +88,6 @@ function formatHours(hours: number | null): string {
 function formatPercent(ratio: number | null): string {
   if (ratio == null) return "—";
   return `${Math.round(ratio * 100)}%`;
-}
-
-/** isoWeekLabel renders a bucket's UTC start (already the ISO week's Monday
- *  00:00 — see apps/api/internal/metricsperiod.BucketStart) as "YYYY-Www",
- *  per the standard ISO 8601 week-numbering algorithm. */
-function isoWeekLabel(start: Date): string {
-  const date = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
-  const isoWeekday = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - isoWeekday);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const week = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-  return `${date.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-}
-
-/** periodLabel renders one bucket's start as the Y-axis category a
- *  time-series row is keyed by: "2026-W07" / "2026-02" / "2026". */
-function periodLabel(period: { start: string }, interval: MetricsInterval): string {
-  const start = new Date(period.start);
-  if (interval === "year") return String(start.getUTCFullYear());
-  if (interval === "month") return `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`;
-  return isoWeekLabel(start);
 }
 
 type StatTab = "median" | "p90";

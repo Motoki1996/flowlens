@@ -502,3 +502,54 @@ export interface FlowMetrics extends FlowPeriodStats {
   truncated: boolean;
   periods: FlowPeriod[];
 }
+
+/** VelocityPeriod is one interval-sized bucket of completed-task throughput
+ *  (issue #195), assigned by each task's *completion time* — `min(its first
+ *  progress='done' transition's occurred_at, tasks.closed_at)`, whichever is
+ *  non-nil — the opposite cohort basis from DeliveryPeriod/FlowPeriod, which
+ *  both bucket by creation time. See apps/api/internal/velocity.Period. */
+export interface VelocityPeriod {
+  /** Bucket bounds in UTC; end is exclusive. */
+  start: string;
+  end: string;
+  /** Always equal to completedByUser + completedByAgent + completedByUnknown. */
+  completed: number;
+  completedByUser: number;
+  completedByAgent: number;
+  /** A closed_at-only completion (no done-transition to read an actor from),
+   *  including the pre-migration-000020 gap task_progress_events can't
+   *  backfill. */
+  completedByUnknown: number;
+  /** Simple average of `completed` over this period and up to 3 preceding
+   *  ones (fewer once fewer exist) — the value actually meant to be read,
+   *  since a single period's count is too noisy to act on alone. */
+  movingAverage: number;
+  /** False for a still-running period (typically the most recent one) — a
+   *  partial bucket that reads low by construction, not a real slowdown. */
+  complete: boolean;
+}
+
+/** Velocity is a project's completed-task throughput over the optional
+ *  [from, to] range (issue #195), bounding each task's completion time, not
+ *  its creation time. See apps/api/internal/velocity.Result. Unlike
+ *  DeliveryMetrics/FlowMetrics, `interval` defaults to "week" server-side
+ *  when omitted rather than turning off bucketing — periods are the metric
+ *  here, not an optional add-on, so it is never null. */
+export interface Velocity {
+  from: string | null;
+  to: string | null;
+  interval: MetricsInterval;
+  /** True when periods was capped at metricsperiod.MaxPeriods (52) and the
+   *  oldest buckets were dropped. */
+  truncated: boolean;
+  periods: VelocityPeriod[];
+  /** Current count of tasks with status='open' AND progress<>'done',
+   *  regardless of from/to. */
+  openTaskCount: number;
+  /** Mean `completed` over the most recent up to 4 *complete* periods
+   *  (excluding any still-running one); null when none is complete yet. */
+  averageVelocity: number | null;
+  /** openTaskCount / averageVelocity; null whenever averageVelocity is null
+   *  or 0. */
+  forecastPeriods: number | null;
+}

@@ -42,6 +42,8 @@ paths:
 
   /api/v1/me:
     $ref: './paths/me.yaml#/me'
+  /api/v1/me/password:
+    $ref: './paths/me.yaml#/password'
   /api/v1/me/gitlab-identities:
     $ref: './paths/me.yaml#/gitlabIdentities'
 

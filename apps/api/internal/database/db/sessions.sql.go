@@ -55,6 +55,19 @@ func (q *Queries) DeleteSessionByTokenHash(ctx context.Context, tokenHash string
 	return err
 }
 
+const deleteSessionsByUserID = `-- name: DeleteSessionsByUserID :exec
+DELETE FROM sessions WHERE user_id = $1
+`
+
+// DeleteSessionsByUserID revokes every session a user holds. A password
+// change does this (issue #210) and then issues a fresh session, so that a
+// session stolen elsewhere is cut and the caller's own token is rotated
+// rather than surviving the change.
+func (q *Queries) DeleteSessionsByUserID(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteSessionsByUserID, userID)
+	return err
+}
+
 const getUserBySessionToken = `-- name: GetUserBySessionToken :one
 SELECT users.id, users.display_name, users.created_at, users.updated_at, users.username, users.email, users.password_hash
 FROM sessions

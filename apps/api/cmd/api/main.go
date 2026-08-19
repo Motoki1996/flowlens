@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectsync"
 	syncpkg "github.com/flowlens/api/internal/sync"
+	"github.com/flowlens/api/internal/user"
 	"github.com/flowlens/api/internal/webhookapply"
 	"github.com/flowlens/api/internal/webhookevent"
 	"github.com/flowlens/api/migrations"
@@ -50,11 +53,17 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "hash-password":
+			if err := hashPassword(os.Stdin, os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, "hash-password:", err)
+				os.Exit(1)
+			}
+			return
 		case "version":
 			fmt.Println(version)
 			return
 		default:
-			fmt.Fprintf(os.Stderr, "unknown command %q (known: gen-key, version)\n", os.Args[1])
+			fmt.Fprintf(os.Stderr, "unknown command %q (known: gen-key, hash-password, version)\n", os.Args[1])
 			os.Exit(2)
 		}
 	}
@@ -76,6 +85,27 @@ func genKey(w io.Writer) error {
 		return err
 	}
 	_, err := fmt.Fprintf(w, "ENCRYPTION_KEY=%s\n", base64.StdEncoding.EncodeToString(key))
+	return err
+}
+
+// hashPassword reads one password from r and writes its bcrypt hash to w —
+// the recovery path for an account whose password was lost, since FlowLens
+// has no password-reset email flow (docs/self-hosting.md). The password is
+// read from stdin rather than taken as an argument so it never lands in the
+// operator's shell history or the process list.
+func hashPassword(r io.Reader, w io.Writer) error {
+	scanner := bufio.NewScanner(r)
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		return errors.New("no password on stdin")
+	}
+	hash, err := user.HashPassword(strings.TrimRight(scanner.Text(), "\r"))
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(w, hash)
 	return err
 }
 

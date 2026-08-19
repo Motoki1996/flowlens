@@ -222,6 +222,11 @@ type Querier interface {
 	// membership table alone invites (docs/decisions/0010-why-project-membership.md).
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
+	// DeleteSessionsByUserID revokes every session a user holds. A password
+	// change does this (issue #210) and then issues a fresh session, so that a
+	// session stolen elsewhere is cut and the caller's own token is rotated
+	// rather than surviving the change.
+	DeleteSessionsByUserID(ctx context.Context, userID uuid.UUID) error
 	DeleteTaskCommentByID(ctx context.Context, id uuid.UUID) (int64, error)
 	DeleteTaskDependencyForOwner(ctx context.Context, arg DeleteTaskDependencyForOwnerParams) (int64, error)
 	DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwnerParams) (int64, error)
@@ -771,6 +776,7 @@ type Querier interface {
 	UpdateProjectForOwner(ctx context.Context, arg UpdateProjectForOwnerParams) (Project, error)
 	UpdateProjectMemberRole(ctx context.Context, arg UpdateProjectMemberRoleParams) (ProjectMember, error)
 	UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwnerParams) (Task, error)
+	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	// gitlab_connections has no owner column of its own; ownership is always
 	// checked through the parent project, the same way backlogs and tasks are.
 	// UpsertGitlabConnection trusts the caller to have already verified project

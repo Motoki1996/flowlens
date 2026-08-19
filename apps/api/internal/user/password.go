@@ -25,6 +25,16 @@ func hashPassword(password string) (string, error) {
 	return string(hash), nil
 }
 
+// HashPassword is hashPassword exported for the `flowlens-api hash-password`
+// subcommand (issue #210), which prints a hash an operator can paste into
+// users.password_hash to recover an account whose password was lost. There
+// is no password-reset email flow to do it for them — FlowLens has no mail
+// transport and is aimed at closed networks — so this is the documented
+// recovery path in docs/self-hosting.md.
+func HashPassword(password string) (string, error) {
+	return hashPassword(password)
+}
+
 // verifyPassword reports whether password matches the stored hash.
 func verifyPassword(hash, password string) error {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))

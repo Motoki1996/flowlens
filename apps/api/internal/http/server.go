@@ -182,6 +182,11 @@ func (s *Server) Router() chi.Router {
 			protected.Use(s.requireCSRF)
 			protected.Get("/me", s.handleMe)
 
+			// Changing one's own password (issue #210). Session-only, like
+			// everything in this group — see handleChangePassword for why a
+			// bearer token must never reach it.
+			protected.Put("/me/password", s.handleChangePassword)
+
 			// Registers the caller's own GitLab user ID/username per GitLab
 			// base URL (issue #102), so ?assignee=me on the task collections
 			// below can match it against a task's assignee. No access token

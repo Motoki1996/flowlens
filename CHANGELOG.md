@@ -17,6 +17,14 @@ procedure itself.
   (`RUN_MIGRATIONS`, default on).
 - `flowlens-api gen-key` prints a ready-to-paste `ENCRYPTION_KEY`, so
   generating one needs nothing but the image itself.
+- **Changing your own password**: `PUT /api/v1/me/password` and a form on
+  **Settings → Password**. A successful change revokes every session the
+  account holds and issues a fresh one, so no older token survives it while
+  the caller stays signed in. Session-only — a project API token can never
+  call it. There is no reset-by-email flow; `flowlens-api hash-password`
+  plus [Recovering a lost
+  password](docs/self-hosting.md#recovering-a-lost-password) is the
+  operator's path for an account that is locked out.
 - `GET /version` and `flowlens-api version` report the running build.
 - `ALLOW_SIGNUP` closes registration on an instance whose accounts already
   exist. The first account is always allowed, so a fresh instance can be

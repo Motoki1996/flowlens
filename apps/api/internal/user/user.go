@@ -143,3 +143,37 @@ func (s *Service) ByUsernameOrEmail(ctx context.Context, identifier string) (Use
 	}
 	return FromRow(row), nil
 }
+
+// ChangePassword replaces a user's password, verifying the current one
+// first. Wrong current password reports ErrInvalidCredentials — the same
+// error Authenticate uses, since this is the same check — and a new
+// password below the minimum length reports ErrPasswordTooShort.
+//
+// Revoking the user's other sessions is deliberately *not* done here: this
+// package knows nothing about sessions (auth imports user, not the other
+// way round). The caller does it, so that a password change and the
+// session sweep it implies stay one visible pair at the handler.
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, currentPassword, newPassword string) error {
+	row, err := s.q.GetUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("user: lookup: %w", err)
+	}
+	if err := verifyPassword(row.PasswordHash, currentPassword); err != nil {
+		return ErrInvalidCredentials
+	}
+
+	hash, err := hashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	if err := s.q.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
+		ID:           userID,
+		PasswordHash: hash,
+	}); err != nil {
+		return fmt.Errorf("user: update password: %w", err)
+	}
+	return nil
+}

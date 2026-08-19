@@ -182,6 +182,42 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/me/password:
+    put:
+      summary: Change the caller's own password
+      description: |
+        Verifies the current password, then replaces it. Every session the user holds is revoked and a fresh one is issued, so the caller stays logged in while any other session is cut. Session auth only — a project API token can never call this.
+      tags:
+        - users
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Password changed; a new session cookie is set
+        '400':
+          description: Invalid body, or the new password is shorter than 8 characters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated, or the current password is incorrect
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/me/gitlab-identities:
     get:
       summary: List the caller's own GitLab identities
@@ -2928,6 +2964,17 @@ components:
       required:
         - identifier
         - password
+    ChangePasswordRequest:
+      type: object
+      properties:
+        currentPassword:
+          type: string
+        newPassword:
+          type: string
+          minLength: 8
+      required:
+        - currentPassword
+        - newPassword
     GitlabIdentity:
       type: object
       properties:

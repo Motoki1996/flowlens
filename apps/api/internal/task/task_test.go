@@ -1741,3 +1741,78 @@ func TestService_Reorder_ReturnsNotFoundForForeignProject(t *testing.T) {
 	_, err := svc.Reorder(context.Background(), other, p.ID, nil, nil)
 	assert.ErrorIs(t, err, task.ErrNotFound)
 }
+
+// Size follows exactly the same absent/explicit-empty/reject rules priority
+// does, defaulting to the middle of the five rather than the lowest.
+func TestService_Create_DefaultsAndValidatesSize(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr error
+	}{
+		{"empty defaults to m, the middle value", "", task.SizeM, nil},
+		{"accepts xs", task.SizeXS, task.SizeXS, nil},
+		{"accepts s", task.SizeS, task.SizeS, nil},
+		{"accepts l", task.SizeL, task.SizeL, nil},
+		{"accepts xl", task.SizeXL, task.SizeXL, nil},
+		{"rejects unknown value", "xxl", "", task.ErrInvalidSize},
+		{"rejects a numeric point value", "5", "", task.ErrInvalidSize},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+
+			got, err := svc.Create(context.Background(), owner, p.ID, task.CreateParams{Title: "Fix bug", Size: tt.input})
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.Size)
+		})
+	}
+}
+
+func TestService_Update_ChangesSize(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	created, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", Size: task.SizeXL})
+	require.NoError(t, err)
+	require.Equal(t, task.SizeXL, created.Size)
+
+	// An absent Size leaves the stored value alone.
+	untouched, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Title: task.Present("Fix bug")}, task.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, task.SizeXL, untouched.Size)
+
+	// An explicit empty string resets to the default, like priority's.
+	reset, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{Size: task.Present("")}, task.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, task.SizeM, reset.Size)
+
+	updated, err := svc.Update(ctx, owner, created.ID, task.UpdateParams{
+		Size: task.Present(task.SizeS),
+	}, task.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, task.SizeS, updated.Size)
+
+	_, err = svc.Update(ctx, owner, created.ID, task.UpdateParams{
+		Size: task.Present("enormous"),
+	}, task.ActorKindUser)
+	assert.ErrorIs(t, err, task.ErrInvalidSize)
+}
+
+// Size is app-only: it is not one of the fields mirrored to a GitLab issue,
+// since GitLab CE has no size/weight concept to mirror it to.
+func TestBuildGitlabIssuePayload_OmitsSize(t *testing.T) {
+	before := task.BuildGitlabIssuePayload(task.Task{Title: "Fix bug", Size: task.SizeXS})
+	after := task.BuildGitlabIssuePayload(task.Task{Title: "Fix bug", Size: task.SizeXL})
+	assert.Equal(t, before, after, "changing size must not change what is pushed to GitLab")
+}

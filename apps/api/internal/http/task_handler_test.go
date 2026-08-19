@@ -375,6 +375,7 @@ func TestHandleListAllTasks_RejectsInvalidQuery(t *testing.T) {
 		{"invalid status", "?status=bogus"},
 		{"invalid priority", "?priority=bogus"},
 		{"invalid progress", "?progress=bogus"},
+		{"invalid size", "?size=bogus"},
 		{"invalid sort", "?sort=bogus"},
 		{"invalid dueBefore", "?dueBefore=not-a-date"},
 		{"invalid dueAfter", "?dueAfter=not-a-date"},
@@ -1084,4 +1085,86 @@ func TestHandleReorderTasks_ForeignProjectGets404(t *testing.T) {
 	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/tasks/order",
 		reorderTasksRequest{}, intruderToken)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestHandleListTasks_RejectsInvalidSizeQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?size=bogus", nil, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// ?size= narrows the project list and ?sort=size ranks biggest first, the
+// same direction ?sort=priority runs.
+func TestHandleListTasks_FiltersAndSortsBySizeQuery(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	for _, tc := range []struct{ title, size string }{
+		{"Small one", "xs"},
+		{"Huge one", "xl"},
+		{"Middling one", "m"},
+	} {
+		created := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+			map[string]any{"title": tc.title, "size": tc.size}, token)
+		require.Equal(t, http.StatusCreated, created.Code)
+	}
+
+	filtered := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?size=xl", nil, token)
+	require.Equal(t, http.StatusOK, filtered.Code)
+	var only []map[string]any
+	require.NoError(t, json.Unmarshal(filtered.Body.Bytes(), &only))
+	require.Len(t, only, 1)
+	assert.Equal(t, "Huge one", only[0]["title"])
+	assert.Equal(t, "xl", only[0]["size"])
+
+	sorted := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort=size", nil, token)
+	require.Equal(t, http.StatusOK, sorted.Code)
+	var ranked []map[string]any
+	require.NoError(t, json.Unmarshal(sorted.Body.Bytes(), &ranked))
+	require.Len(t, ranked, 3)
+	assert.Equal(t, []any{"xl", "m", "xs"},
+		[]any{ranked[0]["size"], ranked[1]["size"], ranked[2]["size"]})
+}
+
+// A task created without a size gets the middle value, and an unknown size
+// is a 400 rather than being silently coerced.
+func TestHandleCreateTask_DefaultsAndValidatesSize(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	defaulted := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		map[string]any{"title": "No size given"}, token)
+	require.Equal(t, http.StatusCreated, defaulted.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(defaulted.Body.Bytes(), &body))
+	assert.Equal(t, "m", body["size"])
+
+	rejected := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		map[string]any{"title": "Bad size", "size": "gigantic"}, token)
+	assert.Equal(t, http.StatusBadRequest, rejected.Code)
+}
+
+// The AI-facing context endpoint carries the size, so an agent knows how
+// large the work is expected to be before it starts.
+func TestHandleGetTaskContext_IncludesSize(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	created := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		map[string]any{"title": "Big job", "size": "xl"}, token)
+	require.Equal(t, http.StatusCreated, created.Code)
+	var task map[string]any
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &task))
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+task["id"].(string)+"/context", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "xl", body["size"])
 }

@@ -28,8 +28,8 @@ type Querier interface {
 	// GetLinkedGitlabProjectByID, because the task_gitlab_links row that names
 	// this task ID was already authorized when the link was first created (or,
 	// for a brand-new unclassified task, in the same transaction that just
-	// created it). It never touches backlog_id, position, priority or progress,
-	// which are app-only — in particular an issue being closed on GitLab moves
+	// created it). It never touches backlog_id, position, priority, progress or
+	// size, which are app-only — in particular an issue being closed on GitLab moves
 	// status, never progress (see the 000011 migration).
 	// closed_at only advances when status transitions into 'closed' — the CASE
 	// reads the pre-update closed_at (every SET expression in one UPDATE sees
@@ -56,13 +56,19 @@ type Querier interface {
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
 	CompleteRepositorySyncRun(ctx context.Context, arg CompleteRepositorySyncRunParams) (RepositorySyncRun, error)
 	CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error)
-	// CountOpenTasksForVelocity returns projectID's current count of
-	// not-yet-completed tasks (status='open' AND progress<>'done'), used to
-	// forecast how many periods the remaining work will take at the recent
-	// velocity. Always the current count, regardless of any ?from=/?to= the
-	// request passed.
+	// CountOpenTasksBySizeForVelocity returns projectID's current count of
+	// not-yet-completed tasks (status='open' AND progress<>'done') grouped by
+	// size, used to forecast how many periods the remaining work will take at
+	// the recent velocity. Always the current counts, regardless of any
+	// ?from=/?to= the request passed.
 	//
-	CountOpenTasksForVelocity(ctx context.Context, arg CountOpenTasksForVelocityParams) (int64, error)
+	// It groups by size rather than returning a bare COUNT(*) plus a
+	// SUM(CASE size ...) so that the size->points weight table lives in exactly
+	// one place, internal/velocity.sizePoints. Summing here would mean the same
+	// weights written twice, in Go and in SQL, free to drift apart. The total
+	// open count is just the sum of these rows' counts.
+	//
+	CountOpenTasksBySizeForVelocity(ctx context.Context, arg CountOpenTasksBySizeForVelocityParams) ([]CountOpenTasksBySizeForVelocityRow, error)
 	CountUsers(ctx context.Context) (int64, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the
@@ -527,16 +533,18 @@ type Querier interface {
 	// N+1 query per task. Ordered by task then occurred_at so the caller can
 	// walk each task's timeline in order without re-sorting.
 	ListTaskProgressEventsForFlowMetrics(ctx context.Context, arg ListTaskProgressEventsForFlowMetricsParams) ([]ListTaskProgressEventsForFlowMetricsRow, error)
-	// ListTasksByProject's priority and progress filters and sorts follow the same
+	// ListTasksByProject's priority, progress and size filters and sorts follow the same
 	// "empty/false disables it" convention as the other three filters. Sorting by
 	// priority ranks urgent > high > medium > low; sorting by progress runs the
 	// other way, not_started first through done, so the order reads as the work
-	// advancing (and matches the Board view's left-to-right axis). Both fall back
-	// to the usual position/created_at order as a tiebreak, so equal-ranked tasks
-	// keep their manual order instead of shuffling; when a sort_by_* flag is false
-	// its CASE always evaluates to 0, leaving the original position/created_at
-	// order untouched. The two flags are mutually exclusive in practice —
-	// internal/task sets at most one from a single ?sort=.
+	// advancing (and matches the Board view's left-to-right axis). Sorting by size
+	// ranks xl > l > m > s > xs, biggest first, the same direction priority runs.
+	// All three fall back to the usual position/created_at order as a tiebreak,
+	// so equal-ranked tasks keep their manual order instead of shuffling; when a
+	// sort_by_* flag is false its CASE always evaluates to 0, leaving the
+	// original position/created_at order untouched. The three flags are mutually
+	// exclusive in practice — internal/task sets at most one from a single
+	// ?sort=.
 	// ListTasksByProject's assignee_me filter joins the project's own GitLab
 	// connection (if any) to the caller's registered identity for that same
 	// base_url (internal/gitlabidentity, issue #102): a caller with no
@@ -577,7 +585,7 @@ type Querier interface {
 	ListTasksForFlowMetrics(ctx context.Context, arg ListTasksForFlowMetricsParams) ([]ListTasksForFlowMetricsRow, error)
 	// ListTasksForOwner backs the cross-project task collection (GET
 	// /api/v1/tasks, issue #76): every task across every project ownerID owns,
-	// narrowed by the same status/priority/progress filters as ListTasksByProject plus
+	// narrowed by the same status/priority/progress/size filters as ListTasksByProject plus
 	// due/start date ranges and an optional project_id allowlist — each
 	// following the same "empty/NULL disables it" convention. project_name is
 	// joined in for the same reason GetTaskGitlabLinkWithProjectPathByTaskID

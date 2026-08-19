@@ -259,3 +259,209 @@ func TestService_Compute_ForecastPeriods(t *testing.T) {
 	require.NotNil(t, got.ForecastPeriods)
 	assert.InDelta(t, float64(got.OpenTaskCount)/(*got.AverageVelocity), *got.ForecastPeriods, 0.001)
 }
+
+// Points weight each completed task by its size, and the actor split of the
+// points always sums back to CompletedPoints exactly as the counts do.
+// Table-driven over the five sizes so the weight table itself is pinned:
+// a silent edit to sizePoints has to break a named case here.
+func TestService_Compute_CompletedPointsWeightBySize(t *testing.T) {
+	base := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC) // a Monday
+
+	tests := []struct {
+		name       string
+		size       string
+		wantPoints int
+	}{
+		{name: "xs weighs 1", size: "xs", wantPoints: 1},
+		{name: "s weighs 2", size: "s", wantPoints: 2},
+		{name: "m weighs 3 (the default)", size: "m", wantPoints: 3},
+		{name: "l weighs 5", size: "l", wantPoints: 5},
+		{name: "xl weighs 8", size: "xl", wantPoints: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", base.Add(-30*24*time.Hour))
+			f.q.SeedTaskSize(task.ID, tt.size)
+			f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", base, "agent")
+
+			got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+			require.NoError(t, err)
+
+			require.Len(t, got.Periods, 1)
+			p := got.Periods[0]
+			assert.Equal(t, 1, p.Completed, "one task regardless of size")
+			assert.Equal(t, tt.wantPoints, p.CompletedPoints)
+			assert.Equal(t, tt.wantPoints, p.CompletedPointsByAgent)
+			assert.Equal(t, p.CompletedPoints,
+				p.CompletedPointsByUser+p.CompletedPointsByAgent+p.CompletedPointsByUnknown)
+		})
+	}
+}
+
+// The point split follows the same actor attribution as the counts: only a
+// done transition that actually decided the completion time carries an
+// actor, so a closed_at-only completion lands in Unknown for points too.
+func TestService_Compute_PointsActorSplitMatchesCountSplit(t *testing.T) {
+	f := newFixture(t)
+	base := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	created := base.Add(-30 * 24 * time.Hour)
+
+	// xl by user (8), l by agent (5), s closed on GitLab's side (2, unknown).
+	byUser := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "User task", created)
+	f.q.SeedTaskSize(byUser.ID, "xl")
+	f.q.SeedTaskProgressEventWithActor(byUser.ID, "in_progress", "done", base, "user")
+
+	byAgent := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Agent task", created)
+	f.q.SeedTaskSize(byAgent.ID, "l")
+	f.q.SeedTaskProgressEventWithActor(byAgent.ID, "in_progress", "done", base, "agent")
+
+	unknown := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "GitLab-closed task", created)
+	f.q.SeedTaskSize(unknown.ID, "s")
+	f.q.SeedTaskClosedAt(unknown.ID, base)
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+	require.NoError(t, err)
+
+	require.Len(t, got.Periods, 1)
+	p := got.Periods[0]
+	assert.Equal(t, 3, p.Completed)
+	assert.Equal(t, 15, p.CompletedPoints, "8 + 5 + 2")
+	assert.Equal(t, 8, p.CompletedPointsByUser)
+	assert.Equal(t, 5, p.CompletedPointsByAgent)
+	assert.Equal(t, 2, p.CompletedPointsByUnknown)
+	assert.Equal(t, p.CompletedPoints,
+		p.CompletedPointsByUser+p.CompletedPointsByAgent+p.CompletedPointsByUnknown)
+}
+
+// The point-denominated average has to exclude a still-running period for
+// exactly the reason the count-denominated one does — a partial bucket is
+// low by construction. This is the regression issue #195 named as the
+// easiest thing to get wrong, now doubled.
+func TestService_Compute_AverageVelocityPointsExcludesInProgressPeriod(t *testing.T) {
+	f := newFixture(t)
+	currentWeekStart := metricsperiod.BucketStart(time.Now(), metricsperiod.Week)
+
+	// Two complete weeks, one 'l' task (5 points) each.
+	for weeksAgo := 1; weeksAgo <= 2; weeksAgo++ {
+		weekStart := currentWeekStart.AddDate(0, 0, -7*weeksAgo)
+		task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", weekStart)
+		f.q.SeedTaskSize(task.ID, "l")
+		f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", weekStart.Add(time.Hour), "agent")
+	}
+
+	// The current, still-running week: a pile of xs tasks that must not drag
+	// the point average down.
+	for j := 0; j < 20; j++ {
+		task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", currentWeekStart)
+		f.q.SeedTaskSize(task.ID, "xs")
+		f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", currentWeekStart.Add(time.Minute), "agent")
+	}
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+	require.NoError(t, err)
+
+	require.NotNil(t, got.AverageVelocityPoints)
+	assert.InDelta(t, 5.0, *got.AverageVelocityPoints, 0.001, "(5+5)/2, current week excluded")
+
+	last := got.Periods[len(got.Periods)-1]
+	assert.False(t, last.Complete)
+	assert.Equal(t, 20, last.CompletedPoints, "the partial week is still reported, just not averaged")
+}
+
+// OpenTaskPoints weights the remaining open tasks the same way, and the
+// point forecast divides one by the other.
+func TestService_Compute_ForecastPeriodsByPoints(t *testing.T) {
+	f := newFixture(t)
+	weekStart := metricsperiod.BucketStart(time.Now().AddDate(0, 0, -14), metricsperiod.Week)
+
+	// Two completed 'm' tasks (3 points each) in one complete week.
+	for j := 0; j < 2; j++ {
+		task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", weekStart)
+		f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", weekStart.Add(time.Hour), "agent")
+		f.q.SeedTaskProgress(task.ID, "done")
+	}
+	// Three open tasks: xl (8) + m (3) + xs (1) = 12 points.
+	for _, size := range []string{"xl", "m", "xs"} {
+		open := f.q.SeedTask(f.project.ID, f.owner, "Open")
+		f.q.SeedTaskSize(open.ID, size)
+		f.q.SeedTaskProgress(open.ID, "in_progress")
+	}
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, got.OpenTaskCount)
+	assert.Equal(t, 12, got.OpenTaskPoints)
+	require.NotNil(t, got.AverageVelocityPoints)
+	assert.InDelta(t, 6.0, *got.AverageVelocityPoints, 0.001, "two 'm' tasks = 6 points in one week")
+	require.NotNil(t, got.ForecastPeriodsByPoints)
+	assert.InDelta(t, 2.0, *got.ForecastPeriodsByPoints, 0.001, "12 points / 6 per week")
+
+	// The count forecast disagrees here on purpose: 3 open tasks / 2 per
+	// week = 1.5 weeks, which understates the work because the remaining
+	// tasks are larger than average. That divergence is the whole reason
+	// sizing exists.
+	require.NotNil(t, got.ForecastPeriods)
+	assert.InDelta(t, 1.5, *got.ForecastPeriods, 0.001)
+}
+
+// MovingAveragePoints smooths the same window MovingAverage does, over
+// points instead of counts.
+func TestService_Compute_MovingAveragePoints(t *testing.T) {
+	f := newFixture(t)
+	currentWeekStart := metricsperiod.BucketStart(time.Now(), metricsperiod.Week)
+
+	// Three consecutive complete weeks of one task each: xs (1), l (5), xl (8).
+	sizes := []string{"xs", "l", "xl"}
+	for i, size := range sizes {
+		weeksAgo := len(sizes) - i // 3, 2, 1
+		weekStart := currentWeekStart.AddDate(0, 0, -7*weeksAgo)
+		task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", weekStart)
+		f.q.SeedTaskSize(task.ID, size)
+		f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", weekStart.Add(time.Hour), "agent")
+	}
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+	require.NoError(t, err)
+
+	require.GreaterOrEqual(t, len(got.Periods), 3)
+	assert.InDelta(t, 1.0, got.Periods[0].MovingAveragePoints, 0.001, "1/1")
+	assert.InDelta(t, 3.0, got.Periods[1].MovingAveragePoints, 0.001, "(1+5)/2")
+	assert.InDelta(t, 14.0/3.0, got.Periods[2].MovingAveragePoints, 0.001, "(1+5+8)/3")
+}
+
+// SizedTaskRatio tells a caller whether the point series carries any real
+// information yet: every task predating migration 000025 reads as the
+// default 'm', which would make points a flat 3x copy of the counts.
+func TestService_Compute_SizedTaskRatio(t *testing.T) {
+	base := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC)
+	created := base.Add(-30 * 24 * time.Hour)
+
+	tests := []struct {
+		name      string
+		sizes     []string
+		wantRatio float64
+	}{
+		{name: "no completed tasks at all", sizes: nil, wantRatio: 0},
+		{name: "every task still at the default", sizes: []string{"m", "m", "m"}, wantRatio: 0},
+		{name: "half sized", sizes: []string{"m", "m", "l", "xs"}, wantRatio: 0.5},
+		{name: "all sized", sizes: []string{"xs", "l", "xl"}, wantRatio: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			for _, size := range tt.sizes {
+				task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", created)
+				f.q.SeedTaskSize(task.ID, size)
+				f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", base, "agent")
+			}
+
+			got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+			require.NoError(t, err)
+			assert.InDelta(t, tt.wantRatio, got.SizedTaskRatio, 0.001)
+		})
+	}
+}

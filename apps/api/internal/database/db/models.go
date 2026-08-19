@@ -237,6 +237,7 @@ type Task struct {
 	SearchVector            interface{}        `json:"search_vector"`
 	DesignStartedAt         pgtype.Timestamptz `json:"design_started_at"`
 	ImplementationStartedAt pgtype.Timestamptz `json:"implementation_started_at"`
+	Size                    string             `json:"size"`
 }
 
 type TaskAiContext struct {

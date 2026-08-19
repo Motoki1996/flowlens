@@ -25,6 +25,7 @@ type createTaskRequest struct {
 	StartDate              *time.Time `json:"startDate"`
 	Priority               string     `json:"priority"`
 	Progress               string     `json:"progress"`
+	Size                   string     `json:"size"`
 }
 
 // updateTaskRequest is a true partial update: a key absent from the body
@@ -41,6 +42,7 @@ type updateTaskRequest struct {
 	StartDate              task.Optional[*time.Time] `json:"startDate"`
 	Priority               task.Optional[string]     `json:"priority"`
 	Progress               task.Optional[string]     `json:"progress"`
+	Size                   task.Optional[string]     `json:"size"`
 	Position               task.Optional[int32]      `json:"position"`
 }
 
@@ -94,6 +96,16 @@ func isValidProgress(v string) bool {
 	}
 }
 
+// isValidSize reports whether v is one of the fixed size values.
+func isValidSize(v string) bool {
+	switch v {
+	case task.SizeXS, task.SizeS, task.SizeM, task.SizeL, task.SizeXL:
+		return true
+	default:
+		return false
+	}
+}
+
 // parseTaskListFilter reads the ?backlog_id=, ?status=, ?priority=,
 // ?progress=, ?sort=, ?assignee= and ?q= query parameters. backlog_id
 // accepts a UUID or the literal "unassigned"; status accepts "open" or
@@ -140,13 +152,20 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 		filter.Progress = v
 	}
 
+	if v := r.URL.Query().Get("size"); v != "" {
+		if !isValidSize(v) {
+			return task.ListFilter{}, errors.New("size must be one of xs, s, m, l, xl")
+		}
+		filter.Size = v
+	}
+
 	if v := r.URL.Query().Get("sort"); v != "" {
-		// The same four values the cross-project collection accepts (see
+		// The same five values the cross-project collection accepts (see
 		// parseCrossProjectFilter), so a screen's sort menu means the same
 		// thing whichever list backs it. Omitting sort is this list's manual
 		// position order, which the cross-project one has no equivalent for.
-		if v != task.SortPriority && v != task.SortProgress && v != task.SortDueOn && v != task.SortUpdatedAt {
-			return task.ListFilter{}, errors.New("sort must be one of priority, progress, dueOn, updatedAt")
+		if v != task.SortPriority && v != task.SortProgress && v != task.SortSize && v != task.SortDueOn && v != task.SortUpdatedAt {
+			return task.ListFilter{}, errors.New("sort must be one of priority, progress, size, dueOn, updatedAt")
 		}
 		filter.Sort = v
 	}
@@ -249,7 +268,7 @@ func parseIntervalQueryParam(r *http.Request) (*metricsperiod.Interval, error) {
 // /api/v1/tasks accepts.
 func isValidCrossProjectSort(v string) bool {
 	switch v {
-	case task.SortDueOn, task.SortPriority, task.SortProgress, task.SortUpdatedAt:
+	case task.SortDueOn, task.SortPriority, task.SortProgress, task.SortSize, task.SortUpdatedAt:
 		return true
 	default:
 		return false
@@ -288,6 +307,13 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 		filter.Progress = v
 	}
 
+	if v := r.URL.Query().Get("size"); v != "" {
+		if !isValidSize(v) {
+			return task.CrossProjectFilter{}, errors.New("size must be one of xs, s, m, l, xl")
+		}
+		filter.Size = v
+	}
+
 	dueBefore, err := parseDateQueryParam(r, "dueBefore")
 	if err != nil {
 		return task.CrossProjectFilter{}, err
@@ -316,7 +342,7 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 
 	if v := r.URL.Query().Get("sort"); v != "" {
 		if !isValidCrossProjectSort(v) {
-			return task.CrossProjectFilter{}, errors.New("sort must be one of dueOn, priority, progress, updatedAt")
+			return task.CrossProjectFilter{}, errors.New("sort must be one of dueOn, priority, progress, size, updatedAt")
 		}
 		filter.Sort = v
 	}
@@ -385,6 +411,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		StartDate:              req.StartDate,
 		Priority:               req.Priority,
 		Progress:               req.Progress,
+		Size:                   req.Size,
 	})
 	if err != nil {
 		writeTaskError(w, err)
@@ -452,6 +479,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		StartDate:              req.StartDate,
 		Priority:               req.Priority,
 		Progress:               req.Progress,
+		Size:                   req.Size,
 		Position:               req.Position,
 	}, actorKind)
 	if err != nil {
@@ -632,6 +660,8 @@ func writeTaskError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, task.ErrInvalidTitle):
 		writeError(w, http.StatusBadRequest, "invalid_title", "title must be 1-255 characters")
+	case errors.Is(err, task.ErrInvalidSize):
+		writeError(w, http.StatusBadRequest, "invalid_size", "size must be one of xs, s, m, l, xl")
 	case errors.Is(err, task.ErrInvalidPriority):
 		writeError(w, http.StatusBadRequest, "invalid_priority", "priority must be one of low, medium, high, urgent")
 	case errors.Is(err, task.ErrInvalidProgress):

@@ -430,6 +430,20 @@ Two rules make this predictable:
 Inbound sync is unchanged: an issue imported or delivered by webhook still
 lands with no backlog (Unclassified), whichever GitLab project it came from.
 
+### A backlog's base branch
+
+A backlog can also name the branch its tasks are meant to branch from during
+development (e.g. `main`, `release/2.4`) — `baseBranch` on
+`POST /api/v1/projects/{projectID}/backlogs` and
+`PATCH /api/v1/backlogs/{backlogID}`, editable from the same create/edit form
+and shown on the Backlog single view. It is optional, validated as a git
+branch name when non-empty (400 `invalid_base_branch` otherwise), app-only,
+and never synced to or from GitLab — unlike a merge request's own base
+branch, which mirrors an actual GitLab merge request. It is also surfaced on
+`GET /api/v1/tasks/{taskID}/context` (resolved through the task's backlog, or
+`""` if unfiled or unset), so an AI agent working a task knows what branch to
+start from.
+
 ### What FlowLens registers as a webhook
 
 For each linked GitLab project, FlowLens registers exactly one webhook on

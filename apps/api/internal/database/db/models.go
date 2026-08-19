@@ -22,6 +22,7 @@ type Backlog struct {
 	Priority                     string             `json:"priority"`
 	Progress                     string             `json:"progress"`
 	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
+	BaseBranch                   string             `json:"base_branch"`
 }
 
 type BacklogProgressEvent struct {

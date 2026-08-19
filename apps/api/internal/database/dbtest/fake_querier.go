@@ -585,6 +585,7 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 		Priority:                     arg.Priority,
 		Progress:                     arg.Progress,
 		DefaultLinkedGitlabProjectID: arg.DefaultLinkedGitlabProjectID,
+		BaseBranch:                   arg.BaseBranch,
 		CreatedAt:                    now(),
 		UpdatedAt:                    now(),
 	}
@@ -657,6 +658,7 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 			Priority:                     b.Priority,
 			Progress:                     b.Progress,
 			DefaultLinkedGitlabProjectID: b.DefaultLinkedGitlabProjectID,
+			BaseBranch:                   b.BaseBranch,
 			TaskCount:                    taskCount,
 			ClosedTaskCount:              closedTaskCount,
 		})
@@ -712,6 +714,16 @@ func (f *FakeQuerier) GetBacklogProjectID(_ context.Context, id uuid.UUID) (uuid
 	return b.ProjectID, nil
 }
 
+// GetBacklogBaseBranch mirrors the SQL: no owner join, just the backlog's
+// own base_branch.
+func (f *FakeQuerier) GetBacklogBaseBranch(_ context.Context, id uuid.UUID) (string, error) {
+	b, ok := f.backlogsByID[id]
+	if !ok {
+		return "", pgx.ErrNoRows
+	}
+	return b.BaseBranch, nil
+}
+
 // UpdateBacklogForOwner mirrors the SQL: member-minimum.
 func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBacklogForOwnerParams) (db.Backlog, error) {
 	existing, ok := f.backlogsByID[arg.ID]
@@ -729,6 +741,7 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	existing.Priority = arg.Priority
 	existing.Progress = arg.Progress
 	existing.DefaultLinkedGitlabProjectID = arg.DefaultLinkedGitlabProjectID
+	existing.BaseBranch = arg.BaseBranch
 	existing.UpdatedAt = now()
 
 	f.backlogsByID[arg.ID] = existing

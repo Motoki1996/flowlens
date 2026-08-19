@@ -26,6 +26,7 @@ const backlog: Backlog = {
   priority: "medium",
   progress: "not_started",
   defaultLinkedGitlabProjectId: null,
+  baseBranch: "",
   taskCount: 0,
   closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
@@ -159,6 +160,37 @@ describe("BacklogListSection", () => {
       "/api/v1/projects/p1/backlogs",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("sends the entered base branch when creating a backlog", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ...backlog, id: "b2" }), { status: 201 }));
+    render(<BacklogListSection projectId="p1" backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New backlog" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Sprint 2" } });
+    fireEvent.change(screen.getByLabelText("Base branch"), { target: { value: "main" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create backlog" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(bodyOf(vi.mocked(fetch).mock.calls[0])).toMatchObject({
+      baseBranch: "main",
+    });
+  });
+
+  it("sends the edited base branch with the rest of the backlog", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(backlog), { status: 200 }));
+    render(<BacklogListSection projectId="p1" backlogs={[{ ...backlog, baseBranch: "main" }]} />);
+    showList();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Base branch")).toHaveValue("main");
+    fireEvent.change(screen.getByLabelText("Base branch"), { target: { value: "develop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(bodyOf(vi.mocked(fetch).mock.calls[0])).toMatchObject({
+      baseBranch: "develop",
+    });
   });
 
   // A backlog can name its own GitLab project for new issues (issue #180).

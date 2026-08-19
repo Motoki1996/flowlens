@@ -163,6 +163,7 @@ function NewBacklogForm({
   const [priority, setPriority] = useState<Priority>("medium");
   const [progress, setProgress] = useState<Progress>("not_started");
   const [linkId, setLinkId] = useState<string | null>(null);
+  const [baseBranch, setBaseBranch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -190,6 +191,7 @@ function NewBacklogForm({
             priority,
             progress,
             defaultLinkedGitlabProjectId: linkId,
+            baseBranch,
           }),
         },
       );
@@ -317,6 +319,25 @@ function NewBacklogForm({
         value={linkId}
         onChange={setLinkId}
       />
+      <div>
+        <label
+          htmlFor="new-backlog-base-branch"
+          className="text-foreground block text-sm font-medium"
+        >
+          Base branch
+        </label>
+        <Input
+          id="new-backlog-base-branch"
+          name="baseBranch"
+          value={baseBranch}
+          onChange={(e) => setBaseBranch(e.target.value)}
+          placeholder="main"
+          className="mt-1 sm:w-80"
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The branch tasks in this backlog are meant to branch from.
+        </p>
+      </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Creating…" : "Create backlog"}
@@ -359,6 +380,7 @@ function EditBacklogForm({
   const [linkId, setLinkId] = useState<string | null>(
     backlog.defaultLinkedGitlabProjectId,
   );
+  const [baseBranch, setBaseBranch] = useState(backlog.baseBranch);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -387,6 +409,7 @@ function EditBacklogForm({
             priority,
             progress,
             defaultLinkedGitlabProjectId: linkId,
+            baseBranch,
           }),
         },
       );
@@ -514,6 +537,25 @@ function EditBacklogForm({
         value={linkId}
         onChange={setLinkId}
       />
+      <div>
+        <label
+          htmlFor={`edit-backlog-base-branch-${backlog.id}`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Base branch
+        </label>
+        <Input
+          id={`edit-backlog-base-branch-${backlog.id}`}
+          name="baseBranch"
+          value={baseBranch}
+          onChange={(e) => setBaseBranch(e.target.value)}
+          placeholder="main"
+          className="mt-1 sm:w-80"
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The branch tasks in this backlog are meant to branch from.
+        </p>
+      </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? "Saving…" : "Save"}

@@ -783,3 +783,78 @@ func TestService_Reorder_ReturnsNotFoundForForeignProject(t *testing.T) {
 	_, err := svc.Reorder(context.Background(), other, p.ID, nil)
 	assert.ErrorIs(t, err, backlog.ErrNotFound)
 }
+
+func TestService_Create_ValidatesBaseBranch(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr error
+	}{
+		{"empty is not set", "", "", nil},
+		{"trims whitespace", "  main  ", "main", nil},
+		{"accepts a namespaced branch", "release/2.4", "release/2.4", nil},
+		{"rejects too long", strings.Repeat("a", 256), "", backlog.ErrInvalidBaseBranch},
+		{"rejects a space", "feature branch", "", backlog.ErrInvalidBaseBranch},
+		{"rejects a leading slash", "/main", "", backlog.ErrInvalidBaseBranch},
+		{"rejects a trailing slash", "main/", "", backlog.ErrInvalidBaseBranch},
+		{"rejects a leading dot", ".main", "", backlog.ErrInvalidBaseBranch},
+		{"rejects a double dot", "main..2", "", backlog.ErrInvalidBaseBranch},
+		{"rejects a .lock suffix", "main.lock", "", backlog.ErrInvalidBaseBranch},
+		{"rejects a tilde", "main~1", "", backlog.ErrInvalidBaseBranch},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+
+			got, err := svc.Create(context.Background(), owner, p.ID, backlog.CreateParams{Name: "Sprint 1", BaseBranch: tt.input})
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.BaseBranch)
+		})
+	}
+}
+
+func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1", BaseBranch: "main"})
+	require.NoError(t, err)
+
+	// Absent leaves the stored value untouched.
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1", Position: created.Position}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, "main", updated.BaseBranch)
+
+	// Explicit value overwrites it.
+	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name: "Sprint 1", Position: created.Position,
+		BaseBranch: optional.Present("develop"),
+	}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, "develop", updated.BaseBranch)
+
+	// Explicit empty string clears it back to "not set".
+	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name: "Sprint 1", Position: created.Position,
+		BaseBranch: optional.Present(""),
+	}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, "", updated.BaseBranch)
+
+	// An invalid explicit value is rejected.
+	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name: "Sprint 1", Position: created.Position,
+		BaseBranch: optional.Present("bad branch"),
+	}, backlog.ActorKindUser)
+	assert.ErrorIs(t, err, backlog.ErrInvalidBaseBranch)
+}

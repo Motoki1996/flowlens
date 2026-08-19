@@ -143,6 +143,12 @@ export function BacklogDetail({
               </div>
             ) : null}
             <div>
+              <dt className="text-muted-foreground">Base branch</dt>
+              <dd className="text-foreground">
+                {backlog.baseBranch ? <code>{backlog.baseBranch}</code> : "Not set"}
+              </dd>
+            </div>
+            <div>
               <dt className="text-muted-foreground">Created</dt>
               <dd className="text-foreground">{formatDateTime(backlog.createdAt)}</dd>
             </div>

@@ -34,6 +34,7 @@ var (
 	ErrInvalidSchedule    = errors.New("backlog: start date must not be after due date")
 	ErrInvalidPriority    = errors.New("backlog: priority must be one of low, medium, high, urgent")
 	ErrInvalidProgress    = errors.New("backlog: progress must be one of not_started, in_progress, on_hold, done")
+	ErrInvalidBaseBranch  = errors.New("backlog: baseBranch must be a valid git branch name, at most 255 characters")
 	ErrLinkNotInProject   = errors.New("backlog: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	ErrNotFound           = errors.New("backlog: not found")
 	ErrForbidden          = errors.New("backlog: forbidden")
@@ -99,6 +100,12 @@ type Backlog struct {
 	// It is read only when a task is created: moving a task into or out of a
 	// backlog afterwards never moves an issue that already exists.
 	DefaultLinkedGitlabProjectID *uuid.UUID `json:"defaultLinkedGitlabProjectId"`
+	// BaseBranch is the branch tasks in this backlog are meant to branch from
+	// during development (e.g. "main", "release/2.4"). Optional, app-only,
+	// and never synced to GitLab — unlike a merge request's own base branch,
+	// which is a fact synced from GitLab about an actual merge request (see
+	// the 000024 migration).
+	BaseBranch string `json:"baseBranch"`
 	// TaskCount and ClosedTaskCount are the backlog's total and closed task
 	// counts, computed by ListBacklogsByProject's LEFT JOIN aggregate (issue
 	// #144) so the Backlog collection screen doesn't need to fetch every task
@@ -127,6 +134,7 @@ func fromRow(row db.Backlog) Backlog {
 		Priority:                     row.Priority,
 		Progress:                     row.Progress,
 		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
+		BaseBranch:                   row.BaseBranch,
 		CreatedAt:                    row.CreatedAt.Time,
 		UpdatedAt:                    row.UpdatedAt.Time,
 	}
@@ -146,6 +154,7 @@ func fromListRow(row db.ListBacklogsByProjectRow) Backlog {
 		Priority:                     row.Priority,
 		Progress:                     row.Progress,
 		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
+		BaseBranch:                   row.BaseBranch,
 		TaskCount:                    row.TaskCount,
 		ClosedTaskCount:              row.ClosedTaskCount,
 		CreatedAt:                    row.CreatedAt.Time,
@@ -220,6 +229,36 @@ func normalizeProgress(raw string) (string, error) {
 	default:
 		return "", ErrInvalidProgress
 	}
+}
+
+// normalizeBaseBranch trims raw and, if non-empty, validates it as a git
+// branch name (git-check-ref-format's rules, the subset relevant to a
+// single branch component: no control characters or spaces, none of
+// ~ ^ : ? * [ \, no "..", no "@{", doesn't start or end with "/", doesn't
+// start with "." or end with "." or ".lock"). An empty raw means "not set"
+// and is always valid — this is an optional field.
+func normalizeBaseBranch(raw string) (string, error) {
+	branch := strings.TrimSpace(raw)
+	if branch == "" {
+		return "", nil
+	}
+	if utf8.RuneCountInString(branch) > 255 {
+		return "", ErrInvalidBaseBranch
+	}
+	if strings.ContainsAny(branch, " ~^:?*[\\") || strings.Contains(branch, "..") || strings.Contains(branch, "@{") {
+		return "", ErrInvalidBaseBranch
+	}
+	if strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") ||
+		strings.HasPrefix(branch, ".") || strings.HasSuffix(branch, ".") ||
+		strings.HasSuffix(branch, ".lock") {
+		return "", ErrInvalidBaseBranch
+	}
+	for _, r := range branch {
+		if r < 0x20 || r == 0x7f {
+			return "", ErrInvalidBaseBranch
+		}
+	}
+	return branch, nil
 }
 
 // Service manages backlogs inside projects owned by a single user.
@@ -302,6 +341,9 @@ type CreateParams struct {
 	// project's default link. A link outside this project is rejected with
 	// ErrLinkNotInProject.
 	DefaultLinkedGitlabProjectID *uuid.UUID
+	// BaseBranch is optional; empty means "not set". Validated as a git
+	// branch name when non-empty.
+	BaseBranch string
 }
 
 // Create validates name and creates a backlog at the end of projectID's
@@ -330,6 +372,10 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	if err := s.validateLink(ctx, ownerID, projectID, p.DefaultLinkedGitlabProjectID); err != nil {
 		return Backlog{}, err
 	}
+	baseBranch, err := normalizeBaseBranch(p.BaseBranch)
+	if err != nil {
+		return Backlog{}, err
+	}
 	row, err := s.q.CreateBacklog(ctx, db.CreateBacklogParams{
 		ProjectID:                    projectID,
 		Name:                         normalized,
@@ -339,6 +385,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 		Priority:                     priority,
 		Progress:                     progress,
 		DefaultLinkedGitlabProjectID: toUUID(p.DefaultLinkedGitlabProjectID),
+		BaseBranch:                   baseBranch,
 	})
 	if err != nil {
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
@@ -438,6 +485,10 @@ type UpdateParams struct {
 	// its tasks' issues go. An explicit null falls the backlog back to the
 	// project's default link.
 	DefaultLinkedGitlabProjectID optional.Optional[*uuid.UUID]
+	// BaseBranch follows the same absent/explicit-empty rule as Priority and
+	// Progress: absent keeps the current value, an explicit empty string
+	// clears it back to "not set".
+	BaseBranch optional.Optional[string]
 }
 
 // Update overwrites name, description and position, and applies whichever of
@@ -490,6 +541,11 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		}
 	}
 
+	baseBranch, err := normalizeBaseBranch(p.BaseBranch.Or(current.BaseBranch))
+	if err != nil {
+		return Backlog{}, err
+	}
+
 	progressChanged := current.Progress != progress
 
 	var result Backlog
@@ -505,6 +561,7 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 			Priority:                     priority,
 			Progress:                     progress,
 			DefaultLinkedGitlabProjectID: toUUID(link),
+			BaseBranch:                   baseBranch,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

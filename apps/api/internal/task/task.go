@@ -1561,29 +1561,33 @@ const ProgressGuidance = `Update this task's progress as you work, via PATCH /ap
 // external AI integration parses this contract, so its field names and
 // nesting must stay stable regardless of what Task does.
 type Context struct {
-	ID                     uuid.UUID      `json:"id"`
-	ProjectID              uuid.UUID      `json:"projectId"`
-	BacklogID              *uuid.UUID     `json:"backlogId"`
-	Title                  string         `json:"title"`
-	Description            string         `json:"description"`
-	Status                 string         `json:"status"`
-	Progress               string         `json:"progress"`
-	ProgressGuidance       string         `json:"progressGuidance"`
-	AssigneeGitlabUserID   *int64         `json:"assigneeGitlabUserId"`
-	AssigneeGitlabUsername string         `json:"assigneeGitlabUsername"`
-	Labels                 []string       `json:"labels"`
-	DueOn                  *time.Time     `json:"dueOn"`
-	UpdatedAt              time.Time      `json:"updatedAt"`
-	Gitlab                 *GitlabContext `json:"gitlab"`
-	AcceptanceCriteria     string         `json:"acceptanceCriteria"`
-	AIContext              string         `json:"aiContext"`
-	AllowedScope           string         `json:"allowedScope"`
-	ForbiddenScope         string         `json:"forbiddenScope"`
+	ID                     uuid.UUID  `json:"id"`
+	ProjectID              uuid.UUID  `json:"projectId"`
+	BacklogID              *uuid.UUID `json:"backlogId"`
+	Title                  string     `json:"title"`
+	Description            string     `json:"description"`
+	Status                 string     `json:"status"`
+	Progress               string     `json:"progress"`
+	ProgressGuidance       string     `json:"progressGuidance"`
+	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
+	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
+	Labels                 []string   `json:"labels"`
+	DueOn                  *time.Time `json:"dueOn"`
+	UpdatedAt              time.Time  `json:"updatedAt"`
+	// BaseBranch is the task's backlog's base_branch (internal/backlog,
+	// issue's own migration) — the branch an agent working this task should
+	// branch from. "" when the task is unfiled or its backlog has none set.
+	BaseBranch         string         `json:"baseBranch"`
+	Gitlab             *GitlabContext `json:"gitlab"`
+	AcceptanceCriteria string         `json:"acceptanceCriteria"`
+	AIContext          string         `json:"aiContext"`
+	AllowedScope       string         `json:"allowedScope"`
+	ForbiddenScope     string         `json:"forbiddenScope"`
 }
 
 // toContext combines t with its already-resolved GitLab and AI context into
 // the AI-facing Context shape.
-func toContext(t Task, gc *GitlabContext, ai AIContext) Context {
+func toContext(t Task, gc *GitlabContext, ai AIContext, baseBranch string) Context {
 	return Context{
 		ID:                     t.ID,
 		ProjectID:              t.ProjectID,
@@ -1598,6 +1602,7 @@ func toContext(t Task, gc *GitlabContext, ai AIContext) Context {
 		Labels:                 t.Labels,
 		DueOn:                  t.DueOn,
 		UpdatedAt:              t.UpdatedAt,
+		BaseBranch:             baseBranch,
 		Gitlab:                 gc,
 		AcceptanceCriteria:     ai.AcceptanceCriteria,
 		AIContext:              ai.AIContext,
@@ -1644,7 +1649,27 @@ func (s *Service) contextForTask(ctx context.Context, t Task) (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
-	return toContext(t, gc, ai), nil
+	baseBranch, err := s.baseBranchForTask(ctx, t.BacklogID)
+	if err != nil {
+		return Context{}, err
+	}
+	return toContext(t, gc, ai, baseBranch), nil
+}
+
+// baseBranchForTask resolves backlogID's base_branch, or "" if the task is
+// unfiled (backlogID nil) or its backlog has none set.
+func (s *Service) baseBranchForTask(ctx context.Context, backlogID *uuid.UUID) (string, error) {
+	if backlogID == nil {
+		return "", nil
+	}
+	branch, err := s.q.GetBacklogBaseBranch(ctx, *backlogID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", fmt.Errorf("task: get backlog base branch: %w", err)
+	}
+	return branch, nil
 }
 
 // ContextListFilter narrows ListContext/ListContextForProject to a subset of

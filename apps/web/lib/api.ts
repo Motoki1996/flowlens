@@ -34,6 +34,7 @@ import type {
   TaskStatus,
   TaskWithProject,
   User,
+  Velocity,
   WebhookEventPage,
 } from "@/types";
 
@@ -442,6 +443,34 @@ export async function getProjectFlowMetrics(
     throw new Error(`Failed to load project flow metrics: ${res.status}`);
   }
   return (await res.json()) as FlowMetrics;
+}
+
+/**
+ * getProjectVelocity returns the project's completed-task throughput
+ * aggregation (issue #195), over the same optional [from, to] range shape as
+ * getProjectMetrics/getProjectFlowMetrics — but bucketed by each task's
+ * *completion* time, not creation time. Callers must already know the
+ * request is authenticated.
+ */
+export async function getProjectVelocity(
+  projectId: string,
+  filter: ProjectMetricsFilter = {},
+): Promise<Velocity> {
+  const cookieStore = await cookies();
+  const params = new URLSearchParams();
+  if (filter.from) params.set("from", filter.from);
+  if (filter.to) params.set("to", filter.to);
+  if (filter.interval) params.set("interval", filter.interval);
+  const query = params.toString();
+
+  const res = await fetch(
+    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/velocity${query ? `?${query}` : ""}`,
+    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
+  );
+  if (!res.ok) {
+    throw new Error(`Failed to load project velocity: ${res.status}`);
+  }
+  return (await res.json()) as Velocity;
 }
 
 /**

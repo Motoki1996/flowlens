@@ -10,6 +10,7 @@ import {
   getProjectFlowMetrics,
   getProjectMembers,
   getProjectMetrics,
+  getProjectVelocity,
   getTasks,
 } from "@/lib/api";
 import { ProjectDetail } from "@/components/ProjectDetail";
@@ -106,6 +107,18 @@ export default async function ProjectPage({
     metricsError = true;
   }
 
+  // Velocity (issue #195) shares the same [from, to, interval] URL filter as
+  // the delivery/flow metrics above (issue #196), but is fetched and can
+  // fail independently — it's a separate API endpoint with its own
+  // authorization check.
+  let velocity: Awaited<ReturnType<typeof getProjectVelocity>> | null = null;
+  let velocityError = false;
+  try {
+    velocity = await getProjectVelocity(projectId, { from: metricsFrom, to: metricsTo, interval: metricsInterval });
+  } catch {
+    velocityError = true;
+  }
+
   return (
     <ProjectDetail
       project={project}
@@ -121,7 +134,9 @@ export default async function ProjectPage({
       currentUserId={currentUser?.id ?? ""}
       metrics={metrics}
       flowMetrics={flowMetrics}
+      velocity={velocity}
       metricsError={metricsError}
+      velocityError={velocityError}
       metricsFrom={metricsFrom}
       metricsTo={metricsTo}
       metricsInterval={metricsInterval}

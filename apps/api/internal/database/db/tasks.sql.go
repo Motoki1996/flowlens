@@ -12,6 +12,50 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const applyGitlabProgressDone = `-- name: ApplyGitlabProgressDone :one
+
+UPDATE tasks
+SET progress = 'done',
+    updated_at = now()
+WHERE id = $1
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size
+`
+
+// ApplyGitlabProgressDone is internal/progresssync's write (issue #202):
+// called only from the same transaction as an ApplyWebhookTaskFields
+// status='closed' write, and only when progress_sync_settings.enabled is
+// true for the task's project and progress isn't already 'done'. Unscoped
+// like ApplyWebhookTaskFields, for the same reason.
+func (q *Queries) ApplyGitlabProgressDone(ctx context.Context, id uuid.UUID) (Task, error) {
+	row := q.db.QueryRow(ctx, applyGitlabProgressDone, id)
+	var i Task
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BacklogID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.ClosedAt,
+		&i.AssigneeGitlabUserID,
+		&i.AssigneeGitlabUsername,
+		&i.Labels,
+		&i.DueOn,
+		&i.Position,
+		&i.CreatedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartDate,
+		&i.Priority,
+		&i.Progress,
+		&i.SearchVector,
+		&i.DesignStartedAt,
+		&i.ImplementationStartedAt,
+		&i.Size,
+	)
+	return i, err
+}
+
 const applyWebhookTaskFields = `-- name: ApplyWebhookTaskFields :one
 
 

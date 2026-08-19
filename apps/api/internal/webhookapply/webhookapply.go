@@ -3,11 +3,14 @@
 // guarded against an out-of-scope issue, a stale or duplicate delivery, and
 // FlowLens's own outbound push echoing back. Since #104 it also applies
 // "Note Hook" events onto a task's activity log (task_comments) — see
-// applyNote. It never enqueues an outbound
+// applyNote. Since #202 a task's own close can also, opt-in per project,
+// write a task_progress_events row through internal/progresssync — see
+// applyToExistingTask. It never enqueues an outbound
 // sync_jobs row — apply's write path only ever touches tasks,
-// task_gitlab_links and webhook_events, and never imports internal/sync —
-// which is the structural half of the loop-prevention guard; the
-// content-fingerprint echo check is the other half.
+// task_gitlab_links, task_progress_events and webhook_events, and never
+// imports internal/sync — which is the structural half of the
+// loop-prevention guard; the content-fingerprint echo check is the other
+// half.
 package webhookapply
 
 import (
@@ -23,6 +26,7 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/linkedproject"
+	"github.com/flowlens/api/internal/progresssync"
 	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -478,6 +482,27 @@ func (s *Service) applyToExistingTask(ctx context.Context, q db.Querier, event d
 		}
 	}
 
+	// Read the pre-image status/progress before writing, so progresssync
+	// below can tell a genuine open->closed transition from a re-applied
+	// already-closed status (issue #202) — only needed when this delivery is
+	// closing the issue, since progresssync.ApplyOnClose is a no-op for
+	// anything else.
+	var projectID uuid.UUID
+	var previousStatus, previousProgress string
+	if fields.Status == task.StatusClosed {
+		var ownerID uuid.UUID
+		var err error
+		ownerID, projectID, err = resolveProjectOwner(ctx, q, linkedProject)
+		if err != nil {
+			return s.markFailed(ctx, q, event.ID, fmt.Errorf("resolve project owner: %w", err))
+		}
+		current, err := q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: link.TaskID, OwnerUserID: ownerID})
+		if err != nil {
+			return s.markFailed(ctx, q, event.ID, fmt.Errorf("get task: %w", err))
+		}
+		previousStatus, previousProgress = current.Status, current.Progress
+	}
+
 	if _, err := q.ApplyWebhookTaskFields(ctx, db.ApplyWebhookTaskFieldsParams{
 		ID:                     link.TaskID,
 		Title:                  fields.Title,
@@ -496,6 +521,12 @@ func (s *Service) applyToExistingTask(ctx context.Context, q db.Querier, event d
 		GitlabUpdatedAt: toTimestamptz(fields.UpdatedAt),
 	}); err != nil {
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("mark link applied: %w", err))
+	}
+
+	if fields.Status == task.StatusClosed {
+		if err := progresssync.ApplyOnClose(ctx, q, projectID, link.TaskID, previousStatus, fields.Status, previousProgress); err != nil {
+			return s.markFailed(ctx, q, event.ID, err)
+		}
 	}
 
 	return s.markProcessed(ctx, q, event.ID)

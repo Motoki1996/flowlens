@@ -20,6 +20,7 @@ import (
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/mergerequest"
 	"github.com/flowlens/api/internal/notification"
+	"github.com/flowlens/api/internal/progresssettings"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/projectmember"
 	"github.com/flowlens/api/internal/projectsync"
@@ -43,38 +44,39 @@ type Pinger interface {
 
 // Server holds handler dependencies and builds the router.
 type Server struct {
-	health           Pinger
-	users            *user.Service
-	projects         *project.Service
-	backlogs         *backlog.Service
-	apiTokens        *apitoken.Service
-	projectMembers   *projectmember.Service
-	tasks            *task.Service
-	taskDependencies *taskdependency.Service
-	taskComments     *taskcomment.Service
-	mergeRequests    *mergerequest.Service
-	deliveryMetrics  *deliverymetrics.Service
-	flowMetrics      *flowmetrics.Service
-	velocity         *velocity.Service
-	gitlabConns      *gitlabconn.Service
-	gitlabIdentities *gitlabidentity.Service
-	linkedProjects   *linkedproject.Service
-	projectSync      *projectsync.Service
-	webhookEvents    *webhookevent.Service
-	syncJobs         *syncjob.Service
-	notifications    *notification.Service
-	webhookLimiter   *simpleRateLimiter
-	tokenLimiter     *simpleRateLimiter
-	authLimiter      *simpleRateLimiter
-	sessions         *auth.SessionService
-	cookies          cookieManager
-	webBaseURL       string
-	version          string
-	metricsToken     string
-	trustedProxyHops int
-	allowSignup      bool
-	sessionTTL       time.Duration
-	cipher           *crypto.Cipher
+	health               Pinger
+	users                *user.Service
+	projects             *project.Service
+	backlogs             *backlog.Service
+	apiTokens            *apitoken.Service
+	projectMembers       *projectmember.Service
+	tasks                *task.Service
+	taskDependencies     *taskdependency.Service
+	taskComments         *taskcomment.Service
+	mergeRequests        *mergerequest.Service
+	deliveryMetrics      *deliverymetrics.Service
+	flowMetrics          *flowmetrics.Service
+	velocity             *velocity.Service
+	gitlabConns          *gitlabconn.Service
+	gitlabIdentities     *gitlabidentity.Service
+	linkedProjects       *linkedproject.Service
+	projectSync          *projectsync.Service
+	webhookEvents        *webhookevent.Service
+	syncJobs             *syncjob.Service
+	notifications        *notification.Service
+	progressSyncSettings *progresssettings.Service
+	webhookLimiter       *simpleRateLimiter
+	tokenLimiter         *simpleRateLimiter
+	authLimiter          *simpleRateLimiter
+	sessions             *auth.SessionService
+	cookies              cookieManager
+	webBaseURL           string
+	version              string
+	metricsToken         string
+	trustedProxyHops     int
+	allowSignup          bool
+	sessionTTL           time.Duration
+	cipher               *crypto.Cipher
 }
 
 // NewServer constructs a Server from configuration, the generated queries, a
@@ -99,38 +101,39 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 	gitlabConns := gitlabconn.NewService(queries, projects, cipher, clientFactory)
 	tasks := task.NewService(queries, txRunner, projects, backlogs)
 	return &Server{
-		health:           health,
-		users:            users,
-		projects:         projects,
-		backlogs:         backlogs,
-		apiTokens:        apiTokens,
-		projectMembers:   projectMembers,
-		tasks:            tasks,
-		taskDependencies: taskdependency.NewService(queries, projects, tasks),
-		taskComments:     taskcomment.NewService(queries, txRunner, projects, tasks),
-		mergeRequests:    mergerequest.NewService(queries, projects),
-		deliveryMetrics:  deliverymetrics.NewService(queries, projects),
-		flowMetrics:      flowmetrics.NewService(queries, projects),
-		velocity:         velocity.NewService(queries, projects),
-		gitlabConns:      gitlabConns,
-		gitlabIdentities: gitlabidentity.NewService(queries),
-		linkedProjects:   linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
-		projectSync:      projectsync.NewService(queries, txRunner, projects, cipher, clientFactory),
-		webhookEvents:    webhookevent.NewService(queries, cipher),
-		syncJobs:         syncjob.NewService(queries, projects),
-		notifications:    notification.NewService(queries, projects),
-		webhookLimiter:   newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
-		tokenLimiter:     newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
-		authLimiter:      newSimpleRateLimiter(authRateLimit, authRateLimitWindow),
-		sessions:         auth.NewSessionService(queries, cfg.SessionTTL),
-		cookies:          cookieManager{secure: cfg.IsProduction()},
-		webBaseURL:       cfg.WebBaseURL,
-		version:          cfg.Version,
-		metricsToken:     cfg.MetricsToken,
-		trustedProxyHops: cfg.TrustedProxyHops,
-		allowSignup:      cfg.AllowSignup,
-		sessionTTL:       cfg.SessionTTL,
-		cipher:           cipher,
+		health:               health,
+		users:                users,
+		projects:             projects,
+		backlogs:             backlogs,
+		apiTokens:            apiTokens,
+		projectMembers:       projectMembers,
+		tasks:                tasks,
+		taskDependencies:     taskdependency.NewService(queries, projects, tasks),
+		taskComments:         taskcomment.NewService(queries, txRunner, projects, tasks),
+		mergeRequests:        mergerequest.NewService(queries, projects),
+		deliveryMetrics:      deliverymetrics.NewService(queries, projects),
+		flowMetrics:          flowmetrics.NewService(queries, projects),
+		velocity:             velocity.NewService(queries, projects),
+		gitlabConns:          gitlabConns,
+		gitlabIdentities:     gitlabidentity.NewService(queries),
+		linkedProjects:       linkedproject.NewService(queries, txRunner, projects, gitlabConns, cipher, cfg.AppPublicURL),
+		projectSync:          projectsync.NewService(queries, txRunner, projects, cipher, clientFactory),
+		webhookEvents:        webhookevent.NewService(queries, cipher),
+		syncJobs:             syncjob.NewService(queries, projects),
+		notifications:        notification.NewService(queries, projects),
+		progressSyncSettings: progresssettings.NewService(queries, projects),
+		webhookLimiter:       newSimpleRateLimiter(webhookRateLimit, webhookRateLimitWindow),
+		tokenLimiter:         newSimpleRateLimiter(tokenRateLimit, tokenRateLimitWindow),
+		authLimiter:          newSimpleRateLimiter(authRateLimit, authRateLimitWindow),
+		sessions:             auth.NewSessionService(queries, cfg.SessionTTL),
+		cookies:              cookieManager{secure: cfg.IsProduction()},
+		webBaseURL:           cfg.WebBaseURL,
+		version:              cfg.Version,
+		metricsToken:         cfg.MetricsToken,
+		trustedProxyHops:     cfg.TrustedProxyHops,
+		allowSignup:          cfg.AllowSignup,
+		sessionTTL:           cfg.SessionTTL,
+		cipher:               cipher,
 	}, nil
 }
 
@@ -211,6 +214,12 @@ func (s *Server) Router() chi.Router {
 				// lesser role should not be able to redirect.
 				projects.Put("/{projectID}/notification-settings", s.handlePutNotificationSettings)
 				projects.Get("/{projectID}/notification-settings", s.handleGetNotificationSettings)
+
+				// Progress sync on issue close (issue #202): owner-only,
+				// since it's an opt-in exception to progress otherwise
+				// never moving via the GitLab sync path.
+				projects.Put("/{projectID}/progress-sync-settings", s.handlePutProgressSyncSettings)
+				projects.Get("/{projectID}/progress-sync-settings", s.handleGetProgressSyncSettings)
 
 				projects.Get("/{projectID}/linked-gitlab-projects", s.handleListLinkedGitlabProjects)
 				projects.Post("/{projectID}/linked-gitlab-projects", s.handleCreateLinkedGitlabProject)

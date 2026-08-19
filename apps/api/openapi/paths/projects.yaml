@@ -275,6 +275,69 @@ availableGitlabProjects:
           application/json:
             schema: { $ref: '../components/schemas/error.yaml#/Error' }
 
+progressSyncSettings:
+  put:
+    summary: Save (create or replace) a project's progress-sync-on-close setting
+    description: >-
+      Owner-only. Opt-in (issue #202): when enabled, closing a task's linked
+      GitLab issue also moves the task's progress to 'done'. Off by default.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/PutProgressSyncSettingsRequest'
+    responses:
+      "200":
+        description: The saved settings
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/ProgressSyncSettings' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not the project owner
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  get:
+    summary: Get a project's progress-sync-on-close setting
+    description: Owner-only.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: The settings, or their unconfigured (disabled) default if never saved
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/ProgressSyncSettings' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not the project owner
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
 notificationSettings:
   put:
     summary: Save (create or replace) a project's daily digest notification settings

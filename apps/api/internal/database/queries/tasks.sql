@@ -281,6 +281,19 @@ SET title = $2,
 WHERE id = $1
 RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size;
 
+-- ApplyGitlabProgressDone is internal/progresssync's write (issue #202):
+-- called only from the same transaction as an ApplyWebhookTaskFields
+-- status='closed' write, and only when progress_sync_settings.enabled is
+-- true for the task's project and progress isn't already 'done'. Unscoped
+-- like ApplyWebhookTaskFields, for the same reason.
+
+-- name: ApplyGitlabProgressDone :one
+UPDATE tasks
+SET progress = 'done',
+    updated_at = now()
+WHERE id = $1
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size;
+
 -- MarkTaskDesignStarted and MarkTaskImplementationStarted back the two
 -- spec-driven-development phase-marker endpoints (POST
 -- .../design-started, .../implementation-started): unlike every other task

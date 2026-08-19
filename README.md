@@ -1187,6 +1187,38 @@ leaves its progress alone, and moving a task to `done` never closes its
 GitLab issue. A task can legitimately read *Closed* and *On hold* at once, and
 both badges are shown wherever either is.
 
+**Progress sync on issue close is the one, opt-in exception** (issue #202).
+A spec-driven flow ends with a merge, not a manual progress edit, so left as
+is a merged task sits at whatever progress it had until a human notices —
+which the Board, dashboard and velocity all read from. A project can turn on
+a per-project setting so that closing a task's linked GitLab issue *also*
+moves its progress to `done`:
+
+- `PUT`/`GET /api/v1/projects/{projectID}/progress-sync-settings` (owner-only,
+  `{enabled}`, off by default) — the same owner-only, always-exists-with-a-
+  default shape as [notification settings](#notification-digest-issue-109)
+  below.
+- The write only ever moves progress *to* `done`, and only once: it fires on
+  a genuine `open`→`closed` transition of the task's status (never on a
+  redelivered or re-applied "already closed" update, so a duplicate webhook
+  never appends a second event), and never if progress is already `done`.
+  Reopening the issue (`closed`→`open`) never reverts it — the sync is
+  one-directional. If a human has since moved progress off `done`, a stale
+  re-apply of the same close will not put it back, since the transition
+  already happened once.
+  Both inbound paths apply it — a live `Issue Hook` webhook
+  (`internal/webhookapply`) and the periodic `project.resync`/`project.import`
+  walk (`internal/projectsync`) — and both write it atomically with the
+  status change that triggered it, so a crash between the two never leaves
+  one without the other.
+- The change is recorded as a `task_progress_events` row with
+  `actor_kind = "gitlab"` (`internal/task`'s `ActorKindGitlab`), the third
+  value alongside `"user"`/`"agent"` (issue #169) — an audit trail entry with
+  no acting user (`actor_user_id` is `NULL`), the same as `"agent"`.
+  [Velocity](#velocity-issue-195)'s user/agent/unknown actor split does not
+  yet have its own `"gitlab"` bucket and currently counts these under
+  "unknown" — left as a known gap, not implemented as part of issue #202.
+
 - `POST`/`PATCH` on both `/api/v1/projects/{projectID}/tasks` /
   `/api/v1/tasks/{taskID}` and `/api/v1/projects/{projectID}/backlogs` /
   `/api/v1/backlogs/{backlogID}` accept `progress`, under the same
@@ -1770,9 +1802,13 @@ types per task; `size` is a five-value T-shirt scale and the weights
 - A task's **completion time** is `min(its first progress='done'
   transition's occurred_at, tasks.closed_at)`, whichever is non-nil; a task
   with neither is not completed and is never counted. Both signals have to
-  be checked: `tasks.progress` is app-only and GitLab sync never writes it,
-  so a task closed on the GitLab side alone never reaches `progress='done'`
-  and would be invisible if only `task_progress_events` were read;
+  be checked: `tasks.progress` is app-only and GitLab sync does not write it
+  by default, so a task closed on the GitLab side alone never reaches
+  `progress='done'` and would be invisible if only `task_progress_events`
+  were read — unless [progress sync on issue close](#task--backlog-progress)
+  is turned on for the project, in which case that same GitLab-side close
+  is exactly what writes `progress='done'`, via an `actor_kind = "gitlab"`
+  event;
   conversely `tasks.status` can stay `open` after `progress` reaches
   `done` (they're separate axes that never write each other), so
   `closed_at` alone would miss those. Each task counts at most once, at

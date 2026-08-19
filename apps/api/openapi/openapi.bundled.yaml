@@ -672,6 +672,75 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/progress-sync-settings:
+    put:
+      summary: Save (create or replace) a project's progress-sync-on-close setting
+      description: 'Owner-only. Opt-in (issue #202): when enabled, closing a task''s linked GitLab issue also moves the task''s progress to ''done''. Off by default.'
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutProgressSyncSettingsRequest'
+      responses:
+        '200':
+          description: The saved settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressSyncSettings'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not the project owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: Get a project's progress-sync-on-close setting
+      description: Owner-only.
+      tags:
+        - projects
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: The settings, or their unconfigured (disabled) default if never saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressSyncSettings'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not the project owner
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/projects/{projectID}/linked-gitlab-projects:
     get:
       summary: List a project's linked GitLab projects
@@ -3161,6 +3230,28 @@ components:
         - webhookUrl
         - enabled
         - sendHour
+    ProgressSyncSettings:
+      type: object
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+          description: 'Opt-in (issue #202, off by default): when true, closing a task''s linked GitLab issue also moves the task''s progress to ''done''.'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    PutProgressSyncSettingsRequest:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+      required:
+        - enabled
     LinkedGitlabProject:
       type: object
       properties:

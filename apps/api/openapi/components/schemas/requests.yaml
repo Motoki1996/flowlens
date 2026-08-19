@@ -43,6 +43,12 @@ PutGitlabConnectionRequest:
     token: { type: string }
   required: [baseUrl, token]
 
+PutProgressSyncSettingsRequest:
+  type: object
+  properties:
+    enabled: { type: boolean }
+  required: [enabled]
+
 PutNotificationSettingsRequest:
   type: object
   properties:

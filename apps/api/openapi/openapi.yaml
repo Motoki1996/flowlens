@@ -71,6 +71,8 @@ paths:
     $ref: './paths/projects.yaml#/availableGitlabProjects'
   /api/v1/projects/{projectID}/notification-settings:
     $ref: './paths/projects.yaml#/notificationSettings'
+  /api/v1/projects/{projectID}/progress-sync-settings:
+    $ref: './paths/projects.yaml#/progressSyncSettings'
   /api/v1/projects/{projectID}/linked-gitlab-projects:
     $ref: './paths/projects.yaml#/linkedGitlabProjects'
   /api/v1/projects/{projectID}/linked-gitlab-projects/{linkID}:

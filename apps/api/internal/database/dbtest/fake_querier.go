@@ -84,6 +84,8 @@ type FakeQuerier struct {
 
 	notificationSettingsByProjectID map[uuid.UUID]db.NotificationSetting
 	notificationDigests             map[notificationDigestKey]db.NotificationDigest
+
+	progressSyncSettingsByProjectID map[uuid.UUID]db.ProgressSyncSetting
 }
 
 type notificationDigestKey struct {
@@ -152,6 +154,7 @@ func New() *FakeQuerier {
 
 		notificationSettingsByProjectID: map[uuid.UUID]db.NotificationSetting{},
 		notificationDigests:             map[notificationDigestKey]db.NotificationDigest{},
+		progressSyncSettingsByProjectID: map[uuid.UUID]db.ProgressSyncSetting{},
 	}
 }
 
@@ -996,6 +999,19 @@ func (f *FakeQuerier) ApplyWebhookTaskFields(_ context.Context, arg db.ApplyWebh
 	} else {
 		existing.ClosedAt = pgtype.Timestamptz{}
 	}
+	existing.UpdatedAt = now()
+	f.storeTask(existing)
+	return existing, nil
+}
+
+// ApplyGitlabProgressDone mirrors the SQL: an unscoped write by task ID
+// only, used by internal/progresssync (issue #202).
+func (f *FakeQuerier) ApplyGitlabProgressDone(_ context.Context, id uuid.UUID) (db.Task, error) {
+	existing, ok := f.tasksByID[id]
+	if !ok {
+		return db.Task{}, pgx.ErrNoRows
+	}
+	existing.Progress = "done"
 	existing.UpdatedAt = now()
 	f.storeTask(existing)
 	return existing, nil
@@ -3985,6 +4001,40 @@ func (f *FakeQuerier) ListEnabledNotificationSettings(_ context.Context) ([]db.N
 		}
 	}
 	return out, nil
+}
+
+// UpsertProgressSyncSettings mirrors the SQL's ON CONFLICT (project_id) DO
+// UPDATE.
+func (f *FakeQuerier) UpsertProgressSyncSettings(_ context.Context, arg db.UpsertProgressSyncSettingsParams) (db.ProgressSyncSetting, error) {
+	existing, ok := f.progressSyncSettingsByProjectID[arg.ProjectID]
+	s := db.ProgressSyncSetting{
+		ProjectID: arg.ProjectID,
+		Enabled:   arg.Enabled,
+		CreatedAt: now(),
+		UpdatedAt: now(),
+	}
+	if ok {
+		s.CreatedAt = existing.CreatedAt
+	}
+	f.progressSyncSettingsByProjectID[arg.ProjectID] = s
+	return s, nil
+}
+
+// GetProgressSyncSettingsForOwner mirrors the SQL: a project with no
+// settings row, or one belonging to a non-owner, is reported as
+// pgx.ErrNoRows.
+func (f *FakeQuerier) GetProgressSyncSettingsForOwner(_ context.Context, arg db.GetProgressSyncSettingsForOwnerParams) (db.ProgressSyncSetting, error) {
+	s, ok := f.progressSyncSettingsByProjectID[arg.ProjectID]
+	if !ok || !f.hasRoleAtLeast(arg.ProjectID, arg.OwnerUserID, "owner") {
+		return db.ProgressSyncSetting{}, pgx.ErrNoRows
+	}
+	return s, nil
+}
+
+// IsProgressSyncEnabledForProject mirrors the SQL: false, not an error, for
+// a project with no settings row.
+func (f *FakeQuerier) IsProgressSyncEnabledForProject(_ context.Context, projectID uuid.UUID) (bool, error) {
+	return f.progressSyncSettingsByProjectID[projectID].Enabled, nil
 }
 
 // InsertNotificationDigestLog mirrors the SQL's ON CONFLICT (project_id,

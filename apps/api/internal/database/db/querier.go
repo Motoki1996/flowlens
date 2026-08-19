@@ -17,6 +17,12 @@ type Querier interface {
 	// project_members since it was added by
 	// docs/decisions/0010-why-project-membership.md.
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) (ProjectMember, error)
+	// ApplyGitlabProgressDone is internal/progresssync's write (issue #202):
+	// called only from the same transaction as an ApplyWebhookTaskFields
+	// status='closed' write, and only when progress_sync_settings.enabled is
+	// true for the task's project and progress isn't already 'done'. Unscoped
+	// like ApplyWebhookTaskFields, for the same reason.
+	ApplyGitlabProgressDone(ctx context.Context, id uuid.UUID) (Task, error)
 	// CountFailedSyncTasksByProjectForOwner backs the project single view's sync
 	// warning (docs/plans/issue-sync.md's "gitlab" fields, surfaced per-task by
 	// internal/task). A task counts as failed the same way internal/task derives
@@ -334,6 +340,7 @@ type Querier interface {
 	// empty, which internal/sync reads as "no gauge to report" rather than a
 	// bogus zero-age job.
 	GetPendingSyncJobQueueStats(ctx context.Context) (GetPendingSyncJobQueueStatsRow, error)
+	GetProgressSyncSettingsForOwner(ctx context.Context, arg GetProgressSyncSettingsForOwnerParams) (ProgressSyncSetting, error)
 	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error)
 	// GetProjectByID is unscoped, for the inbound webhook apply pipeline
 	// (internal/webhookapply, docs/plans/issue-sync.md "Inbound"), which
@@ -416,6 +423,10 @@ type Querier interface {
 	// second process) hits the notification_digests unique constraint and
 	// reports pgx.ErrNoRows instead of a duplicate send.
 	InsertNotificationDigestLog(ctx context.Context, arg InsertNotificationDigestLogParams) (NotificationDigest, error)
+	// IsProgressSyncEnabledForProject reports false, not an error, for a
+	// project that has never saved a row: settings conceptually always exist,
+	// just possibly unset (default off).
+	IsProgressSyncEnabledForProject(ctx context.Context, projectID uuid.UUID) (bool, error)
 	ListBacklogProgressEventsByBacklog(ctx context.Context, backlogID uuid.UUID) ([]BacklogProgressEvent, error)
 	ListBacklogProgressEventsForFlowMetrics(ctx context.Context, arg ListBacklogProgressEventsForFlowMetricsParams) ([]ListBacklogProgressEventsForFlowMetricsRow, error)
 	// ListBacklogTaskCreatedAtForFlowMetrics returns every (backlog_id,
@@ -774,6 +785,12 @@ type Querier interface {
 	// itself has no acting user (like sync.Worker), so ListEnabledNotificationSettings
 	// and the digest-content queries below are unscoped.
 	UpsertNotificationSettings(ctx context.Context, arg UpsertNotificationSettingsParams) (NotificationSetting, error)
+	// Progress sync on issue close settings (issue #202). No owner column of
+	// its own; the owner-scoped query joins through project_members the same
+	// way notification_settings does. The sync paths (webhookapply,
+	// projectsync) have no acting user, so IsProgressSyncEnabledForProject is
+	// unscoped, like ListEnabledNotificationSettings.
+	UpsertProgressSyncSettings(ctx context.Context, arg UpsertProgressSyncSettingsParams) (ProgressSyncSetting, error)
 	// task_ai_contexts is app-only: acceptance criteria, AI context, and the
 	// allowed/forbidden change scope must never be sent to GitLab (see "Why the
 	// task is split across three tables" in docs/plans/issue-sync.md). Ownership

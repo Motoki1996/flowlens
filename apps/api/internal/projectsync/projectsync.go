@@ -23,6 +23,7 @@ import (
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
+	"github.com/flowlens/api/internal/progresssync"
 	"github.com/flowlens/api/internal/project"
 	syncpkg "github.com/flowlens/api/internal/sync"
 	"github.com/flowlens/api/internal/task"
@@ -377,7 +378,7 @@ func (s *Service) applyIssue(ctx context.Context, link db.LinkedGitlabProject, p
 	})
 	switch {
 	case err == nil:
-		return s.applyToExistingTask(ctx, existing, fields)
+		return s.applyToExistingTask(ctx, project.ID, existing, fields)
 	case errors.Is(err, pgx.ErrNoRows):
 		return s.applyAsNewTask(ctx, link, project, fields)
 	default:
@@ -393,28 +394,60 @@ func (s *Service) applyIssue(ctx context.Context, link db.LinkedGitlabProject, p
 // than GitLab last told us about (docs/plans/issue-sync.md's stale guard).
 // A second run over an already-imported issue always lands here, which is
 // what makes import idempotent: re-running it creates no duplicate tasks.
-func (s *Service) applyToExistingTask(ctx context.Context, link db.TaskGitlabLink, fields issueFields) (applyOutcome, error) {
+//
+// Unlike before issue #202, its two writes now run inside a transaction:
+// progresssync.ApplyOnClose (issue #202) adds a third, non-idempotent write
+// (a task_progress_events row) that must commit atomically with the status
+// write it depends on, or a crash between them would leave a closed task
+// whose progress was never synced, with no way to detect that on retry —
+// the earlier "each write is independently idempotent, no transaction
+// needed" reasoning stops applying once a write isn't idempotent.
+func (s *Service) applyToExistingTask(ctx context.Context, projectID uuid.UUID, link db.TaskGitlabLink, fields issueFields) (applyOutcome, error) {
 	if !fields.UpdatedAt.IsZero() && link.GitlabUpdatedAt.Valid && fields.UpdatedAt.Before(link.GitlabUpdatedAt.Time) {
 		return applySkipped, nil
 	}
 
-	if _, err := s.q.ApplyWebhookTaskFields(ctx, db.ApplyWebhookTaskFieldsParams{
-		ID:                     link.TaskID,
-		Title:                  fields.Title,
-		Description:            fields.Description,
-		AssigneeGitlabUserID:   toInt8(fields.AssigneeID),
-		AssigneeGitlabUsername: fields.AssigneeUsername,
-		Labels:                 fields.Labels,
-		DueOn:                  toDate(fields.DueDate),
-		Status:                 fields.Status,
-	}); err != nil {
-		return applySkipped, fmt.Errorf("update task: %w", err)
-	}
-	if _, err := s.q.MarkTaskGitlabLinkAppliedForTask(ctx, db.MarkTaskGitlabLinkAppliedForTaskParams{
-		TaskID:          link.TaskID,
-		GitlabUpdatedAt: toTimestamptz(fields.UpdatedAt),
-	}); err != nil {
-		return applySkipped, fmt.Errorf("mark link applied: %w", err)
+	err := s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		// Read the pre-image status/progress before writing, so
+		// progresssync below can tell a genuine open->closed transition
+		// from a re-applied already-closed status.
+		var previousStatus, previousProgress string
+		if fields.Status == task.StatusClosed {
+			current, err := q.GetTaskForProject(ctx, db.GetTaskForProjectParams{ID: link.TaskID, ProjectID: projectID})
+			if err != nil {
+				return fmt.Errorf("get task: %w", err)
+			}
+			previousStatus, previousProgress = current.Status, current.Progress
+		}
+
+		if _, err := q.ApplyWebhookTaskFields(ctx, db.ApplyWebhookTaskFieldsParams{
+			ID:                     link.TaskID,
+			Title:                  fields.Title,
+			Description:            fields.Description,
+			AssigneeGitlabUserID:   toInt8(fields.AssigneeID),
+			AssigneeGitlabUsername: fields.AssigneeUsername,
+			Labels:                 fields.Labels,
+			DueOn:                  toDate(fields.DueDate),
+			Status:                 fields.Status,
+		}); err != nil {
+			return fmt.Errorf("update task: %w", err)
+		}
+		if _, err := q.MarkTaskGitlabLinkAppliedForTask(ctx, db.MarkTaskGitlabLinkAppliedForTaskParams{
+			TaskID:          link.TaskID,
+			GitlabUpdatedAt: toTimestamptz(fields.UpdatedAt),
+		}); err != nil {
+			return fmt.Errorf("mark link applied: %w", err)
+		}
+
+		if fields.Status == task.StatusClosed {
+			if err := progresssync.ApplyOnClose(ctx, q, projectID, link.TaskID, previousStatus, fields.Status, previousProgress); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return applySkipped, err
 	}
 	return applyUpdated, nil
 }

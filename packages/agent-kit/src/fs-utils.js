@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, writeFile, appendFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /**
@@ -21,21 +21,21 @@ export async function writeFileGuarded(path, content, { force = false, alwaysOve
 }
 
 /**
- * Appends a `.flowlens/` ignore entry to the repo's .gitignore if it isn't
- * already covered by an existing line (exact match, since a broader
- * pattern like `.flowlens*` is for the repo owner to write themselves).
+ * Removes an exact-match `.flowlens/` ignore line from the repo's
+ * .gitignore, left over from an older agent-kit that gitignored it. Only
+ * an exact-match line is touched — a broader pattern like `.flowlens*` is
+ * left alone, since that's the repo owner's own to manage.
  */
-export async function ensureGitignoreEntry(gitignorePath, entry) {
+export async function removeGitignoreEntry(gitignorePath, entry) {
   if (!existsSync(gitignorePath)) {
-    await writeFile(gitignorePath, `${entry}\n`, "utf8");
-    return "created";
-  }
-  const current = readFileSync(gitignorePath, "utf8");
-  const alreadyPresent = current.split("\n").some((line) => line.trim() === entry);
-  if (alreadyPresent) {
     return "skipped";
   }
-  const separator = current.endsWith("\n") || current.length === 0 ? "" : "\n";
-  await appendFile(gitignorePath, `${separator}${entry}\n`, "utf8");
-  return "appended";
+  const current = readFileSync(gitignorePath, "utf8");
+  const lines = current.split("\n");
+  if (!lines.some((line) => line.trim() === entry)) {
+    return "skipped";
+  }
+  const filtered = lines.filter((line) => line.trim() !== entry);
+  await writeFile(gitignorePath, filtered.join("\n"), "utf8");
+  return "removed";
 }

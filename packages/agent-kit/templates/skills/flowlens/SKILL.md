@@ -11,10 +11,12 @@ share: how to authenticate, and — the part an OpenAPI spec can't express —
 **what order to call things in**.
 
 Config for this repo's connection lives in `.flowlens/config.json`
-(`baseUrl`, `projectId`), written by `agent-kit init` and gitignored. The
-full API schema is `.flowlens/openapi.yaml`, fetched from the connected
-instance — read it whenever you need an exact request/response shape;
-this file stays short on purpose (progressive disclosure).
+(`baseUrl`, `projectId`), written by `agent-kit init` and committed to
+git. The full API schema is `.flowlens/openapi.yaml`, fetched from the
+connected instance — read it whenever you need an exact request/response
+shape; this file stays short on purpose (progressive disclosure). If
+`.flowlens/` doesn't exist yet, run `agent-kit init --url <url>` with
+`FLOWLENS_API_TOKEN` set to populate it.
 
 ## Authentication
 

@@ -814,6 +814,53 @@ boundary:
 headers, so a bearer token stays usable only for direct, server-to-server
 calls, never from browser script.
 
+### Agent Kit: setting up an AI agent in the repo it works in (issue #203)
+
+An OpenAPI spec (served at `GET /openapi.yaml`, see above) resolves *what
+schema* an endpoint takes, but not *what order* to call things in — that's
+what `@flowlens/agent-kit` installs into the repository an AI agent
+actually works in, as a Claude Code skill and three slash commands.
+
+```bash
+npx @flowlens/agent-kit init --url https://flowlens.internal --project <projectId>
+```
+
+This is deliberately not an npm dependency of the consumer repo: FlowLens
+tracks repos in any language, and a self-hosted instance's version drifts
+from whatever a published package would pin, which would eventually point
+an agent at endpoints that don't exist on that instance. `npx` needs no
+`package.json` in the target repo, and `init` re-fetches the spec from the
+connected instance itself rather than bundling one.
+
+`init` writes:
+
+| Path | Contents | Committed? |
+| --- | --- | --- |
+| `.claude/skills/flowlens/SKILL.md` | Auth, the task lifecycle's call order, branch-naming rule | yes |
+| `.claude/commands/flowlens/refine-backlog.md` | `/flowlens:refine-backlog` — turn a backlog into numbered requirements | yes |
+| `.claude/commands/flowlens/breakdown.md` | `/flowlens:breakdown` — split a backlog into sized, scoped, dependency-ordered tasks via [bulk task creation](#bulk-task-creation) | yes |
+| `.claude/commands/flowlens/work.md` | `/flowlens:work` — run one task's design → implementation lifecycle | yes |
+| `.flowlens/openapi.yaml` | The connected instance's OpenAPI spec | no (gitignored) |
+| `.flowlens/config.json` | `baseUrl` / `projectId` | no (gitignored) |
+
+The skill and commands are short and stable, meant to be reviewed and
+committed like any other file — they need to reach a cloned-but-not-run
+colleague and a CI-triggered agent, not just whoever ran `init`. The spec
+and config are regenerated from the connected instance on every run
+(`--force` or not) and gitignored, since they change on every FlowLens
+release. `init` never overwrites an existing skill/command file unless
+`--force` is passed, and adds a `.flowlens/` line to `.gitignore` if one
+isn't already there.
+
+Commands live under the `.claude/commands/flowlens/` directory namespace
+(`/flowlens:breakdown`, not a flat `/breakdown`), so they can't collide
+with a repo's own commands and uninstalling is just deleting the
+directory. The skill assumes an existing project API token (see "API
+tokens" above) is reachable through an environment variable — `init` does
+not create or store one — and that only one `/flowlens:work` runs at a
+time: there is no task-claiming endpoint yet, so concurrent agents can
+race onto the same task.
+
 ### Project membership
 
 A project can have more than one user, each with a role — `owner`,

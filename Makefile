@@ -59,8 +59,9 @@ migrate-create: ## Create a new migration: make migrate-create name=add_x
 	migrate create -ext sql -dir $(MIGRATIONS) -seq $(name)
 
 .PHONY: generate
-generate: ## Generate type-safe DB code from SQL (sqlc).
+generate: ## Generate type-safe DB code from SQL (sqlc) and bundle the OpenAPI spec.
 	cd $(API_DIR) && sqlc generate
+	cd $(WEB_DIR) && npx @redocly/cli bundle ../api/openapi/openapi.yaml -o ../api/openapi/openapi.bundled.yaml
 
 .PHONY: test
 test: ## Run api and web unit tests.

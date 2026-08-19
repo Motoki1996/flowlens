@@ -1813,6 +1813,18 @@ types per task; `size` is a five-value T-shirt scale and the weights
   - A project with no completed tasks yet shows "No completed tasks yet."
     instead of an empty chart.
 
+## API Reference
+
+The Go API serves its own OpenAPI 3.1 document, unauthenticated, at
+`GET $API_BASE_URL/openapi.yaml` and `GET $API_BASE_URL/openapi.json` —
+every route in `internal/http`'s router, kept from drifting by a test that
+walks the router and fails the build if it and `apps/api/openapi/` (the
+document's source, bundled by `make generate` into the committed
+`openapi.bundled.yaml`) disagree on the route set. It is unauthenticated
+because this is an on-prem deployment where the API is already reachable
+from any logged-in browser on the same origin — the document describes
+route shapes, not secrets.
+
 ## Current limitations
 
 - The token cipher is the local AES-GCM implementation; the Azure Key Vault

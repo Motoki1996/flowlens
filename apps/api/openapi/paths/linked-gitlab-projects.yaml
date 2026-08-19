@@ -1,0 +1,305 @@
+linkedGitlabProject:
+  patch:
+    summary: Update a linked GitLab project
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/UpdateLinkedGitlabProjectRequest'
+    responses:
+      "200":
+        description: The updated link
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/LinkedGitlabProject' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  delete:
+    summary: Delete a linked GitLab project
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+webhook:
+  post:
+    summary: (Re-)register the GitLab webhook for a linked project
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+    responses:
+      "200":
+        description: The updated link, with its new webhook status
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/LinkedGitlabProject' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+syncRuns:
+  post:
+    summary: Start a manual re-sync
+    description: Session-only create. Returns 409 if a sync run is already in progress for this link.
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateSyncRunRequest'
+    responses:
+      "201":
+        description: The started sync run
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/SyncRun' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "409":
+        description: A sync run is already in progress
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  get:
+    summary: List a linked GitLab project's sync runs
+    description: Session or bearer token (read scope).
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+    responses:
+      "200":
+        description: Sync runs, newest first
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/SyncRun' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+webhookEvents:
+  get:
+    summary: List a linked GitLab project's recorded webhook events
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+      - in: query
+        name: status
+        schema: { type: string }
+      - in: query
+        name: page
+        schema: { type: integer }
+      - in: query
+        name: per_page
+        schema: { type: integer }
+    responses:
+      "200":
+        description: A page of webhook events
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/WebhookEventsPage' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+webhookEvent:
+  get:
+    summary: Get one recorded webhook event, including its raw payload
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+      - $ref: '#/components/parameters/eventID'
+    responses:
+      "200":
+        description: The event detail
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/WebhookEventDetail' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+webhookEventRetry:
+  post:
+    summary: Retry a failed webhook event's processing
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+      - $ref: '#/components/parameters/eventID'
+    responses:
+      "200":
+        description: The retried event
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/WebhookEvent' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+members:
+  get:
+    summary: List a linked GitLab project's members
+    description: Feeds a task's assignee picker.
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+      - in: query
+        name: search
+        schema: { type: string }
+      - in: query
+        name: page
+        schema: { type: integer }
+      - in: query
+        name: per_page
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Members
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/GitlabMember' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+labels:
+  get:
+    summary: List a linked GitLab project's existing labels
+    description: Feeds a task's label picker.
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/linkID'
+    responses:
+      "200":
+        description: Labels
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                labels:
+                  type: array
+                  items: { $ref: '../components/schemas/domain.yaml#/GitlabLabel' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+components:
+  parameters:
+    linkID:
+      in: path
+      name: linkID
+      required: true
+      schema: { type: string, format: uuid }
+    eventID:
+      in: path
+      name: eventID
+      required: true
+      schema: { type: string, format: uuid }

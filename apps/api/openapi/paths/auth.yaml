@@ -1,0 +1,64 @@
+signup:
+  post:
+    summary: Create a local account
+    description: Creates a user and starts a session for it. Rejected with 403 when signups are disabled and this isn't the instance's first account.
+    tags: [auth]
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/SignupRequest'
+    responses:
+      "201":
+        description: Account created, session cookie set
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/domain.yaml#/User'
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "409":
+        description: Username or email already taken
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+login:
+  post:
+    summary: Log in
+    description: Verifies credentials with bcrypt and issues a session cookie plus a CSRF cookie.
+    tags: [auth]
+    security: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/LoginRequest'
+    responses:
+      "200":
+        description: Logged in, session cookie set
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/domain.yaml#/User'
+      "401":
+        description: Invalid credentials
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+logout:
+  post:
+    summary: Log out
+    description: Revokes the current session and clears the session/CSRF cookies.
+    tags: [auth]
+    security: []
+    responses:
+      "204":
+        description: Logged out

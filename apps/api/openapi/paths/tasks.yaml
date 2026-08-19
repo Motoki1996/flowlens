@@ -1,0 +1,746 @@
+list:
+  get:
+    summary: List a project's tasks
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - in: query
+        name: backlogId
+        schema: { type: string, format: uuid }
+      - in: query
+        name: status
+        schema: { type: string, enum: [open, closed] }
+      - in: query
+        name: priority
+        schema: { type: string, enum: [low, medium, high, urgent] }
+      - in: query
+        name: progress
+        schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
+      - in: query
+        name: sort
+        schema: { type: string }
+    responses:
+      "200":
+        description: Matching tasks
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Create a task
+    description: >
+      Requires write scope for a bearer token. Resolves its GitLab issue
+      destination (backlog's own link -> project's default link -> nowhere)
+      only at creation time; task_gitlab_links is authoritative afterward.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateTaskRequest'
+    responses:
+      "201":
+        description: The created task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+order:
+  patch:
+    summary: Bulk-reorder one backlog bucket's tasks
+    description: All-or-nothing; taskIds must be exactly that bucket's current tasks. Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/ReorderTasksRequest'
+    responses:
+      "200":
+        description: The reordered tasks
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "400":
+        description: Invalid input (ID list mismatch)
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+taskDependencies:
+  get:
+    summary: List a project's task dependencies
+    tags: [task-dependencies]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: Task dependencies
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/TaskDependency' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Create a task dependency
+    description: Cycle-checked in the application layer. Requires write scope for a bearer token.
+    tags: [task-dependencies]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateTaskDependencyRequest'
+    responses:
+      "201":
+        description: The created dependency
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/TaskDependency' }
+      "400":
+        description: Invalid input, or would create a cycle
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+taskDependency:
+  delete:
+    summary: Delete a task dependency
+    description: Requires write scope for a bearer token.
+    tags: [task-dependencies]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/dependencyID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+projectTaskContexts:
+  get:
+    summary: List a project's AI-facing task contexts
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - in: query
+        name: page
+        schema: { type: integer }
+    responses:
+      "200":
+        description: A page of task contexts
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/TaskContextPage' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+task:
+  get:
+    summary: Get a task
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: The task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  patch:
+    summary: Update a task
+    description: Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/UpdateTaskRequest'
+    responses:
+      "200":
+        description: The updated task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  delete:
+    summary: Delete a task
+    description: Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+close:
+  post:
+    summary: Close a task
+    description: Syncs to GitLab's issue state both ways. Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: The closed task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+reopen:
+  post:
+    summary: Reopen a task
+    description: Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: The reopened task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+assignBacklog:
+  post:
+    summary: Assign (or unassign) a task's backlog
+    description: Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/AssignTaskBacklogRequest'
+    responses:
+      "200":
+        description: The updated task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+syncRetry:
+  post:
+    summary: Retry a task's failed GitLab sync
+    description: Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: The task, with sync retried
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+aiContext:
+  put:
+    summary: Save (create or replace) a task's AI context
+    description: Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/UpsertTaskAIContextRequest'
+    responses:
+      "200":
+        description: The saved AI context
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/TaskAIContext' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+designStarted:
+  post:
+    summary: Mark a task's design phase as started
+    description: Spec-driven-development phase marker, feeds flow-metrics' Design stage. Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: The updated task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+implementationStarted:
+  post:
+    summary: Mark a task's implementation phase as started
+    description: Spec-driven-development phase marker, feeds flow-metrics' Implementation stage. Requires write scope for a bearer token.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: The updated task
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Task' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+comments:
+  get:
+    summary: List a task's activity-log comments
+    tags: [task-comments]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: Comments, oldest first
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/TaskComment' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Post a comment to a task's activity log
+    description: authorKind is "user" for a session caller, "agent" for a project API token. Requires write scope for a bearer token.
+    tags: [task-comments]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateTaskCommentRequest'
+    responses:
+      "201":
+        description: The created comment
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/TaskComment' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+comment:
+  delete:
+    summary: Delete a task comment
+    description: Own comment only. Requires write scope for a bearer token.
+    tags: [task-comments]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/commentID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope, or not the comment's own author
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+context:
+  get:
+    summary: Get a task's AI-facing context
+    description: >
+      The primary read for an AI agent working a task: description,
+      acceptance criteria, allowed/forbidden scope, backlog base branch,
+      GitLab issue state, and recent comments. Already project-scoped
+      through the bearer token itself, so no separate ownership check
+      against {taskID} is needed on top.
+    tags: [tasks]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/taskID'
+    responses:
+      "200":
+        description: The task's context
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/TaskContext' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+components:
+  parameters:
+    projectID:
+      in: path
+      name: projectID
+      required: true
+      schema: { type: string, format: uuid }
+    taskID:
+      in: path
+      name: taskID
+      required: true
+      schema: { type: string, format: uuid }
+    dependencyID:
+      in: path
+      name: dependencyID
+      required: true
+      schema: { type: string, format: uuid }
+    commentID:
+      in: path
+      name: commentID
+      required: true
+      schema: { type: string, format: uuid }

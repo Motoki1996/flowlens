@@ -1,0 +1,229 @@
+list:
+  get:
+    summary: List a project's backlogs
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - in: query
+        name: priority
+        schema: { type: string, enum: [low, medium, high, urgent] }
+      - in: query
+        name: progress
+        schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
+      - in: query
+        name: sort
+        schema: { type: string }
+    responses:
+      "200":
+        description: The project's backlogs
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/Backlog' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Create a backlog
+    description: Requires write scope for a bearer token.
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateBacklogRequest'
+    responses:
+      "201":
+        description: The created backlog
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Backlog' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+order:
+  patch:
+    summary: Bulk-reorder a project's backlogs
+    description: All-or-nothing; the ID list must be exactly the project's current backlogs. Requires write scope for a bearer token.
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/ReorderBacklogsRequest'
+    responses:
+      "200":
+        description: The reordered backlogs
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/Backlog' }
+      "400":
+        description: Invalid input (ID list mismatch)
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+backlog:
+  get:
+    summary: Get a backlog
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/backlogID'
+    responses:
+      "200":
+        description: The backlog
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Backlog' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  patch:
+    summary: Update a backlog
+    description: Requires write scope for a bearer token.
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/backlogID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/UpdateBacklogRequest'
+    responses:
+      "200":
+        description: The updated backlog
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Backlog' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  delete:
+    summary: Delete a backlog
+    description: Requires write scope for a bearer token.
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/backlogID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+components:
+  parameters:
+    projectID:
+      in: path
+      name: projectID
+      required: true
+      schema: { type: string, format: uuid }
+    backlogID:
+      in: path
+      name: backlogID
+      required: true
+      schema: { type: string, format: uuid }

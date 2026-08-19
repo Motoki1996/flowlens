@@ -1,115 +1,191 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: FlowLens API
-  version: 0.1.0
+  version: 0.2.0
   description: >
-    FlowLens API. This document covers the endpoints implemented in the
-    foundation phase (health, GitHub OAuth, current user). Organization,
-    repository and pull-request endpoints are added in later phases.
+    FlowLens's Go API: local username/password auth, the project/backlog/
+    task tracker kept 1:1 with GitLab CE issues, project-scoped API tokens
+    for AI agents (ADR-0009), the GitLab webhook receiver, and read-only
+    merge-request/CI sync and delivery/flow/velocity metrics
+    (ADR-0011). See README.md for the full feature narrative.
 servers:
   - url: http://localhost:8080
-    description: Local development
+    description: Local development (API container)
+
+security:
+  - cookieAuth: []
 
 paths:
   /healthz:
-    get:
-      summary: Liveness / readiness probe
-      tags: [system]
-      responses:
-        "200":
-          description: API and database healthy
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Health"
-        "503":
-          description: Database unreachable
+    $ref: './paths/system.yaml#/healthz'
+  /version:
+    $ref: './paths/system.yaml#/version'
+  # /metrics (Prometheus, metrics-token auth) is deliberately excluded: it is
+  # an operational endpoint scraped by infrastructure, not an API consumer
+  # route, and carries no session/bearer/webhook auth this spec's security
+  # schemes could describe.
 
-  /auth/github:
-    get:
-      summary: Start GitHub OAuth login
-      description: >
-        Sets a short-lived anti-CSRF state cookie and redirects the browser
-        to GitHub's authorization page.
-      tags: [auth]
-      responses:
-        "307":
-          description: Redirect to GitHub
-        "503":
-          description: OAuth is not configured
+  /openapi.yaml:
+    $ref: './paths/openapi-spec.yaml#/openapiYaml'
+  /openapi.json:
+    $ref: './paths/openapi-spec.yaml#/openapiJson'
 
-  /auth/github/callback:
-    get:
-      summary: GitHub OAuth callback
-      description: >
-        Verifies the state cookie, exchanges the code for an access token,
-        upserts the user, issues a session cookie and redirects to the web
-        app. On error it redirects to the web login page with an error code.
-      tags: [auth]
-      parameters:
-        - in: query
-          name: code
-          schema: { type: string }
-        - in: query
-          name: state
-          schema: { type: string }
-      responses:
-        "307":
-          description: Redirect to the web app (success) or login page (error)
-
+  /auth/signup:
+    $ref: './paths/auth.yaml#/signup'
+  /auth/login:
+    $ref: './paths/auth.yaml#/login'
   /auth/logout:
-    post:
-      summary: Log out
-      description: Revokes the current session and clears the session cookie.
-      tags: [auth]
-      responses:
-        "204":
-          description: Logged out
+    $ref: './paths/auth.yaml#/logout'
+
+  /webhooks/gitlab/{linkID}:
+    $ref: './paths/webhooks.yaml#/gitlabWebhook'
 
   /api/v1/me:
+    $ref: './paths/me.yaml#/me'
+  /api/v1/me/gitlab-identities:
+    $ref: './paths/me.yaml#/gitlabIdentities'
+
+  /api/v1/tasks:
+    $ref: './paths/tasks-global.yaml#/allTasks'
+
+  /api/v1/projects:
+    $ref: './paths/projects.yaml#/list'
+  # chi mounts POST under this route group's own sub-router at "/" (see
+  # server.go's protected.Route("/projects", ...)), which chi.Walk reports
+  # as the literal path "/api/v1/projects/" (trailing slash) rather than
+  # "/api/v1/projects" — distinct from the flat GET registered above.
+  /api/v1/projects/:
+    $ref: './paths/projects.yaml#/create'
+  /api/v1/projects/{projectID}:
     get:
-      summary: Get the authenticated user
-      tags: [users]
-      security:
-        - sessionCookie: []
-      responses:
-        "200":
-          description: The current user
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/User"
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+      $ref: './paths/projects.yaml#/get/get'
+    patch:
+      $ref: './paths/projects.yaml#/update/patch'
+    delete:
+      $ref: './paths/projects.yaml#/update/delete'
+  /api/v1/projects/{projectID}/gitlab-connection:
+    $ref: './paths/projects.yaml#/gitlabConnection'
+  /api/v1/projects/{projectID}/gitlab-connection/test:
+    $ref: './paths/projects.yaml#/gitlabConnectionTest'
+  /api/v1/projects/{projectID}/gitlab-connection/available-projects:
+    $ref: './paths/projects.yaml#/availableGitlabProjects'
+  /api/v1/projects/{projectID}/notification-settings:
+    $ref: './paths/projects.yaml#/notificationSettings'
+  /api/v1/projects/{projectID}/linked-gitlab-projects:
+    $ref: './paths/projects.yaml#/linkedGitlabProjects'
+  /api/v1/projects/{projectID}/linked-gitlab-projects/{linkID}:
+    $ref: './paths/projects.yaml#/linkedGitlabProject'
+  /api/v1/projects/{projectID}/api-tokens:
+    $ref: './paths/projects.yaml#/apiTokens'
+  /api/v1/projects/{projectID}/members:
+    $ref: './paths/projects.yaml#/members'
+  /api/v1/projects/{projectID}/members/{userID}:
+    $ref: './paths/projects.yaml#/member'
+  /api/v1/projects/{projectID}/member-candidates:
+    $ref: './paths/projects.yaml#/memberCandidates'
+  /api/v1/projects/{projectID}/sync-jobs:
+    $ref: './paths/projects.yaml#/syncJobs'
+  /api/v1/projects/{projectID}/metrics:
+    $ref: './paths/projects.yaml#/metrics'
+  /api/v1/projects/{projectID}/flow-metrics:
+    $ref: './paths/projects.yaml#/flowMetrics'
+  /api/v1/projects/{projectID}/velocity:
+    $ref: './paths/projects.yaml#/velocity'
+
+  /api/v1/api-tokens/{tokenID}:
+    $ref: './paths/api-tokens.yaml#/apiToken'
+
+  /api/v1/sync-jobs/{jobID}/retry:
+    $ref: './paths/sync-jobs.yaml#/syncJobRetry'
+
+  /api/v1/linked-gitlab-projects/{linkID}:
+    $ref: './paths/linked-gitlab-projects.yaml#/linkedGitlabProject'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook:
+    $ref: './paths/linked-gitlab-projects.yaml#/webhook'
+  /api/v1/linked-gitlab-projects/{linkID}/sync-runs:
+    $ref: './paths/linked-gitlab-projects.yaml#/syncRuns'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook-events:
+    $ref: './paths/linked-gitlab-projects.yaml#/webhookEvents'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook-events/{eventID}:
+    $ref: './paths/linked-gitlab-projects.yaml#/webhookEvent'
+  /api/v1/linked-gitlab-projects/{linkID}/webhook-events/{eventID}/retry:
+    $ref: './paths/linked-gitlab-projects.yaml#/webhookEventRetry'
+  /api/v1/linked-gitlab-projects/{linkID}/members:
+    $ref: './paths/linked-gitlab-projects.yaml#/members'
+  /api/v1/linked-gitlab-projects/{linkID}/labels:
+    $ref: './paths/linked-gitlab-projects.yaml#/labels'
+
+  /api/v1/projects/{projectID}/backlogs:
+    $ref: './paths/backlogs.yaml#/list'
+  /api/v1/projects/{projectID}/backlogs/order:
+    $ref: './paths/backlogs.yaml#/order'
+  /api/v1/backlogs/{backlogID}:
+    $ref: './paths/backlogs.yaml#/backlog'
+
+  /api/v1/projects/{projectID}/tasks:
+    $ref: './paths/tasks.yaml#/list'
+  /api/v1/projects/{projectID}/tasks/order:
+    $ref: './paths/tasks.yaml#/order'
+  /api/v1/projects/{projectID}/task-dependencies:
+    $ref: './paths/tasks.yaml#/taskDependencies'
+  /api/v1/task-dependencies/{dependencyID}:
+    $ref: './paths/tasks.yaml#/taskDependency'
+  /api/v1/projects/{projectID}/tasks/context:
+    $ref: './paths/tasks.yaml#/projectTaskContexts'
+  /api/v1/tasks/{taskID}:
+    $ref: './paths/tasks.yaml#/task'
+  /api/v1/tasks/{taskID}/close:
+    $ref: './paths/tasks.yaml#/close'
+  /api/v1/tasks/{taskID}/reopen:
+    $ref: './paths/tasks.yaml#/reopen'
+  /api/v1/tasks/{taskID}/assign-backlog:
+    $ref: './paths/tasks.yaml#/assignBacklog'
+  /api/v1/tasks/{taskID}/sync-retry:
+    $ref: './paths/tasks.yaml#/syncRetry'
+  /api/v1/tasks/{taskID}/ai-context:
+    $ref: './paths/tasks.yaml#/aiContext'
+  /api/v1/tasks/{taskID}/design-started:
+    $ref: './paths/tasks.yaml#/designStarted'
+  /api/v1/tasks/{taskID}/implementation-started:
+    $ref: './paths/tasks.yaml#/implementationStarted'
+  /api/v1/tasks/{taskID}/comments:
+    $ref: './paths/tasks.yaml#/comments'
+  /api/v1/task-comments/{commentID}:
+    $ref: './paths/tasks.yaml#/comment'
+  /api/v1/tasks/{taskID}/context:
+    $ref: './paths/tasks.yaml#/context'
+
+  /api/v1/projects/{projectID}/merge-requests:
+    $ref: './paths/merge-requests.yaml#/list'
+  /api/v1/merge-requests/{mergeRequestID}:
+    $ref: './paths/merge-requests.yaml#/get'
 
 components:
   securitySchemes:
-    sessionCookie:
+    cookieAuth:
       type: apiKey
       in: cookie
       name: flowlens_session
+      description: >
+        Session cookie set at login. Every session-authenticated mutation
+        must also echo the flowlens_csrf cookie's value in the
+        X-CSRF-Token header (internal/http/middleware.go's requireCSRF) —
+        not expressible as a second apiKey scheme referencing the same
+        request, so it is documented here instead of modeled.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Authorization: Bearer <project API token> (ADR-0009). Scoped to
+        read/write and to a fixed route allowlist — only routes under the
+        "shared" security option in this document accept a bearer token at
+        all. No CSRF header is required or checked for bearer requests.
   schemas:
     Health:
-      type: object
-      properties:
-        status: { type: string, example: ok }
-        database: { type: string, example: ok }
+      $ref: './components/schemas/domain.yaml#/Health'
+    Version:
+      $ref: './components/schemas/domain.yaml#/Version'
     User:
-      type: object
-      properties:
-        id: { type: string, format: uuid }
-        username: { type: string }
-        email: { type: string, format: email }
-        displayName: { type: string }
+      $ref: './components/schemas/domain.yaml#/User'
     Error:
-      type: object
-      properties:
-        error:
-          type: object
-          properties:
-            code: { type: string }
-            message: { type: string }
+      $ref: './components/schemas/error.yaml#/Error'

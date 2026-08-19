@@ -1,0 +1,28 @@
+gitlabWebhook:
+  post:
+    summary: GitLab CE webhook receiver
+    description: >
+      Receives Issue Hook / Merge Request Hook / Pipeline Hook payloads for
+      one linked GitLab project. Authenticated by the per-link webhook
+      secret header (X-Gitlab-Token), not by session or bearer token.
+    tags: [webhooks]
+    security: []
+    parameters:
+      - in: path
+        name: linkID
+        required: true
+        schema: { type: string, format: uuid }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema: { type: object }
+    responses:
+      "202":
+        description: Event accepted for processing
+      "401":
+        description: Missing or invalid webhook token
+      "404":
+        description: Unknown link
+      "429":
+        description: Rate limited

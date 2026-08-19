@@ -1,0 +1,25 @@
+apiToken:
+  delete:
+    summary: Revoke an API token
+    description: Session-only.
+    tags: [api-tokens]
+    security:
+      - cookieAuth: []
+    parameters:
+      - in: path
+        name: tokenID
+        required: true
+        schema: { type: string, format: uuid }
+    responses:
+      "204":
+        description: Revoked
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }

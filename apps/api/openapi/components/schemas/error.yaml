@@ -1,0 +1,15 @@
+Error:
+  type: object
+  description: The standard error envelope returned by every non-2xx response (internal/http/response.go's writeError).
+  properties:
+    error:
+      type: object
+      properties:
+        code:
+          type: string
+          example: not_found
+        message:
+          type: string
+          example: not found
+      required: [code, message]
+  required: [error]

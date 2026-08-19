@@ -148,6 +148,13 @@ func (s *Server) Router() chi.Router {
 	r.Get("/version", s.handleVersion)
 	r.Handle("/metrics", s.requireMetricsToken(metricsHandler))
 
+	// The OpenAPI document (issue #200). Unauthenticated on purpose: this is
+	// an on-prem deployment where the API is already reachable from any
+	// logged-in browser on the same origin, so the route shape it describes
+	// carries no more information than the app itself already exposes.
+	r.Get("/openapi.yaml", handleOpenAPIYAML)
+	r.Get("/openapi.json", handleOpenAPIJSON)
+
 	// Local auth endpoints (JSON, unauthenticated).
 	r.Post("/auth/signup", s.handleSignup)
 	r.Post("/auth/login", s.handleLogin)

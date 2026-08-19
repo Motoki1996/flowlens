@@ -1,0 +1,801 @@
+list:
+  get:
+    summary: List projects
+    description: >
+      Session: every project the caller owns or is a member of, optionally
+      filtered to ?failedSync=true (used by /dashboard).
+      Bearer token: always returns exactly the token's own single project.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: failedSync
+        schema: { type: boolean }
+        description: Session-only. Restricts to projects with at least one permanently-failed sync job.
+    responses:
+      "200":
+        description: Matching projects
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/Project' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+create:
+  post:
+    summary: Create a project
+    description: Session-only — a bearer token cannot create a project (issue #66's route allowlist).
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateProjectRequest'
+    responses:
+      "201":
+        description: The created project
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Project' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+get:
+  get:
+    summary: Get a project
+    tags: [projects]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: The project
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Project' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+update:
+  patch:
+    summary: Update a project
+    description: Session-only.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/UpdateProjectRequest'
+    responses:
+      "200":
+        description: The updated project
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Project' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  delete:
+    summary: Delete a project
+    description: Session-only — a bearer token cannot destroy its own project (issue #66's route allowlist).
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+gitlabConnection:
+  put:
+    summary: Save (create or replace) a project's GitLab connection
+    description: Session-only. The token is verified against GitLab before being stored, encrypted at rest.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/PutGitlabConnectionRequest'
+    responses:
+      "200":
+        description: The saved connection
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/GitlabConnection' }
+      "400":
+        description: Invalid input, or the token could not be verified
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  get:
+    summary: Get a project's GitLab connection
+    description: Session-only. Never returns the raw access token.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: The connection
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/GitlabConnection' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  delete:
+    summary: Delete a project's GitLab connection
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+gitlabConnectionTest:
+  post:
+    summary: Test a project's GitLab connection
+    description: Re-verifies the stored token against GitLab CE without changing anything.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: Verification result
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/GitlabConnectionTestResult' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+availableGitlabProjects:
+  get:
+    summary: List GitLab projects the connection's token can see
+    description: Feeds the "link a GitLab project" picker.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - in: query
+        name: search
+        schema: { type: string }
+    responses:
+      "200":
+        description: Candidate GitLab projects
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/AvailableGitlabProject' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+notificationSettings:
+  put:
+    summary: Save (create or replace) a project's daily digest notification settings
+    description: Owner-only.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/PutNotificationSettingsRequest'
+    responses:
+      "200":
+        description: The saved settings
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/NotificationSettings' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not the project owner
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  get:
+    summary: Get a project's notification settings
+    description: Owner-only.
+    tags: [projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: The settings
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/NotificationSettings' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not the project owner
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found (no settings saved yet)
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+linkedGitlabProjects:
+  get:
+    summary: List a project's linked GitLab projects
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: Linked GitLab projects
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/LinkedGitlabProject' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Link a GitLab project
+    description: Creates the link, starts an initial import, and (if APP_PUBLIC_URL is set) registers a webhook.
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateLinkedGitlabProjectRequest'
+    responses:
+      "201":
+        description: The created link
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/LinkedGitlabProject' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+linkedGitlabProject:
+  get:
+    summary: Get one of a project's linked GitLab projects
+    tags: [linked-gitlab-projects]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - $ref: '#/components/parameters/linkID'
+    responses:
+      "200":
+        description: The link
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/LinkedGitlabProject' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+apiTokens:
+  get:
+    summary: List a project's API tokens
+    description: Never carries the raw token value — only tokenPrefix. Session-only.
+    tags: [api-tokens]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: The project's tokens
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/APIToken' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Issue a new API token
+    description: Session-only (a token cannot mint another token — privilege escalation, issue #66). The response's token field carries the raw bearer value exactly once.
+    tags: [api-tokens]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateAPITokenRequest'
+    responses:
+      "201":
+        description: The created token, including its one-time raw value
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/APIToken' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+members:
+  get:
+    summary: List a project's members
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: The project's members
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/ProjectMember' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Add a member to a project
+    description: Owner-only.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/AddProjectMemberRequest'
+    responses:
+      "201":
+        description: The added member
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/ProjectMember' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not the project owner
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+member:
+  patch:
+    summary: Change a project member's role
+    description: Owner-only.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - $ref: '#/components/parameters/userID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/UpdateProjectMemberRequest'
+    responses:
+      "200":
+        description: The updated member
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/ProjectMember' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not the project owner
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  delete:
+    summary: Remove a member from a project
+    description: Owner-only.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - $ref: '#/components/parameters/userID'
+    responses:
+      "204":
+        description: Removed
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not the project owner
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+memberCandidates:
+  get:
+    summary: Search users to invite to a project
+    description: Candidates are limited to people the caller already shares a project with. ?q= must be at least 2 characters.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - in: query
+        name: q
+        required: true
+        schema: { type: string, minLength: 2 }
+    responses:
+      "200":
+        description: Matching candidates
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/ProjectMemberCandidate' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+syncJobs:
+  get:
+    summary: List a project's permanently-failed sync jobs
+    tags: [sync-jobs]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: Failed sync jobs
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/SyncJob' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+metrics:
+  get:
+    summary: Delivery-flow metrics dashboard
+    description: Open-to-first-review / first-review-to-merge lead time, MR size distribution, pipeline success rate and merge throughput, computed over already-synced merge requests.
+    tags: [metrics]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - $ref: '#/components/parameters/from'
+      - $ref: '#/components/parameters/to'
+      - $ref: '#/components/parameters/interval'
+    responses:
+      "200":
+        description: Delivery metrics
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/DeliveryMetrics' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+flowMetrics:
+  get:
+    summary: Stage-level flow metrics
+    description: Waiting-to-start/design/implementation/review-and-merge/completion/blocked lead times, built on task_progress_events.
+    tags: [metrics]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - $ref: '#/components/parameters/from'
+      - $ref: '#/components/parameters/to'
+      - $ref: '#/components/parameters/interval'
+    responses:
+      "200":
+        description: Flow metrics
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/FlowMetrics' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+velocity:
+  get:
+    summary: Velocity (completed-task throughput)
+    description: Tasks completed per period, split by user/agent/unknown actor, plus a size-weighted points series. Defaults ?interval= to week.
+    tags: [metrics]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - $ref: '#/components/parameters/from'
+      - $ref: '#/components/parameters/to'
+      - $ref: '#/components/parameters/interval'
+    responses:
+      "200":
+        description: Velocity
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/VelocityMetrics' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+components:
+  parameters:
+    projectID:
+      in: path
+      name: projectID
+      required: true
+      schema: { type: string, format: uuid }
+    linkID:
+      in: path
+      name: linkID
+      required: true
+      schema: { type: string, format: uuid }
+    userID:
+      in: path
+      name: userID
+      required: true
+      schema: { type: string, format: uuid }
+    from:
+      in: query
+      name: from
+      schema: { type: string, format: date-time }
+    to:
+      in: query
+      name: to
+      schema: { type: string, format: date-time }
+    interval:
+      in: query
+      name: interval
+      schema: { type: string, enum: [all, week, month, year] }

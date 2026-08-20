@@ -858,3 +858,72 @@ func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidBaseBranch)
 }
+
+func TestService_Create_ValidatesScope(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+
+	got, err := svc.Create(context.Background(), owner, p.ID, backlog.CreateParams{
+		Name:           "Sprint 1",
+		AllowedScope:   "internal/payments/**",
+		ForbiddenScope: "internal/auth/**",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "internal/payments/**", got.AllowedScope)
+	assert.Equal(t, "internal/auth/**", got.ForbiddenScope)
+
+	_, err = svc.Create(context.Background(), owner, p.ID, backlog.CreateParams{
+		Name:         "Sprint 2",
+		AllowedScope: strings.Repeat("a", 20001),
+	})
+	assert.ErrorIs(t, err, backlog.ErrInvalidScope)
+}
+
+func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{
+		Name:           "Sprint 1",
+		AllowedScope:   "internal/payments/**",
+		ForbiddenScope: "internal/auth/**",
+	})
+	require.NoError(t, err)
+
+	// Absent leaves the stored values untouched.
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1", Position: created.Position}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, "internal/payments/**", updated.AllowedScope)
+	assert.Equal(t, "internal/auth/**", updated.ForbiddenScope)
+
+	// Explicit value overwrites it.
+	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name: "Sprint 1", Position: created.Position,
+		AllowedScope:   optional.Present("cmd/**"),
+		ForbiddenScope: optional.Present("vendor/**"),
+	}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, "cmd/**", updated.AllowedScope)
+	assert.Equal(t, "vendor/**", updated.ForbiddenScope)
+
+	// Explicit empty string clears it back to "not set".
+	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name: "Sprint 1", Position: created.Position,
+		AllowedScope:   optional.Present(""),
+		ForbiddenScope: optional.Present(""),
+	}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, "", updated.AllowedScope)
+	assert.Equal(t, "", updated.ForbiddenScope)
+
+	// An invalid explicit value is rejected.
+	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name: "Sprint 1", Position: created.Position,
+		ForbiddenScope: optional.Present(strings.Repeat("a", 20001)),
+	}, backlog.ActorKindUser)
+	assert.ErrorIs(t, err, backlog.ErrInvalidScope)
+}

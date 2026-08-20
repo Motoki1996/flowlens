@@ -620,6 +620,8 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 		Progress:                     arg.Progress,
 		DefaultLinkedGitlabProjectID: arg.DefaultLinkedGitlabProjectID,
 		BaseBranch:                   arg.BaseBranch,
+		AllowedScope:                 arg.AllowedScope,
+		ForbiddenScope:               arg.ForbiddenScope,
 		CreatedAt:                    now(),
 		UpdatedAt:                    now(),
 	}
@@ -712,6 +714,8 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 			Progress:                     b.Progress,
 			DefaultLinkedGitlabProjectID: b.DefaultLinkedGitlabProjectID,
 			BaseBranch:                   b.BaseBranch,
+			AllowedScope:                 b.AllowedScope,
+			ForbiddenScope:               b.ForbiddenScope,
 			TaskCount:                    taskCount,
 			ClosedTaskCount:              closedTaskCount,
 		})
@@ -767,14 +771,18 @@ func (f *FakeQuerier) GetBacklogProjectID(_ context.Context, id uuid.UUID) (uuid
 	return b.ProjectID, nil
 }
 
-// GetBacklogBaseBranch mirrors the SQL: no owner join, just the backlog's
-// own base_branch.
-func (f *FakeQuerier) GetBacklogBaseBranch(_ context.Context, id uuid.UUID) (string, error) {
+// GetBacklogTaskDefaults mirrors the SQL: no owner join, just the backlog's
+// own base_branch/allowed_scope/forbidden_scope.
+func (f *FakeQuerier) GetBacklogTaskDefaults(_ context.Context, id uuid.UUID) (db.GetBacklogTaskDefaultsRow, error) {
 	b, ok := f.backlogsByID[id]
 	if !ok {
-		return "", pgx.ErrNoRows
+		return db.GetBacklogTaskDefaultsRow{}, pgx.ErrNoRows
 	}
-	return b.BaseBranch, nil
+	return db.GetBacklogTaskDefaultsRow{
+		BaseBranch:     b.BaseBranch,
+		AllowedScope:   b.AllowedScope,
+		ForbiddenScope: b.ForbiddenScope,
+	}, nil
 }
 
 // UpdateBacklogForOwner mirrors the SQL: member-minimum.
@@ -795,6 +803,8 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	existing.Progress = arg.Progress
 	existing.DefaultLinkedGitlabProjectID = arg.DefaultLinkedGitlabProjectID
 	existing.BaseBranch = arg.BaseBranch
+	existing.AllowedScope = arg.AllowedScope
+	existing.ForbiddenScope = arg.ForbiddenScope
 	existing.UpdatedAt = now()
 
 	f.backlogsByID[arg.ID] = existing
@@ -1806,8 +1816,6 @@ func (f *FakeQuerier) UpsertTaskAIContext(_ context.Context, arg db.UpsertTaskAI
 		TaskID:             arg.TaskID,
 		AcceptanceCriteria: arg.AcceptanceCriteria,
 		AiContext:          arg.AiContext,
-		AllowedScope:       arg.AllowedScope,
-		ForbiddenScope:     arg.ForbiddenScope,
 		UpdatedAt:          now(),
 	}
 	f.taskAIContextsByTaskID[arg.TaskID] = c

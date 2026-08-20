@@ -30,8 +30,6 @@ function makeTask(overrides: Partial<Task>): Task {
     aiContext: {
       acceptanceCriteria: "",
       aiContext: "",
-      allowedScope: "",
-      forbiddenScope: "",
       updatedAt: null,
     },
     ...overrides,

@@ -66,6 +66,12 @@ export interface Backlog {
   // development (e.g. "main", "release/2.4"). Optional — "" means not set.
   // App-only, never synced to GitLab.
   baseBranch: string;
+  // The paths tasks filed in this backlog may/may not touch. Optional — ""
+  // means not set. App-only, never synced to GitLab, moved here from
+  // TaskAIContext because they describe a sub-area of the codebase, not one
+  // task.
+  allowedScope: string;
+  forbiddenScope: string;
   // The backlog's total and closed task counts, aggregated server-side
   // (issue #144) so the Backlog collection doesn't need to fetch every task
   // itself just to show a count and a completion ratio.
@@ -80,8 +86,6 @@ export type TaskStatus = "open" | "closed";
 export interface TaskAIContext {
   acceptanceCriteria: string;
   aiContext: string;
-  allowedScope: string;
-  forbiddenScope: string;
   updatedAt: string | null;
 }
 

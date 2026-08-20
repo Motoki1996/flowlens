@@ -98,7 +98,9 @@ type Querier interface {
 	// GitLab connection before writing it — the schema cannot.
 	//
 	// base_branch (000024) is the branch tasks in this backlog are meant to
-	// branch from; app-only, never synced to GitLab.
+	// branch from; app-only, never synced to GitLab. allowed_scope/
+	// forbidden_scope (000029) are the same kind of field: the paths tasks
+	// filed in this backlog may/may not touch.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
 	CreateBacklogProgressEvent(ctx context.Context, arg CreateBacklogProgressEventParams) (BacklogProgressEvent, error)
 	// gitlab_sync_runs records one project.import / project.resync execution
@@ -263,10 +265,6 @@ type Querier interface {
 	EnqueueSyncJob(ctx context.Context, arg EnqueueSyncJobParams) (SyncJob, error)
 	FailGitlabSyncRun(ctx context.Context, arg FailGitlabSyncRunParams) (GitlabSyncRun, error)
 	FailRepositorySyncRun(ctx context.Context, arg FailRepositorySyncRunParams) (RepositorySyncRun, error)
-	// GetBacklogBaseBranch is the lightweight lookup internal/task's Context
-	// uses to resolve a task's backlog's base_branch without pulling in the rest
-	// of the backlog row.
-	GetBacklogBaseBranch(ctx context.Context, id uuid.UUID) (string, error)
 	GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwnerParams) (Backlog, error)
 	// The backlog-scoped half of GetDefaultLinkedGitlabProjectForOwner:
 	// internal/task resolves a new task's issue destination from its backlog
@@ -280,6 +278,10 @@ type Querier interface {
 	// GetBacklogForOwner's owner join — a token has no session owner to join
 	// against.
 	GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	// GetBacklogTaskDefaults is the lightweight lookup internal/task's Context
+	// uses to resolve a task's backlog's base_branch/allowed_scope/
+	// forbidden_scope without pulling in the rest of the backlog row.
+	GetBacklogTaskDefaults(ctx context.Context, id uuid.UUID) (GetBacklogTaskDefaultsRow, error)
 	// internal/task uses this at task-create time to decide whether the
 	// project has anywhere to push a new issue, and if so, where
 	// (docs/plans/issue-sync.md, "Outbound").
@@ -764,9 +766,10 @@ type Querier interface {
 	SetLinkedGitlabProjectWebhookForOwner(ctx context.Context, arg SetLinkedGitlabProjectWebhookForOwnerParams) (LinkedGitlabProject, error)
 	SetTaskCommentGitlabNoteID(ctx context.Context, arg SetTaskCommentGitlabNoteIDParams) error
 	// UpdateBacklogForOwner overwrites every editable column, so start_date/due_on,
-	// default_linked_gitlab_project_id and base_branch must arrive already
-	// resolved: backlog.Service reads the current row first and fills in
-	// whatever the PATCH body left out (see its Update).
+	// default_linked_gitlab_project_id, base_branch, allowed_scope and
+	// forbidden_scope must arrive already resolved: backlog.Service reads the
+	// current row first and fills in whatever the PATCH body left out (see its
+	// Update).
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
 	// Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.
@@ -829,11 +832,13 @@ type Querier interface {
 	// projectsync) have no acting user, so IsProgressSyncEnabledForProject is
 	// unscoped, like ListEnabledNotificationSettings.
 	UpsertProgressSyncSettings(ctx context.Context, arg UpsertProgressSyncSettingsParams) (ProgressSyncSetting, error)
-	// task_ai_contexts is app-only: acceptance criteria, AI context, and the
-	// allowed/forbidden change scope must never be sent to GitLab (see "Why the
-	// task is split across three tables" in docs/plans/issue-sync.md). Ownership
-	// is verified by the caller via task.Service.Get before either query runs,
-	// the same way CreateTask trusts an already-verified project.
+	// task_ai_contexts is app-only: acceptance criteria and AI context must
+	// never be sent to GitLab (see "Why the task is split across three tables"
+	// in docs/plans/issue-sync.md). The allowed/forbidden change scope moved to
+	// backlogs (000029 migration) since it describes a sub-area of the
+	// codebase, not one task. Ownership is verified by the caller via
+	// task.Service.Get before either query runs, the same way CreateTask
+	// trusts an already-verified project.
 	UpsertTaskAIContext(ctx context.Context, arg UpsertTaskAIContextParams) (TaskAiContext, error)
 	// user_gitlab_identities maps a FlowLens user to their GitLab user ID/username
 	// on one GitLab CE instance (gitlab_base_url), so ?assignee=me on the task

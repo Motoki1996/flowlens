@@ -12,7 +12,7 @@ import (
 )
 
 const getTaskAIContext = `-- name: GetTaskAIContext :one
-SELECT task_id, acceptance_criteria, ai_context, allowed_scope, forbidden_scope, updated_at
+SELECT task_id, acceptance_criteria, ai_context, updated_at
 FROM task_ai_contexts
 WHERE task_id = $1
 `
@@ -24,8 +24,6 @@ func (q *Queries) GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskA
 		&i.TaskID,
 		&i.AcceptanceCriteria,
 		&i.AiContext,
-		&i.AllowedScope,
-		&i.ForbiddenScope,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -33,45 +31,35 @@ func (q *Queries) GetTaskAIContext(ctx context.Context, taskID uuid.UUID) (TaskA
 
 const upsertTaskAIContext = `-- name: UpsertTaskAIContext :one
 
-INSERT INTO task_ai_contexts (task_id, acceptance_criteria, ai_context, allowed_scope, forbidden_scope)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO task_ai_contexts (task_id, acceptance_criteria, ai_context)
+VALUES ($1, $2, $3)
 ON CONFLICT (task_id) DO UPDATE
 SET acceptance_criteria = EXCLUDED.acceptance_criteria,
     ai_context = EXCLUDED.ai_context,
-    allowed_scope = EXCLUDED.allowed_scope,
-    forbidden_scope = EXCLUDED.forbidden_scope,
     updated_at = now()
-RETURNING task_id, acceptance_criteria, ai_context, allowed_scope, forbidden_scope, updated_at
+RETURNING task_id, acceptance_criteria, ai_context, updated_at
 `
 
 type UpsertTaskAIContextParams struct {
 	TaskID             uuid.UUID `json:"task_id"`
 	AcceptanceCriteria string    `json:"acceptance_criteria"`
 	AiContext          string    `json:"ai_context"`
-	AllowedScope       string    `json:"allowed_scope"`
-	ForbiddenScope     string    `json:"forbidden_scope"`
 }
 
-// task_ai_contexts is app-only: acceptance criteria, AI context, and the
-// allowed/forbidden change scope must never be sent to GitLab (see "Why the
-// task is split across three tables" in docs/plans/issue-sync.md). Ownership
-// is verified by the caller via task.Service.Get before either query runs,
-// the same way CreateTask trusts an already-verified project.
+// task_ai_contexts is app-only: acceptance criteria and AI context must
+// never be sent to GitLab (see "Why the task is split across three tables"
+// in docs/plans/issue-sync.md). The allowed/forbidden change scope moved to
+// backlogs (000029 migration) since it describes a sub-area of the
+// codebase, not one task. Ownership is verified by the caller via
+// task.Service.Get before either query runs, the same way CreateTask
+// trusts an already-verified project.
 func (q *Queries) UpsertTaskAIContext(ctx context.Context, arg UpsertTaskAIContextParams) (TaskAiContext, error) {
-	row := q.db.QueryRow(ctx, upsertTaskAIContext,
-		arg.TaskID,
-		arg.AcceptanceCriteria,
-		arg.AiContext,
-		arg.AllowedScope,
-		arg.ForbiddenScope,
-	)
+	row := q.db.QueryRow(ctx, upsertTaskAIContext, arg.TaskID, arg.AcceptanceCriteria, arg.AiContext)
 	var i TaskAiContext
 	err := row.Scan(
 		&i.TaskID,
 		&i.AcceptanceCriteria,
 		&i.AiContext,
-		&i.AllowedScope,
-		&i.ForbiddenScope,
 		&i.UpdatedAt,
 	)
 	return i, err

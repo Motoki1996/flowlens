@@ -480,8 +480,6 @@ func TestProcessNext_PreservesAIContext(t *testing.T) {
 		TaskID:             tsk.ID,
 		AcceptanceCriteria: "must pass tests",
 		AiContext:          "context for the AI agent",
-		AllowedScope:       "src/",
-		ForbiddenScope:     "infra/",
 	})
 	require.NoError(t, err)
 

@@ -28,9 +28,10 @@ install, upgrade, backup and hardening instructions are in
   (Gantt), and a cross-project view — plus a dashboard of what is overdue,
   due soon, waiting to start, or failing to sync.
 - **An API built for AI agents.** Project-scoped bearer tokens and a task
-  context endpoint that carries acceptance criteria and allowed/forbidden
-  change scope — fields GitLab has nowhere to put. FlowLens does not write
-  code; it is the source of truth an agent reads from and reports back to.
+  context endpoint that carries acceptance criteria and the backlog's
+  allowed/forbidden change scope — fields GitLab has nowhere to put.
+  FlowLens does not write code; it is the source of truth an agent reads
+  from and reports back to.
 - **Optional GitLab CE sync.** Bidirectional issue sync through a Postgres
   outbox and webhooks, read-only merge request and pipeline import, and
   delivery metrics (review latency median/p90, pipeline success rate, merge
@@ -40,19 +41,20 @@ install, upgrade, backup and hardening instructions are in
 
 Development teams track work in two places that drift apart: a GitLab CE
 issue has the canonical title, description, and status, while the context an
-AI coding agent actually needs — acceptance criteria, allowed/forbidden
-change scope — has nowhere to live on the GitLab side. Keeping a second
-tracker in sync by hand doesn't survive contact with concurrent edits,
-webhook retries, or a flaky network.
+AI coding agent actually needs — acceptance criteria on the task, an
+allowed/forbidden change scope on the backlog — has nowhere to live on the
+GitLab side. Keeping a second tracker in sync by hand doesn't survive
+contact with concurrent edits, webhook retries, or a flaky network.
 
 ## Solution
 
 FlowLens keeps a `Task` and a GitLab CE issue in sync in both directions —
 create or edit a task in FlowLens and it's pushed to GitLab; close, reopen,
 or edit the issue on GitLab and it comes back — while keeping the AI-only
-fields (acceptance criteria, AI context, allowed/forbidden scope) in a
-separate table GitLab never sees. It does **not** generate or review code
-with AI; FlowLens is the source of truth an AI agent reads from and writes
+fields (a task's acceptance criteria and AI context, a backlog's
+allowed/forbidden scope) in tables GitLab never sees. It does **not**
+generate or review code with AI; FlowLens is the source of truth an AI
+agent reads from and writes
 task status to, not something that writes code. The delivery-flow
 visualization (review → test → merge → release) described above is a
 later, separate phase — see [Roadmap](#roadmap).
@@ -444,6 +446,21 @@ branch, which mirrors an actual GitLab merge request. It is also surfaced on
 `""` if unfiled or unset), so an AI agent working a task knows what branch to
 start from.
 
+### A backlog's allowed/forbidden change scope
+
+A backlog can also name the paths its tasks may and may not touch —
+`allowedScope`/`forbiddenScope` on the same create/edit endpoints and form,
+and shown on the Backlog single view. These used to be per-task fields on
+`task_ai_contexts`, but in practice they describe a sub-area of the
+codebase rather than one unit of work, so they moved to the backlog: set
+once, they apply to every task filed in it. Optional, capped at 20000
+characters (400 `invalid_scope` otherwise), app-only, and never synced to
+GitLab. Like `baseBranch`, they are surfaced on
+`GET /api/v1/tasks/{taskID}/context` resolved through the task's backlog
+(`""` if unfiled or unset) — a task's own `acceptanceCriteria`/`aiContext`
+(set via `PUT /api/v1/tasks/{taskID}/ai-context`) remain the place for
+anything task-specific.
+
 ### What FlowLens registers as a webhook
 
 For each linked GitLab project, FlowLens registers exactly one webhook on
@@ -661,9 +678,11 @@ curl "$API_BASE_URL/api/v1/tasks/$TASK_ID/context" \
 
 A token is scoped to the project it was issued for — a request against a
 task from a different project gets the same 404 a foreign session gets, not
-a 403, so a token can't distinguish "not yours" from "does not exist".
-`acceptanceCriteria`, `aiContext`, `allowedScope`, and `forbiddenScope` are
-`""`, never `null`, until set via `PUT /api/v1/tasks/{taskID}/ai-context`.
+a 403, so a token can't distinguish "not yours" from "does not exist". All
+four fields are `""`, never `null`, until set: `acceptanceCriteria`/
+`aiContext` via `PUT /api/v1/tasks/{taskID}/ai-context`, `allowedScope`/
+`forbiddenScope` via the task's backlog (see "A backlog's allowed/forbidden
+change scope" above) — `""` either way if the task is unfiled.
 
 To list several tasks at once (e.g. an agent polling its queue), use
 `GET /api/v1/projects/{projectID}/tasks/context?status=open&per_page=20`,
@@ -1508,8 +1527,8 @@ same as `POST /tasks`.
   don't have real IDs yet — plus the same fields `POST /tasks` accepts
   (`title` required; `description`, `backlogId`, `labels`, `dueOn`,
   `startDate`, `priority`, `size`) and an optional inline `aiContext`
-  (`acceptanceCriteria`, `aiContext`, `allowedScope`, `forbiddenScope`,
-  upserted alongside the task). Up to 100 tasks per request.
+  (`acceptanceCriteria`, `aiContext`, upserted alongside the task). Up to
+  100 tasks per request.
 - Each dependency is `{predecessorRef, successorRef}`, naming two `ref`s
   from the same request's `tasks` — a bulk dependency can only connect two
   tasks created in the same batch, not an existing task by ID. The

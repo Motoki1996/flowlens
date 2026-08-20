@@ -35,6 +35,7 @@ var (
 	ErrInvalidPriority    = errors.New("backlog: priority must be one of low, medium, high, urgent")
 	ErrInvalidProgress    = errors.New("backlog: progress must be one of not_started, in_progress, on_hold, done")
 	ErrInvalidBaseBranch  = errors.New("backlog: baseBranch must be a valid git branch name, at most 255 characters")
+	ErrInvalidScope       = errors.New("backlog: allowedScope/forbiddenScope must be at most 20000 characters")
 	ErrLinkNotInProject   = errors.New("backlog: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	ErrNotFound           = errors.New("backlog: not found")
 	ErrForbidden          = errors.New("backlog: forbidden")
@@ -106,6 +107,15 @@ type Backlog struct {
 	// which is a fact synced from GitLab about an actual merge request (see
 	// the 000024 migration).
 	BaseBranch string `json:"baseBranch"`
+	// AllowedScope/ForbiddenScope are the paths tasks filed in this backlog
+	// may/may not touch — moved here from task_ai_contexts (000029
+	// migration) because they describe a sub-area of the codebase, not one
+	// task, and were being copy-pasted onto every task in a backlog.
+	// Optional, app-only, never synced to GitLab, resolved into
+	// GET /tasks/{taskID}/context through the task's backlog the same way
+	// BaseBranch is.
+	AllowedScope   string `json:"allowedScope"`
+	ForbiddenScope string `json:"forbiddenScope"`
 	// TaskCount and ClosedTaskCount are the backlog's total and closed task
 	// counts, computed by ListBacklogsByProject's LEFT JOIN aggregate (issue
 	// #144) so the Backlog collection screen doesn't need to fetch every task
@@ -135,6 +145,8 @@ func fromRow(row db.Backlog) Backlog {
 		Progress:                     row.Progress,
 		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
 		BaseBranch:                   row.BaseBranch,
+		AllowedScope:                 row.AllowedScope,
+		ForbiddenScope:               row.ForbiddenScope,
 		CreatedAt:                    row.CreatedAt.Time,
 		UpdatedAt:                    row.UpdatedAt.Time,
 	}
@@ -155,6 +167,8 @@ func fromListRow(row db.ListBacklogsByProjectRow) Backlog {
 		Progress:                     row.Progress,
 		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
 		BaseBranch:                   row.BaseBranch,
+		AllowedScope:                 row.AllowedScope,
+		ForbiddenScope:               row.ForbiddenScope,
 		TaskCount:                    row.TaskCount,
 		ClosedTaskCount:              row.ClosedTaskCount,
 		CreatedAt:                    row.CreatedAt.Time,
@@ -261,6 +275,21 @@ func normalizeBaseBranch(raw string) (string, error) {
 	return branch, nil
 }
 
+// maxScopeFieldLength bounds AllowedScope/ForbiddenScope, matching
+// internal/task's maxAIContextFieldLength cap on acceptanceCriteria/
+// aiContext.
+const maxScopeFieldLength = 20000
+
+// normalizeScope enforces the length cap on an AllowedScope/ForbiddenScope
+// value. Unlike normalizeBaseBranch, this is free-text (path globs, prose),
+// not a git ref name, so there is no format restriction.
+func normalizeScope(raw string) (string, error) {
+	if utf8.RuneCountInString(raw) > maxScopeFieldLength {
+		return "", ErrInvalidScope
+	}
+	return raw, nil
+}
+
 // Service manages backlogs inside projects owned by a single user.
 type Service struct {
 	q        db.Querier
@@ -344,6 +373,10 @@ type CreateParams struct {
 	// BaseBranch is optional; empty means "not set". Validated as a git
 	// branch name when non-empty.
 	BaseBranch string
+	// AllowedScope/ForbiddenScope are optional; empty means "not set".
+	// Capped at maxScopeFieldLength, otherwise unrestricted free text.
+	AllowedScope   string
+	ForbiddenScope string
 }
 
 // Create validates name and creates a backlog at the end of projectID's
@@ -376,6 +409,14 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	if err != nil {
 		return Backlog{}, err
 	}
+	allowedScope, err := normalizeScope(p.AllowedScope)
+	if err != nil {
+		return Backlog{}, err
+	}
+	forbiddenScope, err := normalizeScope(p.ForbiddenScope)
+	if err != nil {
+		return Backlog{}, err
+	}
 	row, err := s.q.CreateBacklog(ctx, db.CreateBacklogParams{
 		ProjectID:                    projectID,
 		Name:                         normalized,
@@ -386,6 +427,8 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 		Progress:                     progress,
 		DefaultLinkedGitlabProjectID: toUUID(p.DefaultLinkedGitlabProjectID),
 		BaseBranch:                   baseBranch,
+		AllowedScope:                 allowedScope,
+		ForbiddenScope:               forbiddenScope,
 	})
 	if err != nil {
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
@@ -489,6 +532,10 @@ type UpdateParams struct {
 	// Progress: absent keeps the current value, an explicit empty string
 	// clears it back to "not set".
 	BaseBranch optional.Optional[string]
+	// AllowedScope/ForbiddenScope follow the same absent/explicit-empty rule
+	// as BaseBranch.
+	AllowedScope   optional.Optional[string]
+	ForbiddenScope optional.Optional[string]
 }
 
 // Update overwrites name, description and position, and applies whichever of
@@ -545,6 +592,14 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 	if err != nil {
 		return Backlog{}, err
 	}
+	allowedScope, err := normalizeScope(p.AllowedScope.Or(current.AllowedScope))
+	if err != nil {
+		return Backlog{}, err
+	}
+	forbiddenScope, err := normalizeScope(p.ForbiddenScope.Or(current.ForbiddenScope))
+	if err != nil {
+		return Backlog{}, err
+	}
 
 	progressChanged := current.Progress != progress
 
@@ -562,6 +617,8 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 			Progress:                     progress,
 			DefaultLinkedGitlabProjectID: toUUID(link),
 			BaseBranch:                   baseBranch,
+			AllowedScope:                 allowedScope,
+			ForbiddenScope:               forbiddenScope,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {

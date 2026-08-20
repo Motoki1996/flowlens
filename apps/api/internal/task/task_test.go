@@ -816,14 +816,10 @@ func TestService_UpsertAIContext_CreatesThenUpdates(t *testing.T) {
 	created, err := svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
 		AcceptanceCriteria: "Given/When/Then",
 		AIContext:          "Legacy payments module",
-		AllowedScope:       "internal/payments/**",
-		ForbiddenScope:     "internal/auth/**",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Given/When/Then", created.AcceptanceCriteria)
 	assert.Equal(t, "Legacy payments module", created.AIContext)
-	assert.Equal(t, "internal/payments/**", created.AllowedScope)
-	assert.Equal(t, "internal/auth/**", created.ForbiddenScope)
 	require.NotNil(t, created.UpdatedAt)
 
 	got, err := svc.GetAIContext(ctx, owner, tsk.ID)
@@ -837,8 +833,6 @@ func TestService_UpsertAIContext_CreatesThenUpdates(t *testing.T) {
 	assert.Equal(t, "Updated criteria", updated.AcceptanceCriteria)
 	// Fields omitted from the second call overwrite, they don't merge.
 	assert.Equal(t, "", updated.AIContext)
-	assert.Equal(t, "", updated.AllowedScope)
-	assert.Equal(t, "", updated.ForbiddenScope)
 
 	got, err = svc.GetAIContext(ctx, owner, tsk.ID)
 	require.NoError(t, err)
@@ -903,8 +897,6 @@ func TestService_UpsertAIContext_DoesNotChangeTaskUpdatedAt(t *testing.T) {
 	_, err = svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
 		AcceptanceCriteria: "Given/When/Then",
 		AIContext:          "Legacy payments module",
-		AllowedScope:       "internal/payments/**",
-		ForbiddenScope:     "internal/auth/**",
 	})
 	require.NoError(t, err)
 
@@ -935,8 +927,6 @@ func TestBuildGitlabIssuePayload_NeverReferencesAIContextFields(t *testing.T) {
 	_, err = svc.UpsertAIContext(ctx, owner, tsk.ID, task.AIContextParams{
 		AcceptanceCriteria: "SECRET_ACCEPTANCE_CRITERIA",
 		AIContext:          "SECRET_AI_CONTEXT",
-		AllowedScope:       "SECRET_ALLOWED_SCOPE",
-		ForbiddenScope:     "SECRET_FORBIDDEN_SCOPE",
 	})
 	require.NoError(t, err)
 
@@ -945,7 +935,7 @@ func TestBuildGitlabIssuePayload_NeverReferencesAIContextFields(t *testing.T) {
 	body, err := json.Marshal(payload)
 	require.NoError(t, err)
 	for _, secret := range []string{
-		"SECRET_ACCEPTANCE_CRITERIA", "SECRET_AI_CONTEXT", "SECRET_ALLOWED_SCOPE", "SECRET_FORBIDDEN_SCOPE",
+		"SECRET_ACCEPTANCE_CRITERIA", "SECRET_AI_CONTEXT",
 	} {
 		assert.NotContains(t, string(body), secret)
 	}

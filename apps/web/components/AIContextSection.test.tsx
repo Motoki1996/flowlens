@@ -6,8 +6,6 @@ import { AIContextSection } from "./AIContextSection";
 const emptyContext: TaskAIContext = {
   acceptanceCriteria: "",
   aiContext: "",
-  allowedScope: "",
-  forbiddenScope: "",
   updatedAt: null,
 };
 
@@ -20,8 +18,6 @@ describe("AIContextSection", () => {
     render(<AIContextSection taskId="t1" aiContext={emptyContext} />);
     expect(screen.getByText("No acceptance criteria set.")).toBeInTheDocument();
     expect(screen.getByText("No AI context set.")).toBeInTheDocument();
-    expect(screen.getByText("No allowed scope set.")).toBeInTheDocument();
-    expect(screen.getByText("No forbidden scope set.")).toBeInTheDocument();
   });
 
   it("edits and saves one field independently, leaving the others untouched", async () => {
@@ -47,8 +43,6 @@ describe("AIContextSection", () => {
     expect(JSON.parse(init?.body as string)).toEqual({
       acceptanceCriteria: "Ship the feature",
       aiContext: "",
-      allowedScope: "",
-      forbiddenScope: "",
     });
   });
 

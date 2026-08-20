@@ -2,6 +2,15 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import {
+  FolderIcon,
+  GitPullRequestIcon,
+  LayoutDashboardIcon,
+  LayersIcon,
+  ListTodoIcon,
+  PlugIcon,
+  type LucideIcon,
+} from "lucide-react";
 import type { Project } from "@/types";
 import {
   projectSectionOf,
@@ -9,6 +18,16 @@ import {
   type ProjectSection,
 } from "@/lib/routes";
 import { Combobox } from "@/components/ui/combobox";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
+import { SidebarResizer } from "@/components/SidebarResizer";
 import { cn } from "@/lib/utils";
 
 /** Counts shown next to each section. `null` means the count failed to load —
@@ -21,12 +40,14 @@ export type ProjectSidebarCounts = {
   gitlab: string | null;
 };
 
-const SECTIONS: { section: ProjectSection; label: string }[] = [
-  { section: "overview", label: "Overview" },
-  { section: "backlogs", label: "Backlogs" },
-  { section: "tasks", label: "Tasks" },
-  { section: "merge-requests", label: "Merge requests" },
-  { section: "gitlab-connection", label: "GitLab connection" },
+/** The icon is what the section is known by once the sidebar is collapsed to
+ *  its rail, so each one has to distinguish its section on its own. */
+const SECTIONS: { section: ProjectSection; label: string; icon: LucideIcon }[] = [
+  { section: "overview", label: "Overview", icon: LayoutDashboardIcon },
+  { section: "backlogs", label: "Backlogs", icon: LayersIcon },
+  { section: "tasks", label: "Tasks", icon: ListTodoIcon },
+  { section: "merge-requests", label: "Merge requests", icon: GitPullRequestIcon },
+  { section: "gitlab-connection", label: "GitLab connection", icon: PlugIcon },
 ];
 
 function summaryOf(section: ProjectSection, counts: ProjectSidebarCounts) {
@@ -53,6 +74,12 @@ function summaryOf(section: ProjectSection, counts: ProjectSidebarCounts) {
  * the same section of another project. It is the navigation half of
  * docs/ui-design.md rule 3, made permanent rather than left to each screen's
  * body.
+ *
+ * Built on shadcn's Sidebar, so it collapses to an icon rail (⌘B, or the
+ * trigger in the header) and becomes a drawer on mobile; SidebarResizer adds
+ * the width drag shadcn leaves out. Both pieces of that state live in cookies
+ * the layout above reads, so a reload comes back the way it was left. It must
+ * be rendered inside a SidebarProvider.
  */
 export function ProjectSidebar({
   project,
@@ -76,11 +103,10 @@ export function ProjectSidebar({
   }));
 
   return (
-    <aside
-      aria-label="Project"
-      className="border-border w-60 shrink-0 border-r px-4 py-8"
-    >
-      <div className="sticky top-8">
+    <Sidebar collapsible="icon">
+      {/* The switcher needs a text field to be worth anything, so the icon
+          rail drops it rather than shrinking it into an unusable stub. */}
+      <SidebarHeader className="group-data-[collapsible=icon]:hidden">
         <Combobox
           options={options}
           value={project.id}
@@ -91,44 +117,56 @@ export function ProjectSidebar({
           size="sm"
           className="w-full"
         />
+      </SidebarHeader>
 
-        <nav aria-label="Project sections" className="mt-4">
-          <ul className="space-y-0.5">
-            {SECTIONS.map(({ section, label }) => {
+      <SidebarContent>
+        <nav aria-label="Project sections" className="p-2">
+          <SidebarMenu>
+            {SECTIONS.map(({ section, label, icon: Icon }) => {
               const active = section === current;
               const summary = summaryOf(section, counts);
               return (
-                <li key={section}>
-                  <Link
-                    href={projectSectionPath(project.id, section)}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "flex items-center justify-between gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-                      active
-                        ? "bg-accent text-accent-foreground font-medium"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
-                    )}
-                  >
-                    <span>{label}</span>
-                    {summary ? (
-                      <span className="text-muted-foreground text-xs tabular-nums">{summary}</span>
-                    ) : null}
-                  </Link>
-                </li>
+                <SidebarMenuItem key={section}>
+                  <SidebarMenuButton asChild isActive={active} tooltip={label}>
+                    <Link
+                      href={projectSectionPath(project.id, section)}
+                      aria-current={active ? "page" : undefined}
+                    >
+                      <Icon />
+                      <span className="flex-1 truncate">{label}</span>
+                      {summary ? (
+                        <span
+                          className={cn(
+                            "text-muted-foreground text-xs tabular-nums",
+                            "group-data-[collapsible=icon]:hidden",
+                          )}
+                        >
+                          {summary}
+                        </span>
+                      ) : null}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               );
             })}
-          </ul>
+          </SidebarMenu>
         </nav>
+      </SidebarContent>
 
-        <div className="border-border mt-4 border-t pt-4">
-          <Link
-            href="/projects"
-            className="text-muted-foreground hover:text-foreground block px-3 text-sm"
-          >
-            All projects
-          </Link>
-        </div>
-      </div>
-    </aside>
+      <SidebarFooter className="border-sidebar-border border-t">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="All projects">
+              <Link href="/projects" className="text-muted-foreground">
+                <FolderIcon />
+                <span>All projects</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+
+      <SidebarResizer />
+    </Sidebar>
   );
 }

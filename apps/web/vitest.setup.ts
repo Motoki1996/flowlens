@@ -33,3 +33,21 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.setPointerCapture = () => {};
   Element.prototype.releasePointerCapture = () => {};
 }
+
+// components/ui/sidebar.tsx decides between the desktop sidebar and the mobile
+// drawer from a media query jsdom doesn't implement. Reporting "no match"
+// keeps every test on the desktop branch, which is the one the screens are
+// written against.
+if (!window.matchMedia) {
+  window.matchMedia = (query: string) =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList;
+}

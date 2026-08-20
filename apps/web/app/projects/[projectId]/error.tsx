@@ -3,15 +3,33 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import {
+  FolderIcon,
+  LayersIcon,
+  LayoutDashboardIcon,
+  ListTodoIcon,
+  PlugIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { projectSectionPath, type ProjectSection } from "@/lib/routes";
 import { BoundaryHeader } from "@/components/BoundaryHeader";
 import { Button } from "@/components/ui/button";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 
-const SECTIONS: { section: ProjectSection; label: string }[] = [
-  { section: "overview", label: "Overview" },
-  { section: "backlogs", label: "Backlogs" },
-  { section: "tasks", label: "Tasks" },
-  { section: "gitlab-connection", label: "GitLab connection" },
+const SECTIONS: { section: ProjectSection; label: string; icon: LucideIcon }[] = [
+  { section: "overview", label: "Overview", icon: LayoutDashboardIcon },
+  { section: "backlogs", label: "Backlogs", icon: LayersIcon },
+  { section: "tasks", label: "Tasks", icon: ListTodoIcon },
+  { section: "gitlab-connection", label: "GitLab connection", icon: PlugIcon },
 ];
 
 /**
@@ -21,7 +39,9 @@ const SECTIONS: { section: ProjectSection; label: string }[] = [
  * doesn't strand the user outside the project. It's a Client Component by
  * Next.js's convention for error.tsx, so unlike ProjectLayout it can't fetch
  * the project or its counts; the sidebar here is section links only, built
- * from the route's own projectId (useParams), not project data.
+ * from the route's own projectId (useParams), not project data. It collapses
+ * the same way, but starts open every time: the cookie the layout reads is
+ * server-side state this boundary has no access to.
  */
 export default function ProjectError({
   error,
@@ -38,35 +58,39 @@ export default function ProjectError({
   const projectId = params.projectId;
 
   return (
-    <>
-      <BoundaryHeader />
-      <div className="mx-auto flex max-w-7xl">
-        <aside aria-label="Project" className="border-border w-60 shrink-0 border-r px-4 py-8">
-          <div className="sticky top-8">
-            <nav aria-label="Project sections">
-              <ul className="space-y-0.5">
-                {SECTIONS.map(({ section, label }) => (
-                  <li key={section}>
-                    <Link
-                      href={projectSectionPath(projectId, section)}
-                      className="text-muted-foreground hover:bg-accent/50 hover:text-foreground flex items-center rounded-md px-3 py-2 text-sm transition-colors"
-                    >
-                      {label}
+    <SidebarProvider>
+      <Sidebar collapsible="icon">
+        <SidebarContent>
+          <nav aria-label="Project sections" className="p-2">
+            <SidebarMenu>
+              {SECTIONS.map(({ section, label, icon: Icon }) => (
+                <SidebarMenuItem key={section}>
+                  <SidebarMenuButton asChild tooltip={label}>
+                    <Link href={projectSectionPath(projectId, section)}>
+                      <Icon />
+                      <span>{label}</span>
                     </Link>
-                  </li>
-                ))}
-              </ul>
-            </nav>
-            <div className="border-border mt-4 border-t pt-4">
-              <Link
-                href="/projects"
-                className="text-muted-foreground hover:text-foreground block px-3 text-sm"
-              >
-                All projects
-              </Link>
-            </div>
-          </div>
-        </aside>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </nav>
+        </SidebarContent>
+        <SidebarFooter className="border-sidebar-border border-t">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton asChild tooltip="All projects">
+                <Link href="/projects" className="text-muted-foreground">
+                  <FolderIcon />
+                  <span>All projects</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarFooter>
+      </Sidebar>
+      <div className="bg-background relative flex min-w-0 flex-1 flex-col">
+        <BoundaryHeader leading={<SidebarTrigger className="-ml-1" />} />
         <main className="flex min-w-0 flex-1 flex-col items-start gap-4 px-8 py-16">
           <h1 className="text-foreground text-2xl font-semibold">Something went wrong</h1>
           <p className="text-muted-foreground text-sm">
@@ -76,6 +100,6 @@ export default function ProjectError({
           <Button onClick={() => reset()}>Try again</Button>
         </main>
       </div>
-    </>
+    </SidebarProvider>
   );
 }

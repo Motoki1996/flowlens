@@ -10,12 +10,20 @@ function initials(user: User) {
   return source.slice(0, 2).toUpperCase();
 }
 
-/** AppHeader is the top navigation bar shown on authenticated pages. */
-export function AppHeader({ user }: { user: User }) {
+/**
+ * AppHeader is the top navigation bar shown on authenticated pages.
+ *
+ * `leading` is for controls that belong to the frame around the header rather
+ * than to the app: the project screens pass the sidebar's toggle there. It
+ * stays optional because most screens have no sidebar, and a SidebarTrigger
+ * outside a SidebarProvider would throw.
+ */
+export function AppHeader({ user, leading }: { user: User; leading?: React.ReactNode }) {
   return (
     <header className="border-border bg-card border-b">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
         <div className="flex items-center gap-6">
+          {leading}
           <Link href="/dashboard" className="text-foreground flex items-center gap-2 text-lg font-semibold">
             <AppIcon className="size-6" />
             FlowLens

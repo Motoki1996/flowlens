@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import {
   getBacklogs,
@@ -11,6 +12,13 @@ import {
 } from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
 import { ProjectSidebar, type ProjectSidebarCounts } from "@/components/ProjectSidebar";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import {
+  SIDEBAR_STATE_COOKIE,
+  SIDEBAR_WIDTH_COOKIE,
+  sidebarOpenFromCookie,
+  sidebarWidthFromCookie,
+} from "@/lib/sidebar";
 
 /**
  * Every screen under a project shares this frame: the app header, then a
@@ -20,7 +28,9 @@ import { ProjectSidebar, type ProjectSidebarCounts } from "@/components/ProjectS
  * the object they are about.
  *
  * Auth is checked here only, not repeated in the nested pages below — this
- * layout renders the AppHeader they don't (issue #94). The project lookup
+ * layout renders the AppHeader they don't (issue #94). The sidebar's open
+ * state and width are read from cookies here rather than on the client, so
+ * the first paint is already the shape the user left it in. The project lookup
  * does still happen here as well as in each page: the page needs it for its
  * own data anyway, and the reads are memoised per request (see lib/api), so
  * the duplication costs one function call, not one round trip.
@@ -90,13 +100,23 @@ export default async function ProjectLayout({
     // The switcher falls back to listing only the current project.
   }
 
+  const cookieStore = await cookies();
+  const sidebarOpen = sidebarOpenFromCookie(cookieStore.get(SIDEBAR_STATE_COOKIE)?.value);
+  const sidebarWidth = sidebarWidthFromCookie(cookieStore.get(SIDEBAR_WIDTH_COOKIE)?.value);
+
   return (
-    <>
-      <AppHeader user={user} />
-      <div className="mx-auto flex max-w-7xl">
-        <ProjectSidebar project={project} projects={projects} counts={counts} />
-        <main className="min-w-0 flex-1 px-8 py-8">{children}</main>
+    <SidebarProvider
+      defaultOpen={sidebarOpen}
+      style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}
+    >
+      <ProjectSidebar project={project} projects={projects} counts={counts} />
+      {/* shadcn's own SidebarInset is a <main>, and the page's content is
+          already one — this is that element with the landmark left to the
+          content below, where it belongs. */}
+      <div className="bg-background relative flex min-w-0 flex-1 flex-col">
+        <AppHeader user={user} leading={<SidebarTrigger className="-ml-1" />} />
+        <main className="mx-auto w-full max-w-6xl min-w-0 flex-1 px-8 py-8">{children}</main>
       </div>
-    </>
+    </SidebarProvider>
   );
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Project } from "@/types";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { ProjectSidebar, type ProjectSidebarCounts } from "./ProjectSidebar";
 
 const push = vi.fn();
@@ -34,9 +35,16 @@ const counts: ProjectSidebarCounts = {
   gitlab: "1",
 };
 
-function renderSidebar(overrides: Partial<Parameters<typeof ProjectSidebar>[0]> = {}) {
+/** ProjectSidebar reads its open/collapsed state from the provider the layout
+ *  owns, so every case renders inside one. */
+function renderSidebar(
+  overrides: Partial<Parameters<typeof ProjectSidebar>[0]> = {},
+  providerProps: Partial<Parameters<typeof SidebarProvider>[0]> = {},
+) {
   return render(
-    <ProjectSidebar project={alpha} projects={[alpha, beta]} counts={counts} {...overrides} />,
+    <SidebarProvider {...providerProps}>
+      <ProjectSidebar project={alpha} projects={[alpha, beta]} counts={counts} {...overrides} />
+    </SidebarProvider>,
   );
 }
 

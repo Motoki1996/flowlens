@@ -121,6 +121,22 @@ Because the sidebar always names the project, breadcrumbs inside it start at the
 collection (`Backlogs / Sprint 1`), and the collection views drop them
 altogether — their own entry in the sidebar is already marked current.
 
+The sidebar is shadcn's `Sidebar` (`components/ui/sidebar.tsx`), so it
+**collapses** to an icon rail — from the toggle in the header, or ⌘B — and
+becomes a drawer below the mobile breakpoint. Its **width is draggable** by
+the handle on its right edge (`components/SidebarResizer.tsx`, ours: shadcn
+has no such handle, it only reads a `--sidebar-width` variable), which is also
+adjustable from the keyboard and resets on double-click. Both the open/closed
+state and the width persist in cookies and are read by the layout on the
+server (`lib/sidebar.ts`), never restored on the client afterwards — a screen
+must not paint at one width and then jump to another. A screen that is not
+under a project has no sidebar and therefore no toggle: `AppHeader`'s
+`leading` slot is empty there.
+
+Which means the sidebar is furniture, not content: an entry may be reduced to
+its icon at any time, so every section needs an icon that identifies it alone,
+and nothing may live *only* in the sidebar.
+
 `/dashboard`, the screen every login lands on, is the other deliberate
 exception: it is not a view of one object, but read-only teasers onto two —
 overdue/due-soon/waiting-to-start/high-priority slices of the `Task`

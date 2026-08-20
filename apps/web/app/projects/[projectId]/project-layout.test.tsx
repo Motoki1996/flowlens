@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { GitlabConnection, Project, User } from "@/types";
 
 const user: User = {
@@ -48,6 +49,18 @@ vi.mock("@/lib/api", () => ({
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
 }));
+// The layout reads the sidebar's remembered geometry from the request's
+// cookies; tests set them through this map.
+const cookieJar = new Map<string, string>();
+
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) => {
+      const value = cookieJar.get(name);
+      return value === undefined ? undefined : { name, value };
+    },
+  }),
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
   usePathname: () => "/projects/p1/tasks",
@@ -70,6 +83,7 @@ function renderLayout() {
 
 describe("ProjectLayout", () => {
   beforeEach(() => {
+    cookieJar.clear();
     getCurrentUser.mockResolvedValue(user);
     getProject.mockResolvedValue(project);
     getProjects.mockResolvedValue([project]);
@@ -106,6 +120,50 @@ describe("ProjectLayout", () => {
     render(await renderLayout());
     const nav = within(screen.getByRole("navigation", { name: "Project sections" }));
     expect(nav.getByRole("link", { name: /^GitLab connection/ })).toHaveTextContent("Error");
+  });
+
+  // The sidebar's geometry is server-rendered from the cookie rather than
+  // restored on the client, so the first paint is already the right shape.
+  it("opens the sidebar at its default width when nothing was remembered", async () => {
+    const { container } = render(await renderLayout());
+    expect(container.querySelector('[data-slot="sidebar-wrapper"]')).toHaveStyle({
+      "--sidebar-width": "240px",
+    });
+    expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      "data-state",
+      "expanded",
+    );
+  });
+
+  it("restores the sidebar's collapsed state and width from the request's cookies", async () => {
+    cookieJar.set("sidebar_state", "false");
+    cookieJar.set("flowlens_sidebar_width", "320");
+    const { container } = render(await renderLayout());
+    expect(container.querySelector('[data-slot="sidebar-wrapper"]')).toHaveStyle({
+      "--sidebar-width": "320px",
+    });
+    expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      "data-state",
+      "collapsed",
+    );
+  });
+
+  it("clamps a width cookie that is out of range", async () => {
+    cookieJar.set("flowlens_sidebar_width", "9999");
+    const { container } = render(await renderLayout());
+    expect(container.querySelector('[data-slot="sidebar-wrapper"]')).toHaveStyle({
+      "--sidebar-width": "480px",
+    });
+  });
+
+  it("collapses the sidebar from the header's toggle, and remembers it", async () => {
+    const { container } = render(await renderLayout());
+    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      "data-state",
+      "collapsed",
+    );
+    expect(document.cookie).toContain("sidebar_state=false");
   });
 
   it("still renders the screen when the sidebar's counts fail to load", async () => {

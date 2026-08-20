@@ -147,3 +147,89 @@
       Arial, sans-serif;
   }
 }
+
+/*
+ * Styling for components/Markdown.tsx — user-authored long text (task and
+ * backlog descriptions, task comments, project descriptions) rendered as
+ * GFM. Written against the theme tokens above rather than pulling in
+ * @tailwindcss/typography, whose `prose` defaults would need overriding
+ * token by token for this dark-only palette anyway.
+ */
+@layer components {
+  .markdown {
+    @apply text-sm leading-relaxed break-words;
+  }
+  .markdown > :first-child {
+    @apply mt-0;
+  }
+  .markdown > :last-child {
+    @apply mb-0;
+  }
+  .markdown p {
+    @apply my-2;
+  }
+  .markdown a {
+    @apply text-primary underline-offset-2 hover:underline;
+  }
+  .markdown h1,
+  .markdown h2,
+  .markdown h3,
+  .markdown h4,
+  .markdown h5,
+  .markdown h6 {
+    @apply text-foreground mt-4 mb-2 font-semibold;
+  }
+  .markdown h1 {
+    @apply text-base;
+  }
+  .markdown h2 {
+    @apply text-[0.9375rem];
+  }
+  .markdown h3,
+  .markdown h4,
+  .markdown h5,
+  .markdown h6 {
+    @apply text-sm;
+  }
+  .markdown ul {
+    @apply my-2 list-disc pl-5;
+  }
+  .markdown ol {
+    @apply my-2 list-decimal pl-5;
+  }
+  .markdown li {
+    @apply my-0.5;
+  }
+  /* A GFM task list draws its own checkbox, so kill the bullet. */
+  .markdown li:has(> input[type="checkbox"]) {
+    @apply list-none -ml-5;
+  }
+  .markdown li > input[type="checkbox"] {
+    @apply mr-1.5 align-middle;
+  }
+  .markdown code {
+    @apply bg-muted rounded px-1 py-0.5 font-mono text-[0.85em];
+  }
+  .markdown pre {
+    @apply bg-muted my-2 overflow-x-auto rounded-md border p-3;
+  }
+  .markdown pre code {
+    @apply bg-transparent p-0 text-xs;
+  }
+  .markdown blockquote {
+    @apply border-border text-muted-foreground my-2 border-l-2 pl-3;
+  }
+  .markdown hr {
+    @apply border-border my-3;
+  }
+  .markdown table {
+    @apply my-2 block w-full overflow-x-auto border-collapse text-left;
+  }
+  .markdown th,
+  .markdown td {
+    @apply border-border border px-2 py-1 align-top;
+  }
+  .markdown th {
+    @apply text-foreground font-medium;
+  }
+}

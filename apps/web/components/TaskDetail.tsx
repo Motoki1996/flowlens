@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { AIContextSection } from "@/components/AIContextSection";
+import { Markdown } from "@/components/Markdown";
 import { TaskActivitySection } from "@/components/TaskActivitySection";
 import { TaskDependencySection } from "@/components/TaskDependencySection";
 import { TaskEditForm } from "@/components/TaskEditForm";
@@ -347,8 +348,8 @@ export function TaskDetail({
                     </Badge>
                   </div>
                   {task.description ? (
-                    <CardDescription className="mt-1.5 whitespace-pre-wrap">
-                      {task.description}
+                    <CardDescription className="mt-1.5">
+                      <Markdown>{task.description}</Markdown>
                     </CardDescription>
                   ) : null}
                   <div className="mt-2">

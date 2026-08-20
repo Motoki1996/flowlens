@@ -279,10 +279,14 @@ function NewTaskForm({
         <Textarea
           id="new-task-description"
           name="description"
+          aria-describedby="new-task-description-hint"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
         />
+        <p id="new-task-description-hint" className="text-muted-foreground mt-1 text-xs">
+          Markdown supported — pasted URLs become links.
+        </p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div>

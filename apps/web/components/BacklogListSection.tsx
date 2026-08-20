@@ -243,10 +243,14 @@ function NewBacklogForm({
         <Textarea
           id="new-backlog-description"
           name="description"
+          aria-describedby="new-backlog-description-hint"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
         />
+        <p id="new-backlog-description-hint" className="text-muted-foreground mt-1 text-xs">
+          Markdown supported — pasted URLs become links.
+        </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <DateField
@@ -461,10 +465,17 @@ function EditBacklogForm({
         <Textarea
           id={`edit-backlog-description-${backlog.id}`}
           name="description"
+          aria-describedby={`edit-backlog-description-${backlog.id}-hint`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
         />
+        <p
+          id={`edit-backlog-description-${backlog.id}-hint`}
+          className="text-muted-foreground mt-1 text-xs"
+        >
+          Markdown supported — pasted URLs become links.
+        </p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <DateField

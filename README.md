@@ -1213,6 +1213,31 @@ for space-separated words. Both Task collection screens' search boxes are
 this same match: the project-scoped one stopped matching substrings
 client-side when its filtering moved to the API (issue #143, above).
 
+### Markdown descriptions
+
+A task's and a backlog's `description`, a project's `description` and a task
+comment's body are all stored as plain text and **rendered as GitHub-flavoured
+Markdown** in the web app — headings, lists, task lists, tables, blockquotes,
+fenced code and links. A bare URL pasted into any of them (`https://…`,
+`www.…`) becomes a clickable link on its own, with no `[text](url)` needed.
+
+This is a rendering change only: nothing about the stored value or the API
+changed, and a description that contains no Markdown syntax reads exactly as
+it always did. It also lines the web app up with GitLab, whose issue
+descriptions — the other end of the two-way sync — have always been Markdown.
+
+Two deliberate limits:
+
+- **Raw HTML in a description is shown as text, not rendered.** A description
+  can arrive from a GitLab issue written by anyone with access to that
+  project, so the renderer (`react-markdown` + `remark-gfm`) builds a React
+  tree instead of setting `innerHTML`, and raw HTML is dropped rather than
+  sanitized. Links are restricted to `http`, `https` and `mailto`.
+- **Images are shown as their alt text rather than fetched.** GitLab stores an
+  issue's attachments as paths relative to its own project (`/uploads/…`),
+  which FlowLens cannot resolve, so rendering them would reliably produce a
+  broken image.
+
 ### Task & backlog priority
 
 A task and a backlog each carry a `priority` — one of `low`, `medium`, `high`,

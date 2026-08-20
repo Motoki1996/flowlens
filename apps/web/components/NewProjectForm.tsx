@@ -77,10 +77,14 @@ export function NewProjectForm({ onCancel }: { onCancel: () => void }) {
         <Textarea
           id="project-description"
           name="description"
+          aria-describedby="project-description-hint"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
         />
+        <p id="project-description-hint" className="text-muted-foreground mt-1 text-xs">
+          Markdown supported — pasted URLs become links.
+        </p>
       </div>
 
       <div className="flex gap-2">

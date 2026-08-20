@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
+import { Markdown } from "@/components/Markdown";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -81,7 +82,7 @@ export function BacklogDetail({
             <h1 className="text-foreground text-xl leading-none font-semibold">{backlog.name}</h1>
           </div>
           <CardDescription className="mt-1.5">
-            {backlog.description || "No description"}
+            {backlog.description ? <Markdown>{backlog.description}</Markdown> : "No description"}
           </CardDescription>
         </CardHeader>
         <CardContent>

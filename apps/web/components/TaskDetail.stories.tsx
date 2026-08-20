@@ -71,6 +71,20 @@ export const Unlinked: Story = {
   args: { task: makeTask({ gitlab: null }), backlogs: [backlog], tasks: [], dependencies: [] },
 };
 
+/** A Markdown description: headings, lists, code and a bare URL that autolinks.
+ *  A description round-trips with a GitLab issue's, which is Markdown too. */
+export const MarkdownDescription: Story = {
+  args: {
+    task: makeTask({
+      description:
+        "## Steps to reproduce\n\n1. Open the **board** view\n2. Drag a card between columns\n\nSee https://gitlab.example.com/group/demo/-/issues/7 and the [design doc](https://example.com/design).\n\n> The drop target is computed in `useDragOrder`.\n\n```ts\nconst next = reorder(items, from, to);\n```\n",
+    }),
+    backlogs: [backlog],
+    tasks: [],
+    dependencies: [],
+  },
+};
+
 /** Synced: the task pushed cleanly and links to its GitLab issue. */
 export const Synced: Story = {
   args: {

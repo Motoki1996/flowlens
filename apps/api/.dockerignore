@@ -1,0 +1,6 @@
+# The runtime stage copies only the built binary, so nothing here can reach
+# the published image — this just keeps the build context small.
+bin
+tmp
+.env
+.env.*

@@ -115,7 +115,7 @@ function EditProjectForm({
           aria-describedby="edit-project-description-hint"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="mt-1"
+          className="mt-1 min-h-[150px]"
         />
         <p id="edit-project-description-hint" className="text-muted-foreground mt-1 text-xs">
           Markdown supported — pasted URLs become links.

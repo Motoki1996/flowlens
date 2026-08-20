@@ -6,6 +6,7 @@ import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { PasswordField } from "@/components/PasswordField";
 
 export function LoginForm() {
   const router = useRouter();
@@ -60,20 +61,14 @@ export function LoginForm() {
         />
       </div>
 
-      <div>
-        <label htmlFor="password" className="text-foreground block text-sm font-medium">
-          Password
-        </label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          required
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="border-input bg-input/30 text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 block w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
-        />
-      </div>
+      <PasswordField
+        id="password"
+        label="Password"
+        autoComplete="current-password"
+        required
+        value={password}
+        onChange={setPassword}
+      />
 
       <Button type="submit" disabled={pending} className="w-full">
         {pending ? "Signing in…" : "Sign in"}

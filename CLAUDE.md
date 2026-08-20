@@ -128,7 +128,8 @@ Dev Container note: `.env` records the host port, but the Makefile keeps the env
 
 `docs/architecture.md` for detail; `docs/ui-design.md` for the OOUI rules every web screen follows; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first, OOUI, outbox worker, per-project GitLab connection).
 
-`docs/self-hosting.md` is the install/upgrade contract for self-hosters;
+`docs/self-hosting.md` is the install/upgrade contract for self-hosters,
+and `docs/releasing.md` the maintainer's side of the same event;
 `CONTRIBUTING.md` and `SECURITY.md` are the OSS entry points.
 
 `docs/plans/` holds **time-limited** implementation plans, not conventions — read [`docs/plans/README.md`](docs/plans/README.md) before adding one, and delete a plan once its work ships. There is no plan in flight right now; the issue-sync MVP plan shipped and was deleted once `README.md`/`docs/ui-design.md` absorbed what survived it.

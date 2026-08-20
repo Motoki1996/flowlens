@@ -68,6 +68,12 @@ A few that catch people out:
   tests can use its `FakeClient`.
 - **Fakes over mocks**, table-driven cases. See `docs/testing.md`.
 
+## Cutting a release
+
+Releases are tag-driven and maintainer-only; the procedure, including the
+clean-install check that has to happen *before* the tag, is
+[`docs/releasing.md`](docs/releasing.md).
+
 ## Reporting a security issue
 
 Please do not open a public issue — see [`SECURITY.md`](SECURITY.md).

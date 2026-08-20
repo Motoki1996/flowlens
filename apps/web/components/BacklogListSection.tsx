@@ -195,7 +195,7 @@ function NewBacklogForm({
           aria-describedby="new-backlog-description-hint"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="mt-1"
+          className="mt-1 min-h-[150px]"
         />
         <p
           id="new-backlog-description-hint"

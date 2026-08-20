@@ -198,7 +198,7 @@ export function BacklogEditForm({
           aria-describedby={`edit-backlog-description-${backlog.id}-hint`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="mt-1"
+          className="mt-1 min-h-[150px]"
         />
         <p
           id={`edit-backlog-description-${backlog.id}-hint`}

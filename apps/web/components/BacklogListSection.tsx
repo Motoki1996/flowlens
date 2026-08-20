@@ -8,7 +8,7 @@ import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { backlogPath, tasksPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
-import { fromApiDate, toApiDate } from "@/lib/dates";
+import { toApiDate } from "@/lib/dates";
 import { backlogScheduleLabel } from "@/lib/backlogs";
 import { backlogTaskCompletion } from "@/lib/timeline";
 import { useViewMode } from "@/lib/useViewMode";
@@ -34,6 +34,11 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
+import {
+  BacklogEditForm,
+  LinkedGitlabProjectField,
+} from "@/components/BacklogEditForm";
+import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { BacklogBoardSection } from "@/components/BacklogBoardSection";
@@ -89,62 +94,6 @@ function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
 /** The Select value standing in for "no link of this backlog's own" — Radix
  *  Select has no empty-string item, and the API's own spelling for it is
  *  `null`, which a Select can't hold either. */
-const PROJECT_DEFAULT_LINK = "project-default";
-
-/**
- * LinkedGitlabProjectField picks the GitLab project this backlog's new tasks
- * get their issue created in (issue #180). Choosing "Project default" sends
- * null, which falls the backlog back to the project's own default link.
- *
- * It renders nothing when the project has no linked GitLab project at all:
- * there is no destination to choose between, and the field would only raise a
- * question the screen can't answer.
- */
-function LinkedGitlabProjectField({
-  id,
-  links,
-  value,
-  onChange,
-}: {
-  id: string;
-  links: LinkedGitlabProject[];
-  value: string | null;
-  onChange: (value: string | null) => void;
-}) {
-  if (links.length === 0) return null;
-  const projectDefault = links.find((l) => l.isDefault);
-
-  return (
-    <div>
-      <label htmlFor={id} className="text-foreground block text-sm font-medium">
-        GitLab project for new issues
-      </label>
-      <Select
-        value={value ?? PROJECT_DEFAULT_LINK}
-        onValueChange={(next) =>
-          onChange(next === PROJECT_DEFAULT_LINK ? null : next)
-        }
-      >
-        <SelectTrigger id={id} className="mt-1 w-full sm:w-80">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={PROJECT_DEFAULT_LINK}>
-            {projectDefault
-              ? `Project default (${projectDefault.pathWithNamespace})`
-              : "Project default"}
-          </SelectItem>
-          {links.map((link) => (
-            <SelectItem key={link.id} value={link.id}>
-              {link.pathWithNamespace}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
 /** NewBacklogForm is the inline creation form shown in the backlog list. */
 function NewBacklogForm({
   projectId,
@@ -248,7 +197,10 @@ function NewBacklogForm({
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
         />
-        <p id="new-backlog-description-hint" className="text-muted-foreground mt-1 text-xs">
+        <p
+          id="new-backlog-description-hint"
+          className="text-muted-foreground mt-1 text-xs"
+        >
           Markdown supported — pasted URLs become links.
         </p>
       </div>
@@ -357,304 +309,6 @@ function NewBacklogForm({
         </Button>
       </div>
     </form>
-  );
-}
-
-/** EditBacklogForm is the inline edit form shown in place of one backlog row.
- *  It covers the schedule as well as the name, so the action is "Edit", not
- *  "Rename". */
-function EditBacklogForm({
-  backlog,
-  links,
-  onSaved,
-  onCancel,
-}: {
-  backlog: Backlog;
-  links: LinkedGitlabProject[];
-  onSaved: () => void;
-  onCancel: () => void;
-}) {
-  const router = useRouter();
-  const [name, setName] = useState(backlog.name);
-  const [description, setDescription] = useState(backlog.description);
-  const [startDate, setStartDate] = useState(fromApiDate(backlog.startDate));
-  const [dueOn, setDueOn] = useState(fromApiDate(backlog.dueOn));
-  const [priority, setPriority] = useState<Priority>(backlog.priority);
-  const [progress, setProgress] = useState<Progress>(backlog.progress);
-  const [linkId, setLinkId] = useState<string | null>(
-    backlog.defaultLinkedGitlabProjectId,
-  );
-  const [baseBranch, setBaseBranch] = useState(backlog.baseBranch);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) {
-      setError("Backlog name is required.");
-      return;
-    }
-
-    setPending(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`,
-        {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json", ...csrfHeaders() },
-          body: JSON.stringify({
-            name,
-            description,
-            position: backlog.position,
-            startDate: toApiDate(startDate),
-            dueOn: toApiDate(dueOn),
-            priority,
-            progress,
-            defaultLinkedGitlabProjectId: linkId,
-            baseBranch,
-          }),
-        },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.error.message ?? "Failed to update backlog.");
-        return;
-      }
-      router.refresh();
-      onSaved();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <form
-      onSubmit={handleSubmit}
-      className="space-y-3"
-      aria-label={`Edit ${backlog.name}`}
-    >
-      {error ? (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-      <div>
-        <label
-          htmlFor={`edit-backlog-name-${backlog.id}`}
-          className="text-foreground block text-sm font-medium"
-        >
-          Name
-        </label>
-        <Input
-          id={`edit-backlog-name-${backlog.id}`}
-          name="name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="mt-1"
-        />
-      </div>
-      <div>
-        <label
-          htmlFor={`edit-backlog-description-${backlog.id}`}
-          className="text-foreground block text-sm font-medium"
-        >
-          Description
-        </label>
-        <Textarea
-          id={`edit-backlog-description-${backlog.id}`}
-          name="description"
-          aria-describedby={`edit-backlog-description-${backlog.id}-hint`}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="mt-1"
-        />
-        <p
-          id={`edit-backlog-description-${backlog.id}-hint`}
-          className="text-muted-foreground mt-1 text-xs"
-        >
-          Markdown supported — pasted URLs become links.
-        </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <DateField
-          id={`edit-backlog-start-date-${backlog.id}`}
-          label="Start date"
-          value={startDate}
-          onChange={setStartDate}
-        />
-        <DateField
-          id={`edit-backlog-due-on-${backlog.id}`}
-          label="Due date"
-          value={dueOn}
-          onChange={setDueOn}
-        />
-      </div>
-      <div>
-        <label
-          htmlFor={`edit-backlog-priority-${backlog.id}`}
-          className="text-foreground block text-sm font-medium"
-        >
-          Priority
-        </label>
-        <Select
-          value={priority}
-          onValueChange={(value) => setPriority(value as Priority)}
-        >
-          <SelectTrigger
-            id={`edit-backlog-priority-${backlog.id}`}
-            className="mt-1 w-full sm:w-40"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="urgent">Urgent</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <label
-          htmlFor={`edit-backlog-progress-${backlog.id}`}
-          className="text-foreground block text-sm font-medium"
-        >
-          Progress
-        </label>
-        <Select
-          value={progress}
-          onValueChange={(value) => setProgress(value as Progress)}
-        >
-          <SelectTrigger
-            id={`edit-backlog-progress-${backlog.id}`}
-            className="mt-1 w-full sm:w-40"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PROGRESS_COLUMNS.map((option) => (
-              <SelectItem key={option.progress} value={option.progress}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <LinkedGitlabProjectField
-        id={`edit-backlog-linked-gitlab-project-${backlog.id}`}
-        links={links}
-        value={linkId}
-        onChange={setLinkId}
-      />
-      <div>
-        <label
-          htmlFor={`edit-backlog-base-branch-${backlog.id}`}
-          className="text-foreground block text-sm font-medium"
-        >
-          Base branch
-        </label>
-        <Input
-          id={`edit-backlog-base-branch-${backlog.id}`}
-          name="baseBranch"
-          value={baseBranch}
-          onChange={(e) => setBaseBranch(e.target.value)}
-          placeholder="main"
-          className="mt-1 sm:w-80"
-        />
-        <p className="text-muted-foreground mt-1 text-xs">
-          Optional. The branch tasks in this backlog are meant to branch from.
-        </p>
-      </div>
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? "Saving…" : "Save"}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={onCancel}
-          disabled={pending}
-        >
-          Cancel
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-/**
- * DeleteBacklogButton interposes an inline confirmation before deleting,
- * spelling out that the backlog's tasks move to Unclassified rather than being
- * deleted with it.
- */
-function DeleteBacklogButton({ backlog }: { backlog: Backlog }) {
-  const router = useRouter();
-  const [confirming, setConfirming] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleDelete() {
-    setPending(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `${API_PUBLIC_URL}/api/v1/backlogs/${backlog.id}`,
-        {
-          method: "DELETE",
-          credentials: "include",
-          headers: csrfHeaders(),
-        },
-      );
-      if (!res.ok && res.status !== 204) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.error.message ?? "Failed to delete backlog.");
-        setPending(false);
-        return;
-      }
-      router.refresh();
-    } catch {
-      setPending(false);
-    }
-  }
-
-  if (confirming) {
-    return (
-      <div className="flex flex-col items-end gap-1">
-        {error ? (
-          <span className="text-destructive text-xs">{error}</span>
-        ) : null}
-        <span className="text-foreground text-xs">
-          Its tasks will move to Unclassified. Delete this backlog?
-        </span>
-        <div className="flex gap-2">
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={handleDelete}
-            disabled={pending}
-          >
-            {pending ? "Deleting…" : "Confirm delete"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setConfirming(false)}
-            disabled={pending}
-          >
-            Cancel
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <Button variant="destructive" size="sm" onClick={() => setConfirming(true)}>
-      Delete
-    </Button>
   );
 }
 
@@ -914,7 +568,10 @@ export function BacklogListSection({
                   hidden), but "New backlog" must stay reachable on an empty
                   project. Left off entirely on a load error, alongside the
                   filter row below, the same way TaskListSection's does. */}
-              {!error && (backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0) ? (
+              {!error &&
+              (backlogs.length > 0 ||
+                hasActiveFilters ||
+                unclassifiedCount > 0) ? (
                 <ViewModeToggle value={view} onChange={setView} />
               ) : null}
               {!creating ? (
@@ -934,7 +591,8 @@ export function BacklogListSection({
               and narrow the timeline the same way they narrow the list. Only
               shown once there's something to filter, same condition as the
               view toggle above. */}
-          {!error && (backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0) ? (
+          {!error &&
+          (backlogs.length > 0 || hasActiveFilters || unclassifiedCount > 0) ? (
             <div className="flex flex-wrap items-center gap-2">
               <TaskSearchBox
                 value={search}
@@ -1076,10 +734,16 @@ export function BacklogListSection({
                       }}
                     >
                       {editingId === backlog.id ? (
-                        <EditBacklogForm
+                        <BacklogEditForm
                           backlog={backlog}
                           links={links}
-                          onSaved={() => setEditingId(null)}
+                          onSaved={() => {
+                            // The row is rendered from the server-fetched
+                            // list, so the saved values only appear after a
+                            // refresh.
+                            router.refresh();
+                            setEditingId(null);
+                          }}
                           onCancel={() => setEditingId(null)}
                         />
                       ) : (
@@ -1177,7 +841,10 @@ export function BacklogListSection({
                             >
                               Edit
                             </Button>
-                            <DeleteBacklogButton backlog={backlog} />
+                            <BacklogDeleteButton
+                              backlog={backlog}
+                              onDeleted={() => router.refresh()}
+                            />
                           </div>
                         </div>
                       )}

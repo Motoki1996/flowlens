@@ -14,8 +14,13 @@ test("signup, create project, create task, then log out", async ({ page }) => {
   await page.goto("/signup");
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Email").fill(`${username}@example.com`);
+  // exact: true on both, because PasswordField's show/hide toggle carries an
+  // aria-label derived from the field's own label ("Show password", "Show
+  // confirm password"). Playwright's getByLabel is a case-insensitive
+  // substring match by default, so "Password" would also match the confirm
+  // field and "Confirm password" would also match its toggle button.
   await page.getByLabel("Password", { exact: true }).fill("hunter22");
-  await page.getByLabel("Confirm password").fill("hunter22");
+  await page.getByLabel("Confirm password", { exact: true }).fill("hunter22");
   await page.getByRole("button", { name: "Create account" }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/);

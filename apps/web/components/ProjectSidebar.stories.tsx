@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/nextjs-vite";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { ProjectSidebar } from "./ProjectSidebar";
 import type { Project } from "@/types";
 
@@ -18,6 +19,15 @@ const projects = [project("p1", "Alpha"), project("p2", "Beta")];
 const meta = {
   title: "Components/ProjectSidebar",
   component: ProjectSidebar,
+  // The sidebar is a child of the provider the project layout owns; without
+  // one it has no open/collapsed state to read.
+  decorators: [
+    (Story) => (
+      <SidebarProvider>
+        <Story />
+      </SidebarProvider>
+    ),
+  ],
   parameters: {
     nextjs: { appDirectory: true, navigation: { pathname: "/projects/p1/tasks" } },
   },
@@ -51,4 +61,15 @@ export const CountsUnavailable: Story = {
   args: {
     counts: { backlogs: null, openTasks: null, totalTasks: null, mergeRequests: null, gitlab: null },
   },
+};
+
+/** Collapsed to its icon rail: each section is known by its icon alone. */
+export const Collapsed: Story = {
+  decorators: [
+    (Story) => (
+      <SidebarProvider defaultOpen={false}>
+        <Story />
+      </SidebarProvider>
+    ),
+  ],
 };

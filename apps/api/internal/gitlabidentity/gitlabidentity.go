@@ -15,13 +15,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/gitlaburl"
 	"github.com/google/uuid"
 )
 
-// ErrInvalidBaseURL is returned when a GitLab base URL is empty.
+// ErrInvalidBaseURL is returned when a GitLab base URL is empty or not an
+// absolute http(s) URL.
 var ErrInvalidBaseURL = errors.New("gitlabidentity: base URL must not be empty")
 
 // Identity is the API-facing representation of one registered GitLab
@@ -61,9 +62,14 @@ type UpsertInput struct {
 
 // Upsert registers userID's GitLab identity for one base URL, replacing any
 // previously registered identity for that same (userID, baseURL) pair.
+// baseURL is normalized with internal/gitlaburl, the same normalization
+// internal/gitlabconn applies to a project's connection base_url —
+// ?assignee=me joins the two on equality, so registering
+// "https://gitlab.example.com/" must match a connection saved as
+// "https://gitlab.example.com".
 func (s *Service) Upsert(ctx context.Context, userID uuid.UUID, in UpsertInput) (Identity, error) {
-	baseURL := strings.TrimSpace(in.GitlabBaseURL)
-	if baseURL == "" {
+	baseURL, err := gitlaburl.Normalize(in.GitlabBaseURL)
+	if err != nil {
 		return Identity{}, ErrInvalidBaseURL
 	}
 	row, err := s.q.UpsertUserGitlabIdentity(ctx, db.UpsertUserGitlabIdentityParams{

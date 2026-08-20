@@ -12,7 +12,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-/** Strips a trailing slash so `${base}/api/v4/user` never doubles up. */
+/**
+ * Strips a trailing slash so `${base}/api/v4/user` never doubles up, and so
+ * the submitted gitlabBaseUrl matches how internal/gitlabconn normalizes a
+ * project's connection base_url — ?assignee=me joins the two on equality.
+ * The API re-normalizes on save regardless; this just avoids a round trip
+ * failing to match for the common "typed a trailing slash" case.
+ */
 function normalizeBaseUrl(baseUrl: string) {
   return baseUrl.trim().replace(/\/+$/, "");
 }
@@ -51,7 +57,7 @@ function RegisterIdentityForm({ onSaved }: { onSaved: () => void }) {
         credentials: "include",
         headers: { "Content-Type": "application/json", ...csrfHeaders() },
         body: JSON.stringify({
-          gitlabBaseUrl: baseUrl.trim(),
+          gitlabBaseUrl: normalizeBaseUrl(baseUrl),
           gitlabUserId: Number(gitlabUserId),
           gitlabUsername: gitlabUsername.trim(),
         }),

@@ -56,6 +56,46 @@ func TestService_Upsert(t *testing.T) {
 	})
 }
 
+// TestService_Upsert_NormalizesBaseURL verifies gitlabidentity normalizes
+// gitlabBaseUrl the same way internal/gitlabconn normalizes a project's
+// connection base_url, since ?assignee=me joins the two on equality — a
+// mismatch (e.g. a trailing slash the connection strips but the identity
+// didn't) silently zeroes out the filter instead of erroring.
+func TestService_Upsert_NormalizesBaseURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		want    string
+		wantErr error
+	}{
+		{"trims trailing slash", "https://gitlab.example.com/", "https://gitlab.example.com", nil},
+		{"trims trailing slashes and path slash", "https://gitlab.example.com/gitlab/", "https://gitlab.example.com/gitlab", nil},
+		{"accepts http", "http://gitlab.internal", "http://gitlab.internal", nil},
+		{"rejects missing scheme", "gitlab.example.com", "", gitlabidentity.ErrInvalidBaseURL},
+		{"rejects non-http(s) scheme", "ftp://gitlab.example.com", "", gitlabidentity.ErrInvalidBaseURL},
+		{"rejects empty", "", "", gitlabidentity.ErrInvalidBaseURL},
+		{"rejects whitespace only", "   ", "", gitlabidentity.ErrInvalidBaseURL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			user := q.SeedUser("dana", "dana@example.com")
+			s := gitlabidentity.NewService(q)
+
+			identity, err := s.Upsert(context.Background(), user.ID, gitlabidentity.UpsertInput{
+				GitlabBaseURL: tt.baseURL,
+				GitlabUserID:  1,
+			})
+			if tt.wantErr != nil {
+				assert.True(t, errors.Is(err, tt.wantErr))
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, identity.GitlabBaseURL)
+		})
+	}
+}
+
 func TestService_ListForUser(t *testing.T) {
 	q := dbtest.New()
 	user := q.SeedUser("bob", "bob@example.com")

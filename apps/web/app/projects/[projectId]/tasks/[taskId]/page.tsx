@@ -14,7 +14,7 @@ import {
   getTasks,
 } from "@/lib/api";
 import { tasksPath } from "@/lib/routes";
-import type { ApiToken, GitlabLabelOption, GitlabMemberOption } from "@/types";
+import type { ApiToken, GitlabLabelOption, GitlabMemberOption, MergeRequest } from "@/types";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { TaskDetail } from "@/components/TaskDetail";
 
@@ -76,9 +76,11 @@ export default async function TaskPage({
   // The merge requests that reference this task (issue #112's reverse
   // link) — fetched through the same project-scoped endpoint the
   // MergeRequest collection uses, filtered to this one task.
-  let taskMergeRequests: Awaited<ReturnType<typeof getMergeRequests>> = [];
+  let taskMergeRequests: MergeRequest[] = [];
   try {
-    taskMergeRequests = await getMergeRequests(projectId, { taskId });
+    // A task has at most a handful of merge requests, so its own card wants
+    // the first page and never pages further.
+    taskMergeRequests = (await getMergeRequests(projectId, { taskId })).mergeRequests;
   } catch {
     // Left empty; the rest of the task single view still renders.
   }

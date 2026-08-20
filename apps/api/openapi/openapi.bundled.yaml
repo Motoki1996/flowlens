@@ -3011,15 +3011,26 @@ paths:
             type: string
             enum:
               - updated
+        - in: query
+          name: page
+          description: 1-based page number. Defaults to the first page.
+          schema:
+            type: integer
+            minimum: 1
+        - in: query
+          name: per_page
+          description: Page size, defaulting to 30 and clamped to 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
       responses:
         '200':
-          description: Matching merge requests
+          description: One page of matching merge requests
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/MergeRequest'
+                $ref: '#/components/schemas/MergeRequestsPage'
         '401':
           description: Not authenticated
           content:
@@ -4751,6 +4762,19 @@ components:
             - string
             - 'null'
           format: date-time
+    MergeRequestsPage:
+      type: object
+      properties:
+        mergeRequests:
+          type: array
+          items:
+            $ref: '#/components/schemas/MergeRequest'
+        nextPage:
+          type: integer
+          description: 0 when there is no next page.
+        totalCount:
+          type: integer
+          description: How many merge requests match the filter across every page.
   parameters:
     projectID:
       in: path

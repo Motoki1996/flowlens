@@ -3663,38 +3663,80 @@ func (f *FakeQuerier) projectIDForRepository(repositoryID uuid.UUID) (uuid.UUID,
 	return conn.ProjectID, true
 }
 
-// ListMergeRequestsByProject mirrors the SQL: scoped to projectID via
-// repositories/linked_gitlab_projects/gitlab_connections, gated by
-// ownerUserID's project membership, then state/author/task_id/since/until
-// filters, sorted by gitlab_updated_at or gitlab_created_at DESC (created_at
-// as tiebreak).
-func (f *FakeQuerier) ListMergeRequestsByProject(_ context.Context, arg db.ListMergeRequestsByProjectParams) ([]db.MergeRequest, error) {
-	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
-		return []db.MergeRequest{}, nil
+// mergeRequestFilter is the state/author/task_id/since/until predicate
+// ListMergeRequestsByProject and CountMergeRequestsByProject share, kept in
+// one place for the same reason the two SQL queries repeat one WHERE clause:
+// a count that disagrees with its list is worse than no count.
+type mergeRequestFilter struct {
+	ProjectID   uuid.UUID
+	OwnerUserID uuid.UUID
+	State       string
+	Author      string
+	TaskID      pgtype.UUID
+	Since       pgtype.Timestamptz
+	Until       pgtype.Timestamptz
+}
+
+// matchingMergeRequests returns every merge request passing filter, unsorted.
+func (f *FakeQuerier) matchingMergeRequests(filter mergeRequestFilter) []db.MergeRequest {
+	if !f.hasMembership(filter.ProjectID, filter.OwnerUserID) {
+		return []db.MergeRequest{}
 	}
 	items := []db.MergeRequest{}
 	for _, m := range f.mergeRequestsByID {
 		projectID, ok := f.projectIDForRepository(m.RepositoryID)
-		if !ok || projectID != arg.ProjectID {
+		if !ok || projectID != filter.ProjectID {
 			continue
 		}
-		if arg.State != "" && m.State != arg.State {
+		if filter.State != "" && m.State != filter.State {
 			continue
 		}
-		if arg.Author != "" && m.AuthorGitlabUsername != arg.Author {
+		if filter.Author != "" && m.AuthorGitlabUsername != filter.Author {
 			continue
 		}
-		if arg.TaskID.Valid && m.TaskID != arg.TaskID {
+		if filter.TaskID.Valid && m.TaskID != filter.TaskID {
 			continue
 		}
-		if arg.Since.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.Before(arg.Since.Time)) {
+		if filter.Since.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.Before(filter.Since.Time)) {
 			continue
 		}
-		if arg.Until.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.After(arg.Until.Time)) {
+		if filter.Until.Valid && (!m.GitlabCreatedAt.Valid || m.GitlabCreatedAt.Time.After(filter.Until.Time)) {
 			continue
 		}
 		items = append(items, m)
 	}
+	return items
+}
+
+// CountMergeRequestsByProject mirrors the SQL: ListMergeRequestsByProject's
+// filters and scoping, without its ordering or paging.
+func (f *FakeQuerier) CountMergeRequestsByProject(_ context.Context, arg db.CountMergeRequestsByProjectParams) (int64, error) {
+	return int64(len(f.matchingMergeRequests(mergeRequestFilter{
+		ProjectID:   arg.ProjectID,
+		OwnerUserID: arg.OwnerUserID,
+		State:       arg.State,
+		Author:      arg.Author,
+		TaskID:      arg.TaskID,
+		Since:       arg.Since,
+		Until:       arg.Until,
+	}))), nil
+}
+
+// ListMergeRequestsByProject mirrors the SQL: scoped to projectID via
+// repositories/linked_gitlab_projects/gitlab_connections, gated by
+// ownerUserID's project membership, then state/author/task_id/since/until
+// filters, sorted by gitlab_updated_at or gitlab_created_at DESC (created_at
+// as tiebreak), then LIMIT/OFFSET paged.
+func (f *FakeQuerier) ListMergeRequestsByProject(_ context.Context, arg db.ListMergeRequestsByProjectParams) ([]db.MergeRequest, error) {
+	items := f.matchingMergeRequests(mergeRequestFilter{
+		ProjectID:   arg.ProjectID,
+		OwnerUserID: arg.OwnerUserID,
+		State:       arg.State,
+		Author:      arg.Author,
+		TaskID:      arg.TaskID,
+		Since:       arg.Since,
+		Until:       arg.Until,
+	})
 	sort.Slice(items, func(i, j int) bool {
 		a, b := items[i], items[j]
 		primary := func(m db.MergeRequest) pgtype.Timestamptz {
@@ -3713,6 +3755,16 @@ func (f *FakeQuerier) ListMergeRequestsByProject(_ context.Context, arg db.ListM
 			return a.CreatedAt.Time.After(b.CreatedAt.Time)
 		}
 	})
+
+	offset := int(arg.OffsetCount)
+	if offset > len(items) {
+		offset = len(items)
+	}
+	items = items[offset:]
+	limit := int(arg.LimitCount)
+	if limit < len(items) {
+		items = items[:limit]
+	}
 	return items, nil
 }
 

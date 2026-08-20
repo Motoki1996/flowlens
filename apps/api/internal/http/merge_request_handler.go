@@ -22,14 +22,16 @@ func mergeRequestIDFromURL(r *http.Request) (uuid.UUID, bool) {
 }
 
 // parseMergeRequestListFilter reads the ?state=, ?author=, ?taskId=,
-// ?since=, ?until= and ?sort= query parameters. state accepts a GitLab MR
+// ?since=, ?until=, ?sort=, ?page= and ?per_page= query parameters. state accepts a GitLab MR
 // state ("opened", "merged", "closed", "locked"); since/until are
 // YYYY-MM-DD dates bounding gitlab_created_at, the same format
 // parseDateQueryParam already uses for task due/start dates; sort accepts
 // "updated" to rank by gitlab_updated_at instead of the default
 // gitlab_created_at. taskId lets the Task single view fetch its own related
 // merge requests through this same endpoint rather than a separate route.
-// Any may be omitted to mean "no filter"/"default order".
+// page/per_page are the same 1-based paging parameters
+// handleListWebhookEvents takes, clamped in mergerequest.Service.
+// Any may be omitted to mean "no filter"/"default order"/"first page".
 func parseMergeRequestListFilter(r *http.Request) (mergerequest.ListFilter, error) {
 	var filter mergerequest.ListFilter
 
@@ -71,12 +73,17 @@ func parseMergeRequestListFilter(r *http.Request) (mergerequest.ListFilter, erro
 		filter.Sort = v
 	}
 
+	filter.Page = atoiOrZero(r.URL.Query().Get("page"))
+	filter.PerPage = atoiOrZero(r.URL.Query().Get("per_page"))
+
 	return filter, nil
 }
 
-// handleListMergeRequests returns the project's merge requests matching the
-// state/author/taskId/since/until query filters, scoped to the
-// authenticated user.
+// handleListMergeRequests returns one page of the project's merge requests
+// matching the state/author/taskId/since/until query filters, scoped to the
+// authenticated user. The response is the {mergeRequests, nextPage} envelope
+// handleListWebhookEvents uses rather than a bare array: a long-lived
+// repository holds far more merge requests than one response should carry.
 func (s *Server) handleListMergeRequests(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	projectID, ok := projectIDFromURL(r)
@@ -91,12 +98,16 @@ func (s *Server) handleListMergeRequests(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	mrs, err := s.mergeRequests.List(r.Context(), u.ID, projectID, filter)
+	page, err := s.mergeRequests.List(r.Context(), u.ID, projectID, filter)
 	if err != nil {
 		writeMergeRequestError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, mrs)
+	writeJSON(w, http.StatusOK, struct {
+		MergeRequests []mergerequest.MergeRequest `json:"mergeRequests"`
+		NextPage      int                         `json:"nextPage"`
+		TotalCount    int64                       `json:"totalCount"`
+	}{MergeRequests: page.MergeRequests, NextPage: page.NextPage, TotalCount: page.TotalCount})
 }
 
 // handleGetMergeRequest returns a single merge request, scoped to the

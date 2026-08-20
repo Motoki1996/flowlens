@@ -330,7 +330,9 @@ export async function getTask(id: string): Promise<Task | null> {
  *  #112) — every one is optional, meaning "no filter". since/until are plain
  *  YYYY-MM-DD strings, the same date-only convention AllTasksFilter's
  *  dueBefore/dueAfter use. taskId lets the Task single view fetch its own
- *  related merge requests through this same endpoint. */
+ *  related merge requests through this same endpoint. page/perPage are the
+ *  API's 1-based paging: a repository synced for a year holds thousands of
+ *  merged merge requests, so the endpoint never returns all of them at once. */
 export type MergeRequestFilter = {
   state?: MergeRequestState;
   author?: string;
@@ -338,17 +340,28 @@ export type MergeRequestFilter = {
   since?: string;
   until?: string;
   sort?: "updated";
+  page?: number;
+  perPage?: number;
+};
+
+/** MergeRequestsPage is GET .../merge-requests's response envelope:
+ *  nextPage is 0 when no further page follows, and totalCount is how many
+ *  merge requests match the filter across every page. */
+export type MergeRequestsPage = {
+  mergeRequests: MergeRequest[];
+  nextPage: number;
+  totalCount: number;
 };
 
 /**
- * getMergeRequests returns the project's merge requests matching filter,
- * newest (by GitLab creation date) first unless filter.sort overrides it.
- * Callers must already know the request is authenticated.
+ * getMergeRequests returns one page of the project's merge requests matching
+ * filter, newest (by GitLab creation date) first unless filter.sort overrides
+ * it. Callers must already know the request is authenticated.
  */
 export async function getMergeRequests(
   projectId: string,
   filter: MergeRequestFilter = {},
-): Promise<MergeRequest[]> {
+): Promise<MergeRequestsPage> {
   const cookieStore = await cookies();
   const params = new URLSearchParams();
   if (filter.state) params.set("state", filter.state);
@@ -357,6 +370,8 @@ export async function getMergeRequests(
   if (filter.since) params.set("since", filter.since);
   if (filter.until) params.set("until", filter.until);
   if (filter.sort) params.set("sort", filter.sort);
+  if (filter.page) params.set("page", String(filter.page));
+  if (filter.perPage) params.set("per_page", String(filter.perPage));
   const query = params.toString();
 
   const res = await fetch(
@@ -366,7 +381,7 @@ export async function getMergeRequests(
   if (!res.ok) {
     throw new Error(`Failed to load merge requests: ${res.status}`);
   }
-  return (await res.json()) as MergeRequest[];
+  return (await res.json()) as MergeRequestsPage;
 }
 
 /**

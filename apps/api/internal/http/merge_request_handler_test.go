@@ -36,6 +36,15 @@ func seedRepository(t *testing.T, q *dbtest.FakeQuerier, p db.Project) db.Reposi
 	return repo
 }
 
+// mergeRequestListBody decodes GET .../merge-requests' {mergeRequests,
+// nextPage, totalCount} envelope, handleListWebhookEvents' shape plus the
+// filter-wide total the paged collection view can't derive from one page.
+type mergeRequestListBody struct {
+	MergeRequests []map[string]any `json:"mergeRequests"`
+	NextPage      int              `json:"nextPage"`
+	TotalCount    int64            `json:"totalCount"`
+}
+
 func TestHandleListMergeRequests_NoCookie(t *testing.T) {
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")
@@ -66,10 +75,10 @@ func TestHandleListMergeRequests_FiltersByStateQuery(t *testing.T) {
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/merge-requests?state=merged", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var body []map[string]any
+	var body mergeRequestListBody
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body, 1)
-	assert.Equal(t, "Merged one", body[0]["title"])
+	require.Len(t, body.MergeRequests, 1)
+	assert.Equal(t, "Merged one", body.MergeRequests[0]["title"])
 }
 
 func TestHandleListMergeRequests_FiltersByTaskIDQuery(t *testing.T) {
@@ -88,10 +97,10 @@ func TestHandleListMergeRequests_FiltersByTaskIDQuery(t *testing.T) {
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/merge-requests?taskId="+task.ID.String(), nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var body []map[string]any
+	var body mergeRequestListBody
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body, 1)
-	assert.Equal(t, "Linked", body[0]["title"])
+	require.Len(t, body.MergeRequests, 1)
+	assert.Equal(t, "Linked", body.MergeRequests[0]["title"])
 }
 
 func TestHandleListMergeRequests_RejectsInvalidStateQuery(t *testing.T) {
@@ -142,10 +151,10 @@ func TestHandleListMergeRequests_SortsByUpdated(t *testing.T) {
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/merge-requests?sort=updated", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var body []map[string]any
+	var body mergeRequestListBody
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body, 2)
-	assert.Equal(t, "Updated first", body[0]["title"])
+	require.Len(t, body.MergeRequests, 2)
+	assert.Equal(t, "Updated first", body.MergeRequests[0]["title"])
 }
 
 func TestHandleGetMergeRequest(t *testing.T) {

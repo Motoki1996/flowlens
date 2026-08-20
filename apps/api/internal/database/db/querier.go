@@ -66,6 +66,13 @@ type Querier interface {
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
 	CompleteRepositorySyncRun(ctx context.Context, arg CompleteRepositorySyncRunParams) (RepositorySyncRun, error)
 	CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg CountFailedSyncTasksByProjectForOwnerParams) (int64, error)
+	// CountMergeRequestsByProject is ListMergeRequestsByProject's total, with
+	// the same scoping and the same filters, minus the ordering and paging. The
+	// collection view needs it because the paged list can no longer be counted
+	// client-side by its length, and the project sidebar's merge-request badge
+	// is a count rather than a list — it used to fetch every row just to read
+	// .length off it.
+	CountMergeRequestsByProject(ctx context.Context, arg CountMergeRequestsByProjectParams) (int64, error)
 	// CountOpenTasksBySizeForVelocity returns projectID's current count of
 	// not-yet-completed tasks (status='open' AND progress<>'done') grouped by
 	// size, used to forecast how many periods the remaining work will take at
@@ -513,6 +520,13 @@ type Querier interface {
 	// order from gitlab_created_at to gitlab_updated_at, both DESC with created_at
 	// as the tiebreak, so a merge request with no GitLab timestamp yet still
 	// sorts deterministically.
+	//
+	// LIMIT/OFFSET paging follows the same "fetch one extra row to detect a next
+	// page" convention ListWebhookEventsByLinkedGitlabProjectID/internal/webhookevent
+	// established: a long-lived repository accumulates thousands of merged merge
+	// requests, and this view used to return every one of them in a single
+	// response. idx_merge_requests_repo_state_{created,updated} (migration 28)
+	// back both orderings.
 	ListMergeRequestsByProject(ctx context.Context, arg ListMergeRequestsByProjectParams) ([]MergeRequest, error)
 	// ListMergeRequestsForMetrics backs the delivery-metrics aggregation (issue
 	// #113): the narrow column set deliverymetrics.Service needs to compute

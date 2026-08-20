@@ -68,8 +68,6 @@ describe("TasksPage", () => {
     expect(getTasks).toHaveBeenCalledWith("p1", {
       backlogId: undefined,
       status: "open",
-      progress: undefined,
-      priority: undefined,
       assignee: undefined,
       sort: undefined,
       q: undefined,
@@ -100,9 +98,6 @@ describe("TasksPage", () => {
         searchParams: Promise.resolve({
           backlog: "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21",
           status: "all",
-          progress: "in_progress",
-          size: "m",
-          priority: "high",
           assignee: "me",
           sort: "priority",
           q: "sprint",
@@ -113,9 +108,6 @@ describe("TasksPage", () => {
     expect(getTasks).toHaveBeenCalledWith("p1", {
       backlogId: "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21",
       status: undefined,
-      progress: "in_progress",
-      size: "m",
-      priority: "high",
       assignee: "me",
       sort: "priority",
       q: "sprint",
@@ -154,7 +146,6 @@ describe("TasksPage", () => {
         searchParams: Promise.resolve({
           backlog: "not-a-uuid",
           status: "banana",
-          priority: "extreme",
           sort: "sideways",
         }),
       }),
@@ -162,8 +153,6 @@ describe("TasksPage", () => {
     expect(getTasks).toHaveBeenCalledWith("p1", {
       backlogId: undefined,
       status: "open",
-      progress: undefined,
-      priority: undefined,
       assignee: undefined,
       sort: undefined,
       q: undefined,

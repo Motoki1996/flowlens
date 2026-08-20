@@ -21,9 +21,9 @@ import type {
   TaskDependency,
   TaskStatus,
 } from "@/types";
-import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
-import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
-import { SIZE_OPTIONS, SIZE_LABELS, SIZE_POINTS } from "@/lib/size";
+import { PROGRESS_COLUMNS } from "@/lib/progress";
+import { PRIORITY_COLUMNS } from "@/lib/priority";
+import { SIZE_OPTIONS, SIZE_POINTS } from "@/lib/size";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -455,9 +455,6 @@ export function TaskListSection({
   search = "",
   statusFilter = "open",
   sort = "manual",
-  progressFilter,
-  priorityFilter,
-  sizeFilter,
   assigneeMe = false,
   assigneeAvailability = "available",
   today,
@@ -483,13 +480,6 @@ export function TaskListSection({
   statusFilter?: "all" | TaskStatus;
   /** The applied `?sort=`, or "manual" for the API's own position order. */
   sort?: TaskSort;
-  /** The applied `?progress=`; undefined means all of them — unlike status,
-   *  no progress stage is noise worth hiding by default. */
-  progressFilter?: Progress;
-  /** The applied `?priority=`; undefined means all of them, same as progress. */
-  priorityFilter?: Priority;
-  /** The applied `?size=`; undefined means all of them, same as priority. */
-  sizeFilter?: Size;
   /** True when `?assignee=me` is set (issue #146, extending issue #102's
    *  cross-project toggle to this project-scoped collection): only tasks
    *  assigned to the caller's own registered GitLab identity. Held in the
@@ -667,18 +657,6 @@ export function TaskListSection({
     updateQuery({ status: value === FILTER_DEFAULTS.status ? undefined : value });
   }
 
-  function changeProgressFilter(value: "all" | Progress) {
-    updateQuery({ progress: value === FILTER_DEFAULTS.progress ? undefined : value });
-  }
-
-  function changePriorityFilter(value: "all" | Priority) {
-    updateQuery({ priority: value === FILTER_DEFAULTS.priority ? undefined : value });
-  }
-
-  function changeSizeFilter(value: "all" | Size) {
-    updateQuery({ size: value === FILTER_DEFAULTS.size ? undefined : value });
-  }
-
   function changeAssigneeMe(checked: boolean) {
     updateQuery({ assignee: checked ? "me" : undefined });
   }
@@ -708,9 +686,6 @@ export function TaskListSection({
     backlogFilter !== FILTER_DEFAULTS.backlog ||
     search.trim() !== "" ||
     statusFilter !== FILTER_DEFAULTS.status ||
-    Boolean(progressFilter) ||
-    Boolean(priorityFilter) ||
-    Boolean(sizeFilter) ||
     assigneeMe ||
     sort !== FILTER_DEFAULTS.sort ||
     Boolean(labelFilter) ||
@@ -742,15 +717,6 @@ export function TaskListSection({
     }
     if (statusFilter !== "all") {
       return `No ${statusFilter} tasks.`;
-    }
-    if (progressFilter) {
-      return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} tasks.`;
-    }
-    if (sizeFilter) {
-      return `No ${SIZE_LABELS[sizeFilter]} tasks.`;
-    }
-    if (priorityFilter) {
-      return `No ${PRIORITY_LABELS[priorityFilter].toLowerCase()} priority tasks.`;
     }
     if (dueFilter === "overdue") {
       return "No overdue tasks.";
@@ -1056,51 +1022,6 @@ export function TaskListSection({
                   <SelectItem value="all">All statuses</SelectItem>
                   <SelectItem value="open">Open</SelectItem>
                   <SelectItem value="closed">Closed</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={progressFilter ?? "all"}
-                onValueChange={(value) => changeProgressFilter(value as "all" | Progress)}
-              >
-                <SelectTrigger size="sm" aria-label="Progress" className="w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All progress</SelectItem>
-                  {PROGRESS_COLUMNS.map((option) => (
-                    <SelectItem key={option.progress} value={option.progress}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={priorityFilter ?? "all"}
-                onValueChange={(value) => changePriorityFilter(value as "all" | Priority)}
-              >
-                <SelectTrigger size="sm" aria-label="Priority" className="w-36">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All priorities</SelectItem>
-                  {PRIORITY_COLUMNS.map((option) => (
-                    <SelectItem key={option.priority} value={option.priority}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={sizeFilter ?? "all"} onValueChange={(value) => changeSizeFilter(value as "all" | Size)}>
-                <SelectTrigger size="sm" aria-label="Size" className="w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All sizes</SelectItem>
-                  {SIZE_OPTIONS.map((option) => (
-                    <SelectItem key={option.size} value={option.size}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
                 </SelectContent>
               </Select>
               <Select value={dueFilter ?? "all"} onValueChange={changeDueFilter}>

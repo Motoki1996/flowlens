@@ -11,15 +11,10 @@ import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { toDateParam } from "@/lib/dates";
 import { TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
-import type { Priority, Progress, Size, TaskStatus } from "@/types";
+import type { TaskStatus } from "@/types";
 
 const STATUSES = ["all", "open", "closed"] as const;
 type StatusFilter = (typeof STATUSES)[number];
-
-const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
-
-const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
-const SIZES = ["xs", "s", "m", "l", "xl"] as const;
 
 // "manual" is the API's own position order, which it expresses by the absence
 // of ?sort= rather than a named value; the other five are the ones both Task
@@ -69,9 +64,6 @@ export default async function TasksPage({
     backlog?: string;
     q?: string;
     status?: string;
-    progress?: string;
-    priority?: string;
-    size?: string;
     assignee?: string;
     sort?: string;
     view?: string;
@@ -86,16 +78,6 @@ export default async function TasksPage({
   const status: StatusFilter = STATUSES.includes(statusParam as StatusFilter)
     ? (statusParam as StatusFilter)
     : "open";
-  const progressParam = resolvedSearchParams?.progress;
-  const progress = PROGRESSES.includes(progressParam as Progress)
-    ? (progressParam as Progress)
-    : undefined;
-  const priorityParam = resolvedSearchParams?.priority;
-  const priority = PRIORITIES.includes(priorityParam as Priority)
-    ? (priorityParam as Priority)
-    : undefined;
-  const sizeParam = resolvedSearchParams?.size;
-  const size = SIZES.includes(sizeParam as Size) ? (sizeParam as Size) : undefined;
   const sortParam = resolvedSearchParams?.sort;
   const sort: Sort = SORTS.includes(sortParam as NamedSort) ? (sortParam as NamedSort) : "manual";
   const viewParam = resolvedSearchParams?.view;
@@ -129,9 +111,6 @@ export default async function TasksPage({
               ? "unassigned"
               : backlogFilter,
         status: status === "all" ? undefined : (status as TaskStatus),
-        progress,
-        priority,
-        size,
         sort: sort === "manual" ? undefined : sort,
         assignee: assigneeMe ? "me" : undefined,
         q: search,
@@ -183,9 +162,6 @@ export default async function TasksPage({
       backlogFilter={backlogFilter}
       search={search}
       statusFilter={status}
-      progressFilter={progress}
-      priorityFilter={priority}
-      sizeFilter={size}
       assigneeMe={assigneeMe}
       assigneeAvailability={assigneeAvailability}
       sort={sort}

@@ -61,7 +61,10 @@ export default async function ProjectLayout({
   }
 
   try {
-    counts.mergeRequests = (await getMergeRequests(projectId)).length;
+    // perPage: 1 because only the badge's number is wanted here — totalCount
+    // is counted in SQL, so the sidebar no longer pulls every merge request
+    // of the project on every page load just to read .length off it.
+    counts.mergeRequests = (await getMergeRequests(projectId, { perPage: 1 })).totalCount;
   } catch {
     // Left null — the section reads as "no summary".
   }

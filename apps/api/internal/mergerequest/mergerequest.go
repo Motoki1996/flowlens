@@ -31,6 +31,15 @@ var (
 // switches to gitlab_updated_at DESC.
 const SortUpdated = "updated"
 
+// Paging bounds for List. A repository that has been synced for a year or
+// two holds thousands of merged merge requests, so the collection view is
+// paged rather than returning all of them; these mirror
+// webhookevent.DefaultPerPage/MaxPerPage.
+const (
+	DefaultPerPage = 30
+	MaxPerPage     = 100
+)
+
 // MergeRequest is the domain model returned by List/Get.
 type MergeRequest struct {
 	ID                   uuid.UUID  `json:"id"`
@@ -173,15 +182,46 @@ type ListFilter struct {
 	// (gitlab_updated_at DESC). Both keep created_at DESC as a tiebreak for
 	// merge requests with no GitLab timestamp yet.
 	Sort string
+	// Page is the 1-based page number; anything below 1 means the first
+	// page. PerPage caps the page size: non-positive defaults to
+	// DefaultPerPage, and anything above MaxPerPage is clamped to it.
+	Page    int
+	PerPage int
 }
 
-// List returns projectID's merge requests matching filter. It returns
-// ErrNotFound if projectID does not exist or the caller isn't a member.
-func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]MergeRequest, error) {
+// Page is one page of List's results, in the order ListFilter.Sort asked
+// for. NextPage is 0 when no further page follows, the same shape
+// webhookevent.EventsPage uses. TotalCount is how many merge requests match
+// the filter across every page — it is not derivable from a single page, and
+// both the collection view's header and the project sidebar's badge need it.
+type Page struct {
+	MergeRequests []MergeRequest
+	NextPage      int
+	TotalCount    int64
+}
+
+// List returns one page of projectID's merge requests matching filter. It
+// returns ErrNotFound if projectID does not exist or the caller isn't a
+// member.
+func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) (Page, error) {
 	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
-		return nil, err
+		return Page{}, err
 	}
 
+	page := filter.Page
+	if page < 1 {
+		page = 1
+	}
+	perPage := filter.PerPage
+	if perPage < 1 {
+		perPage = DefaultPerPage
+	}
+	if perPage > MaxPerPage {
+		perPage = MaxPerPage
+	}
+
+	// Fetch one extra row to tell whether another page follows, the same
+	// "peek" pattern internal/webhookevent uses.
 	rows, err := s.q.ListMergeRequestsByProject(ctx, db.ListMergeRequestsByProjectParams{
 		ProjectID:     projectID,
 		OwnerUserID:   ownerID,
@@ -191,15 +231,37 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		Since:         toTimestamptz(filter.Since),
 		Until:         toTimestamptz(filter.Until),
 		SortByUpdated: filter.Sort == SortUpdated,
+		LimitCount:    int32(perPage + 1),
+		OffsetCount:   int32((page - 1) * perPage),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("mergerequest: list: %w", err)
+		return Page{}, fmt.Errorf("mergerequest: list: %w", err)
 	}
+
+	nextPage := 0
+	if len(rows) > perPage {
+		rows = rows[:perPage]
+		nextPage = page + 1
+	}
+
+	total, err := s.q.CountMergeRequestsByProject(ctx, db.CountMergeRequestsByProjectParams{
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+		State:       filter.State,
+		Author:      filter.Author,
+		TaskID:      toUUID(filter.TaskID),
+		Since:       toTimestamptz(filter.Since),
+		Until:       toTimestamptz(filter.Until),
+	})
+	if err != nil {
+		return Page{}, fmt.Errorf("mergerequest: count: %w", err)
+	}
+
 	out := make([]MergeRequest, len(rows))
 	for i, row := range rows {
 		out[i] = fromRow(row)
 	}
-	return out, nil
+	return Page{MergeRequests: out, NextPage: nextPage, TotalCount: total}, nil
 }
 
 // Get returns a single merge request, scoped to a project the caller is a

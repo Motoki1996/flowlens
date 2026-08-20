@@ -99,3 +99,16 @@ export const FilteredByState: Story = {
     ],
   },
 };
+
+/**
+ * A project with more merge requests than fit one page: the pager appears
+ * with the range it covers, and "Previous" is disabled on the first page.
+ */
+export const Paged: Story = {
+  args: { page: 1, perPage: 3, nextPage: 2, totalCount: 128 },
+};
+
+/** The last page of the same collection — "Next" is disabled. */
+export const LastPage: Story = {
+  args: { page: 43, perPage: 3, nextPage: 0, totalCount: 128 },
+};

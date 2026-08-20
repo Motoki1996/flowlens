@@ -2,6 +2,7 @@ package mergerequest_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -67,8 +68,9 @@ func TestService_List_FiltersByState(t *testing.T) {
 	f.q.SeedMergeRequest(f.repo.ID, 1, 1, "Opened one", "opened")
 	f.q.SeedMergeRequest(f.repo.ID, 2, 2, "Merged one", "merged")
 
-	got, err := f.svc.List(context.Background(), f.owner, f.project.ID, mergerequest.ListFilter{State: "merged"})
+	page, err := f.svc.List(context.Background(), f.owner, f.project.ID, mergerequest.ListFilter{State: "merged"})
 	require.NoError(t, err)
+	got := page.MergeRequests
 	require.Len(t, got, 1)
 	assert.Equal(t, "Merged one", got[0].Title)
 }
@@ -87,8 +89,9 @@ func TestService_List_FiltersByAuthor(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Author: "alice"})
+	page, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Author: "alice"})
 	require.NoError(t, err)
+	got := page.MergeRequests
 	require.Len(t, got, 1)
 	assert.Equal(t, "Alice's", got[0].Title)
 }
@@ -104,8 +107,9 @@ func TestService_List_FiltersByTaskID(t *testing.T) {
 	f.q.SeedMergeRequest(f.repo.ID, 2, 2, "Unlinked", "opened")
 
 	taskID := task.ID
-	got, err := f.svc.List(context.Background(), f.owner, f.project.ID, mergerequest.ListFilter{TaskID: &taskID})
+	page, err := f.svc.List(context.Background(), f.owner, f.project.ID, mergerequest.ListFilter{TaskID: &taskID})
 	require.NoError(t, err)
+	got := page.MergeRequests
 	require.Len(t, got, 1)
 	assert.Equal(t, "Linked", got[0].Title)
 }
@@ -127,8 +131,9 @@ func TestService_List_FiltersBySinceUntil(t *testing.T) {
 	require.NoError(t, err)
 
 	since := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
-	got, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Since: &since})
+	page, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Since: &since})
 	require.NoError(t, err)
+	got := page.MergeRequests
 	require.Len(t, got, 1)
 	assert.Equal(t, "Recent", got[0].Title)
 }
@@ -151,10 +156,74 @@ func TestService_List_SortsByUpdated(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	got, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Sort: mergerequest.SortUpdated})
+	page, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Sort: mergerequest.SortUpdated})
 	require.NoError(t, err)
+	got := page.MergeRequests
 	require.Len(t, got, 2)
 	assert.Equal(t, "Created first, updated last", got[0].Title)
+}
+
+// Paging is table-driven over one seeded set (docs/testing.md): the same 5
+// merge requests read at three page/per_page combinations, asserting both
+// the page contents and whether NextPage points at a further page.
+func TestService_List_Pages(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	// Seeded oldest-first, so the default gitlab_created_at DESC order
+	// returns them as MR 5, 4, 3, 2, 1.
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 1; i <= 5; i++ {
+		_, err := f.q.CreateMergeRequest(ctx, db.CreateMergeRequestParams{
+			RepositoryID: f.repo.ID, GitlabMergeRequestID: int64(i), Number: int32(i),
+			Title: fmt.Sprintf("MR %d", i), State: "opened",
+			GitlabCreatedAt: pgtype.Timestamptz{Time: base.AddDate(0, 0, i), Valid: true},
+		})
+		require.NoError(t, err)
+	}
+
+	tests := []struct {
+		name         string
+		page         int
+		perPage      int
+		wantTitles   []string
+		wantNextPage int
+	}{
+		{name: "first page", page: 1, perPage: 2, wantTitles: []string{"MR 5", "MR 4"}, wantNextPage: 2},
+		{name: "last page has no next", page: 3, perPage: 2, wantTitles: []string{"MR 1"}, wantNextPage: 0},
+		{name: "page past the end is empty", page: 9, perPage: 2, wantTitles: []string{}, wantNextPage: 0},
+		{name: "unset page and per_page mean the whole first page", wantTitles: []string{"MR 5", "MR 4", "MR 3", "MR 2", "MR 1"}, wantNextPage: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Page: tt.page, PerPage: tt.perPage})
+			require.NoError(t, err)
+			titles := make([]string, len(got.MergeRequests))
+			for i, mr := range got.MergeRequests {
+				titles[i] = mr.Title
+			}
+			assert.Equal(t, tt.wantTitles, titles)
+			assert.Equal(t, tt.wantNextPage, got.NextPage)
+		})
+	}
+}
+
+// PerPage above MaxPerPage is clamped rather than rejected, so a caller
+// asking for everything still gets a bounded response.
+func TestService_List_ClampsPerPage(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	for i := 1; i <= mergerequest.MaxPerPage+5; i++ {
+		_, err := f.q.CreateMergeRequest(ctx, db.CreateMergeRequestParams{
+			RepositoryID: f.repo.ID, GitlabMergeRequestID: int64(i), Number: int32(i),
+			Title: fmt.Sprintf("MR %d", i), State: "opened",
+		})
+		require.NoError(t, err)
+	}
+
+	got, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{PerPage: 10_000})
+	require.NoError(t, err)
+	assert.Len(t, got.MergeRequests, mergerequest.MaxPerPage)
+	assert.Equal(t, 2, got.NextPage)
 }
 
 func TestService_Get_ReturnsNotFoundForForeignProject(t *testing.T) {

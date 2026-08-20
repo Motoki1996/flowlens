@@ -1711,6 +1711,14 @@ here.
   `?until=` (`YYYY-MM-DD`, bounding `gitlab_created_at`), `?sort=updated`
   (ranks by `gitlab_updated_at` instead of the default `gitlab_created_at`,
   both descending).
+- That list is **paged**: `?page=` (1-based) and `?per_page=` (default 30,
+  clamped to 100), and the response is the envelope
+  `{ "mergeRequests": [...], "nextPage": 0, "totalCount": 0 }` rather than a
+  bare array — `nextPage` is `0` when no further page follows, the same shape
+  `GET .../webhook-events` returns, and `totalCount` is how many merge
+  requests match the filter across every page. A repository synced for a year
+  holds thousands of merged merge requests, and this endpoint used to return
+  every one of them in a single response.
 - `GET /api/v1/merge-requests/{mergeRequestID}` returns a single merge
   request, scoped the same way.
 - Web: `/projects/[projectId]/merge-requests` (collection) and
@@ -1719,6 +1727,20 @@ here.
   map in [`docs/ui-design.md`](docs/ui-design.md). The Task single view also
   shows a "Merge requests" card, the reverse link, via the same list endpoint
   filtered by `?taskId=`.
+- The collection view opens on **open merge requests, most recently updated
+  first** (`?state=` defaults to `opened`, `?sort=` to `updated`) rather than
+  on the project's entire merge-request history. That is what the screen is
+  for: seeing what is in flight, and drilling into the project's
+  [delivery metrics](#delivery-metrics-issue-113) when a number moves. "All
+  states" stays one click away, and `?state=all` is the explicit opt-out.
+  Paging is held in the URL as `?page=`, so a deep page can be linked to and
+  survives a refresh; changing any filter resets to page 1.
+- Four indexes on `merge_requests` (migration 28) back the list's two sorts,
+  each in a state-filtered and an unfiltered form. Each leads with the **sort
+  key**, not `repository_id`: the project scope reaches this query through a
+  join rather than a `WHERE` clause, so an index leading with `repository_id`
+  is never chosen. Measured against 50k merge requests, that is 54ms → 0.16ms
+  for "all states" and 15ms → 0.29ms for the view's default.
 
 ### Delivery metrics (issue #113)
 

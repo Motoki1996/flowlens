@@ -87,4 +87,69 @@ describe("MergeRequestListSection", () => {
     fireEvent.click(await screen.findByRole("option", { name: "Merged" }));
     expect(push).toHaveBeenCalledWith("/projects/p1/merge-requests?state=merged");
   });
+
+  it("hides the pager on a single page of results", () => {
+    render(
+      <MergeRequestListSection projectId="p1" mergeRequests={[makeMergeRequest({})]} totalCount={1} />,
+    );
+    expect(screen.queryByRole("navigation", { name: "Pagination" })).not.toBeInTheDocument();
+  });
+
+  it("shows the range and pages forward when a next page follows", () => {
+    render(
+      <MergeRequestListSection
+        projectId="p1"
+        mergeRequests={[makeMergeRequest({})]}
+        perPage={1}
+        nextPage={2}
+        totalCount={5}
+      />,
+    );
+    expect(screen.getByText("1–1 of 5")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(push).toHaveBeenCalledWith("/projects/p1/merge-requests?page=2");
+  });
+
+  it("counts the range from perPage, not from a short last page", () => {
+    render(
+      <MergeRequestListSection
+        projectId="p1"
+        mergeRequests={[makeMergeRequest({})]}
+        page={3}
+        perPage={2}
+        nextPage={0}
+        totalCount={5}
+      />,
+    );
+    expect(screen.getByText("5–5 of 5")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  it("drops ?page= rather than writing page=1 when stepping back to the first page", () => {
+    render(
+      <MergeRequestListSection
+        projectId="p1"
+        mergeRequests={[makeMergeRequest({})]}
+        page={2}
+        perPage={1}
+        nextPage={3}
+        totalCount={5}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    expect(push).toHaveBeenCalledWith("/projects/p1/merge-requests");
+  });
+
+  // A page number counted under one filter is meaningless under the next, so
+  // changing a filter must not carry ?page= along with it.
+  it("resets to the first page when a filter changes", async () => {
+    render(
+      <MergeRequestListSection projectId="p1" mergeRequests={[]} page={4} totalCount={100} />,
+    );
+    fireEvent.click(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Merged" }));
+    expect(push).toHaveBeenCalledWith("/projects/p1/merge-requests?state=merged");
+  });
 });

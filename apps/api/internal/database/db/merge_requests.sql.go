@@ -12,6 +12,56 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countMergeRequestsByProject = `-- name: CountMergeRequestsByProject :one
+
+SELECT count(*)
+FROM merge_requests mr
+JOIN repositories r ON r.id = mr.repository_id
+JOIN linked_gitlab_projects lgp ON lgp.id = r.linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE gc.project_id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = $2
+  )
+  AND ($3::text = '' OR mr.state = $3)
+  AND ($4::text = '' OR mr.author_gitlab_username = $4)
+  AND ($5::uuid IS NULL OR mr.task_id = $5)
+  AND ($6::timestamptz IS NULL OR mr.gitlab_created_at >= $6)
+  AND ($7::timestamptz IS NULL OR mr.gitlab_created_at <= $7)
+`
+
+type CountMergeRequestsByProjectParams struct {
+	ProjectID   uuid.UUID          `json:"project_id"`
+	OwnerUserID uuid.UUID          `json:"owner_user_id"`
+	State       string             `json:"state"`
+	Author      string             `json:"author"`
+	TaskID      pgtype.UUID        `json:"task_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+	Until       pgtype.Timestamptz `json:"until"`
+}
+
+// CountMergeRequestsByProject is ListMergeRequestsByProject's total, with
+// the same scoping and the same filters, minus the ordering and paging. The
+// collection view needs it because the paged list can no longer be counted
+// client-side by its length, and the project sidebar's merge-request badge
+// is a count rather than a list — it used to fetch every row just to read
+// .length off it.
+func (q *Queries) CountMergeRequestsByProject(ctx context.Context, arg CountMergeRequestsByProjectParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countMergeRequestsByProject,
+		arg.ProjectID,
+		arg.OwnerUserID,
+		arg.State,
+		arg.Author,
+		arg.TaskID,
+		arg.Since,
+		arg.Until,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createMergeRequest = `-- name: CreateMergeRequest :one
 
 INSERT INTO merge_requests (
@@ -287,6 +337,7 @@ WHERE gc.project_id = $1
 ORDER BY
   (CASE WHEN $8::boolean THEN mr.gitlab_updated_at ELSE mr.gitlab_created_at END) DESC NULLS LAST,
   mr.created_at DESC
+LIMIT $10 OFFSET $9
 `
 
 type ListMergeRequestsByProjectParams struct {
@@ -298,6 +349,8 @@ type ListMergeRequestsByProjectParams struct {
 	Since         pgtype.Timestamptz `json:"since"`
 	Until         pgtype.Timestamptz `json:"until"`
 	SortByUpdated bool               `json:"sort_by_updated"`
+	OffsetCount   int32              `json:"offset_count"`
+	LimitCount    int32              `json:"limit_count"`
 }
 
 // ListMergeRequestsByProject backs the merge-request collection view (issue
@@ -309,6 +362,13 @@ type ListMergeRequestsByProjectParams struct {
 // order from gitlab_created_at to gitlab_updated_at, both DESC with created_at
 // as the tiebreak, so a merge request with no GitLab timestamp yet still
 // sorts deterministically.
+//
+// LIMIT/OFFSET paging follows the same "fetch one extra row to detect a next
+// page" convention ListWebhookEventsByLinkedGitlabProjectID/internal/webhookevent
+// established: a long-lived repository accumulates thousands of merged merge
+// requests, and this view used to return every one of them in a single
+// response. idx_merge_requests_repo_state_{created,updated} (migration 28)
+// back both orderings.
 func (q *Queries) ListMergeRequestsByProject(ctx context.Context, arg ListMergeRequestsByProjectParams) ([]MergeRequest, error) {
 	rows, err := q.db.Query(ctx, listMergeRequestsByProject,
 		arg.ProjectID,
@@ -319,6 +379,8 @@ func (q *Queries) ListMergeRequestsByProject(ctx context.Context, arg ListMergeR
 		arg.Since,
 		arg.Until,
 		arg.SortByUpdated,
+		arg.OffsetCount,
+		arg.LimitCount,
 	)
 	if err != nil {
 		return nil, err

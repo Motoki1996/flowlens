@@ -469,6 +469,19 @@ MergeRequest:
     pipelineId: { type: [integer, "null"], format: int64 }
     pipelineUpdatedAt: { type: [string, "null"], format: date-time }
 
+MergeRequestsPage:
+  type: object
+  properties:
+    mergeRequests:
+      type: array
+      items: { $ref: '#/MergeRequest' }
+    nextPage:
+      type: integer
+      description: 0 when there is no next page.
+    totalCount:
+      type: integer
+      description: How many merge requests match the filter across every page.
+
 DurationStats:
   type: object
   properties:

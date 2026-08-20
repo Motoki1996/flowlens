@@ -95,6 +95,13 @@ RETURNING *;
 -- order from gitlab_created_at to gitlab_updated_at, both DESC with created_at
 -- as the tiebreak, so a merge request with no GitLab timestamp yet still
 -- sorts deterministically.
+--
+-- LIMIT/OFFSET paging follows the same "fetch one extra row to detect a next
+-- page" convention ListWebhookEventsByLinkedGitlabProjectID/internal/webhookevent
+-- established: a long-lived repository accumulates thousands of merged merge
+-- requests, and this view used to return every one of them in a single
+-- response. idx_merge_requests_repo_state_{created,updated} (migration 28)
+-- back both orderings.
 
 -- name: ListMergeRequestsByProject :many
 SELECT mr.id, mr.repository_id, mr.gitlab_merge_request_id, mr.number, mr.title, mr.state, mr.is_draft, mr.author_gitlab_username, mr.author_avatar_url, mr.base_branch, mr.head_branch, mr.additions, mr.deletions, mr.changed_files, mr.gitlab_created_at, mr.gitlab_updated_at, mr.merged_at, mr.closed_at, mr.html_url, mr.created_at, mr.updated_at, mr.first_reviewed_at, mr.pipeline_status, mr.pipeline_id, mr.pipeline_updated_at, mr.task_id
@@ -114,7 +121,32 @@ WHERE gc.project_id = sqlc.arg(project_id)
   AND (sqlc.narg(until)::timestamptz IS NULL OR mr.gitlab_created_at <= sqlc.narg(until))
 ORDER BY
   (CASE WHEN sqlc.arg(sort_by_updated)::boolean THEN mr.gitlab_updated_at ELSE mr.gitlab_created_at END) DESC NULLS LAST,
-  mr.created_at DESC;
+  mr.created_at DESC
+LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
+
+-- CountMergeRequestsByProject is ListMergeRequestsByProject's total, with
+-- the same scoping and the same filters, minus the ordering and paging. The
+-- collection view needs it because the paged list can no longer be counted
+-- client-side by its length, and the project sidebar's merge-request badge
+-- is a count rather than a list — it used to fetch every row just to read
+-- .length off it.
+
+-- name: CountMergeRequestsByProject :one
+SELECT count(*)
+FROM merge_requests mr
+JOIN repositories r ON r.id = mr.repository_id
+JOIN linked_gitlab_projects lgp ON lgp.id = r.linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE gc.project_id = sqlc.arg(project_id)
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  )
+  AND (sqlc.arg(state)::text = '' OR mr.state = sqlc.arg(state))
+  AND (sqlc.arg(author)::text = '' OR mr.author_gitlab_username = sqlc.arg(author))
+  AND (sqlc.narg(task_id)::uuid IS NULL OR mr.task_id = sqlc.narg(task_id))
+  AND (sqlc.narg(since)::timestamptz IS NULL OR mr.gitlab_created_at >= sqlc.narg(since))
+  AND (sqlc.narg(until)::timestamptz IS NULL OR mr.gitlab_created_at <= sqlc.narg(until));
 
 -- GetMergeRequestForOwner is ListMergeRequestsByProject's single-object
 -- counterpart, backing the merge-request single view. Scoped the same way,

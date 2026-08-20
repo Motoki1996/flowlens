@@ -53,3 +53,12 @@ export const Submitting: Story = {
     await expect(await canvas.findByRole("button", { name: /signing in/i })).toBeDisabled();
   },
 };
+
+export const PasswordRevealed: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.type(canvas.getByLabelText("Password"), "correct-horse-battery-staple");
+    await userEvent.click(canvas.getByRole("button", { name: "Show password" }));
+    await expect(canvas.getByLabelText("Password")).toHaveAttribute("type", "text");
+  },
+};

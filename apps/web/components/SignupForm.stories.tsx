@@ -16,6 +16,7 @@ async function fillAndSubmit(canvas: ReturnType<typeof within>) {
   await userEvent.type(canvas.getByLabelText("Username"), "octocat");
   await userEvent.type(canvas.getByLabelText("Email"), "octocat@example.com");
   await userEvent.type(canvas.getByLabelText("Password"), "correct-horse-battery-staple");
+  await userEvent.type(canvas.getByLabelText("Confirm password"), "correct-horse-battery-staple");
   await userEvent.click(canvas.getByRole("button", { name: /create account/i }));
 }
 
@@ -52,5 +53,26 @@ export const Submitting: Story = {
     const canvas = within(canvasElement);
     await fillAndSubmit(canvas);
     await expect(await canvas.findByRole("button", { name: /creating account/i })).toBeDisabled();
+  },
+};
+
+export const PasswordMismatch: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.type(canvas.getByLabelText("Username"), "octocat");
+    await userEvent.type(canvas.getByLabelText("Email"), "octocat@example.com");
+    await userEvent.type(canvas.getByLabelText("Password"), "correct-horse-battery-staple");
+    await userEvent.type(canvas.getByLabelText("Confirm password"), "correct-horse-battery-stapl");
+    await userEvent.click(canvas.getByRole("button", { name: /create account/i }));
+    await expect(await canvas.findByText("Password and confirmation do not match.")).toBeInTheDocument();
+  },
+};
+
+export const PasswordRevealed: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.type(canvas.getByLabelText("Password"), "correct-horse-battery-staple");
+    await userEvent.click(canvas.getByRole("button", { name: "Show password" }));
+    await expect(canvas.getByLabelText("Password")).toHaveAttribute("type", "text");
   },
 };

@@ -6,6 +6,9 @@ import { API_PUBLIC_URL } from "@/lib/config";
 import type { ApiError } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { PasswordField } from "@/components/PasswordField";
+
+const MIN_PASSWORD_LENGTH = 8;
 
 /**
  * SignupForm creates a local account. `inviteToken`, when given, is sent
@@ -24,11 +27,21 @@ export function SignupForm({
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+
+    // Checked here rather than server-side: the confirmation field exists
+    // only to catch a typo, and the API never sees it. Same rule as
+    // PasswordChangeSection.
+    if (password !== confirmPassword) {
+      setError("Password and confirmation do not match.");
+      return;
+    }
+
     setPending(true);
     setError(null);
     try {
@@ -88,21 +101,26 @@ export function SignupForm({
         />
       </div>
 
-      <div>
-        <label htmlFor="password" className="text-foreground block text-sm font-medium">
-          Password
-        </label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          required
-          minLength={8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="border-input bg-input/30 text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 mt-1 block w-full rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-[3px]"
-        />
-      </div>
+      <PasswordField
+        id="password"
+        label="Password"
+        autoComplete="new-password"
+        required
+        minLength={MIN_PASSWORD_LENGTH}
+        value={password}
+        onChange={setPassword}
+        hint={`At least ${MIN_PASSWORD_LENGTH} characters.`}
+      />
+
+      <PasswordField
+        id="confirm-password"
+        label="Confirm password"
+        autoComplete="new-password"
+        required
+        minLength={MIN_PASSWORD_LENGTH}
+        value={confirmPassword}
+        onChange={setConfirmPassword}
+      />
 
       <Button type="submit" disabled={pending} className="w-full">
         {pending ? "Creating account…" : submitLabel}

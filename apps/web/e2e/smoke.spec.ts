@@ -14,7 +14,8 @@ test("signup, create project, create task, then log out", async ({ page }) => {
   await page.goto("/signup");
   await page.getByLabel("Username").fill(username);
   await page.getByLabel("Email").fill(`${username}@example.com`);
-  await page.getByLabel("Password").fill("hunter22");
+  await page.getByLabel("Password", { exact: true }).fill("hunter22");
+  await page.getByLabel("Confirm password").fill("hunter22");
   await page.getByRole("button", { name: "Create account" }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/);

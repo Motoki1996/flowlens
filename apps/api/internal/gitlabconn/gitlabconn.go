@@ -15,13 +15,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/gitlab"
+	"github.com/flowlens/api/internal/gitlaburl"
 	"github.com/flowlens/api/internal/project"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -104,17 +104,16 @@ func NewService(q db.Querier, projects *project.Service, cipher *crypto.Cipher, 
 
 // normalizeBaseURL trims raw, requires an http(s) scheme and host, and
 // strips any trailing slash, query, or fragment so the same instance always
-// normalizes to the same stored value.
+// normalizes to the same stored value. It delegates to internal/gitlaburl,
+// shared with internal/gitlabidentity so the two normalize identically —
+// ?assignee=me joins gitlab_connections.base_url against
+// user_gitlab_identities.gitlab_base_url on equality.
 func normalizeBaseURL(raw string) (string, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
+	normalized, err := gitlaburl.Normalize(raw)
+	if err != nil {
 		return "", ErrInvalidBaseURL
 	}
-	u, err := url.Parse(trimmed)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return "", ErrInvalidBaseURL
-	}
-	return u.Scheme + "://" + u.Host + strings.TrimRight(u.Path, "/"), nil
+	return normalized, nil
 }
 
 // classifyVerifyError maps a gitlab.Client verification error to a

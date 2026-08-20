@@ -1,0 +1,3 @@
+-- No-op: normalizing away a trailing slash is not reversible (the original
+-- untrimmed value isn't preserved), and leaving the normalized value in
+-- place is harmless either way.

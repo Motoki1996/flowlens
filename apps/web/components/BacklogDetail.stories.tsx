@@ -130,6 +130,19 @@ export const WithOwnGitlabProject: Story = {
   },
 };
 
+/** A Markdown description, rendered the same way a task's is. */
+export const MarkdownDescription: Story = {
+  args: {
+    backlog: {
+      ...backlog,
+      description:
+        "Ends Friday. Scope is in the [plan](https://example.com/plan).\n\n- [x] Kickoff\n- [ ] Review\n\nQuestions to https://gitlab.example.com/group/demo",
+    },
+    project,
+    tasks: [],
+  },
+};
+
 export const Error: Story = {
   args: { backlog, project, tasks: [], tasksError: true },
 };

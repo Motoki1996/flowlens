@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Markdown } from "@/components/Markdown";
 
 function formatTimestamp(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -194,7 +195,8 @@ function CommentForm({
         placeholder="Report progress, ask a question, or leave a note…"
         rows={3}
       />
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-muted-foreground text-xs">Markdown supported — pasted URLs become links.</p>
         <Button type="submit" size="sm" disabled={pending || !body.trim()}>
           {pending ? "Posting…" : "Post"}
         </Button>
@@ -289,7 +291,7 @@ export function TaskActivitySection({
                     />
                   ) : null}
                 </div>
-                <p className="text-foreground mt-1 whitespace-pre-wrap">{comment.body}</p>
+                <Markdown className="text-foreground mt-1">{comment.body}</Markdown>
               </li>
             );
           })}

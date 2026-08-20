@@ -208,10 +208,14 @@ export function TaskEditForm({
         <Textarea
           id="edit-task-description"
           name="description"
+          aria-describedby="edit-task-description-hint"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
         />
+        <p id="edit-task-description-hint" className="text-muted-foreground mt-1 text-xs">
+          Markdown supported — pasted URLs become links.
+        </p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>

@@ -27,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiTokenSection } from "@/components/ApiTokenSection";
 import { DeliveryMetricsSection } from "@/components/DeliveryMetricsSection";
 import { FailedSyncJobSection } from "@/components/FailedSyncJobSection";
+import { Markdown } from "@/components/Markdown";
 import { ProjectInviteSection } from "@/components/ProjectInviteSection";
 import { ProjectMemberSection } from "@/components/ProjectMemberSection";
 import { VelocitySection } from "@/components/VelocitySection";
@@ -111,10 +112,14 @@ function EditProjectForm({
         <Textarea
           id="edit-project-description"
           name="description"
+          aria-describedby="edit-project-description-hint"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="mt-1"
         />
+        <p id="edit-project-description-hint" className="text-muted-foreground mt-1 text-xs">
+          Markdown supported — pasted URLs become links.
+        </p>
       </div>
 
       <div className="flex gap-2">
@@ -293,7 +298,11 @@ export function ProjectDetail({
                     {project.name}
                   </h1>
                   <CardDescription className="mt-1.5">
-                    {project.description || "No description"}
+                    {project.description ? (
+                      <Markdown>{project.description}</Markdown>
+                    ) : (
+                      "No description"
+                    )}
                   </CardDescription>
                 </div>
                 <div className="flex shrink-0 gap-2">

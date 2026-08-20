@@ -203,7 +203,20 @@ Identity (title, number, state) → attributes (branches, size, timestamps) →
 related collections (reviewers, sync history). Keeping the order stable across
 objects is what makes a new screen feel already-learned.
 
-### 7. Authentication is the deliberate exception
+### 7. User-authored long text is Markdown
+
+A task's or backlog's description, a project's description and a task comment
+are rendered as GitHub-flavoured Markdown by `components/Markdown.tsx` — never
+as raw text and never with `dangerouslySetInnerHTML`. A description
+round-trips with a GitLab issue's own description, which is already Markdown,
+so this is the rendering half of a format the data has always been in; the
+same component's autolinking is what makes a pasted URL clickable. Every
+`<textarea>` that edits one of those fields says so beneath it, and any new
+long-text field should use the same component rather than
+`whitespace-pre-wrap`. Short single-line attributes (a name, a branch, a
+label) stay plain text.
+
+### 8. Authentication is the deliberate exception
 
 Login, signup, and logout are genuinely task-shaped: one flow, one outcome, no
 object to browse. They stay task-oriented, and the current `/login` and

@@ -24,6 +24,10 @@ type signupRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// InviteToken, when present and valid, both exempts this signup from
+	// ALLOW_SIGNUP and joins the new account to the invite's project
+	// (issue #211).
+	InviteToken string `json:"inviteToken"`
 }
 
 type loginRequest struct {
@@ -40,11 +44,32 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	var req signupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
+		return
+	}
+
+	// An invite is checked here, before anything is created: an expired or
+	// already-spent invite must fail while it can still fail cleanly, not
+	// after an account exists on an instance that has closed registration
+	// (issue #211).
+	invited := req.InviteToken != ""
+	if invited {
+		if _, err := s.projectInvites.Preview(ctx, req.InviteToken); err != nil {
+			writeProjectInviteError(w, err)
+			return
+		}
+	}
+
 	// ALLOW_SIGNUP=false closes registration on an instance whose accounts
 	// already exist, so that reaching the login page is not enough to
 	// create one. The first account is exempt: a fresh instance brought up
-	// with signup already off would otherwise have no way in at all.
-	if !s.allowSignup {
+	// with signup already off would otherwise have no way in at all. A
+	// valid invite is the other exemption — it names one project and is
+	// good for one account, which is what lets an operator keep
+	// registration closed and still onboard a teammate.
+	if !s.allowSignup && !invited {
 		count, err := s.users.Count(ctx)
 		if err != nil {
 			slog.Error("count users", "error", err)
@@ -57,11 +82,6 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var req signupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
-		return
-	}
 	if req.Username == "" || req.Email == "" {
 		writeError(w, http.StatusBadRequest, "missing_fields", "username and email are required")
 		return
@@ -85,6 +105,20 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		}
 		return
+	}
+
+	// Spend the invite now that the account it names exists. Preview above
+	// already rejected the invalid cases, so the only way this fails is
+	// someone else spending the same single-use invite in the intervening
+	// moment — which leaves an account with no project rather than a member
+	// of the wrong one. Reporting it is the honest outcome: the account can
+	// still be logged into, and a fresh invite fixes it.
+	if invited {
+		if _, err := s.projectInvites.Accept(ctx, req.InviteToken, u.ID); err != nil {
+			slog.Error("accept invite during signup", "error", err)
+			writeProjectInviteError(w, err)
+			return
+		}
 	}
 
 	if err := s.startSession(w, r, u.ID); err != nil {

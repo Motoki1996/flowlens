@@ -17,6 +17,16 @@ procedure itself.
   (`RUN_MIGRATIONS`, default on).
 - `flowlens-api gen-key` prints a ready-to-paste `ENCRYPTION_KEY`, so
   generating one needs nothing but the image itself.
+- **Invite links** (`POST`/`GET /api/v1/projects/{projectID}/invites`,
+  `DELETE /api/v1/invites/{inviteID}`, `POST /api/v1/invites/accept`,
+  `GET /auth/invites/{token}`, and the `/invites/[token]` screen). A
+  single-use, expiring link lets someone with no account create one and join
+  one project at a named role, so an instance can keep `ALLOW_SIGNUP=false`
+  and still onboard people — previously adding a member required the person
+  to be registered already, which closed registration made impossible. Only
+  the link's hash is stored, and no email is sent: FlowLens has no mail
+  transport. Owner-only, session-only, never reachable by a project API
+  token.
 - **Changing your own password**: `PUT /api/v1/me/password` and a form on
   **Settings → Password**. A successful change revokes every session the
   account holds and issues a fresh one, so no older token survives it while

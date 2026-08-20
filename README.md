@@ -905,9 +905,12 @@ A project can have more than one user, each with a role — `owner`,
 ([ADR-0010](docs/decisions/0010-why-project-membership.md)). Managing
 membership is always owner-only, session-only (a project API token can
 never reach these routes — see
-[What a token can't reach](#what-a-token-cant-reach) above), and inviting
-someone only adds an *existing* FlowLens user; there is no email-invite
-flow (sign-up is already open).
+[What a token can't reach](#what-a-token-cant-reach) above).
+
+Adding a member this way resolves an **existing** FlowLens account by
+username or email. For someone who has no account yet — the normal case on
+an instance with `ALLOW_SIGNUP=false` — use an
+[invite link](#invite-links) instead.
 
 ```bash
 # Add an existing user by username or email
@@ -976,6 +979,59 @@ app applies the same rules ahead of time: in the Project view's Members
 section, your own row and the designated owner's render as a plain role
 badge with no controls.
 
+
+### Invite links
+
+An invite is a single-use link that lets someone with **no FlowLens account
+at all** create one and join a project. It exists because the two halves of
+onboarding otherwise contradict each other: adding a member needs the person
+to be registered already, and [`docs/self-hosting.md`](docs/self-hosting.md)
+tells you to close registration with `ALLOW_SIGNUP=false`. An invite reopens
+that door for one named person, once, instead of reopening it for everyone.
+
+From the project's single view, open the **Invites** card, click **Create
+invite**, pick a role and an expiry, and copy the link — shown exactly once,
+like an API token, because only its SHA-256 hash is stored. **FlowLens sends
+no email**: it has no mail transport and targets closed networks, so you
+hand the link over yourself.
+
+```bash
+# Owner-only, session-only.
+curl -X POST "$API_BASE_URL/api/v1/projects/$PROJECT_ID/invites" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: flowlens_session=$SESSION_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -d '{"role": "member", "expiresInDays": 7}'
+```
+
+```jsonc
+{
+  "id": "b7e1...",
+  "projectId": "a1b2...",
+  "role": "member",
+  "tokenPrefix": "fli_9f3a2c1d",
+  "status": "pending",
+  "expiresAt": "2026-08-27T00:00:00Z",
+  "createdAt": "2026-08-20T00:00:00Z",
+  "token": "fli_9f3a2c1d8e2b4a1f6c3d5e7a9b0f1c2d" // only ever present here
+}
+```
+
+The invitee opens `/invites/<token>`:
+
+- **No account yet** — they get a sign-up form. That signup is exempt from
+  `ALLOW_SIGNUP`, and creates the account *and* the membership together.
+- **Already signed in** — they get a "Join project" button
+  (`POST /api/v1/invites/accept`).
+
+Whichever path, the invite is spent: a link admits exactly one person, and
+`role` decides what they get. `GET .../invites` lists them (including the
+accepted and expired ones, so you can see who was let in) and
+`DELETE /api/v1/invites/{inviteID}` revokes one.
+
+Everything that can go wrong on the acceptance path — unknown token,
+expired, already used — is reported identically, so whoever holds a link
+cannot probe which invites ever existed.
 ### Task & backlog scheduling, Gantt charts
 
 Beyond GitLab issue sync, a task can carry a `startDate` (alongside the

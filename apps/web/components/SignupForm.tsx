@@ -7,7 +7,19 @@ import type { ApiError } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
-export function SignupForm() {
+/**
+ * SignupForm creates a local account. `inviteToken`, when given, is sent
+ * along with it: the API then exempts this signup from ALLOW_SIGNUP and
+ * joins the new account to the invite's project (issue #211), which is what
+ * the /invites/[token] screen uses it for.
+ */
+export function SignupForm({
+  inviteToken,
+  submitLabel = "Create account",
+}: {
+  inviteToken?: string;
+  submitLabel?: string;
+} = {}) {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
@@ -24,7 +36,7 @@ export function SignupForm() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify(inviteToken ? { username, email, password, inviteToken } : { username, email, password }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as ApiError | null;
@@ -93,7 +105,7 @@ export function SignupForm() {
       </div>
 
       <Button type="submit" disabled={pending} className="w-full">
-        {pending ? "Creating account…" : "Create account"}
+        {pending ? "Creating account…" : submitLabel}
       </Button>
     </form>
   );

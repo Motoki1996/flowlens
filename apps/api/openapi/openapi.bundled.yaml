@@ -947,6 +947,193 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /auth/invites/{token}:
+    get:
+      summary: Preview a project invite
+      description: |
+        Resolves an invite token to the project and role it grants, for the acceptance screen. Unauthenticated on purpose — whoever holds the token is who this is for, and in the case the feature exists to serve they have no account yet. Every failure (unknown, expired, already used) is reported identically, so a caller cannot probe which invites existed.
+      tags:
+        - auth
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The invite's project and role
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectInvitePreview'
+        '404':
+          description: Invalid, expired or already-used invite
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/invites/accept:
+    post:
+      summary: Accept a project invite as the signed-in user
+      description: |
+        For someone who was sent an invite but already has an account. Someone with no account sends the same token with their signup instead (POST /auth/signup, inviteToken). Single-use: the invite is spent and the membership created atomically.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptProjectInviteRequest'
+      responses:
+        '200':
+          description: The project joined, and the role granted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectInvitePreview'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Invalid, expired or already-used invite
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Already a member of this project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/invites/{inviteID}:
+    delete:
+      summary: Revoke a project invite
+      description: Owner-only.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - in: path
+          name: inviteID
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Revoked
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/invites:
+    get:
+      summary: List a project's invites
+      description: Owner-only. Includes spent and expired invites, not only outstanding ones.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      responses:
+        '200':
+          description: The project's invites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectInvite'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not an owner of this project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Issue a project invite
+      description: |
+        Owner-only. Returns the raw invite token exactly once — only its hash is stored. Hand the resulting /invites/{token} URL to the person being invited; FlowLens sends no email.
+      tags:
+        - members
+      security:
+        - cookieAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectInviteRequest'
+      responses:
+        '201':
+          description: The issued invite, with its raw token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectInviteWithToken'
+        '400':
+          description: Invalid role or expiry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not an owner of this project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/projects/{projectID}/members:
     get:
       summary: List a project's members
@@ -2949,6 +3136,10 @@ components:
         password:
           type: string
           minLength: 8
+        inviteToken:
+          type: string
+          description: |
+            A project invite token. When present and valid it both exempts this signup from ALLOW_SIGNUP and joins the new account to the invite's project with the invite's role.
       required:
         - username
         - email
@@ -3421,6 +3612,92 @@ components:
       required:
         - name
         - scopes
+    ProjectInvitePreview:
+      type: object
+      description: What the holder of an invite token is told before accepting.
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        projectName:
+          type: string
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+            - viewer
+        expiresAt:
+          type: string
+          format: date-time
+    AcceptProjectInviteRequest:
+      type: object
+      properties:
+        token:
+          type: string
+      required:
+        - token
+    ProjectInvite:
+      type: object
+      description: |
+        A single-use credential that admits one person to one project, so an instance with ALLOW_SIGNUP=false can still onboard someone. The raw token is returned only by the create call.
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+            - viewer
+        tokenPrefix:
+          type: string
+          description: Leading characters of the raw token
+          for telling invites apart in a list.: null
+        status:
+          type: string
+          enum:
+            - pending
+            - accepted
+            - expired
+        expiresAt:
+          type: string
+          format: date-time
+        acceptedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+    CreateProjectInviteRequest:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+            - owner
+            - member
+            - viewer
+          default: member
+        expiresInDays:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 7
+          description: Omit (or 0) for the 7-day default.
+    ProjectInviteWithToken:
+      allOf:
+        - $ref: '#/components/schemas/ProjectInvite'
+        - type: object
+          properties:
+            token:
+              type: string
+              description: The raw invite token, present only in the create response.
     ProjectMember:
       type: object
       properties:

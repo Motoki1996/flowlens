@@ -12,6 +12,10 @@ import (
 )
 
 type Querier interface {
+	// AcceptProjectInvite spends an invite, and only if it is still spendable:
+	// the accepted_at IS NULL guard means two callers racing to accept the same
+	// invite cannot both win, since the loser's UPDATE matches no row.
+	AcceptProjectInvite(ctx context.Context, arg AcceptProjectInviteParams) (ProjectInvite, error)
 	// These back internal/projectmember, the member invite/list/role-change/
 	// remove API (issue #100), the first thing to actually write to
 	// project_members since it was added by
@@ -144,6 +148,7 @@ type Querier interface {
 	// session, so the project's owner is the only user it can act as (see
 	// internal/apitoken's Auth type).
 	CreateProjectAPIToken(ctx context.Context, arg CreateProjectAPITokenParams) (ProjectApiToken, error)
+	CreateProjectInvite(ctx context.Context, arg CreateProjectInviteParams) (ProjectInvite, error)
 	// repositories is the MR-tracking sibling of a linked GitLab project
 	// (ADR-0011 §1): one linked_gitlab_projects row has at most one repositories
 	// row, created automatically alongside it (internal/linkedproject.Service.Create),
@@ -221,6 +226,11 @@ type Querier interface {
 	// second owner-role member is left holding a project with no owner" race a
 	// membership table alone invites (docs/decisions/0010-why-project-membership.md).
 	DeleteProjectForOwner(ctx context.Context, arg DeleteProjectForOwnerParams) (int64, error)
+	// DeleteProjectInviteForOwner revokes an invite, scoped to a caller holding
+	// the 'owner' role on its project — the ownership check is in the query, so
+	// a non-owner deletes nothing and cannot tell the invite apart from a
+	// missing one. Mirrors DeleteProjectAPITokenForOwner.
+	DeleteProjectInviteForOwner(ctx context.Context, arg DeleteProjectInviteForOwnerParams) (int64, error)
 	DeleteSessionByTokenHash(ctx context.Context, tokenHash string) error
 	// DeleteSessionsByUserID revokes every session a user holds. A password
 	// change does this (issue #210) and then issues a fresh session, so that a
@@ -354,6 +364,13 @@ type Querier interface {
 	// reasoning as GetLinkedGitlabProjectByID.
 	GetProjectByID(ctx context.Context, id uuid.UUID) (Project, error)
 	GetProjectForOwner(ctx context.Context, arg GetProjectForOwnerParams) (Project, error)
+	// GetProjectInviteByTokenHash resolves a raw invite token (hashed by the
+	// caller) to the invite it names, joined to the project it grants access
+	// to so the acceptance screen can name it without a second query. It
+	// deliberately does not filter on expires_at or accepted_at: the caller
+	// distinguishes "expired" from "already used" from "never existed" for its
+	// own error, and only the last of those is a not-found.
+	GetProjectInviteByTokenHash(ctx context.Context, tokenHash string) (GetProjectInviteByTokenHashRow, error)
 	GetProjectMemberRole(ctx context.Context, arg GetProjectMemberRoleParams) (string, error)
 	GetRepositoryByID(ctx context.Context, id uuid.UUID) (Repository, error)
 	// Unscoped, like GetLinkedGitlabProjectByID: the background sync worker
@@ -512,6 +529,7 @@ type Querier interface {
 	// distinction the column supports.
 	ListOverdueOpenTasksByProject(ctx context.Context, arg ListOverdueOpenTasksByProjectParams) ([]Task, error)
 	ListProjectAPITokensByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectApiToken, error)
+	ListProjectInvitesByProject(ctx context.Context, projectID uuid.UUID) ([]ProjectInvite, error)
 	ListProjectMembers(ctx context.Context, projectID uuid.UUID) ([]ProjectMember, error)
 	// ListProjectMembersWithUser joins in the username/display name the member
 	// list response needs; email is deliberately left out so the response never

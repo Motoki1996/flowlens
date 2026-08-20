@@ -164,6 +164,19 @@ type ProjectApiToken struct {
 	TokenPrefix pgtype.Text        `json:"token_prefix"`
 }
 
+type ProjectInvite struct {
+	ID               uuid.UUID          `json:"id"`
+	ProjectID        uuid.UUID          `json:"project_id"`
+	TokenHash        string             `json:"token_hash"`
+	TokenPrefix      string             `json:"token_prefix"`
+	Role             string             `json:"role"`
+	AcceptedAt       pgtype.Timestamptz `json:"accepted_at"`
+	AcceptedByUserID pgtype.UUID        `json:"accepted_by_user_id"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	CreatedByUserID  pgtype.UUID        `json:"created_by_user_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type ProjectMember struct {
 	ProjectID uuid.UUID          `json:"project_id"`
 	UserID    uuid.UUID          `json:"user_id"`

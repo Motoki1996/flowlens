@@ -22,6 +22,7 @@ import (
 	"github.com/flowlens/api/internal/notification"
 	"github.com/flowlens/api/internal/progresssettings"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/projectinvite"
 	"github.com/flowlens/api/internal/projectmember"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/syncjob"
@@ -50,6 +51,7 @@ type Server struct {
 	backlogs             *backlog.Service
 	apiTokens            *apitoken.Service
 	projectMembers       *projectmember.Service
+	projectInvites       *projectinvite.Service
 	tasks                *task.Service
 	taskDependencies     *taskdependency.Service
 	taskComments         *taskcomment.Service
@@ -95,6 +97,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 	apiTokens := apitoken.NewService(queries, projects)
 	users := user.NewService(queries)
 	projectMembers := projectmember.NewService(queries, projects, users)
+	projectInvites := projectinvite.NewService(queries, txRunner, projects)
 	if clientFactory == nil {
 		clientFactory = func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
 	}
@@ -107,6 +110,7 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		backlogs:             backlogs,
 		apiTokens:            apiTokens,
 		projectMembers:       projectMembers,
+		projectInvites:       projectInvites,
 		tasks:                tasks,
 		taskDependencies:     taskdependency.NewService(queries, projects, tasks),
 		taskComments:         taskcomment.NewService(queries, txRunner, projects, tasks),
@@ -162,6 +166,12 @@ func (s *Server) Router() chi.Router {
 	r.Post("/auth/signup", s.handleSignup)
 	r.Post("/auth/login", s.handleLogin)
 	r.Post("/auth/logout", s.handleLogout)
+
+	// Project invite preview (issue #211): unauthenticated on purpose —
+	// whoever holds the token is exactly who this is for, and in the case
+	// the feature exists to serve they have no account yet. See
+	// handlePreviewInvite.
+	r.Get("/auth/invites/{token}", s.handlePreviewInvite)
 
 	// GitLab webhook receiver (token-header auth, not session; ADR-0008).
 	r.Post("/webhooks/gitlab/{linkID}", s.handleGitlabWebhook)
@@ -245,6 +255,16 @@ func (s *Server) Router() chi.Router {
 				projects.Patch("/{projectID}/members/{userID}", s.handleUpdateProjectMember)
 				projects.Delete("/{projectID}/members/{userID}", s.handleRemoveProjectMember)
 
+				// Project invites (issue #211): owner-only and session-only
+				// like member management above, and for the same reason —
+				// who can reach a project at all is a project-management
+				// decision, not something a token may reshape. An invite
+				// admits someone who has no account yet, which is what
+				// lets an instance keep ALLOW_SIGNUP=false and still
+				// onboard people.
+				projects.Get("/{projectID}/invites", s.handleListProjectInvites)
+				projects.Post("/{projectID}/invites", s.handleCreateProjectInvite)
+
 				// The invite form's user picker (issue #140). Kept under the
 				// project it invites to, not as a global /users/search: the
 				// candidates are only ever people the caller already shares
@@ -278,6 +298,14 @@ func (s *Server) Router() chi.Router {
 
 			protected.Route("/api-tokens", func(tokens chi.Router) {
 				tokens.Delete("/{tokenID}", s.handleDeleteAPIToken)
+			})
+
+			protected.Route("/invites", func(invites chi.Router) {
+				// Accepting is for a caller who already has an account; a
+				// caller who does not sends the same token with their
+				// signup instead (handleSignup).
+				invites.Post("/accept", s.handleAcceptInvite)
+				invites.Delete("/{inviteID}", s.handleRevokeProjectInvite)
 			})
 
 			protected.Route("/sync-jobs", func(jobs chi.Router) {

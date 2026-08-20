@@ -1,0 +1,64 @@
+accept:
+  post:
+    summary: Accept a project invite as the signed-in user
+    description: >
+      For someone who was sent an invite but already has an account. Someone
+      with no account sends the same token with their signup instead
+      (POST /auth/signup, inviteToken). Single-use: the invite is spent and
+      the membership created atomically.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/AcceptProjectInviteRequest'
+    responses:
+      "200":
+        description: The project joined, and the role granted
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/ProjectInvitePreview' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Invalid, expired or already-used invite
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "409":
+        description: Already a member of this project
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+invite:
+  delete:
+    summary: Revoke a project invite
+    description: Owner-only.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - in: path
+        name: inviteID
+        required: true
+        schema: { type: string, format: uuid }
+    responses:
+      "204":
+        description: Revoked
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }

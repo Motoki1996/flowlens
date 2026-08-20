@@ -833,6 +833,82 @@ velocity:
           application/json:
             schema: { $ref: '../components/schemas/error.yaml#/Error' }
 
+invites:
+  get:
+    summary: List a project's invites
+    description: Owner-only. Includes spent and expired invites, not only outstanding ones.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    responses:
+      "200":
+        description: The project's invites
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/ProjectInvite' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not an owner of this project
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Issue a project invite
+    description: >
+      Owner-only. Returns the raw invite token exactly once — only its hash is
+      stored. Hand the resulting /invites/{token} URL to the person being
+      invited; FlowLens sends no email.
+    tags: [members]
+    security:
+      - cookieAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateProjectInviteRequest'
+    responses:
+      "201":
+        description: The issued invite, with its raw token
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/ProjectInviteWithToken' }
+      "400":
+        description: Invalid role or expiry
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Not an owner of this project
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
 components:
   parameters:
     projectID:

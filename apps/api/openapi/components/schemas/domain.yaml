@@ -168,6 +168,40 @@ ProjectMember:
     isProjectOwner: { type: boolean }
     createdAt: { type: string, format: date-time }
 
+ProjectInvite:
+  type: object
+  description: >
+    A single-use credential that admits one person to one project, so an
+    instance with ALLOW_SIGNUP=false can still onboard someone. The raw
+    token is returned only by the create call.
+  properties:
+    id: { type: string, format: uuid }
+    projectId: { type: string, format: uuid }
+    role: { type: string, enum: [owner, member, viewer] }
+    tokenPrefix: { type: string, description: Leading characters of the raw token, for telling invites apart in a list. }
+    status: { type: string, enum: [pending, accepted, expired] }
+    expiresAt: { type: string, format: date-time }
+    acceptedAt: { type: string, format: date-time, nullable: true }
+    createdAt: { type: string, format: date-time }
+
+ProjectInviteWithToken:
+  allOf:
+    - $ref: '#/ProjectInvite'
+    - type: object
+      properties:
+        token:
+          type: string
+          description: The raw invite token, present only in the create response.
+
+ProjectInvitePreview:
+  type: object
+  description: What the holder of an invite token is told before accepting.
+  properties:
+    projectId: { type: string, format: uuid }
+    projectName: { type: string }
+    role: { type: string, enum: [owner, member, viewer] }
+    expiresAt: { type: string, format: date-time }
+
 ProjectMemberCandidate:
   type: object
   description: One hit from the invite form's user search (?q=, min 2 characters).

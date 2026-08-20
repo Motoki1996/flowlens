@@ -306,6 +306,41 @@ export interface ProjectMember {
   createdAt: string;
 }
 
+/** ProjectInviteStatus is derived from the invite's own timestamps rather
+ *  than stored: accepted wins over expired, since an invite that was used
+ *  and then aged out was still used. */
+export type ProjectInviteStatus = "pending" | "accepted" | "expired";
+
+/** ProjectInvite is a single-use credential that admits one person to one
+ *  project (see projectinvite.Invite). It is what lets an instance keep
+ *  ALLOW_SIGNUP=false and still onboard someone. The raw token is never in
+ *  a listing — only `tokenPrefix`, for telling invites apart. */
+export interface ProjectInvite {
+  id: string;
+  projectId: string;
+  role: ProjectMemberRole;
+  tokenPrefix: string;
+  status: ProjectInviteStatus;
+  expiresAt: string;
+  acceptedAt?: string;
+  createdAt: string;
+}
+
+/** ProjectInviteWithToken is the create response, the only place the raw
+ *  invite token ever appears — the API stores just its hash. */
+export interface ProjectInviteWithToken extends ProjectInvite {
+  token: string;
+}
+
+/** ProjectInvitePreview is what the holder of an invite token is told
+ *  before accepting: which project, and as what. */
+export interface ProjectInvitePreview {
+  projectId: string;
+  projectName: string;
+  role: ProjectMemberRole;
+  expiresAt: string;
+}
+
 /** ProjectMemberCandidate is one hit from the invite form's user search
  *  (see projectmember.Candidate). The candidates are only ever people the
  *  caller already shares a project with, minus this project's members — the

@@ -8,6 +8,7 @@ import {
   getProject,
   getProjectApiTokens,
   getProjectFlowMetrics,
+  getProjectInvites,
   getProjectMembers,
   getProjectMetrics,
   getProjectVelocity,
@@ -92,6 +93,16 @@ export default async function ProjectPage({
     // Left null; the section renders its read-only state.
   }
 
+  // null (not []) is the failure default here for the same reason as
+  // members above: the invites listing is owner-only, and its card is
+  // hidden rather than shown empty for anyone else.
+  let invites: Awaited<ReturnType<typeof getProjectInvites>> = null;
+  try {
+    invites = await getProjectInvites(projectId);
+  } catch {
+    // Left null; the card is simply not rendered.
+  }
+
   // Delivery metrics (issue #113) and flow metrics (issue #171) share the
   // same date-range filter and render in the same card, so a failure on
   // either side falls back to the same error state.
@@ -131,6 +142,7 @@ export default async function ProjectPage({
       apiTokens={apiTokens}
       failedSyncJobs={failedSyncJobs}
       members={members}
+      invites={invites}
       currentUserId={currentUser?.id ?? ""}
       metrics={metrics}
       flowMetrics={flowMetrics}

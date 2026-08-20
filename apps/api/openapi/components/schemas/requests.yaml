@@ -4,7 +4,30 @@ SignupRequest:
     username: { type: string }
     email: { type: string, format: email }
     password: { type: string, minLength: 8 }
+    inviteToken:
+      type: string
+      description: >
+        A project invite token. When present and valid it both exempts this
+        signup from ALLOW_SIGNUP and joins the new account to the invite's
+        project with the invite's role.
   required: [username, email, password]
+
+CreateProjectInviteRequest:
+  type: object
+  properties:
+    role: { type: string, enum: [owner, member, viewer], default: member }
+    expiresInDays:
+      type: integer
+      minimum: 1
+      maximum: 90
+      default: 7
+      description: Omit (or 0) for the 7-day default.
+
+AcceptProjectInviteRequest:
+  type: object
+  properties:
+    token: { type: string }
+  required: [token]
 
 LoginRequest:
   type: object

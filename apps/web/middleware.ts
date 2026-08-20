@@ -26,6 +26,11 @@ export const config = {
   // internals. The root "/" always redirects to /dashboard regardless of
   // auth, so it is left in scope on purpose.
   //
+  // invites/ is excluded because the person it is for may have no account
+  // at all — bouncing them to /login is precisely the dead end issue #211
+  // exists to remove. The screen itself handles both the signed-in and the
+  // signed-out case.
+  //
   // api/auth/webhooks are excluded because they are not screens at all:
   // next.config.ts rewrites them to the Go API, which does its own
   // authentication and returns 401 to a caller without a session. Middleware
@@ -34,6 +39,6 @@ export const config = {
   // has no session cookie yet, and the GitLab webhook receiver, which never
   // has one.
   matcher: [
-    "/((?!login|signup|api/|auth/|webhooks/|_next/static|_next/image|favicon.ico).*)",
+    "/((?!login|signup|invites/|api/|auth/|webhooks/|_next/static|_next/image|favicon.ico).*)",
   ],
 };

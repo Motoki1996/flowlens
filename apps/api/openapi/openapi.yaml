@@ -81,6 +81,14 @@ paths:
     $ref: './paths/projects.yaml#/linkedGitlabProject'
   /api/v1/projects/{projectID}/api-tokens:
     $ref: './paths/projects.yaml#/apiTokens'
+  /auth/invites/{token}:
+    $ref: './paths/auth.yaml#/invitePreview'
+  /api/v1/invites/accept:
+    $ref: './paths/invites.yaml#/accept'
+  /api/v1/invites/{inviteID}:
+    $ref: './paths/invites.yaml#/invite'
+  /api/v1/projects/{projectID}/invites:
+    $ref: './paths/projects.yaml#/invites'
   /api/v1/projects/{projectID}/members:
     $ref: './paths/projects.yaml#/members'
   /api/v1/projects/{projectID}/members/{userID}:

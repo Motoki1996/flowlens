@@ -62,3 +62,36 @@ logout:
     responses:
       "204":
         description: Logged out
+
+invitePreview:
+  get:
+    summary: Preview a project invite
+    description: >
+      Resolves an invite token to the project and role it grants, for the
+      acceptance screen. Unauthenticated on purpose — whoever holds the token
+      is who this is for, and in the case the feature exists to serve they
+      have no account yet. Every failure (unknown, expired, already used) is
+      reported identically, so a caller cannot probe which invites existed.
+    tags: [auth]
+    security: []
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: { type: string }
+    responses:
+      "200":
+        description: The invite's project and role
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/ProjectInvitePreview' }
+      "404":
+        description: Invalid, expired or already-used invite
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "429":
+        description: Too many attempts
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }

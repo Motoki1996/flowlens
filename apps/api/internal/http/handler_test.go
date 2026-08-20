@@ -22,6 +22,7 @@ import (
 	"github.com/flowlens/api/internal/linkedproject"
 	"github.com/flowlens/api/internal/mergerequest"
 	"github.com/flowlens/api/internal/project"
+	"github.com/flowlens/api/internal/projectinvite"
 	"github.com/flowlens/api/internal/projectmember"
 	"github.com/flowlens/api/internal/projectsync"
 	"github.com/flowlens/api/internal/syncjob"
@@ -83,6 +84,7 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 		backlogs:         backlogs,
 		apiTokens:        apiTokens,
 		projectMembers:   projectMembers,
+		projectInvites:   projectinvite.NewService(q, txRunner, projects),
 		tasks:            tasks,
 		taskDependencies: taskdependency.NewService(q, projects, tasks),
 		taskComments:     taskcomment.NewService(q, txRunner, projects, tasks),

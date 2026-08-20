@@ -8,6 +8,7 @@ upgrade, back up, and harden. The only prerequisite is Docker with Compose
 - [Putting it on a real hostname](#putting-it-on-a-real-hostname)
 - [Upgrading](#upgrading)
 - [Backup and restore](#backup-and-restore)
+- [Adding people](#adding-people)
 - [Recovering a lost password](#recovering-a-lost-password)
 - [Hardening](#hardening)
 - [Closed networks and air-gapped installs](#closed-networks-and-air-gapped-installs)
@@ -145,6 +146,30 @@ Running against a managed Postgres instead of the bundled container is
 supported and recommended for anything you care about: point `DATABASE_URL`
 at it (with `sslmode=require`), and remove the `db` service.
 
+## Adding people
+
+Keep `ALLOW_SIGNUP=false` and add people with **invite links**. Nothing
+about onboarding requires reopening registration.
+
+From the project's single view, open the **Invites** card → **Create
+invite** → pick a role (`owner`/`member`/`viewer`) and an expiry (7 days by
+default, 90 maximum) → copy the link. Send it over whatever channel you
+already use.
+
+- The link is shown **once**. Only its hash is stored, so a lost link means
+  creating a new invite, not recovering the old one.
+- It works **once**. It admits exactly the first person who accepts it, at
+  the role you chose.
+- The invitee opens it and creates an account from that page — that signup
+  is exempt from `ALLOW_SIGNUP`. Someone who already has an account gets a
+  "Join project" button instead.
+- **No email is sent.** FlowLens has no mail transport; handing over the
+  link is your job.
+- Revoke an outstanding invite from the same card.
+
+Someone who already has an account can also be added directly by username
+or email, from the **Members** card.
+
 ## Recovering a lost password
 
 Anyone can change their own password from **Settings → Password** while
@@ -179,7 +204,7 @@ The defaults favour a working first run. Before exposing an instance:
 | Do this | Why |
 | --- | --- |
 | Serve over HTTPS | The session cookie is `Secure` in production; without TLS, login cannot work. |
-| `ALLOW_SIGNUP=false` | Otherwise reaching the login page is enough to create an account. Set it after registering; the first account is always allowed, so you can also set it before and still bootstrap. |
+| `ALLOW_SIGNUP=false` | Otherwise reaching the login page is enough to create an account. Set it after registering; the first account is always allowed, so you can also set it before and still bootstrap. It does not block onboarding — see [Adding people](#adding-people). |
 | `TRUSTED_PROXY_HOPS` set to your real chain | The per-IP rate limiters key on it. Too low and every user shares one login limit; too high and a client can forge its address to escape it. |
 | `POSTGRES_PASSWORD` changed | It is `change-me` in the example file. |
 | `GITLAB_CA_CERT_FILE` pointed at your GitLab's CA | `GITLAB_TLS_INSECURE_SKIP_VERIFY` defaults to `true` because on-prem GitLab CE usually presents a certificate the container cannot verify, and a failed handshake otherwise surfaces only as "unreachable". Undo that trade when you can. |

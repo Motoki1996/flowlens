@@ -26,6 +26,8 @@ import type {
   Progress,
   Project,
   Size,
+  ProjectInvite,
+  ProjectInvitePreview,
   ProjectMember,
   SyncJob,
   SyncRun,
@@ -679,6 +681,40 @@ export const getProjectApiTokens = cache(async (projectId: string): Promise<ApiT
   }
   return (await res.json()) as ApiToken[];
 });
+
+/**
+ * getProjectInvites returns every invite issued for the project, newest
+ * first — including spent and expired ones, so an owner can audit who was
+ * let in. Owner-only like the member listing, so a non-owner's 403 is
+ * reported as `null` rather than thrown.
+ */
+export const getProjectInvites = cache(async (projectId: string): Promise<ProjectInvite[] | null> => {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/invites`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 403 || res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load project invites: ${res.status}`);
+  }
+  return (await res.json()) as ProjectInvite[];
+});
+
+/**
+ * getInvitePreview resolves an invite token to the project and role it
+ * grants. Unauthenticated by design — the person it is for may have no
+ * account yet — so no cookie is forwarded. `null` covers every reason the
+ * invite cannot be accepted; the API deliberately does not distinguish
+ * unknown from expired from already-used.
+ */
+export async function getInvitePreview(token: string): Promise<ProjectInvitePreview | null> {
+  const res = await fetch(`${API_INTERNAL_URL}/auth/invites/${encodeURIComponent(token)}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as ProjectInvitePreview;
+}
 
 /**
  * getProjectMembers returns every member of the project, oldest first. The

@@ -86,6 +86,10 @@ type FakeQuerier struct {
 	notificationDigests             map[notificationDigestKey]db.NotificationDigest
 
 	progressSyncSettingsByProjectID map[uuid.UUID]db.ProgressSyncSetting
+
+	projectInvites       []db.ProjectInvite // insertion order, newest last
+	projectInvitesByID   map[uuid.UUID]db.ProjectInvite
+	projectInvitesByHash map[string]uuid.UUID // key: token_hash
 }
 
 type notificationDigestKey struct {
@@ -155,6 +159,8 @@ func New() *FakeQuerier {
 		notificationSettingsByProjectID: map[uuid.UUID]db.NotificationSetting{},
 		notificationDigests:             map[notificationDigestKey]db.NotificationDigest{},
 		progressSyncSettingsByProjectID: map[uuid.UUID]db.ProgressSyncSetting{},
+		projectInvitesByID:              map[uuid.UUID]db.ProjectInvite{},
+		projectInvitesByHash:            map[string]uuid.UUID{},
 	}
 }
 
@@ -3856,6 +3862,113 @@ func (f *FakeQuerier) SeedProjectMember(projectID, userID uuid.UUID, role string
 
 // AddProjectMember mirrors the SQL, including the (project_id, user_id)
 // primary key's unique violation on a duplicate insert.
+// storeProjectInvite inserts inv if it is new, or overwrites the existing
+// row in place (preserving its position in f.projectInvites) otherwise.
+func (f *FakeQuerier) storeProjectInvite(inv db.ProjectInvite) {
+	f.projectInvitesByID[inv.ID] = inv
+	f.projectInvitesByHash[inv.TokenHash] = inv.ID
+	for i, x := range f.projectInvites {
+		if x.ID == inv.ID {
+			f.projectInvites[i] = inv
+			return
+		}
+	}
+	f.projectInvites = append(f.projectInvites, inv)
+}
+
+// SeedProjectInvite inserts an invite row directly, so a test can hold one
+// with an arbitrary expiry — an already-expired invite in particular, which
+// projectinvite.Service.Create can never produce.
+func (f *FakeQuerier) SeedProjectInvite(projectID uuid.UUID, tokenHash, role string, expiresAt time.Time) db.ProjectInvite {
+	inv := db.ProjectInvite{
+		ID:          uuid.New(),
+		ProjectID:   projectID,
+		TokenHash:   tokenHash,
+		TokenPrefix: "fli_seeded",
+		Role:        role,
+		ExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		CreatedAt:   now(),
+	}
+	f.storeProjectInvite(inv)
+	return inv
+}
+
+func (f *FakeQuerier) CreateProjectInvite(_ context.Context, arg db.CreateProjectInviteParams) (db.ProjectInvite, error) {
+	inv := db.ProjectInvite{
+		ID:              uuid.New(),
+		ProjectID:       arg.ProjectID,
+		TokenHash:       arg.TokenHash,
+		TokenPrefix:     arg.TokenPrefix,
+		Role:            arg.Role,
+		ExpiresAt:       arg.ExpiresAt,
+		CreatedByUserID: arg.CreatedByUserID,
+		CreatedAt:       now(),
+	}
+	f.storeProjectInvite(inv)
+	return inv, nil
+}
+
+// ListProjectInvitesByProject mirrors the SQL's ORDER BY created_at DESC,
+// which for the fake's insertion-ordered slice means newest first.
+func (f *FakeQuerier) ListProjectInvitesByProject(_ context.Context, projectID uuid.UUID) ([]db.ProjectInvite, error) {
+	items := []db.ProjectInvite{}
+	for i := len(f.projectInvites) - 1; i >= 0; i-- {
+		if f.projectInvites[i].ProjectID == projectID {
+			items = append(items, f.projectInvites[i])
+		}
+	}
+	return items, nil
+}
+
+func (f *FakeQuerier) GetProjectInviteByTokenHash(_ context.Context, tokenHash string) (db.GetProjectInviteByTokenHashRow, error) {
+	id, ok := f.projectInvitesByHash[tokenHash]
+	if !ok {
+		return db.GetProjectInviteByTokenHashRow{}, pgx.ErrNoRows
+	}
+	inv := f.projectInvitesByID[id]
+	p, ok := f.projectsByID[inv.ProjectID]
+	if !ok {
+		return db.GetProjectInviteByTokenHashRow{}, pgx.ErrNoRows
+	}
+	return db.GetProjectInviteByTokenHashRow{ProjectInvite: inv, ProjectName: p.Name}, nil
+}
+
+// AcceptProjectInvite mirrors the SQL's guard: an invite that is already
+// accepted or past its expiry matches no row, so a racing second caller
+// gets ErrNoRows rather than spending it twice.
+func (f *FakeQuerier) AcceptProjectInvite(_ context.Context, arg db.AcceptProjectInviteParams) (db.ProjectInvite, error) {
+	inv, ok := f.projectInvitesByID[arg.ID]
+	if !ok || inv.AcceptedAt.Valid || !inv.ExpiresAt.Time.After(time.Now()) {
+		return db.ProjectInvite{}, pgx.ErrNoRows
+	}
+	inv.AcceptedAt = now()
+	inv.AcceptedByUserID = arg.AcceptedByUserID
+	f.storeProjectInvite(inv)
+	return inv, nil
+}
+
+// DeleteProjectInviteForOwner mirrors the SQL's ownership subquery: only a
+// caller holding the 'owner' role on the invite's project deletes anything.
+func (f *FakeQuerier) DeleteProjectInviteForOwner(_ context.Context, arg db.DeleteProjectInviteForOwnerParams) (int64, error) {
+	inv, ok := f.projectInvitesByID[arg.ID]
+	if !ok {
+		return 0, nil
+	}
+	m, ok := f.projectMembers[projectMemberKey{inv.ProjectID, arg.UserID}]
+	if !ok || m.Role != "owner" {
+		return 0, nil
+	}
+	delete(f.projectInvitesByID, arg.ID)
+	delete(f.projectInvitesByHash, inv.TokenHash)
+	for i, x := range f.projectInvites {
+		if x.ID == arg.ID {
+			f.projectInvites = append(f.projectInvites[:i], f.projectInvites[i+1:]...)
+			break
+		}
+	}
+	return 1, nil
+}
+
 func (f *FakeQuerier) AddProjectMember(_ context.Context, arg db.AddProjectMemberParams) (db.ProjectMember, error) {
 	key := projectMemberKey{arg.ProjectID, arg.UserID}
 	if _, ok := f.projectMembers[key]; ok {

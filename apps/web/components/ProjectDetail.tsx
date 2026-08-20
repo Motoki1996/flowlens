@@ -14,6 +14,7 @@ import type {
   MetricsInterval,
   GitlabConnection,
   Project,
+  ProjectInvite,
   ProjectMember,
   SyncJob,
   Velocity,
@@ -26,6 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { ApiTokenSection } from "@/components/ApiTokenSection";
 import { DeliveryMetricsSection } from "@/components/DeliveryMetricsSection";
 import { FailedSyncJobSection } from "@/components/FailedSyncJobSection";
+import { ProjectInviteSection } from "@/components/ProjectInviteSection";
 import { ProjectMemberSection } from "@/components/ProjectMemberSection";
 import { VelocitySection } from "@/components/VelocitySection";
 
@@ -226,6 +228,7 @@ export function ProjectDetail({
   apiTokens = [],
   failedSyncJobs = [],
   members = null,
+  invites = null,
   currentUserId,
   metrics = null,
   flowMetrics = null,
@@ -248,6 +251,9 @@ export function ProjectDetail({
   failedSyncJobs?: SyncJob[];
   /** null when the caller isn't a project owner (the listing is owner-only). */
   members?: ProjectMember[] | null;
+  /** null when the caller isn't a project owner, in which case the invites
+   *  card is hidden entirely (issue #211). */
+  invites?: ProjectInvite[] | null;
   /** The viewer's own user ID, so their member row can hide its controls. */
   currentUserId: string;
   /** Delivery-flow metrics (issue #113); null when they failed to load. */
@@ -365,6 +371,10 @@ export function ProjectDetail({
           members={members}
           currentUserId={currentUserId}
         />
+      </div>
+
+      <div className="mt-8">
+        <ProjectInviteSection projectId={project.id} invites={invites} />
       </div>
 
       <div className="mt-8">

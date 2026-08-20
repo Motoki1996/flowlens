@@ -1,8 +1,9 @@
 name: Web Checks
 
-# Static checks for the Next.js web app: TypeScript type checking and ESLint.
-# Mirrors `npm run typecheck` and `npm run lint` in apps/web. Jobs run in
-# parallel so a failure in one is easy to spot.
+# Static checks for the Next.js web app: TypeScript type checking, ESLint and
+# a production build. Mirrors `npm run typecheck`, `npm run lint` and
+# `npm run build` in apps/web. Jobs run in parallel so a failure in one is
+# easy to spot.
 
 on:
   push:
@@ -57,6 +58,30 @@ jobs:
 
       - name: ESLint
         run: npm run lint
+
+  # `next build` is not redundant with typecheck: plain tsc accepts a route
+  # file that Next.js rejects (an extra export from a page.tsx, an invalid
+  # route segment config), and that failure would otherwise surface for the
+  # first time inside the release workflow's image build. This job is what
+  # keeps a tag from being cut on a web app that cannot be built.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
 
   storybook-build:
     runs-on: ubuntu-latest

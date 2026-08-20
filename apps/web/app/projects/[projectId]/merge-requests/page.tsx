@@ -21,8 +21,8 @@ import type { MergeRequestFilter } from "@/lib/api";
  * Auth is guarded by the parent layout.tsx; this page doesn't render the
  * AppHeader so it has no need of its own user object.
  */
-export const DEFAULT_STATE = "opened" as const;
-export const DEFAULT_SORT = "updated" as const;
+const DEFAULT_STATE = "opened" as const;
+const DEFAULT_SORT = "updated" as const;
 
 export default async function MergeRequestsPage({
   params,

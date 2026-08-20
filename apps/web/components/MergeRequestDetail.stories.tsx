@@ -57,7 +57,7 @@ const task: Task = {
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
   gitlab: null,
-  aiContext: { acceptanceCriteria: "", aiContext: "", allowedScope: "", forbiddenScope: "", updatedAt: null },
+  aiContext: { acceptanceCriteria: "", aiContext: "", updatedAt: null },
 };
 
 const meta = {

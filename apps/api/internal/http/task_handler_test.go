@@ -864,14 +864,11 @@ func TestHandleUpsertTaskAIContext(t *testing.T) {
 	first := doRequest(t, s, http.MethodPut, "/api/v1/tasks/"+id+"/ai-context", upsertTaskAIContextRequest{
 		AcceptanceCriteria: "Given/When/Then",
 		AIContext:          "Legacy payments module",
-		AllowedScope:       "internal/payments/**",
-		ForbiddenScope:     "internal/auth/**",
 	}, token)
 	require.Equal(t, http.StatusOK, first.Code)
 	var firstBody map[string]any
 	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstBody))
 	assert.Equal(t, "Given/When/Then", firstBody["acceptanceCriteria"])
-	assert.Equal(t, "internal/payments/**", firstBody["allowedScope"])
 
 	// A second call overwrites, it doesn't merge.
 	second := doRequest(t, s, http.MethodPut, "/api/v1/tasks/"+id+"/ai-context", upsertTaskAIContextRequest{
@@ -881,7 +878,6 @@ func TestHandleUpsertTaskAIContext(t *testing.T) {
 	var secondBody map[string]any
 	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &secondBody))
 	assert.Equal(t, "Updated", secondBody["acceptanceCriteria"])
-	assert.Equal(t, "", secondBody["allowedScope"])
 
 	getRec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, token)
 	require.Equal(t, http.StatusOK, getRec.Code)

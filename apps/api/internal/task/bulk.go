@@ -235,8 +235,6 @@ func (s *Service) BulkCreate(ctx context.Context, ownerID, projectID uuid.UUID, 
 					TaskID:             created.ID,
 					AcceptanceCriteria: nt.params.AIContext.AcceptanceCriteria,
 					AiContext:          nt.params.AIContext.AIContext,
-					AllowedScope:       nt.params.AIContext.AllowedScope,
-					ForbiddenScope:     nt.params.AIContext.ForbiddenScope,
 				})
 				if err != nil {
 					return &BulkError{Ref: nt.params.Ref, Err: fmt.Errorf("task: bulk create: upsert ai context: %w", err)}

@@ -233,8 +233,6 @@ UpsertTaskAIContextRequest:
   properties:
     acceptanceCriteria: { type: string }
     aiContext: { type: string }
-    allowedScope: { type: string }
-    forbiddenScope: { type: string }
 
 BulkCreateTasksRequest:
   type: object

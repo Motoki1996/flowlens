@@ -28,6 +28,8 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     progress: "not_started",
     defaultLinkedGitlabProjectId: null,
     baseBranch: "",
+    allowedScope: "",
+    forbiddenScope: "",
     taskCount: 0,
     closedTaskCount: 0,
     createdAt: "2026-01-01T00:00:00Z",

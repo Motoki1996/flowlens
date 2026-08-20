@@ -287,6 +287,8 @@ Backlog:
     progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
     defaultLinkedGitlabProjectId: { type: [string, "null"], format: uuid }
     baseBranch: { type: string }
+    allowedScope: { type: string }
+    forbiddenScope: { type: string }
 
 TaskGitlabInfo:
   type: object
@@ -302,8 +304,6 @@ TaskAIContext:
   properties:
     acceptanceCriteria: { type: string }
     aiContext: { type: string }
-    allowedScope: { type: string }
-    forbiddenScope: { type: string }
     updatedAt: { type: [string, "null"], format: date-time }
 
 Task:

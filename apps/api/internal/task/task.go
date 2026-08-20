@@ -159,17 +159,19 @@ type GitlabInfo struct {
 }
 
 // AIContext holds the app-only fields that describe a task for an AI agent:
-// acceptance criteria, free-form context, and the allowed/forbidden change
-// scope. These fields live in task_ai_contexts, never in tasks, and must
-// never be sent to GitLab (see "Why the task is split across three tables"
-// in docs/plans/issue-sync.md). A task with no task_ai_contexts row yet
-// reports as the zero value rather than nil, so callers never need a nil
-// check.
+// acceptance criteria and free-form context. These fields live in
+// task_ai_contexts, never in tasks, and must never be sent to GitLab (see
+// "Why the task is split across three tables" in
+// docs/plans/issue-sync.md). The allowed/forbidden change scope used to
+// live here too, but moved to Backlog (000029 migration) since it
+// describes a sub-area of the codebase, not one task — see
+// internal/backlog.Backlog.AllowedScope/ForbiddenScope, resolved into
+// Context below through the task's backlog. A task with no
+// task_ai_contexts row yet reports as the zero value rather than nil, so
+// callers never need a nil check.
 type AIContext struct {
 	AcceptanceCriteria string     `json:"acceptanceCriteria"`
 	AIContext          string     `json:"aiContext"`
-	AllowedScope       string     `json:"allowedScope"`
-	ForbiddenScope     string     `json:"forbiddenScope"`
 	UpdatedAt          *time.Time `json:"updatedAt"`
 }
 
@@ -178,25 +180,21 @@ type AIContext struct {
 type AIContextParams struct {
 	AcceptanceCriteria string
 	AIContext          string
-	AllowedScope       string
-	ForbiddenScope     string
 }
 
 func aiContextFromRow(row db.TaskAiContext) AIContext {
 	return AIContext{
 		AcceptanceCriteria: row.AcceptanceCriteria,
 		AIContext:          row.AiContext,
-		AllowedScope:       row.AllowedScope,
-		ForbiddenScope:     row.ForbiddenScope,
 		UpdatedAt:          timePtr(row.UpdatedAt),
 	}
 }
 
 // validateAIContextParams enforces the length cap on each field. Unlike
-// title, empty is always valid: acceptance criteria, AI context, and the
-// allowed/forbidden scope are all optional.
+// title, empty is always valid: acceptance criteria and AI context are both
+// optional.
 func validateAIContextParams(params AIContextParams) error {
-	fields := []string{params.AcceptanceCriteria, params.AIContext, params.AllowedScope, params.ForbiddenScope}
+	fields := []string{params.AcceptanceCriteria, params.AIContext}
 	for _, f := range fields {
 		if utf8.RuneCountInString(f) > maxAIContextFieldLength {
 			return ErrAIContextFieldTooLong
@@ -1568,8 +1566,6 @@ func (s *Service) UpsertAIContext(ctx context.Context, ownerID, taskID uuid.UUID
 		TaskID:             taskID,
 		AcceptanceCriteria: params.AcceptanceCriteria,
 		AiContext:          params.AIContext,
-		AllowedScope:       params.AllowedScope,
-		ForbiddenScope:     params.ForbiddenScope,
 	})
 	if err != nil {
 		return AIContext{}, fmt.Errorf("task: upsert ai context: %w", err)
@@ -1661,17 +1657,31 @@ type Context struct {
 	// BaseBranch is the task's backlog's base_branch (internal/backlog,
 	// issue's own migration) — the branch an agent working this task should
 	// branch from. "" when the task is unfiled or its backlog has none set.
-	BaseBranch         string         `json:"baseBranch"`
+	BaseBranch string `json:"baseBranch"`
+	// AllowedScope/ForbiddenScope are the task's backlog's own
+	// AllowedScope/ForbiddenScope (internal/backlog, 000029 migration) —
+	// the paths an agent working this task may/may not touch. "" when the
+	// task is unfiled or its backlog has none set, the same rule
+	// BaseBranch follows.
+	AllowedScope       string         `json:"allowedScope"`
+	ForbiddenScope     string         `json:"forbiddenScope"`
 	Gitlab             *GitlabContext `json:"gitlab"`
 	AcceptanceCriteria string         `json:"acceptanceCriteria"`
 	AIContext          string         `json:"aiContext"`
-	AllowedScope       string         `json:"allowedScope"`
-	ForbiddenScope     string         `json:"forbiddenScope"`
+}
+
+// backlogTaskDefaults is a task's backlog's own AI-facing defaults —
+// base_branch, allowed_scope, forbidden_scope — resolved once and threaded
+// into Context.
+type backlogTaskDefaults struct {
+	BaseBranch     string
+	AllowedScope   string
+	ForbiddenScope string
 }
 
 // toContext combines t with its already-resolved GitLab and AI context into
 // the AI-facing Context shape.
-func toContext(t Task, gc *GitlabContext, ai AIContext, baseBranch string) Context {
+func toContext(t Task, gc *GitlabContext, ai AIContext, bd backlogTaskDefaults) Context {
 	return Context{
 		ID:                     t.ID,
 		ProjectID:              t.ProjectID,
@@ -1687,12 +1697,12 @@ func toContext(t Task, gc *GitlabContext, ai AIContext, baseBranch string) Conte
 		Labels:                 t.Labels,
 		DueOn:                  t.DueOn,
 		UpdatedAt:              t.UpdatedAt,
-		BaseBranch:             baseBranch,
+		BaseBranch:             bd.BaseBranch,
+		AllowedScope:           bd.AllowedScope,
+		ForbiddenScope:         bd.ForbiddenScope,
 		Gitlab:                 gc,
 		AcceptanceCriteria:     ai.AcceptanceCriteria,
 		AIContext:              ai.AIContext,
-		AllowedScope:           ai.AllowedScope,
-		ForbiddenScope:         ai.ForbiddenScope,
 	}
 }
 
@@ -1734,27 +1744,32 @@ func (s *Service) contextForTask(ctx context.Context, t Task) (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
-	baseBranch, err := s.baseBranchForTask(ctx, t.BacklogID)
+	bd, err := s.backlogTaskDefaultsForTask(ctx, t.BacklogID)
 	if err != nil {
 		return Context{}, err
 	}
-	return toContext(t, gc, ai, baseBranch), nil
+	return toContext(t, gc, ai, bd), nil
 }
 
-// baseBranchForTask resolves backlogID's base_branch, or "" if the task is
-// unfiled (backlogID nil) or its backlog has none set.
-func (s *Service) baseBranchForTask(ctx context.Context, backlogID *uuid.UUID) (string, error) {
+// backlogTaskDefaultsForTask resolves backlogID's base_branch/
+// allowed_scope/forbidden_scope, or the zero value if the task is unfiled
+// (backlogID nil) or its backlog has none set.
+func (s *Service) backlogTaskDefaultsForTask(ctx context.Context, backlogID *uuid.UUID) (backlogTaskDefaults, error) {
 	if backlogID == nil {
-		return "", nil
+		return backlogTaskDefaults{}, nil
 	}
-	branch, err := s.q.GetBacklogBaseBranch(ctx, *backlogID)
+	row, err := s.q.GetBacklogTaskDefaults(ctx, *backlogID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", nil
+			return backlogTaskDefaults{}, nil
 		}
-		return "", fmt.Errorf("task: get backlog base branch: %w", err)
+		return backlogTaskDefaults{}, fmt.Errorf("task: get backlog task defaults: %w", err)
 	}
-	return branch, nil
+	return backlogTaskDefaults{
+		BaseBranch:     row.BaseBranch,
+		AllowedScope:   row.AllowedScope,
+		ForbiddenScope: row.ForbiddenScope,
+	}, nil
 }
 
 // ContextListFilter narrows ListContext/ListContextForProject to a subset of

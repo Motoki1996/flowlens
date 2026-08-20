@@ -27,16 +27,21 @@ type createBacklogRequest struct {
 	// BaseBranch is the branch tasks in this backlog are meant to branch
 	// from; omitted leaves it unset.
 	BaseBranch string `json:"baseBranch"`
+	// AllowedScope/ForbiddenScope are the paths tasks filed in this backlog
+	// may/may not touch; omitted leaves them unset.
+	AllowedScope   string `json:"allowedScope"`
+	ForbiddenScope string `json:"forbiddenScope"`
 }
 
-// The dates, priority, progress and base branch are Optional so PATCH stays
-// a partial update for them: a body without
-// "startDate"/"priority"/"progress"/"baseBranch" keeps the stored value, and
-// an explicit null clears a date (priority and progress have no null case —
-// see backlog.normalizePriority/normalizeProgress — and an explicit empty
-// string clears baseBranch instead, since it has no null case either).
-// Name/description/position predate that and are still overwritten
-// wholesale.
+// The dates, priority, progress, base branch and scope are Optional so
+// PATCH stays a partial update for them: a body without
+// "startDate"/"priority"/"progress"/"baseBranch"/"allowedScope"/
+// "forbiddenScope" keeps the stored value, and an explicit null clears a
+// date (priority and progress have no null case — see
+// backlog.normalizePriority/normalizeProgress — and an explicit empty
+// string clears baseBranch/allowedScope/forbiddenScope instead, since none
+// of them has a null case either). Name/description/position predate that
+// and are still overwritten wholesale.
 type updateBacklogRequest struct {
 	Name        string                        `json:"name"`
 	Description string                        `json:"description"`
@@ -49,6 +54,8 @@ type updateBacklogRequest struct {
 	// falls the backlog back to the project's default link.
 	DefaultLinkedGitlabProjectID optional.Optional[*uuid.UUID] `json:"defaultLinkedGitlabProjectId"`
 	BaseBranch                   optional.Optional[string]     `json:"baseBranch"`
+	AllowedScope                 optional.Optional[string]     `json:"allowedScope"`
+	ForbiddenScope               optional.Optional[string]     `json:"forbiddenScope"`
 }
 
 // reorderBacklogsRequest carries a project's full, newly-ordered backlog ID
@@ -195,6 +202,8 @@ func (s *Server) handleCreateBacklog(w http.ResponseWriter, r *http.Request) {
 		Progress:                     req.Progress,
 		DefaultLinkedGitlabProjectID: req.DefaultLinkedGitlabProjectID,
 		BaseBranch:                   req.BaseBranch,
+		AllowedScope:                 req.AllowedScope,
+		ForbiddenScope:               req.ForbiddenScope,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -254,6 +263,8 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		Progress:                     req.Progress,
 		DefaultLinkedGitlabProjectID: req.DefaultLinkedGitlabProjectID,
 		BaseBranch:                   req.BaseBranch,
+		AllowedScope:                 req.AllowedScope,
+		ForbiddenScope:               req.ForbiddenScope,
 	}, actorKind)
 	if err != nil {
 		writeBacklogError(w, err)
@@ -293,6 +304,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done")
 	case errors.Is(err, backlog.ErrInvalidBaseBranch):
 		writeError(w, http.StatusBadRequest, "invalid_base_branch", "baseBranch must be a valid git branch name, at most 255 characters")
+	case errors.Is(err, backlog.ErrInvalidScope):
+		writeError(w, http.StatusBadRequest, "invalid_scope", "allowedScope/forbiddenScope must be at most 20000 characters")
 	case errors.Is(err, backlog.ErrLinkNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_linked_gitlab_project", "defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	case errors.Is(err, backlog.ErrBacklogIDsMismatch):

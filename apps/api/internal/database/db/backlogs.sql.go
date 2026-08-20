@@ -14,7 +14,7 @@ import (
 
 const createBacklog = `-- name: CreateBacklog :one
 
-INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch)
+INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope)
 VALUES (
     $1,
     $2,
@@ -25,9 +25,11 @@ VALUES (
     $6,
     $7,
     $8,
-    $9
+    $9,
+    $10,
+    $11
 )
-RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch
+RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope
 `
 
 type CreateBacklogParams struct {
@@ -40,6 +42,8 @@ type CreateBacklogParams struct {
 	Progress                     string      `json:"progress"`
 	DefaultLinkedGitlabProjectID pgtype.UUID `json:"default_linked_gitlab_project_id"`
 	BaseBranch                   string      `json:"base_branch"`
+	AllowedScope                 string      `json:"allowed_scope"`
+	ForbiddenScope               string      `json:"forbidden_scope"`
 }
 
 // Backlogs have no owner column of their own; ownership is always checked
@@ -53,7 +57,9 @@ type CreateBacklogParams struct {
 // GitLab connection before writing it — the schema cannot.
 //
 // base_branch (000024) is the branch tasks in this backlog are meant to
-// branch from; app-only, never synced to GitLab.
+// branch from; app-only, never synced to GitLab. allowed_scope/
+// forbidden_scope (000029) are the same kind of field: the paths tasks
+// filed in this backlog may/may not touch.
 func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error) {
 	row := q.db.QueryRow(ctx, createBacklog,
 		arg.ProjectID,
@@ -65,6 +71,8 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		arg.Progress,
 		arg.DefaultLinkedGitlabProjectID,
 		arg.BaseBranch,
+		arg.AllowedScope,
+		arg.ForbiddenScope,
 	)
 	var i Backlog
 	err := row.Scan(
@@ -81,6 +89,8 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		&i.Progress,
 		&i.DefaultLinkedGitlabProjectID,
 		&i.BaseBranch,
+		&i.AllowedScope,
+		&i.ForbiddenScope,
 	)
 	return i, err
 }
@@ -107,22 +117,8 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 	return result.RowsAffected(), nil
 }
 
-const getBacklogBaseBranch = `-- name: GetBacklogBaseBranch :one
-SELECT base_branch FROM backlogs WHERE id = $1
-`
-
-// GetBacklogBaseBranch is the lightweight lookup internal/task's Context
-// uses to resolve a task's backlog's base_branch without pulling in the rest
-// of the backlog row.
-func (q *Queries) GetBacklogBaseBranch(ctx context.Context, id uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, getBacklogBaseBranch, id)
-	var base_branch string
-	err := row.Scan(&base_branch)
-	return base_branch, err
-}
-
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch
+SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -153,6 +149,8 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 		&i.Progress,
 		&i.DefaultLinkedGitlabProjectID,
 		&i.BaseBranch,
+		&i.AllowedScope,
+		&i.ForbiddenScope,
 	)
 	return i, err
 }
@@ -174,10 +172,31 @@ func (q *Queries) GetBacklogProjectID(ctx context.Context, id uuid.UUID) (uuid.U
 	return project_id, err
 }
 
+const getBacklogTaskDefaults = `-- name: GetBacklogTaskDefaults :one
+SELECT base_branch, allowed_scope, forbidden_scope FROM backlogs WHERE id = $1
+`
+
+type GetBacklogTaskDefaultsRow struct {
+	BaseBranch     string `json:"base_branch"`
+	AllowedScope   string `json:"allowed_scope"`
+	ForbiddenScope string `json:"forbidden_scope"`
+}
+
+// GetBacklogTaskDefaults is the lightweight lookup internal/task's Context
+// uses to resolve a task's backlog's base_branch/allowed_scope/
+// forbidden_scope without pulling in the rest of the backlog row.
+func (q *Queries) GetBacklogTaskDefaults(ctx context.Context, id uuid.UUID) (GetBacklogTaskDefaultsRow, error) {
+	row := q.db.QueryRow(ctx, getBacklogTaskDefaults, id)
+	var i GetBacklogTaskDefaultsRow
+	err := row.Scan(&i.BaseBranch, &i.AllowedScope, &i.ForbiddenScope)
+	return i, err
+}
+
 const listBacklogsByProject = `-- name: ListBacklogsByProject :many
 SELECT
   b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
   b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch,
+  b.allowed_scope, b.forbidden_scope,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM backlogs b
@@ -218,6 +237,8 @@ type ListBacklogsByProjectRow struct {
 	Progress                     string             `json:"progress"`
 	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
 	BaseBranch                   string             `json:"base_branch"`
+	AllowedScope                 string             `json:"allowed_scope"`
+	ForbiddenScope               string             `json:"forbidden_scope"`
 	TaskCount                    int64              `json:"task_count"`
 	ClosedTaskCount              int64              `json:"closed_task_count"`
 }
@@ -264,6 +285,8 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 			&i.Progress,
 			&i.DefaultLinkedGitlabProjectID,
 			&i.BaseBranch,
+			&i.AllowedScope,
+			&i.ForbiddenScope,
 			&i.TaskCount,
 			&i.ClosedTaskCount,
 		); err != nil {
@@ -307,13 +330,13 @@ func (q *Queries) ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams
 
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, updated_at = now()
+SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12, updated_at = now()
 WHERE b.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = b.project_id AND pm.user_id = $11 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = b.project_id AND pm.user_id = $13 AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch
+RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope
 `
 
 type UpdateBacklogForOwnerParams struct {
@@ -327,13 +350,16 @@ type UpdateBacklogForOwnerParams struct {
 	Progress                     string      `json:"progress"`
 	DefaultLinkedGitlabProjectID pgtype.UUID `json:"default_linked_gitlab_project_id"`
 	BaseBranch                   string      `json:"base_branch"`
+	AllowedScope                 string      `json:"allowed_scope"`
+	ForbiddenScope               string      `json:"forbidden_scope"`
 	OwnerUserID                  uuid.UUID   `json:"owner_user_id"`
 }
 
 // UpdateBacklogForOwner overwrites every editable column, so start_date/due_on,
-// default_linked_gitlab_project_id and base_branch must arrive already
-// resolved: backlog.Service reads the current row first and fills in
-// whatever the PATCH body left out (see its Update).
+// default_linked_gitlab_project_id, base_branch, allowed_scope and
+// forbidden_scope must arrive already resolved: backlog.Service reads the
+// current row first and fills in whatever the PATCH body left out (see its
+// Update).
 func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error) {
 	row := q.db.QueryRow(ctx, updateBacklogForOwner,
 		arg.ID,
@@ -346,6 +372,8 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		arg.Progress,
 		arg.DefaultLinkedGitlabProjectID,
 		arg.BaseBranch,
+		arg.AllowedScope,
+		arg.ForbiddenScope,
 		arg.OwnerUserID,
 	)
 	var i Backlog
@@ -363,6 +391,8 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		&i.Progress,
 		&i.DefaultLinkedGitlabProjectID,
 		&i.BaseBranch,
+		&i.AllowedScope,
+		&i.ForbiddenScope,
 	)
 	return i, err
 }

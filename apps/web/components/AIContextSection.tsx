@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
-type FieldKey = "acceptanceCriteria" | "aiContext" | "allowedScope" | "forbiddenScope";
+type FieldKey = "acceptanceCriteria" | "aiContext";
 
 const FIELDS: { key: FieldKey; label: string; placeholder: string }[] = [
   {
@@ -17,15 +17,15 @@ const FIELDS: { key: FieldKey; label: string; placeholder: string }[] = [
     placeholder: "No acceptance criteria set.",
   },
   { key: "aiContext", label: "AI context", placeholder: "No AI context set." },
-  { key: "allowedScope", label: "Allowed scope", placeholder: "No allowed scope set." },
-  { key: "forbiddenScope", label: "Forbidden scope", placeholder: "No forbidden scope set." },
 ];
 
 /**
  * AIContextField edits and saves a single task_ai_contexts field. Saving
- * always PUTs the full ai-context payload (the API upserts all four fields
- * together), but only this field's value ever changes: the other three are
- * taken from the current, already-saved context.
+ * always PUTs the full ai-context payload (the API upserts both fields
+ * together), but only this field's value ever changes: the other one is
+ * taken from the current, already-saved context. The allowed/forbidden
+ * change scope lives on the task's Backlog instead (see BacklogEditForm) —
+ * it describes a sub-area of the codebase, not one task.
  */
 function AIContextField({
   taskId,
@@ -61,8 +61,6 @@ function AIContextField({
         body: JSON.stringify({
           acceptanceCriteria: context.acceptanceCriteria,
           aiContext: context.aiContext,
-          allowedScope: context.allowedScope,
-          forbiddenScope: context.forbiddenScope,
           [fieldKey]: draft,
         }),
       });
@@ -137,8 +135,8 @@ function AIContextField({
 
 /**
  * AIContextSection is the AI-facing information block on the task single
- * view: acceptance criteria, free-form AI context, and the allowed/forbidden
- * change scope, each independently editable and saved.
+ * view: acceptance criteria and free-form AI context, each independently
+ * editable and saved.
  */
 export function AIContextSection({
   taskId,

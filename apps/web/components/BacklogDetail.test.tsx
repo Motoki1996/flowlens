@@ -63,6 +63,8 @@ const backlog: Backlog = {
   progress: "not_started",
   defaultLinkedGitlabProjectId: null,
   baseBranch: "",
+  allowedScope: "",
+  forbiddenScope: "",
   taskCount: 0,
   closedTaskCount: 0,
   createdAt: "2026-01-01T00:00:00Z",
@@ -96,8 +98,6 @@ function makeTask(overrides: Partial<Task>): Task {
     aiContext: {
       acceptanceCriteria: "",
       aiContext: "",
-      allowedScope: "",
-      forbiddenScope: "",
       updatedAt: null,
     },
     ...overrides,
@@ -123,8 +123,9 @@ describe("BacklogDetail", () => {
     const { rerender } = render(
       <BacklogDetail backlog={backlog} project={project} tasks={[]} />,
     );
-    // Start date, due date, and base branch each say "Not set" when unset.
-    expect(screen.getAllByText("Not set")).toHaveLength(3);
+    // Start date, due date, base branch, allowed scope, and forbidden scope
+    // each say "Not set" when unset.
+    expect(screen.getAllByText("Not set")).toHaveLength(5);
 
     rerender(
       <BacklogDetail

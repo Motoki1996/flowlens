@@ -3230,10 +3230,6 @@ components:
           type: string
         aiContext:
           type: string
-        allowedScope:
-          type: string
-        forbiddenScope:
-          type: string
         updatedAt:
           type:
             - string
@@ -4209,6 +4205,10 @@ components:
           format: uuid
         baseBranch:
           type: string
+        allowedScope:
+          type: string
+        forbiddenScope:
+          type: string
     CreateBacklogRequest:
       type: object
       properties:
@@ -4359,10 +4359,6 @@ components:
         acceptanceCriteria:
           type: string
         aiContext:
-          type: string
-        allowedScope:
-          type: string
-        forbiddenScope:
           type: string
     BulkCreateTaskItem:
       type: object

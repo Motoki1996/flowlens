@@ -116,6 +116,8 @@ export function BacklogEditForm({
     backlog.defaultLinkedGitlabProjectId,
   );
   const [baseBranch, setBaseBranch] = useState(backlog.baseBranch);
+  const [allowedScope, setAllowedScope] = useState(backlog.allowedScope);
+  const [forbiddenScope, setForbiddenScope] = useState(backlog.forbiddenScope);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -145,6 +147,8 @@ export function BacklogEditForm({
             progress,
             defaultLinkedGitlabProjectId: linkId,
             baseBranch,
+            allowedScope,
+            forbiddenScope,
           }),
         },
       );
@@ -295,6 +299,44 @@ export function BacklogEditForm({
         />
         <p className="text-muted-foreground mt-1 text-xs">
           Optional. The branch tasks in this backlog are meant to branch from.
+        </p>
+      </div>
+      <div>
+        <label
+          htmlFor={`edit-backlog-allowed-scope-${backlog.id}`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Allowed scope
+        </label>
+        <Textarea
+          id={`edit-backlog-allowed-scope-${backlog.id}`}
+          name="allowedScope"
+          value={allowedScope}
+          onChange={(e) => setAllowedScope(e.target.value)}
+          rows={3}
+          className="mt-1"
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The paths tasks in this backlog may touch.
+        </p>
+      </div>
+      <div>
+        <label
+          htmlFor={`edit-backlog-forbidden-scope-${backlog.id}`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Forbidden scope
+        </label>
+        <Textarea
+          id={`edit-backlog-forbidden-scope-${backlog.id}`}
+          name="forbiddenScope"
+          value={forbiddenScope}
+          onChange={(e) => setForbiddenScope(e.target.value)}
+          rows={3}
+          className="mt-1"
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The paths tasks in this backlog may not touch.
         </p>
       </div>
       <div className="flex gap-2">

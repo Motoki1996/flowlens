@@ -113,6 +113,8 @@ function NewBacklogForm({
   const [progress, setProgress] = useState<Progress>("not_started");
   const [linkId, setLinkId] = useState<string | null>(null);
   const [baseBranch, setBaseBranch] = useState("");
+  const [allowedScope, setAllowedScope] = useState("");
+  const [forbiddenScope, setForbiddenScope] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -141,6 +143,8 @@ function NewBacklogForm({
             progress,
             defaultLinkedGitlabProjectId: linkId,
             baseBranch,
+            allowedScope,
+            forbiddenScope,
           }),
         },
       );
@@ -292,6 +296,44 @@ function NewBacklogForm({
         />
         <p className="text-muted-foreground mt-1 text-xs">
           Optional. The branch tasks in this backlog are meant to branch from.
+        </p>
+      </div>
+      <div>
+        <label
+          htmlFor="new-backlog-allowed-scope"
+          className="text-foreground block text-sm font-medium"
+        >
+          Allowed scope
+        </label>
+        <Textarea
+          id="new-backlog-allowed-scope"
+          name="allowedScope"
+          value={allowedScope}
+          onChange={(e) => setAllowedScope(e.target.value)}
+          rows={3}
+          className="mt-1"
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The paths tasks in this backlog may touch.
+        </p>
+      </div>
+      <div>
+        <label
+          htmlFor="new-backlog-forbidden-scope"
+          className="text-foreground block text-sm font-medium"
+        >
+          Forbidden scope
+        </label>
+        <Textarea
+          id="new-backlog-forbidden-scope"
+          name="forbiddenScope"
+          value={forbiddenScope}
+          onChange={(e) => setForbiddenScope(e.target.value)}
+          rows={3}
+          className="mt-1"
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The paths tasks in this backlog may not touch.
         </p>
       </div>
       <div className="flex gap-2">

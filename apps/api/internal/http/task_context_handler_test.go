@@ -146,7 +146,6 @@ func TestHandleGetTaskContext_IncludesAIContextAndGitlabProjectPath(t *testing.T
 
 	_, err := s.tasks.UpsertAIContext(context.Background(), ownerID, tsk.ID, task.AIContextParams{
 		AcceptanceCriteria: "Given/When/Then",
-		AllowedScope:       "internal/payments/**",
 	})
 	require.NoError(t, err)
 
@@ -159,7 +158,6 @@ func TestHandleGetTaskContext_IncludesAIContextAndGitlabProjectPath(t *testing.T
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "Given/When/Then", body["acceptanceCriteria"])
-	assert.Equal(t, "internal/payments/**", body["allowedScope"])
 
 	gitlabBody, ok := body["gitlab"].(map[string]any)
 	require.True(t, ok, "gitlab must be an object once the task is linked")
@@ -168,9 +166,10 @@ func TestHandleGetTaskContext_IncludesAIContextAndGitlabProjectPath(t *testing.T
 	assert.Equal(t, link.PathWithNamespace, gitlabBody["projectPath"])
 }
 
-// baseBranch (internal/backlog) is resolved through the task's backlog, so
-// an AI agent working the task knows what branch to start from.
-func TestHandleGetTaskContext_IncludesBacklogBaseBranch(t *testing.T) {
+// baseBranch/allowedScope/forbiddenScope (internal/backlog) are resolved
+// through the task's backlog, so an AI agent working the task knows what
+// branch to start from and what it may/may not touch.
+func TestHandleGetTaskContext_IncludesBacklogBaseBranchAndScope(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)
 	p := q.SeedProject(ownerID, "Alpha")
@@ -178,7 +177,12 @@ func TestHandleGetTaskContext_IncludesBacklogBaseBranch(t *testing.T) {
 	tsk := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Fix bug")
 
 	patchRec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+b.ID.String(),
-		map[string]any{"name": b.Name, "baseBranch": "release/2.4"}, token)
+		map[string]any{
+			"name":           b.Name,
+			"baseBranch":     "release/2.4",
+			"allowedScope":   "internal/payments/**",
+			"forbiddenScope": "internal/auth/**",
+		}, token)
 	require.Equal(t, http.StatusOK, patchRec.Code)
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String()+"/context", nil, token)
@@ -187,11 +191,13 @@ func TestHandleGetTaskContext_IncludesBacklogBaseBranch(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "release/2.4", body["baseBranch"])
+	assert.Equal(t, "internal/payments/**", body["allowedScope"])
+	assert.Equal(t, "internal/auth/**", body["forbiddenScope"])
 }
 
-// A task with no backlog, or one whose backlog has no base branch set,
+// A task with no backlog, or one whose backlog has none of these set,
 // reports "" rather than omitting the field or erroring.
-func TestHandleGetTaskContext_BaseBranchEmptyWhenUnfiledOrUnset(t *testing.T) {
+func TestHandleGetTaskContext_BaseBranchAndScopeEmptyWhenUnfiledOrUnset(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)
 	p := q.SeedProject(ownerID, "Alpha")
@@ -202,6 +208,8 @@ func TestHandleGetTaskContext_BaseBranchEmptyWhenUnfiledOrUnset(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "", body["baseBranch"])
+	assert.Equal(t, "", body["allowedScope"])
+	assert.Equal(t, "", body["forbiddenScope"])
 
 	b := q.SeedBacklog(p.ID, "Sprint 1")
 	filed := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Filed task")
@@ -209,6 +217,8 @@ func TestHandleGetTaskContext_BaseBranchEmptyWhenUnfiledOrUnset(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "", body["baseBranch"])
+	assert.Equal(t, "", body["allowedScope"])
+	assert.Equal(t, "", body["forbiddenScope"])
 }
 
 func TestHandleGetTaskContext_IncludesProgressAndGuidance(t *testing.T) {

@@ -88,8 +88,6 @@ type bulkDependencyRequest struct {
 type upsertTaskAIContextRequest struct {
 	AcceptanceCriteria string `json:"acceptanceCriteria"`
 	AIContext          string `json:"aiContext"`
-	AllowedScope       string `json:"allowedScope"`
-	ForbiddenScope     string `json:"forbiddenScope"`
 }
 
 // taskIDFromURL parses the {taskID} path parameter. A malformed ID is
@@ -486,8 +484,6 @@ func (s *Server) handleBulkCreateTasks(w http.ResponseWriter, r *http.Request) {
 			bt.AIContext = &task.AIContextParams{
 				AcceptanceCriteria: t.AIContext.AcceptanceCriteria,
 				AIContext:          t.AIContext.AIContext,
-				AllowedScope:       t.AIContext.AllowedScope,
-				ForbiddenScope:     t.AIContext.ForbiddenScope,
 			}
 		}
 		params.Tasks[i] = bt
@@ -732,8 +728,6 @@ func (s *Server) handleUpsertTaskAIContext(w http.ResponseWriter, r *http.Reques
 	aiContext, err := s.tasks.UpsertAIContext(r.Context(), u.ID, taskID, task.AIContextParams{
 		AcceptanceCriteria: req.AcceptanceCriteria,
 		AIContext:          req.AIContext,
-		AllowedScope:       req.AllowedScope,
-		ForbiddenScope:     req.ForbiddenScope,
 	})
 	if err != nil {
 		writeTaskError(w, err)

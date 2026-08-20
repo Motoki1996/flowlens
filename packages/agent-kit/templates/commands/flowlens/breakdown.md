@@ -24,9 +24,13 @@ Backlog ID: $1
    - `priority`
    - which requirement(s) it satisfies (record the `R#` reference(s) in the
      task's `aiContext`, e.g. "Implements R2.")
-   - `allowedScope` / `forbiddenScope` — paths the task may and may not
-     touch
    - `acceptanceCriteria`
+
+   `allowedScope`/`forbiddenScope` (paths tasks may/may not touch) are not
+   a per-task field — they live on the backlog itself (already fetched in
+   step 1) and apply to every task filed in it. If this backlog's own
+   scope needs setting or refining, do that with `PATCH
+   {baseUrl}/api/v1/backlogs/$1` rather than inventing a per-task scope.
 4. Decide dependencies between the new tasks (predecessor → successor).
    These determine the order `/flowlens:work` can run them in — a task
    whose predecessor isn't closed yet should not be started.

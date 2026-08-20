@@ -23,6 +23,8 @@ type Backlog struct {
 	Progress                     string             `json:"progress"`
 	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
 	BaseBranch                   string             `json:"base_branch"`
+	AllowedScope                 string             `json:"allowed_scope"`
+	ForbiddenScope               string             `json:"forbidden_scope"`
 }
 
 type BacklogProgressEvent struct {
@@ -264,8 +266,6 @@ type TaskAiContext struct {
 	TaskID             uuid.UUID          `json:"task_id"`
 	AcceptanceCriteria string             `json:"acceptance_criteria"`
 	AiContext          string             `json:"ai_context"`
-	AllowedScope       string             `json:"allowed_scope"`
-	ForbiddenScope     string             `json:"forbidden_scope"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 

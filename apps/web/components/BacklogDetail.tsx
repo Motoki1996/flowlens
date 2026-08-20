@@ -234,6 +234,18 @@ export function BacklogDetail({
                   </dd>
                 </div>
                 <div>
+                  <dt className="text-muted-foreground">Allowed scope</dt>
+                  <dd className="text-foreground whitespace-pre-wrap">
+                    {backlog.allowedScope || "Not set"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Forbidden scope</dt>
+                  <dd className="text-foreground whitespace-pre-wrap">
+                    {backlog.forbiddenScope || "Not set"}
+                  </dd>
+                </div>
+                <div>
                   <dt className="text-muted-foreground">Created</dt>
                   <dd className="text-foreground">
                     {formatDateTime(backlog.createdAt)}

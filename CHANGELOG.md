@@ -40,8 +40,8 @@ what FlowLens is rather than what changed.
 - **An AI-agent-facing API.** Project-scoped API tokens over
   `Authorization: Bearer` ([ADR-0009](docs/decisions/0009-why-project-scoped-api-tokens.md)),
   a task context endpoint, a task activity log, an OpenAPI 3.1 document
-  served at `GET /openapi.yaml`, and `@flowlens/agent-kit`
-  (`npx @flowlens/agent-kit init`) which installs a Claude Code skill and
+  served at `GET /openapi.yaml`, and `@motokis-lab/agent-kit`
+  (`npx @motokis-lab/agent-kit init`) which installs a Claude Code skill and
   slash commands into the repository an agent works in.
 - **Accounts and access.** Local username/password login with server-side
   opaque sessions, project membership with owner/member/viewer roles

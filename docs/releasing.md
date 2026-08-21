@@ -10,6 +10,13 @@ and attaches an offline image bundle. The version in the image, the git tag
 and the release notes are the same string by construction, so there is
 nothing to keep in sync by hand.
 
+The same workflow also publishes
+[`packages/agent-kit`](../packages/agent-kit) to npm as `@motokis-lab/agent-kit`
+— but only when `packages/agent-kit/package.json`'s own `version` hasn't
+been published yet, since that package versions independently of the image
+tag. A release that doesn't touch agent-kit publishes nothing on that job;
+bump its `version` field yourself before tagging when it does.
+
 ## Before the tag
 
 **1. Settle the CHANGELOG.** Rename `## Unreleased` to `## vX.Y.Z — <date>`
@@ -64,6 +71,25 @@ Note that an editor's port forwarding (VS Code forwards a dev container's
 ports to the host automatically) can claim the host port ahead of Docker and
 swallow the request, which presents as a page that loads forever rather than
 as an error.
+
+## First-time npm setup (once, before the first agent-kit publish)
+
+`@motokis-lab/agent-kit` publishes under the `motokis-lab` npm scope, which
+must exist before CI can push to it:
+
+1. Create the `motokis-lab` organization at <https://www.npmjs.com/org/create>
+   (free tier is fine — `publishConfig.access: public` in the package
+   already opts a scoped package out of npm's private-by-default).
+2. Under that org, generate a **Granular Access Token** scoped to
+   `@motokis-lab/agent-kit` with **Read and write** permission, or an
+   **Automation** token if a granular one can't be scoped narrowly enough.
+3. Add it as the `NPM_TOKEN` secret on the GitHub repository (Settings →
+   Secrets and variables → Actions). The `npm-agent-kit` job in
+   `release.yml` reads it as `NODE_AUTH_TOKEN`.
+
+Until `NPM_TOKEN` exists, the `npm-agent-kit` job fails at the publish step
+on every tag — harmless (the images and GitHub Release still succeed, since
+it's a separate job), but worth fixing before relying on it.
 
 ## Cutting the tag
 

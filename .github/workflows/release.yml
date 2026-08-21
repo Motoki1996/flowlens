@@ -15,6 +15,7 @@ on:
 permissions:
   contents: write   # attach the offline image bundle to the release
   packages: write   # push to ghcr.io
+  id-token: write   # npm provenance for the agent-kit publish
 
 env:
   REGISTRY: ghcr.io
@@ -77,6 +78,39 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.version.outputs.owner }}/flowlens-web:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  npm-agent-kit:
+    # @motokis-lab/agent-kit (packages/agent-kit) versions independently of the
+    # image tag, so a release that doesn't bump it should be a no-op here
+    # rather than fail on "version already published".
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install and test
+        working-directory: packages/agent-kit
+        run: |
+          npm ci
+          npm test
+
+      - name: Publish if this version is new
+        working-directory: packages/agent-kit
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already on npm, skipping publish"
+            exit 0
+          fi
+          npm publish --provenance --access public
 
   offline-bundle:
     # An air-gapped network is a normal place to find on-prem GitLab CE, so

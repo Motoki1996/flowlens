@@ -114,7 +114,7 @@ leaves the newer schema in place under a binary that does not know about it.
 
 ```bash
 docker compose down
-sed -i 's/^FLOWLENS_VERSION=.*/FLOWLENS_VERSION=v1.0.0/' .env
+sed -i 's/^FLOWLENS_VERSION=.*/FLOWLENS_VERSION=v0.1.0/' .env
 docker compose up -d db
 gunzip -c backup-2026-08-18.sql.gz | docker compose exec -T db psql -U flowlens flowlens
 docker compose up -d
@@ -221,9 +221,9 @@ On-prem GitLab CE often lives somewhere that cannot reach `ghcr.io`.
 ```bash
 # On a machine with internet access
 for image in flowlens-api flowlens-web; do
-  docker pull ghcr.io/motoki1996/$image:v1.0.0
-  docker tag ghcr.io/motoki1996/$image:v1.0.0 registry.example.local/flowlens/$image:v1.0.0
-  docker push registry.example.local/flowlens/$image:v1.0.0
+  docker pull ghcr.io/motoki1996/$image:v0.1.0
+  docker tag ghcr.io/motoki1996/$image:v0.1.0 registry.example.local/flowlens/$image:v0.1.0
+  docker push registry.example.local/flowlens/$image:v0.1.0
 done
 
 # In .env on the target
@@ -235,7 +235,7 @@ FLOWLENS_REGISTRY=registry.example.local/flowlens
 and Postgres images:
 
 ```bash
-docker load < flowlens-v1.0.0-images-amd64.tar.gz
+docker load < flowlens-v0.1.0-images-amd64.tar.gz
 docker compose up -d
 ```
 

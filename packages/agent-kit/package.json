@@ -1,9 +1,23 @@
 {
-  "name": "@flowlens/agent-kit",
+  "name": "@motokis-lab/agent-kit",
   "version": "0.1.0",
-  "private": true,
   "description": "Installs FlowLens's Claude Code skill and slash commands into a consuming repository.",
   "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Motoki1996/flowlens.git",
+    "directory": "packages/agent-kit"
+  },
+  "homepage": "https://github.com/Motoki1996/flowlens/tree/main/packages/agent-kit#readme",
+  "keywords": [
+    "flowlens",
+    "claude-code",
+    "ai-agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "agent-kit": "./bin/agent-kit.js"
   },

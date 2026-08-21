@@ -1,4 +1,4 @@
-# @flowlens/agent-kit
+# @motokis-lab/agent-kit
 
 Installs FlowLens's Claude Code skill and slash commands into a
 project-side repository, so an AI agent working from that repo knows which
@@ -6,7 +6,7 @@ FlowLens API to call, in what order, and against what schema.
 
 ```bash
 export FLOWLENS_API_TOKEN=flt_...   # optional at this point, but needed to also populate .flowlens/
-npx @flowlens/agent-kit init --url https://flowlens.internal
+npx @motokis-lab/agent-kit init --url https://flowlens.internal
 ```
 
 This writes:

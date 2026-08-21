@@ -837,12 +837,12 @@ calls, never from browser script.
 
 An OpenAPI spec (served at `GET /openapi.yaml`, see above) resolves *what
 schema* an endpoint takes, but not *what order* to call things in — that's
-what `@flowlens/agent-kit` installs into the repository an AI agent
+what `@motokis-lab/agent-kit` installs into the repository an AI agent
 actually works in, as a Claude Code skill and three slash commands.
 
 ```bash
 export FLOWLENS_API_TOKEN=flt_...   # optional, see below
-npx @flowlens/agent-kit init --url https://flowlens.internal
+npx @motokis-lab/agent-kit init --url https://flowlens.internal
 ```
 
 This is deliberately not an npm dependency of the consumer repo: FlowLens

@@ -221,9 +221,9 @@ On-prem GitLab CE often lives somewhere that cannot reach `ghcr.io`.
 ```bash
 # On a machine with internet access
 for image in flowlens-api flowlens-web; do
-  docker pull ghcr.io/motoki1996/$image:v0.1.0
-  docker tag ghcr.io/motoki1996/$image:v0.1.0 registry.example.local/flowlens/$image:v0.1.0
-  docker push registry.example.local/flowlens/$image:v0.1.0
+  docker pull ghcr.io/motoki1996/$image:v0.1.1
+  docker tag ghcr.io/motoki1996/$image:v0.1.1 registry.example.local/flowlens/$image:v0.1.1
+  docker push registry.example.local/flowlens/$image:v0.1.1
 done
 
 # In .env on the target
@@ -235,7 +235,7 @@ FLOWLENS_REGISTRY=registry.example.local/flowlens
 and Postgres images:
 
 ```bash
-docker load < flowlens-v0.1.0-images-amd64.tar.gz
+docker load < flowlens-v0.1.1-images-amd64.tar.gz
 docker compose up -d
 ```
 

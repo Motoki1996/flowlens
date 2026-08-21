@@ -8,6 +8,15 @@ procedure itself.
 
 ## Unreleased
 
+## v0.1.1 — 2026-08-21
+
+### Added
+
+- **`@motokis-lab/agent-kit` published to npm.** The release workflow now
+  publishes `packages/agent-kit` alongside the Docker images, whenever its
+  own `package.json` version is new. `npx @motokis-lab/agent-kit init` is
+  now installable without a local clone of this repository.
+
 ## v0.1.0 — 2026-08-20
 
 The first public release. Everything below is new, so this entry describes

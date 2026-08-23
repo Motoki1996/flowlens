@@ -46,8 +46,12 @@ RUN printf 'export PATH="$PATH:/usr/local/go/bin:/go/bin"\n' > /etc/profile.d/10
 ARG USERNAME=vscode
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
+# .cache and .npm are created here, owned by the user, so that the named
+# volumes docker-compose.yml mounts over them inherit that ownership — an
+# empty named volume is seeded from the image's directory, and without this
+# it would come up root-owned and unwritable.
 RUN groupadd --gid $USER_GID $USERNAME \
  && useradd --uid $USER_UID --gid $USER_GID -m -s /bin/bash $USERNAME \
- && mkdir -p /go/pkg/mod /home/$USERNAME/.claude \
- && chown -R $USER_UID:$USER_GID /go /home/$USERNAME/.claude
+ && mkdir -p /go/pkg/mod /home/$USERNAME/.claude /home/$USERNAME/.cache /home/$USERNAME/.npm \
+ && chown -R $USER_UID:$USER_GID /go /home/$USERNAME/.claude /home/$USERNAME/.cache /home/$USERNAME/.npm
 USER $USERNAME

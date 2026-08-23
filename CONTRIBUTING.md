@@ -25,7 +25,14 @@ migrate step for a fresh database.
 
 Working inside the devcontainer? Docker is not available in there — use
 `make dev-container`, which runs the API and web natively against the
-sibling `db` service.
+sibling `db` service. It also pre-requests the common web routes in the
+background so Next.js has compiled them before you open the first screen
+(`FLOWLENS_DEV_WARM=0` opts out).
+
+The devcontainer keeps the Go build cache, the gopls index, the
+golangci-lint cache, the Playwright browsers and the npm cache in named
+volumes, so a container rebuild does not throw them away. The first rebuild
+after this was introduced still starts from empty — the volumes are new.
 
 ## Before you open a pull request
 

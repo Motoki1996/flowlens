@@ -124,6 +124,12 @@ Container Postgres is published on host port **55432** to avoid clashing with a 
 
 Dev Container note: `.env` records the host port, but the Makefile keeps the environment's `DATABASE_URL` (`db:5432`, exported by compose) in preference to it, so `make migrate` works unchanged inside the container. `make dev` needs Docker, which isn't available inside the devcontainer itself — use `make dev-container` there instead, which runs the API (`air`) and Web (`npm run dev`) natively against the sibling `db` service.
 
+Dev-loop performance (the devcontainer's bind mount is virtiofs, so small-file I/O is ~8x slower than the container filesystem):
+- `next dev` runs with `--turbopack` (`apps/web/package.json`, and repeated in `playwright.config.ts`, which invokes `next` directly). Measured against webpack on this repo: `/projects/[projectId]` first open 4.7s → 2.0s, edit→served ~0.94s → ~0.53s, `.next` 153MB → 64MB. `next build` deliberately stays on webpack.
+- `experimental.turbopackPersistentCaching` is **canary-only** in Next 15.5.20 and errors on startup — don't add it to `next.config.ts` until the stable release carries it.
+- `.devcontainer/dev.sh` warms the common routes in the background once the dev server is up, because Next compiles a route only when it is first requested. It uses a dummy `flowlens_session` cookie (middleware only checks the cookie is *present*) and a placeholder project id — the request redirects, but the route is compiled, which is the point. Opt out with `FLOWLENS_DEV_WARM=0`. The warmer is deliberately kept out of the script's `wait -n` set, or its exit would tear down the whole stack.
+- `.devcontainer/docker-compose.yml` keeps `~/.cache` (Go build cache, gopls index, golangci-lint, Playwright browsers) and `~/.npm` in named volumes so a container rebuild doesn't discard them; `.devcontainer/Dockerfile` pre-creates both directories user-owned so the volumes inherit that ownership.
+
 ## Further docs
 
 `docs/architecture.md` for detail; `docs/ui-design.md` for the OOUI rules every web screen follows; `docs/testing.md` for the testing strategy and rules; `docs/storybook.md` for the web Storybook conventions (one story per screen, one per permission/data branch; tooling install still pending); `docs/decisions/` for ADRs (why Go+Next.js, REST, PostgreSQL, monorepo, manual-sync-first, OOUI, outbox worker, per-project GitLab connection).

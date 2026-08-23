@@ -35,6 +35,13 @@ services:
       - go-mod-cache:/go/pkg/mod
       # Persist Claude Code login/config across container rebuilds.
       - claude-config:/home/vscode/.claude
+      # Everything expensive to rebuild that would otherwise be thrown away
+      # on every devcontainer rebuild: the Go build cache, the gopls index
+      # (the Go language server is sluggish for minutes without it), the
+      # golangci-lint cache and the Playwright browsers (~1GB to re-download).
+      - user-cache:/home/vscode/.cache
+      # npm's package cache, so `npm install` on postCreate is offline-fast.
+      - npm-cache:/home/vscode/.npm
     command: sleep infinity
     depends_on:
       db:
@@ -43,3 +50,5 @@ services:
 volumes:
   go-mod-cache:
   claude-config:
+  user-cache:
+  npm-cache:

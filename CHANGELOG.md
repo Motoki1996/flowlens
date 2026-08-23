@@ -8,6 +8,8 @@ procedure itself.
 
 ## Unreleased
 
+## v0.1.2 — 2026-08-23
+
 ### Added
 
 - **A FlowLens assignee for tasks and backlogs.** Both objects now carry an
@@ -20,6 +22,17 @@ procedure itself.
   what any member is carrying. Upgrading needs no action: the migration is
   additive and backfills the new column from existing GitLab assignees where
   they unambiguously map to a project member.
+
+### Changed
+
+- **The Velocity chart's bars are narrower.** A range holding only a handful
+  of periods drew bars wide enough to read as a block diagram; they are now
+  capped at a readable width with a wider gap between periods. Presentation
+  only — no metric changed.
+- **A faster dev loop in the dev container** (contributors only, nothing for
+  a self-hoster to do). `next dev` runs under Turbopack and `dev.sh` warms
+  the common routes in the background, cutting the wait for the first web
+  screen after `make dev-container`.
 
 ## v0.1.1 — 2026-08-21
 

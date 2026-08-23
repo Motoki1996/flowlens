@@ -94,6 +94,13 @@ function formatForecast(
 
 const PERIOD_CHART_HEIGHT = 220;
 
+/** Left to itself recharts widens a bar to fill its whole category band, so a
+ *  range holding only a handful of periods draws slabs wide enough to read as
+ *  a block diagram rather than a chart. Cap the width and widen the gap
+ *  between categories instead, so the bars stay slim at any period count. */
+const BAR_MAX_SIZE = 28;
+const BAR_CATEGORY_GAP = "35%";
+
 /**
  * VelocitySection is the Project single view's completed-task throughput
  * chart (issue #196, following #195's API), placed immediately before
@@ -202,7 +209,12 @@ export function VelocitySection({
               className="aspect-auto w-full"
               style={{ height: `${PERIOD_CHART_HEIGHT}px` }}
             >
-              <ComposedChart data={chartData} margin={{ left: 4, right: 8 }}>
+              <ComposedChart
+                data={chartData}
+                margin={{ left: 4, right: 8 }}
+                maxBarSize={BAR_MAX_SIZE}
+                barCategoryGap={BAR_CATEGORY_GAP}
+              >
                 <CartesianGrid vertical={false} />
                 <XAxis dataKey="row" tickLine={false} axisLine={false} fontSize={11} />
                 <YAxis tickLine={false} axisLine={false} width={32} allowDecimals={false} />

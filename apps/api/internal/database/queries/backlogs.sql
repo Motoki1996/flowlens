@@ -14,7 +14,7 @@
 -- forbidden_scope (000029) are the same kind of field: the paths tasks
 -- filed in this backlog may/may not touch.
 -- name: CreateBacklog :one
-INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope)
+INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)
 VALUES (
     $1,
     $2,
@@ -27,7 +27,8 @@ VALUES (
     $8,
     $9,
     $10,
-    $11
+    $11,
+    $12
 )
 RETURNING *;
 
@@ -48,7 +49,7 @@ RETURNING *;
 SELECT
   b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
   b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch,
-  b.allowed_scope, b.forbidden_scope,
+  b.allowed_scope, b.forbidden_scope, b.assignee_user_id,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM backlogs b
@@ -56,6 +57,8 @@ LEFT JOIN tasks t ON t.backlog_id = b.id
 WHERE b.project_id = $1
   AND (sqlc.arg(priority)::text = '' OR b.priority = sqlc.arg(priority))
   AND (sqlc.arg(progress)::text = '' OR b.progress = sqlc.arg(progress))
+  AND (sqlc.narg(assignee_user_id)::uuid IS NULL OR b.assignee_user_id = sqlc.narg(assignee_user_id))
+  AND (NOT sqlc.arg(assignee_unassigned)::boolean OR b.assignee_user_id IS NULL)
 GROUP BY b.id
 ORDER BY
   (CASE WHEN sqlc.arg(sort_by_priority)::boolean THEN
@@ -67,7 +70,7 @@ ORDER BY
   b.position ASC, b.created_at ASC;
 
 -- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope
+SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -114,13 +117,14 @@ WHERE backlogs.id = ordered.id
 -- Update).
 -- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12, updated_at = now()
+SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12,
+    assignee_user_id = $13, updated_at = now()
 WHERE b.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope;
+RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id;
 
 -- name: DeleteBacklogForOwner :execrows
 DELETE FROM backlogs b

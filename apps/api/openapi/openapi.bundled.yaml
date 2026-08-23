@@ -308,6 +308,11 @@ paths:
               - on_hold
               - done
         - in: query
+          name: assignee
+          description: '"me", a user UUID, or "unassigned".'
+          schema:
+            type: string
+        - in: query
           name: sort
           schema:
             type: string
@@ -1870,6 +1875,11 @@ paths:
               - on_hold
               - done
         - in: query
+          name: assignee
+          description: '"me", a user UUID, or "unassigned".'
+          schema:
+            type: string
+        - in: query
           name: sort
           schema:
             type: string
@@ -2138,6 +2148,11 @@ paths:
               - in_progress
               - on_hold
               - done
+        - in: query
+          name: assignee
+          description: '"me", a user UUID, or "unassigned". Matches the FlowLens assignee or, for a task, that user''s GitLab identity.'
+          schema:
+            type: string
         - in: query
           name: sort
           schema:
@@ -3271,6 +3286,18 @@ components:
           format: int64
         assigneeGitlabUsername:
           type: string
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The FlowLens project member who owns this work. Independent of assigneeGitlabUserId, which mirrors the GitLab issue's assignee; setting this one also sets that one when the member has a GitLab identity registered for the project's connection.
+        assigneeUsername:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
+        assigneeDisplayName:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
         labels:
           type: array
           items:
@@ -4209,6 +4236,18 @@ components:
           type: string
         forbiddenScope:
           type: string
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The FlowLens project member who owns this backlog. App-only; a backlog has no GitLab counterpart.
+        assigneeUsername:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
+        assigneeDisplayName:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
     CreateBacklogRequest:
       type: object
       properties:
@@ -4240,6 +4279,12 @@ components:
             - in_progress
             - on_hold
             - done
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: A project member to assign this backlog to. Rejected with invalid_assignee if the user is not a member.
       required:
         - name
     ReorderBacklogsRequest:
@@ -4287,6 +4332,12 @@ components:
             - in_progress
             - on_hold
             - done
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: A project member to assign this backlog to; null unassigns.
     CreateTaskRequest:
       type: object
       properties:
@@ -4306,6 +4357,12 @@ components:
           format: int64
         assigneeGitlabUsername:
           type: string
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: A project member to assign. Rejected with invalid_assignee if the user is not a member. Explicit null unassigns, which also clears the GitLab assignee unless assigneeGitlabUserId is set in the same request.
         labels:
           type: array
           items:
@@ -4575,6 +4632,18 @@ components:
           format: int64
         assigneeGitlabUsername:
           type: string
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The FlowLens project member who owns this work. Independent of assigneeGitlabUserId, which mirrors the GitLab issue's assignee; setting this one also sets that one when the member has a GitLab identity registered for the project's connection.
+        assigneeUsername:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
+        assigneeDisplayName:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
         labels:
           type: array
           items:
@@ -4635,6 +4704,12 @@ components:
           format: int64
         assigneeGitlabUsername:
           type: string
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: A project member to assign. Rejected with invalid_assignee if the user is not a member. Explicit null unassigns, which also clears the GitLab assignee unless assigneeGitlabUserId is set in the same request.
         labels:
           type: array
           items:

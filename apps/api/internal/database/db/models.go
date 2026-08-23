@@ -25,6 +25,7 @@ type Backlog struct {
 	BaseBranch                   string             `json:"base_branch"`
 	AllowedScope                 string             `json:"allowed_scope"`
 	ForbiddenScope               string             `json:"forbidden_scope"`
+	AssigneeUserID               pgtype.UUID        `json:"assignee_user_id"`
 }
 
 type BacklogProgressEvent struct {
@@ -260,6 +261,7 @@ type Task struct {
 	DesignStartedAt         pgtype.Timestamptz `json:"design_started_at"`
 	ImplementationStartedAt pgtype.Timestamptz `json:"implementation_started_at"`
 	Size                    string             `json:"size"`
+	AssigneeUserID          pgtype.UUID        `json:"assignee_user_id"`
 }
 
 type TaskAiContext struct {

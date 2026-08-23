@@ -20,6 +20,10 @@ list:
         name: progress
         schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
       - in: query
+        name: assignee
+        description: '"me", a user UUID, or "unassigned". Matches the FlowLens assignee or, for a task, that user''s GitLab identity.'
+        schema: { type: string }
+      - in: query
         name: sort
         schema: { type: string }
     responses:

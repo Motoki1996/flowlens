@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/flowlens/api/internal/assignee"
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
@@ -214,12 +215,23 @@ type Task struct {
 	ClosedAt               *time.Time `json:"closedAt"`
 	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
 	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
-	Labels                 []string   `json:"labels"`
-	DueOn                  *time.Time `json:"dueOn"`
-	StartDate              *time.Time `json:"startDate"`
-	Priority               string     `json:"priority"`
-	Progress               string     `json:"progress"`
-	Size                   string     `json:"size"`
+	// AssigneeUserID is the task's FlowLens assignee — which project member
+	// owns the work — as opposed to AssigneeGitlabUserID above, which mirrors
+	// the GitLab issue's assignee. App-only: the inbound sync path never
+	// writes it, so a GitLab-side assignee change cannot silently reassign the
+	// task inside FlowLens. The outbound direction is a one-way bridge; see
+	// resolveAssigneeUpdate. AssigneeUsername/AssigneeDisplayName are resolved
+	// from users on read (internal/assignee.Names) rather than stored, so a
+	// rename is picked up without a backfill; both are "" when unassigned.
+	AssigneeUserID      *uuid.UUID `json:"assigneeUserId"`
+	AssigneeUsername    string     `json:"assigneeUsername"`
+	AssigneeDisplayName string     `json:"assigneeDisplayName"`
+	Labels              []string   `json:"labels"`
+	DueOn               *time.Time `json:"dueOn"`
+	StartDate           *time.Time `json:"startDate"`
+	Priority            string     `json:"priority"`
+	Progress            string     `json:"progress"`
+	Size                string     `json:"size"`
 	// DesignStartedAt/ImplementationStartedAt are explicit spec-driven-development
 	// phase markers, set via POST .../design-started and .../implementation-started
 	// rather than derived from progress transitions — see internal/flowmetrics'
@@ -246,6 +258,7 @@ func fromRow(row db.Task) Task {
 		ClosedAt:                timePtr(row.ClosedAt),
 		AssigneeGitlabUserID:    int64Ptr(row.AssigneeGitlabUserID),
 		AssigneeGitlabUsername:  row.AssigneeGitlabUsername,
+		AssigneeUserID:          uuidPtr(row.AssigneeUserID),
 		Labels:                  row.Labels,
 		DueOn:                   datePtr(row.DueOn),
 		StartDate:               datePtr(row.StartDate),
@@ -346,9 +359,14 @@ type CreateParams struct {
 	BacklogID              *uuid.UUID
 	AssigneeGitlabUserID   *int64
 	AssigneeGitlabUsername string
-	Labels                 []string
-	DueOn                  *time.Time
-	StartDate              *time.Time
+	// AssigneeUserID assigns the new task to a project member. Nil leaves it
+	// unassigned inside FlowLens — which is not the same as unassigned on
+	// GitLab, where a linked task still falls back to the connection's own
+	// token user (see defaultAssignee).
+	AssigneeUserID *uuid.UUID
+	Labels         []string
+	DueOn          *time.Time
+	StartDate      *time.Time
 	// Priority defaults to PriorityMedium when empty.
 	Priority string
 	// Progress defaults to ProgressNotStarted when empty.
@@ -372,9 +390,14 @@ type UpdateParams struct {
 	BacklogID              Optional[*uuid.UUID]
 	AssigneeGitlabUserID   Optional[*int64]
 	AssigneeGitlabUsername Optional[string]
-	Labels                 Optional[[]string]
-	DueOn                  Optional[*time.Time]
-	StartDate              Optional[*time.Time]
+	// AssigneeUserID left absent keeps the current assignee *and* leaves the
+	// GitLab assignee columns alone. Only an explicitly present value runs the
+	// bridge — that is what stops a PATCH of some unrelated field from
+	// reassigning the GitLab issue as a side effect.
+	AssigneeUserID Optional[*uuid.UUID]
+	Labels         Optional[[]string]
+	DueOn          Optional[*time.Time]
+	StartDate      Optional[*time.Time]
 	// Priority left absent keeps the task's current priority; an explicit
 	// empty string resets it to PriorityMedium, the same as an absent
 	// Priority on CreateParams.
@@ -398,6 +421,7 @@ type resolvedUpdate struct {
 	BacklogID              *uuid.UUID
 	AssigneeGitlabUserID   *int64
 	AssigneeGitlabUsername string
+	AssigneeUserID         *uuid.UUID
 	Labels                 []string
 	DueOn                  *time.Time
 	StartDate              *time.Time
@@ -414,6 +438,7 @@ func (p UpdateParams) resolve(current Task) resolvedUpdate {
 		BacklogID:              p.BacklogID.Or(current.BacklogID),
 		AssigneeGitlabUserID:   p.AssigneeGitlabUserID.Or(current.AssigneeGitlabUserID),
 		AssigneeGitlabUsername: p.AssigneeGitlabUsername.Or(current.AssigneeGitlabUsername),
+		AssigneeUserID:         p.AssigneeUserID.Or(current.AssigneeUserID),
 		Labels:                 p.Labels.Or(current.Labels),
 		DueOn:                  p.DueOn.Or(current.DueOn),
 		StartDate:              p.StartDate.Or(current.StartDate),
@@ -627,6 +652,9 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 	if err != nil {
 		return Task{}, err
 	}
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
+		return Task{}, err
+	}
 	return result, nil
 }
 
@@ -639,11 +667,28 @@ func createTaskInTx(ctx context.Context, q db.Querier, ownerID, projectID uuid.U
 	assigneeID := params.AssigneeGitlabUserID
 	assigneeUsername := params.AssigneeGitlabUsername
 
+	if params.AssigneeUserID != nil {
+		if err := assignee.ValidateMember(ctx, q, projectID, *params.AssigneeUserID); err != nil {
+			return Task{}, err
+		}
+	}
+
 	link, hasLink, err := resolveLinkedGitlabProject(ctx, q, ownerID, projectID, params.BacklogID)
 	if err != nil {
 		return Task{}, fmt.Errorf("task: create: %w", err)
 	}
-	if hasLink && assigneeID == nil {
+	switch {
+	case assigneeID != nil:
+		// The caller named a GitLab user outright; nothing to resolve.
+	case params.AssigneeUserID != nil:
+		// A FlowLens assignee was named: bridge it, and deliberately skip
+		// defaultAssignee below — falling back to the connection's own token
+		// user would contradict the assignee the caller just chose.
+		assigneeID, assigneeUsername, err = bridgeAssigneeToGitlab(ctx, q, projectID, params.AssigneeUserID)
+		if err != nil {
+			return Task{}, fmt.Errorf("task: create: %w", err)
+		}
+	case hasLink:
 		assigneeID, assigneeUsername, err = defaultAssignee(ctx, q, ownerID, projectID)
 		if err != nil {
 			return Task{}, fmt.Errorf("task: create: %w", err)
@@ -657,6 +702,7 @@ func createTaskInTx(ctx context.Context, q db.Querier, ownerID, projectID uuid.U
 		Description:            params.Description,
 		AssigneeGitlabUserID:   toInt8(assigneeID),
 		AssigneeGitlabUsername: assigneeUsername,
+		AssigneeUserID:         toUUID(params.AssigneeUserID),
 		Labels:                 normalizeLabels(params.Labels),
 		DueOn:                  toDate(params.DueOn),
 		StartDate:              toDate(params.StartDate),
@@ -777,11 +823,17 @@ type ListFilter struct {
 	// cross-project collection accepts, so the two lists don't disagree on
 	// what a sort value means. Each keeps the manual order as its tiebreak.
 	Sort string
-	// AssigneeMe, when true, only returns tasks assigned to the caller's own
-	// GitLab identity for this project's GitLab connection (issue #102). A
-	// caller with no registered identity (internal/gitlabidentity), or a
-	// project with no GitLab connection, matches nothing rather than erroring.
-	AssigneeMe bool
+	// AssigneeUserID, when non-nil, only returns tasks assigned to that user
+	// on either axis: the FlowLens assignee (000031) or that same user's
+	// registered GitLab identity for this project's connection (issue #102).
+	// Handlers resolve ?assignee=me to the caller's own ID, so "me" and
+	// "someone else" are one code path. A target with no registered identity,
+	// or a project with no GitLab connection, simply never matches on the
+	// GitLab half rather than erroring.
+	AssigneeUserID *uuid.UUID
+	// AssigneeUnassigned, when true, only returns tasks assigned to nobody on
+	// either axis. Mutually exclusive with AssigneeUserID.
+	AssigneeUnassigned bool
 	// Query, when non-empty, only returns tasks whose title or description
 	// matches (issue #106) — see List's doc comment for how.
 	Query string
@@ -803,19 +855,19 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	}
 
 	rows, err := s.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
-		OwnerUserID:    ownerID,
-		ProjectID:      projectID,
-		Unassigned:     filter.Unassigned,
-		BacklogID:      toUUID(filter.BacklogID),
-		Status:         filter.Status,
-		Priority:       filter.Priority,
-		Progress:       filter.Progress,
-		Size:           filter.Size,
-		AssigneeMe:     filter.AssigneeMe,
-		Q:              filter.Query,
-		SortByPriority: filter.Sort == SortPriority,
-		SortByProgress: filter.Sort == SortProgress,
-		SortBySize:     filter.Sort == SortSize,
+		ProjectID:          projectID,
+		Unassigned:         filter.Unassigned,
+		BacklogID:          toUUID(filter.BacklogID),
+		Status:             filter.Status,
+		Priority:           filter.Priority,
+		Progress:           filter.Progress,
+		Size:               filter.Size,
+		AssigneeUserID:     toUUID(filter.AssigneeUserID),
+		AssigneeUnassigned: filter.AssigneeUnassigned,
+		Q:                  filter.Query,
+		SortByPriority:     filter.Sort == SortPriority,
+		SortByProgress:     filter.Sort == SortProgress,
+		SortBySize:         filter.Sort == SortSize,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("task: list: %w", err)
@@ -829,6 +881,9 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		}
 		t.Gitlab = info
 		out[i] = t
+	}
+	if err := s.attachAssigneeNamesToTasks(ctx, out); err != nil {
+		return nil, err
 	}
 	sortTasks(out, filter.Sort)
 	return out, nil
@@ -884,10 +939,11 @@ type CrossProjectFilter struct {
 	// DefaultCrossProjectLimit, and anything above MaxCrossProjectLimit is
 	// capped to it.
 	Limit int
-	// AssigneeMe, when true, only returns tasks assigned to the caller's own
-	// GitLab identity for that task's own project's GitLab connection (issue
-	// #102), the same per-project matching ListFilter.AssigneeMe uses.
-	AssigneeMe bool
+	// AssigneeUserID/AssigneeUnassigned are ListFilter's two assignee filters,
+	// matched per-project since the cross-project list spans however many
+	// GitLab connections the caller belongs to.
+	AssigneeUserID     *uuid.UUID
+	AssigneeUnassigned bool
 	// Query, when non-empty, only returns tasks whose title or description
 	// matches, the same search_vector match ListFilter.Query uses (issue #106).
 	Query string
@@ -917,19 +973,20 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 	}
 
 	rows, err := s.q.ListTasksForMember(ctx, db.ListTasksForMemberParams{
-		OwnerUserID:   ownerID,
-		Status:        filter.Status,
-		Priority:      filter.Priority,
-		Size:          filter.Size,
-		Progress:      filter.Progress,
-		DueBefore:     toDate(filter.DueBefore),
-		DueAfter:      toDate(filter.DueAfter),
-		StartedBefore: toDate(filter.StartedBefore),
-		ProjectIds:    projectIDs,
-		AssigneeMe:    filter.AssigneeMe,
-		Q:             filter.Query,
-		Sort:          sortBy,
-		LimitCount:    int32(limit),
+		OwnerUserID:        ownerID,
+		Status:             filter.Status,
+		Priority:           filter.Priority,
+		Size:               filter.Size,
+		Progress:           filter.Progress,
+		DueBefore:          toDate(filter.DueBefore),
+		DueAfter:           toDate(filter.DueAfter),
+		StartedBefore:      toDate(filter.StartedBefore),
+		ProjectIds:         projectIDs,
+		AssigneeUserID:     toUUID(filter.AssigneeUserID),
+		AssigneeUnassigned: filter.AssigneeUnassigned,
+		Q:                  filter.Query,
+		Sort:               sortBy,
+		LimitCount:         int32(limit),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("task: list for owner: %w", err)
@@ -937,6 +994,9 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 	out := make([]TaskWithProject, len(rows))
 	for i, row := range rows {
 		out[i] = fromCrossProjectRow(row)
+	}
+	if err := s.attachAssigneeNamesToCrossProject(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -957,6 +1017,7 @@ func fromCrossProjectRow(row db.ListTasksForMemberRow) TaskWithProject {
 			ClosedAt:               row.ClosedAt,
 			AssigneeGitlabUserID:   row.AssigneeGitlabUserID,
 			AssigneeGitlabUsername: row.AssigneeGitlabUsername,
+			AssigneeUserID:         row.AssigneeUserID,
 			Labels:                 row.Labels,
 			DueOn:                  row.DueOn,
 			StartDate:              row.StartDate,
@@ -989,6 +1050,9 @@ func (s *Service) Get(ctx context.Context, ownerID, taskID uuid.UUID) (Task, err
 		return Task{}, err
 	}
 	t.Gitlab = info
+	if err := s.attachAssigneeName(ctx, &t); err != nil {
+		return Task{}, err
+	}
 	return t, nil
 }
 
@@ -1188,7 +1252,13 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, resolved.BacklogID); err != nil {
 		return Task{}, err
 	}
+	if err := applyAssigneeUpdate(ctx, s.q, current.ProjectID, params, &resolved); err != nil {
+		return Task{}, err
+	}
 
+	// Note assignee_user_id itself is app-only and deliberately absent from
+	// mirroredFieldsChanged: only the GitLab columns applyAssigneeUpdate just
+	// bridged into resolved can enqueue an issue.update.
 	mirroredChanged := mirroredFieldsChanged(current, resolved)
 	progressChanged := current.Progress != resolved.Progress
 
@@ -1202,6 +1272,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			Description:            resolved.Description,
 			AssigneeGitlabUserID:   toInt8(resolved.AssigneeGitlabUserID),
 			AssigneeGitlabUsername: resolved.AssigneeGitlabUsername,
+			AssigneeUserID:         toUUID(resolved.AssigneeUserID),
 			Labels:                 normalizeLabels(resolved.Labels),
 			DueOn:                  toDate(resolved.DueOn),
 			StartDate:              toDate(resolved.StartDate),
@@ -1245,6 +1316,9 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			fmt.Sprintf("issue.update:%s", taskID), payload)
 	})
 	if err != nil {
+		return Task{}, err
+	}
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
 		return Task{}, err
 	}
 	return result, nil
@@ -1337,7 +1411,11 @@ func (s *Service) AssignBacklog(ctx context.Context, ownerID, taskID uuid.UUID, 
 		}
 		return Task{}, fmt.Errorf("task: assign backlog: %w", err)
 	}
-	return fromRow(row), nil
+	t := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &t); err != nil {
+		return Task{}, err
+	}
+	return t, nil
 }
 
 // Reorder resequences the position of every task in one backlog bucket
@@ -1441,6 +1519,9 @@ func (s *Service) Close(ctx context.Context, ownerID, taskID uuid.UUID) (Task, e
 	if err != nil {
 		return Task{}, err
 	}
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
+		return Task{}, err
+	}
 	return result, nil
 }
 
@@ -1474,6 +1555,9 @@ func (s *Service) Reopen(ctx context.Context, ownerID, taskID uuid.UUID) (Task, 
 	if err != nil {
 		return Task{}, err
 	}
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
+		return Task{}, err
+	}
 	return result, nil
 }
 
@@ -1497,7 +1581,11 @@ func (s *Service) MarkDesignStarted(ctx context.Context, ownerID, taskID uuid.UU
 		}
 		return Task{}, fmt.Errorf("task: mark design started: %w", err)
 	}
-	return fromRow(row), nil
+	t := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &t); err != nil {
+		return Task{}, err
+	}
+	return t, nil
 }
 
 // MarkImplementationStarted is MarkDesignStarted's implementation-phase
@@ -1518,7 +1606,11 @@ func (s *Service) MarkImplementationStarted(ctx context.Context, ownerID, taskID
 		}
 		return Task{}, fmt.Errorf("task: mark implementation started: %w", err)
 	}
-	return fromRow(row), nil
+	t := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &t); err != nil {
+		return Task{}, err
+	}
+	return t, nil
 }
 
 // Delete removes the task and never touches GitLab, even for a linked task:
@@ -1648,12 +1740,19 @@ type Context struct {
 	// Size is the task's coarse size estimate (one of the Size* constants),
 	// surfaced so an agent knows how large the work is expected to be before
 	// it starts. App-only, never synced to GitLab.
-	Size                   string     `json:"size"`
-	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
-	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
-	Labels                 []string   `json:"labels"`
-	DueOn                  *time.Time `json:"dueOn"`
-	UpdatedAt              time.Time  `json:"updatedAt"`
+	Size                   string `json:"size"`
+	AssigneeGitlabUserID   *int64 `json:"assigneeGitlabUserId"`
+	AssigneeGitlabUsername string `json:"assigneeGitlabUsername"`
+	// AssigneeUserID/AssigneeUsername/AssigneeDisplayName are the task's
+	// FlowLens assignee, surfaced so an agent reading its context knows
+	// whether the work is already someone's — and whose — before picking it
+	// up. App-only, never synced to GitLab.
+	AssigneeUserID      *uuid.UUID `json:"assigneeUserId"`
+	AssigneeUsername    string     `json:"assigneeUsername"`
+	AssigneeDisplayName string     `json:"assigneeDisplayName"`
+	Labels              []string   `json:"labels"`
+	DueOn               *time.Time `json:"dueOn"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 	// BaseBranch is the task's backlog's base_branch (internal/backlog,
 	// issue's own migration) — the branch an agent working this task should
 	// branch from. "" when the task is unfiled or its backlog has none set.
@@ -1694,6 +1793,9 @@ func toContext(t Task, gc *GitlabContext, ai AIContext, bd backlogTaskDefaults) 
 		Size:                   t.Size,
 		AssigneeGitlabUserID:   t.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: t.AssigneeGitlabUsername,
+		AssigneeUserID:         t.AssigneeUserID,
+		AssigneeUsername:       t.AssigneeUsername,
+		AssigneeDisplayName:    t.AssigneeDisplayName,
 		Labels:                 t.Labels,
 		DueOn:                  t.DueOn,
 		UpdatedAt:              t.UpdatedAt,
@@ -1746,6 +1848,10 @@ func (s *Service) contextForTask(ctx context.Context, t Task) (Context, error) {
 	}
 	bd, err := s.backlogTaskDefaultsForTask(ctx, t.BacklogID)
 	if err != nil {
+		return Context{}, err
+	}
+	// A no-op when the caller came through Get, which already resolved it.
+	if err := s.attachAssigneeName(ctx, &t); err != nil {
 		return Context{}, err
 	}
 	return toContext(t, gc, ai, bd), nil

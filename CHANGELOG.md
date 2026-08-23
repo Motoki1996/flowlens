@@ -8,6 +8,19 @@ procedure itself.
 
 ## Unreleased
 
+### Added
+
+- **A FlowLens assignee for tasks and backlogs.** Both objects now carry an
+  optional `assigneeUserId`, naming the project member who owns the work —
+  independent of a task's GitLab issue assignee, which keeps syncing as
+  before. Setting the FlowLens assignee also assigns the GitLab issue when
+  that member has a GitLab identity registered for the project; a GitLab-side
+  change never writes back. `?assignee=` on the task and backlog collections
+  now accepts a user UUID or `unassigned`, not just `me`, so a lead can see
+  what any member is carrying. Upgrading needs no action: the migration is
+  additive and backfills the new column from existing GitLab assignees where
+  they unambiguously map to a project member.
+
 ## v0.1.1 — 2026-08-21
 
 ### Added

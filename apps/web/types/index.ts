@@ -66,6 +66,11 @@ export interface Backlog {
   // development (e.g. "main", "release/2.4"). Optional — "" means not set.
   // App-only, never synced to GitLab.
   baseBranch: string;
+  // The project member who owns this backlog. App-only end to end: unlike a
+  // task's, a backlog's assignee has no GitLab counterpart to mirror onto.
+  assigneeUserId: string | null;
+  assigneeUsername: string;
+  assigneeDisplayName: string;
   // The paths tasks filed in this backlog may/may not touch. Optional — ""
   // means not set. App-only, never synced to GitLab, moved here from
   // TaskAIContext because they describe a sub-area of the codebase, not one
@@ -109,6 +114,16 @@ export interface Task {
   closedAt: string | null;
   assigneeGitlabUserId: number | null;
   assigneeGitlabUsername: string;
+  // The FlowLens project member who owns this work — independent of the
+  // GitLab assignee above, which mirrors the issue's own. Setting this one
+  // also sets that one when the member has a GitLab identity registered for
+  // the project's connection (the one-way bridge); a GitLab-side assignee
+  // change never writes back to it. assigneeUsername/assigneeDisplayName are
+  // resolved from users on read, so a rename needs no backfill; both are ""
+  // when unassigned.
+  assigneeUserId: string | null;
+  assigneeUsername: string;
+  assigneeDisplayName: string;
   labels: string[];
   dueOn: string | null;
   startDate: string | null;

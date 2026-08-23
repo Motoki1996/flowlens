@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/flowlens/api/internal/assignee"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/optional"
@@ -116,6 +117,15 @@ type Backlog struct {
 	// BaseBranch is.
 	AllowedScope   string `json:"allowedScope"`
 	ForbiddenScope string `json:"forbiddenScope"`
+	// AssigneeUserID is the project member who owns this backlog (000031),
+	// the same field a task carries — except a backlog has no GitLab
+	// counterpart to mirror onto, so it is app-only end to end, like
+	// BaseBranch and AllowedScope above. AssigneeUsername/AssigneeDisplayName
+	// are resolved from users on read rather than stored; both are "" when
+	// unassigned.
+	AssigneeUserID      *uuid.UUID `json:"assigneeUserId"`
+	AssigneeUsername    string     `json:"assigneeUsername"`
+	AssigneeDisplayName string     `json:"assigneeDisplayName"`
 	// TaskCount and ClosedTaskCount are the backlog's total and closed task
 	// counts, computed by ListBacklogsByProject's LEFT JOIN aggregate (issue
 	// #144) so the Backlog collection screen doesn't need to fetch every task
@@ -147,6 +157,7 @@ func fromRow(row db.Backlog) Backlog {
 		BaseBranch:                   row.BaseBranch,
 		AllowedScope:                 row.AllowedScope,
 		ForbiddenScope:               row.ForbiddenScope,
+		AssigneeUserID:               uuidPtr(row.AssigneeUserID),
 		CreatedAt:                    row.CreatedAt.Time,
 		UpdatedAt:                    row.UpdatedAt.Time,
 	}
@@ -169,6 +180,7 @@ func fromListRow(row db.ListBacklogsByProjectRow) Backlog {
 		BaseBranch:                   row.BaseBranch,
 		AllowedScope:                 row.AllowedScope,
 		ForbiddenScope:               row.ForbiddenScope,
+		AssigneeUserID:               uuidPtr(row.AssigneeUserID),
 		TaskCount:                    row.TaskCount,
 		ClosedTaskCount:              row.ClosedTaskCount,
 		CreatedAt:                    row.CreatedAt.Time,
@@ -377,6 +389,10 @@ type CreateParams struct {
 	// Capped at maxScopeFieldLength, otherwise unrestricted free text.
 	AllowedScope   string
 	ForbiddenScope string
+	// AssigneeUserID is optional: nil leaves the backlog unassigned. A user
+	// who is not a member of the project is rejected with
+	// assignee.ErrNotMember.
+	AssigneeUserID *uuid.UUID
 }
 
 // Create validates name and creates a backlog at the end of projectID's
@@ -417,6 +433,11 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	if err != nil {
 		return Backlog{}, err
 	}
+	if p.AssigneeUserID != nil {
+		if err := assignee.ValidateMember(ctx, s.q, projectID, *p.AssigneeUserID); err != nil {
+			return Backlog{}, err
+		}
+	}
 	row, err := s.q.CreateBacklog(ctx, db.CreateBacklogParams{
 		ProjectID:                    projectID,
 		Name:                         normalized,
@@ -429,11 +450,16 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 		BaseBranch:                   baseBranch,
 		AllowedScope:                 allowedScope,
 		ForbiddenScope:               forbiddenScope,
+		AssigneeUserID:               toUUID(p.AssigneeUserID),
 	})
 	if err != nil {
 		return Backlog{}, fmt.Errorf("backlog: create: %w", err)
 	}
-	return fromRow(row), nil
+	b := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &b); err != nil {
+		return Backlog{}, err
+	}
+	return b, nil
 }
 
 // ListFilter narrows List to a subset of a project's backlogs. The zero
@@ -441,6 +467,12 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 type ListFilter struct {
 	Priority string // one of the Priority* constants, or "" (no filter)
 	Progress string // one of the Progress* constants, or "" (no filter)
+	// AssigneeUserID, when non-nil, only returns backlogs assigned to that
+	// user; AssigneeUnassigned only those assigned to nobody. Unlike a task's
+	// (internal/task.ListFilter), there is no GitLab axis to OR against — a
+	// backlog has no GitLab counterpart. Mutually exclusive.
+	AssigneeUserID     *uuid.UUID
+	AssigneeUnassigned bool
 	// Sort is "" (position ASC, created_at ASC, the manual order),
 	// SortPriority (priority rank DESC, then the same tiebreak) or
 	// SortProgress (progress rank ASC, then the same tiebreak).
@@ -456,11 +488,13 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	}
 
 	rows, err := s.q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{
-		ProjectID:      projectID,
-		Priority:       filter.Priority,
-		Progress:       filter.Progress,
-		SortByPriority: filter.Sort == SortPriority,
-		SortByProgress: filter.Sort == SortProgress,
+		ProjectID:          projectID,
+		Priority:           filter.Priority,
+		Progress:           filter.Progress,
+		AssigneeUserID:     toUUID(filter.AssigneeUserID),
+		AssigneeUnassigned: filter.AssigneeUnassigned,
+		SortByPriority:     filter.Sort == SortPriority,
+		SortByProgress:     filter.Sort == SortProgress,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("backlog: list: %w", err)
@@ -468,6 +502,9 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 	out := make([]Backlog, len(rows))
 	for i, row := range rows {
 		out[i] = fromListRow(row)
+	}
+	if err := s.attachAssigneeNamesToList(ctx, out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -486,7 +523,11 @@ func (s *Service) Get(ctx context.Context, ownerID, backlogID uuid.UUID) (Backlo
 		}
 		return Backlog{}, fmt.Errorf("backlog: get: %w", err)
 	}
-	return fromRow(row), nil
+	b := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &b); err != nil {
+		return Backlog{}, err
+	}
+	return b, nil
 }
 
 // ProjectID returns the project backlogID belongs to, with no owner check —
@@ -536,6 +577,9 @@ type UpdateParams struct {
 	// as BaseBranch.
 	AllowedScope   optional.Optional[string]
 	ForbiddenScope optional.Optional[string]
+	// AssigneeUserID is Optional for the same reason the dates are: renaming
+	// a backlog must not silently unassign it. An explicit null unassigns.
+	AssigneeUserID optional.Optional[*uuid.UUID]
 }
 
 // Update overwrites name, description and position, and applies whichever of
@@ -601,6 +645,19 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		return Backlog{}, err
 	}
 
+	// Only an assignee the caller actually sent is re-validated, the same rule
+	// the link above follows: the stored one was checked when it was written,
+	// and a member who has since left the project is already NULL here (ON
+	// DELETE SET NULL only covers deletion, so a removed member's assignment
+	// does survive — deliberately, since removing someone from a project
+	// should not silently rewrite what they were working on).
+	newAssignee := p.AssigneeUserID.Or(current.AssigneeUserID)
+	if _, changed := p.AssigneeUserID.Get(); changed && newAssignee != nil {
+		if err := assignee.ValidateMember(ctx, s.q, current.ProjectID, *newAssignee); err != nil {
+			return Backlog{}, err
+		}
+	}
+
 	progressChanged := current.Progress != progress
 
 	var result Backlog
@@ -619,6 +676,7 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 			BaseBranch:                   baseBranch,
 			AllowedScope:                 allowedScope,
 			ForbiddenScope:               forbiddenScope,
+			AssigneeUserID:               toUUID(newAssignee),
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -646,6 +704,9 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		return nil
 	})
 	if err != nil {
+		return Backlog{}, err
+	}
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
 		return Backlog{}, err
 	}
 	return result, nil

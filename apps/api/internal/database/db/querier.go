@@ -366,6 +366,16 @@ type Querier interface {
 	GetPendingSyncJobQueueStats(ctx context.Context) (GetPendingSyncJobQueueStatsRow, error)
 	GetProgressSyncSettingsForOwner(ctx context.Context, arg GetProgressSyncSettingsForOwnerParams) (ProgressSyncSetting, error)
 	GetProjectAPITokenByTokenHash(ctx context.Context, tokenHash string) (GetProjectAPITokenByTokenHashRow, error)
+	// GetProjectAssigneeGitlabIdentity is the one-way assignee bridge's lookup
+	// (000031): given a project and the FlowLens user being assigned to one of
+	// its tasks, resolve that user's GitLab identity *on the instance this
+	// project is connected to*. internal/task uses it to set
+	// assignee_gitlab_user_id alongside assignee_user_id, which is what puts the
+	// assignment on the GitLab issue. No rows means the assignment stays
+	// FlowLens-only: either the project has no GitLab connection, or the user
+	// has not registered an identity for that base_url. Both are ordinary, not
+	// errors. The equality join on base_url is why 000030 normalized it.
+	GetProjectAssigneeGitlabIdentity(ctx context.Context, arg GetProjectAssigneeGitlabIdentityParams) (GetProjectAssigneeGitlabIdentityRow, error)
 	// GetProjectByID is unscoped, for the inbound webhook apply pipeline
 	// (internal/webhookapply, docs/plans/issue-sync.md "Inbound"), which
 	// resolves a new unclassified task's created_by_user_id from the project's
@@ -595,12 +605,20 @@ type Querier interface {
 	// original position/created_at order untouched. The three flags are mutually
 	// exclusive in practice — internal/task sets at most one from a single
 	// ?sort=.
-	// ListTasksByProject's assignee_me filter joins the project's own GitLab
-	// connection (if any) to the caller's registered identity for that same
-	// base_url (internal/gitlabidentity, issue #102): a caller with no
-	// registered identity, or a project with no GitLab connection, joins to
-	// NULL, and NULL never equals assignee_gitlab_user_id, so the filter
-	// correctly yields zero rows instead of erroring.
+	// ListTasksByProject's assignee_user_id filter matches a task assigned to
+	// that user on *either* axis: tasks.assignee_user_id (the FlowLens assignee,
+	// 000031) or, through the project's GitLab connection joined to that same
+	// user's registered identity for that base_url (internal/gitlabidentity,
+	// issue #102), tasks.assignee_gitlab_user_id. The two are ORed because a
+	// task synced in from GitLab carries only the latter and a purely local task
+	// only the former, and a caller filtering by a person means the person, not
+	// one of their two identities. The identity join is keyed on the *filter
+	// target*, not the caller, which is what makes ?assignee=<someone else>
+	// behave exactly like ?assignee=me. A target with no registered identity, or
+	// a project with no GitLab connection, joins to NULL, and NULL never equals
+	// assignee_gitlab_user_id, so that half of the OR simply never matches
+	// instead of erroring. assignee_unassigned is the complement: assigned to
+	// nobody on either axis.
 	// ListTasksByProject's q filter (issue #106) matches tasks.search_vector
 	// (the 'simple'-config tsvector generated column, see the 000016
 	// migration) against websearch_to_tsquery, GIN-indexed; an empty q disables
@@ -651,14 +669,23 @@ type Querier interface {
 	// sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
 	// sink to the bottom", so it works unguarded both as sort=dueOn's primary
 	// key and as every other sort's final tiebreak.
-	// ListTasksForMember's assignee_me filter follows the same
-	// gitlab_connections/user_gitlab_identities join ListTasksByProject uses
-	// (issue #102), joined per-project since the cross-project list spans
-	// however many projects and GitLab connections the caller belongs to.
+	// ListTasksForMember's assignee_user_id/assignee_unassigned filters follow
+	// the same two-axis rule ListTasksByProject's do, with the
+	// gitlab_connections/user_gitlab_identities join resolved per-project since
+	// the cross-project list spans however many projects and GitLab connections
+	// the caller belongs to. Note owner_user_id still scopes *membership* here
+	// (pm.user_id) and is independent of who is being filtered for.
 	// ListTasksForMember's q filter is the same search_vector match
 	// ListTasksByProject's is (issue #106).
 	ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error)
 	ListUserGitlabIdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]UserGitlabIdentity, error)
+	// ListUsersByIDs resolves a batch of user IDs to the username/display name a
+	// response needs to render an assignee (000031). Batched rather than joined
+	// into the task/backlog queries themselves: a computed column would push
+	// every one of those queries off the plain db.Task/db.Backlog row type and
+	// into a per-query Row struct, for a lookup that is one extra round trip per
+	// list. Like ListProjectMembersWithUser it deliberately omits email.
+	ListUsersByIDs(ctx context.Context, ids []uuid.UUID) ([]ListUsersByIDsRow, error)
 	// The troubleshooting read side (issue #26): ListWebhookEventsByLinkedGitlabProjectID
 	// and GetWebhookEventByLinkedGitlabProjectIDAndID are scoped by
 	// linked_gitlab_project_id only, not owner — internal/webhookevent.Service

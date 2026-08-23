@@ -622,6 +622,7 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 		BaseBranch:                   arg.BaseBranch,
 		AllowedScope:                 arg.AllowedScope,
 		ForbiddenScope:               arg.ForbiddenScope,
+		AssigneeUserID:               arg.AssigneeUserID,
 		CreatedAt:                    now(),
 		UpdatedAt:                    now(),
 	}
@@ -699,6 +700,12 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 		if arg.Progress != "" && b.Progress != arg.Progress {
 			continue
 		}
+		if arg.AssigneeUserID.Valid && b.AssigneeUserID != arg.AssigneeUserID {
+			continue
+		}
+		if arg.AssigneeUnassigned && b.AssigneeUserID.Valid {
+			continue
+		}
 		taskCount, closedTaskCount := f.backlogTaskCounts(b.ID)
 		items = append(items, db.ListBacklogsByProjectRow{
 			ID:                           b.ID,
@@ -716,6 +723,7 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 			BaseBranch:                   b.BaseBranch,
 			AllowedScope:                 b.AllowedScope,
 			ForbiddenScope:               b.ForbiddenScope,
+			AssigneeUserID:               b.AssigneeUserID,
 			TaskCount:                    taskCount,
 			ClosedTaskCount:              closedTaskCount,
 		})
@@ -805,6 +813,7 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	existing.BaseBranch = arg.BaseBranch
 	existing.AllowedScope = arg.AllowedScope
 	existing.ForbiddenScope = arg.ForbiddenScope
+	existing.AssigneeUserID = arg.AssigneeUserID
 	existing.UpdatedAt = now()
 
 	f.backlogsByID[arg.ID] = existing
@@ -999,6 +1008,7 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 		Status:                 "open",
 		AssigneeGitlabUserID:   arg.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: arg.AssigneeGitlabUsername,
+		AssigneeUserID:         arg.AssigneeUserID,
 		Labels:                 arg.Labels,
 		DueOn:                  arg.DueOn,
 		StartDate:              arg.StartDate,
@@ -1096,7 +1106,10 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.Size != "" && t.Size != arg.Size {
 			continue
 		}
-		if arg.AssigneeMe && !f.matchesAssigneeMe(t.AssigneeGitlabUserID, arg.OwnerUserID, t.ProjectID) {
+		if arg.AssigneeUserID.Valid && !f.matchesAssignee(t, uuid.UUID(arg.AssigneeUserID.Bytes)) {
+			continue
+		}
+		if arg.AssigneeUnassigned && !unassignedOnBothAxes(t) {
 			continue
 		}
 		if !matchesTaskQuery(t.Title, t.Description, arg.Q) {
@@ -1507,7 +1520,10 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 		if len(allowed) > 0 && !allowed[t.ProjectID] {
 			continue
 		}
-		if arg.AssigneeMe && !f.matchesAssigneeMe(t.AssigneeGitlabUserID, arg.OwnerUserID, t.ProjectID) {
+		if arg.AssigneeUserID.Valid && !f.matchesAssignee(t, uuid.UUID(arg.AssigneeUserID.Bytes)) {
+			continue
+		}
+		if arg.AssigneeUnassigned && !unassignedOnBothAxes(t) {
 			continue
 		}
 		if !matchesTaskQuery(t.Title, t.Description, arg.Q) {
@@ -1523,6 +1539,7 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 			ClosedAt:               t.ClosedAt,
 			AssigneeGitlabUserID:   t.AssigneeGitlabUserID,
 			AssigneeGitlabUsername: t.AssigneeGitlabUsername,
+			AssigneeUserID:         t.AssigneeUserID,
 			Labels:                 t.Labels,
 			DueOn:                  t.DueOn,
 			StartDate:              t.StartDate,
@@ -1681,6 +1698,7 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	existing.Description = arg.Description
 	existing.AssigneeGitlabUserID = arg.AssigneeGitlabUserID
 	existing.AssigneeGitlabUsername = arg.AssigneeGitlabUsername
+	existing.AssigneeUserID = arg.AssigneeUserID
 	existing.Labels = arg.Labels
 	existing.DueOn = arg.DueOn
 	existing.StartDate = arg.StartDate
@@ -2223,16 +2241,20 @@ func (f *FakeQuerier) SeedGitlabConnection(projectID uuid.UUID, encryptedToken [
 	return c
 }
 
-// matchesAssigneeMe mirrors the SQL's gitlab_connections/user_gitlab_identities
-// join for ?assignee=me (issue #102): userID's registered identity for
-// projectID's own GitLab connection base URL must match assigneeGitlabUserID
-// exactly. A project with no connection, or a user with no registered
-// identity for that connection's base URL, never matches.
-func (f *FakeQuerier) matchesAssigneeMe(assigneeGitlabUserID pgtype.Int8, userID, projectID uuid.UUID) bool {
-	if !assigneeGitlabUserID.Valid {
+// matchesAssignee mirrors the SQL's two-axis assignee filter (000031): a task
+// matches when its FlowLens assignee is userID, or when userID's registered
+// identity for projectID's own GitLab connection base URL matches its GitLab
+// assignee exactly (issue #102). A project with no connection, or a user with
+// no registered identity for that connection's base URL, matches on the
+// FlowLens axis only.
+func (f *FakeQuerier) matchesAssignee(t db.Task, userID uuid.UUID) bool {
+	if t.AssigneeUserID.Valid && uuid.UUID(t.AssigneeUserID.Bytes) == userID {
+		return true
+	}
+	if !t.AssigneeGitlabUserID.Valid {
 		return false
 	}
-	conn, ok := f.gitlabConnectionsByProjectID[projectID]
+	conn, ok := f.gitlabConnectionsByProjectID[t.ProjectID]
 	if !ok {
 		return false
 	}
@@ -2240,7 +2262,12 @@ func (f *FakeQuerier) matchesAssigneeMe(assigneeGitlabUserID pgtype.Int8, userID
 	if !ok {
 		return false
 	}
-	return identity.GitlabUserID == assigneeGitlabUserID.Int64
+	return identity.GitlabUserID == t.AssigneeGitlabUserID.Int64
+}
+
+// unassignedOnBothAxes mirrors the SQL's assignee_unassigned filter.
+func unassignedOnBothAxes(t db.Task) bool {
+	return !t.AssigneeUserID.Valid && !t.AssigneeGitlabUserID.Valid
 }
 
 // UpsertUserGitlabIdentity mirrors the SQL's ON CONFLICT (user_id,
@@ -2277,6 +2304,39 @@ func (f *FakeQuerier) ListUserGitlabIdentitiesByUser(_ context.Context, userID u
 		}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].GitlabBaseUrl < items[j].GitlabBaseUrl })
+	return items, nil
+}
+
+// GetProjectAssigneeGitlabIdentity mirrors the SQL's join from a project's
+// GitLab connection to the assignee's registered identity for that same base
+// URL — the one-way assignee bridge (000031). pgx.ErrNoRows stands for both
+// "no connection" and "no identity", which the caller treats identically.
+func (f *FakeQuerier) GetProjectAssigneeGitlabIdentity(_ context.Context, arg db.GetProjectAssigneeGitlabIdentityParams) (db.GetProjectAssigneeGitlabIdentityRow, error) {
+	conn, ok := f.gitlabConnectionsByProjectID[arg.ProjectID]
+	if !ok {
+		return db.GetProjectAssigneeGitlabIdentityRow{}, pgx.ErrNoRows
+	}
+	identity, ok := f.userGitlabIdentities[userGitlabIdentityKey{userID: arg.UserID, baseURL: conn.BaseUrl}]
+	if !ok {
+		return db.GetProjectAssigneeGitlabIdentityRow{}, pgx.ErrNoRows
+	}
+	return db.GetProjectAssigneeGitlabIdentityRow{
+		GitlabUserID:   identity.GitlabUserID,
+		GitlabUsername: identity.GitlabUsername,
+	}, nil
+}
+
+// ListUsersByIDs mirrors the SQL's = ANY($1) lookup, skipping ids with no
+// user the same way the real query does.
+func (f *FakeQuerier) ListUsersByIDs(_ context.Context, ids []uuid.UUID) ([]db.ListUsersByIDsRow, error) {
+	items := []db.ListUsersByIDsRow{}
+	for _, id := range ids {
+		u, ok := f.usersByID[id]
+		if !ok {
+			continue
+		}
+		items = append(items, db.ListUsersByIDsRow{ID: u.ID, Username: u.Username, DisplayName: u.DisplayName})
+	}
 	return items, nil
 }
 

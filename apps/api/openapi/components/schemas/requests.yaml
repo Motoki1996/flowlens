@@ -150,6 +150,10 @@ CreateBacklogRequest:
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
     progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: A project member to assign this backlog to. Rejected with invalid_assignee if the user is not a member.
   required: [name]
 
 UpdateBacklogRequest:
@@ -163,6 +167,10 @@ UpdateBacklogRequest:
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
     progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: A project member to assign this backlog to; null unassigns.
 
 ReorderBacklogsRequest:
   type: object
@@ -181,6 +189,13 @@ CreateTaskRequest:
     backlogId: { type: [string, "null"], format: uuid }
     assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
     assigneeGitlabUsername: { type: string }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: >-
+        A project member to assign. Rejected with invalid_assignee if the user
+        is not a member. Explicit null unassigns, which also clears the GitLab
+        assignee unless assigneeGitlabUserId is set in the same request.
     labels:
       type: array
       items: { type: string }
@@ -199,6 +214,13 @@ UpdateTaskRequest:
     backlogId: { type: [string, "null"], format: uuid }
     assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
     assigneeGitlabUsername: { type: string }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: >-
+        A project member to assign. Rejected with invalid_assignee if the user
+        is not a member. Explicit null unassigns, which also clears the GitLab
+        assignee unless assigneeGitlabUserId is set in the same request.
     labels:
       type: array
       items: { type: string }

@@ -289,6 +289,12 @@ Backlog:
     baseBranch: { type: string }
     allowedScope: { type: string }
     forbiddenScope: { type: string }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: The FlowLens project member who owns this backlog. App-only; a backlog has no GitLab counterpart.
+    assigneeUsername: { type: string, description: Resolved from users on read; "" when unassigned. }
+    assigneeDisplayName: { type: string, description: Resolved from users on read; "" when unassigned. }
 
 TaskGitlabInfo:
   type: object
@@ -321,6 +327,16 @@ Task:
     closedAt: { type: [string, "null"], format: date-time }
     assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
     assigneeGitlabUsername: { type: string }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: >-
+        The FlowLens project member who owns this work. Independent of
+        assigneeGitlabUserId, which mirrors the GitLab issue's assignee;
+        setting this one also sets that one when the member has a GitLab
+        identity registered for the project's connection.
+    assigneeUsername: { type: string, description: Resolved from users on read; "" when unassigned. }
+    assigneeDisplayName: { type: string, description: Resolved from users on read; "" when unassigned. }
     labels:
       type: array
       items: { type: string }
@@ -373,6 +389,16 @@ TaskContext:
     size: { type: string, enum: [xs, s, m, l, xl] }
     assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
     assigneeGitlabUsername: { type: string }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: >-
+        The FlowLens project member who owns this work. Independent of
+        assigneeGitlabUserId, which mirrors the GitLab issue's assignee;
+        setting this one also sets that one when the member has a GitLab
+        identity registered for the project's connection.
+    assigneeUsername: { type: string, description: Resolved from users on read; "" when unassigned. }
+    assigneeDisplayName: { type: string, description: Resolved from users on read; "" when unassigned. }
     labels:
       type: array
       items: { type: string }

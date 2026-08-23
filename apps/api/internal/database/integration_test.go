@@ -848,7 +848,7 @@ func TestListTasksByProject_SizeFilterAndSort(t *testing.T) {
 
 	t.Run("an empty size filter returns every task", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
-			ProjectID: p.ID, OwnerUserID: owner.ID,
+			ProjectID: p.ID,
 		})
 		require.NoError(t, err)
 		assert.Len(t, rows, 5)
@@ -856,7 +856,7 @@ func TestListTasksByProject_SizeFilterAndSort(t *testing.T) {
 
 	t.Run("a size filter narrows to that size alone", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
-			ProjectID: p.ID, OwnerUserID: owner.ID, Size: "xl",
+			ProjectID: p.ID, Size: "xl",
 		})
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
@@ -865,7 +865,7 @@ func TestListTasksByProject_SizeFilterAndSort(t *testing.T) {
 
 	t.Run("sort_by_size ranks biggest first", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
-			ProjectID: p.ID, OwnerUserID: owner.ID, SortBySize: true,
+			ProjectID: p.ID, SortBySize: true,
 		})
 		require.NoError(t, err)
 		require.Len(t, rows, 5)
@@ -918,7 +918,7 @@ func TestTasksSearchVector(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	baseParams := db.ListTasksByProjectParams{OwnerUserID: owner.ID, ProjectID: p.ID}
+	baseParams := db.ListTasksByProjectParams{ProjectID: p.ID}
 
 	t.Run("hits on a title match", func(t *testing.T) {
 		params := baseParams

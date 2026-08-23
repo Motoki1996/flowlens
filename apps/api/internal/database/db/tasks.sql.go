@@ -17,8 +17,8 @@ const applyGitlabProgressDone = `-- name: ApplyGitlabProgressDone :one
 UPDATE tasks
 SET progress = 'done',
     updated_at = now()
-WHERE id = $1
-RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size
+WHERE tasks.id = $1
+RETURNING tasks.id, tasks.project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id
 `
 
 // ApplyGitlabProgressDone is internal/progresssync's write (issue #202):
@@ -52,6 +52,7 @@ func (q *Queries) ApplyGitlabProgressDone(ctx context.Context, id uuid.UUID) (Ta
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -69,8 +70,8 @@ SET title = $2,
     status = $8,
     closed_at = CASE WHEN $8 = 'closed' THEN COALESCE(closed_at, now()) ELSE NULL END,
     updated_at = now()
-WHERE id = $1
-RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size
+WHERE tasks.id = $1
+RETURNING tasks.id, tasks.project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id
 `
 
 type ApplyWebhookTaskFieldsParams struct {
@@ -137,6 +138,7 @@ func (q *Queries) ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTa
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -149,7 +151,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = $3 AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id
 `
 
 type AssignTaskBacklogForOwnerParams struct {
@@ -184,6 +186,7 @@ func (q *Queries) AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskB
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -196,7 +199,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id
 `
 
 type CloseTaskForOwnerParams struct {
@@ -230,6 +233,7 @@ func (q *Queries) CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerPa
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -267,13 +271,13 @@ const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (
     project_id, backlog_id, title, description,
     assignee_gitlab_user_id, assignee_gitlab_username,
-    labels, due_on, start_date, priority, progress, size, created_by_user_id, position
+    labels, due_on, start_date, priority, progress, size, created_by_user_id, assignee_user_id, position
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
     COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1 AND backlog_id IS NOT DISTINCT FROM $2), 0)
 )
-RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size
+RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id
 `
 
 type CreateTaskParams struct {
@@ -290,6 +294,7 @@ type CreateTaskParams struct {
 	Progress               string      `json:"progress"`
 	Size                   string      `json:"size"`
 	CreatedByUserID        uuid.UUID   `json:"created_by_user_id"`
+	AssigneeUserID         pgtype.UUID `json:"assignee_user_id"`
 }
 
 // Tasks are scoped through their parent project the same way backlogs are:
@@ -316,6 +321,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		arg.Progress,
 		arg.Size,
 		arg.CreatedByUserID,
+		arg.AssigneeUserID,
 	)
 	var i Task
 	err := row.Scan(
@@ -341,6 +347,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -368,7 +375,7 @@ func (q *Queries) DeleteTaskForOwner(ctx context.Context, arg DeleteTaskForOwner
 }
 
 const getTaskForOwner = `-- name: GetTaskForOwner :one
-SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size
+SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id
 FROM tasks t
 WHERE t.id = $1
   AND EXISTS (
@@ -408,15 +415,16 @@ func (q *Queries) GetTaskForOwner(ctx context.Context, arg GetTaskForOwnerParams
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
 
 const getTaskForProject = `-- name: GetTaskForProject :one
 
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id
 FROM tasks
-WHERE id = $1 AND project_id = $2
+WHERE tasks.id = $1 AND tasks.project_id = $2
 `
 
 type GetTaskForProjectParams struct {
@@ -454,6 +462,7 @@ func (q *Queries) GetTaskForProject(ctx context.Context, arg GetTaskForProjectPa
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -477,7 +486,7 @@ func (q *Queries) GetTaskProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID
 }
 
 const listTasksByProject = `-- name: ListTasksByProject :many
-SELECT tasks.id, tasks.project_id, tasks.backlog_id, tasks.title, tasks.description, tasks.status, tasks.closed_at, tasks.assignee_gitlab_user_id, tasks.assignee_gitlab_username, tasks.labels, tasks.due_on, tasks.position, tasks.created_by_user_id, tasks.created_at, tasks.updated_at, tasks.start_date, tasks.priority, tasks.progress, tasks.search_vector, tasks.design_started_at, tasks.implementation_started_at, tasks.size
+SELECT tasks.id, tasks.project_id, tasks.backlog_id, tasks.title, tasks.description, tasks.status, tasks.closed_at, tasks.assignee_gitlab_user_id, tasks.assignee_gitlab_username, tasks.labels, tasks.due_on, tasks.position, tasks.created_by_user_id, tasks.created_at, tasks.updated_at, tasks.start_date, tasks.priority, tasks.progress, tasks.search_vector, tasks.design_started_at, tasks.implementation_started_at, tasks.size, tasks.assignee_user_id
 FROM tasks
 LEFT JOIN gitlab_connections gc ON gc.project_id = tasks.project_id
 LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = $1
@@ -488,7 +497,11 @@ WHERE tasks.project_id = $2
   AND ($6::text = '' OR tasks.priority = $6)
   AND ($7::text = '' OR tasks.progress = $7)
   AND ($8::text = '' OR tasks.size = $8)
-  AND (NOT $9::boolean OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND ($1::uuid IS NULL
+       OR tasks.assignee_user_id = $1
+       OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (NOT $9::boolean
+       OR (tasks.assignee_user_id IS NULL AND tasks.assignee_gitlab_user_id IS NULL))
   AND ($10::text = '' OR tasks.search_vector @@ websearch_to_tsquery('simple', $10::text))
 ORDER BY
   (CASE WHEN $11::boolean THEN
@@ -504,19 +517,19 @@ ORDER BY
 `
 
 type ListTasksByProjectParams struct {
-	OwnerUserID    uuid.UUID   `json:"owner_user_id"`
-	ProjectID      uuid.UUID   `json:"project_id"`
-	Unassigned     bool        `json:"unassigned"`
-	BacklogID      pgtype.UUID `json:"backlog_id"`
-	Status         string      `json:"status"`
-	Priority       string      `json:"priority"`
-	Progress       string      `json:"progress"`
-	Size           string      `json:"size"`
-	AssigneeMe     bool        `json:"assignee_me"`
-	Q              string      `json:"q"`
-	SortByPriority bool        `json:"sort_by_priority"`
-	SortByProgress bool        `json:"sort_by_progress"`
-	SortBySize     bool        `json:"sort_by_size"`
+	AssigneeUserID     pgtype.UUID `json:"assignee_user_id"`
+	ProjectID          uuid.UUID   `json:"project_id"`
+	Unassigned         bool        `json:"unassigned"`
+	BacklogID          pgtype.UUID `json:"backlog_id"`
+	Status             string      `json:"status"`
+	Priority           string      `json:"priority"`
+	Progress           string      `json:"progress"`
+	Size               string      `json:"size"`
+	AssigneeUnassigned bool        `json:"assignee_unassigned"`
+	Q                  string      `json:"q"`
+	SortByPriority     bool        `json:"sort_by_priority"`
+	SortByProgress     bool        `json:"sort_by_progress"`
+	SortBySize         bool        `json:"sort_by_size"`
 }
 
 // ListTasksByProject's priority, progress and size filters and sorts follow the same
@@ -531,19 +544,27 @@ type ListTasksByProjectParams struct {
 // original position/created_at order untouched. The three flags are mutually
 // exclusive in practice — internal/task sets at most one from a single
 // ?sort=.
-// ListTasksByProject's assignee_me filter joins the project's own GitLab
-// connection (if any) to the caller's registered identity for that same
-// base_url (internal/gitlabidentity, issue #102): a caller with no
-// registered identity, or a project with no GitLab connection, joins to
-// NULL, and NULL never equals assignee_gitlab_user_id, so the filter
-// correctly yields zero rows instead of erroring.
+// ListTasksByProject's assignee_user_id filter matches a task assigned to
+// that user on *either* axis: tasks.assignee_user_id (the FlowLens assignee,
+// 000031) or, through the project's GitLab connection joined to that same
+// user's registered identity for that base_url (internal/gitlabidentity,
+// issue #102), tasks.assignee_gitlab_user_id. The two are ORed because a
+// task synced in from GitLab carries only the latter and a purely local task
+// only the former, and a caller filtering by a person means the person, not
+// one of their two identities. The identity join is keyed on the *filter
+// target*, not the caller, which is what makes ?assignee=<someone else>
+// behave exactly like ?assignee=me. A target with no registered identity, or
+// a project with no GitLab connection, joins to NULL, and NULL never equals
+// assignee_gitlab_user_id, so that half of the OR simply never matches
+// instead of erroring. assignee_unassigned is the complement: assigned to
+// nobody on either axis.
 // ListTasksByProject's q filter (issue #106) matches tasks.search_vector
 // (the 'simple'-config tsvector generated column, see the 000016
 // migration) against websearch_to_tsquery, GIN-indexed; an empty q disables
 // it the same way every other filter here does.
 func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProjectParams) ([]Task, error) {
 	rows, err := q.db.Query(ctx, listTasksByProject,
-		arg.OwnerUserID,
+		arg.AssigneeUserID,
 		arg.ProjectID,
 		arg.Unassigned,
 		arg.BacklogID,
@@ -551,7 +572,7 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 		arg.Priority,
 		arg.Progress,
 		arg.Size,
-		arg.AssigneeMe,
+		arg.AssigneeUnassigned,
 		arg.Q,
 		arg.SortByPriority,
 		arg.SortByProgress,
@@ -587,6 +608,7 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 			&i.DesignStartedAt,
 			&i.ImplementationStartedAt,
 			&i.Size,
+			&i.AssigneeUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -600,7 +622,7 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 
 const listTasksByProjectPaged = `-- name: ListTasksByProjectPaged :many
 
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id
 FROM tasks
 WHERE project_id = $1
   AND ($2::uuid IS NULL OR backlog_id = $2)
@@ -666,6 +688,7 @@ func (q *Queries) ListTasksByProjectPaged(ctx context.Context, arg ListTasksByPr
 			&i.DesignStartedAt,
 			&i.ImplementationStartedAt,
 			&i.Size,
+			&i.AssigneeUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -679,54 +702,59 @@ func (q *Queries) ListTasksByProjectPaged(ctx context.Context, arg ListTasksByPr
 
 const listTasksForMember = `-- name: ListTasksForMember :many
 
-SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.size,
+SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.size, t.assignee_user_id,
        p.name AS project_name
 FROM tasks t
 JOIN projects p ON p.id = t.project_id
 JOIN project_members pm ON pm.project_id = p.id
 LEFT JOIN gitlab_connections gc ON gc.project_id = p.id
-LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = pm.user_id
-WHERE pm.user_id = $1
-  AND ($2::text = '' OR t.status = $2)
-  AND ($3::text = '' OR t.priority = $3)
-  AND ($4::text = '' OR t.progress = $4)
-  AND ($5::text = '' OR t.size = $5)
-  AND ($6::date IS NULL OR t.due_on <= $6)
-  AND ($7::date IS NULL OR t.due_on >= $7)
-  AND ($8::date IS NULL OR t.start_date <= $8)
-  AND (cardinality($9::uuid[]) = 0 OR t.project_id = ANY($9::uuid[]))
-  AND (NOT $10::boolean OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
-  AND ($11::text = '' OR t.search_vector @@ websearch_to_tsquery('simple', $11::text))
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = $1
+WHERE pm.user_id = $2
+  AND ($3::text = '' OR t.status = $3)
+  AND ($4::text = '' OR t.priority = $4)
+  AND ($5::text = '' OR t.progress = $5)
+  AND ($6::text = '' OR t.size = $6)
+  AND ($7::date IS NULL OR t.due_on <= $7)
+  AND ($8::date IS NULL OR t.due_on >= $8)
+  AND ($9::date IS NULL OR t.start_date <= $9)
+  AND (cardinality($10::uuid[]) = 0 OR t.project_id = ANY($10::uuid[]))
+  AND ($1::uuid IS NULL
+       OR t.assignee_user_id = $1
+       OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (NOT $11::boolean
+       OR (t.assignee_user_id IS NULL AND t.assignee_gitlab_user_id IS NULL))
+  AND ($12::text = '' OR t.search_vector @@ websearch_to_tsquery('simple', $12::text))
 ORDER BY
-  (CASE WHEN $12::text = 'priority' THEN
+  (CASE WHEN $13::text = 'priority' THEN
      CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    END) DESC,
-  (CASE WHEN $12::text = 'progress' THEN
+  (CASE WHEN $13::text = 'progress' THEN
      CASE t.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    END) ASC,
-  (CASE WHEN $12::text = 'size' THEN
+  (CASE WHEN $13::text = 'size' THEN
      CASE t.size WHEN 'xl' THEN 5 WHEN 'l' THEN 4 WHEN 'm' THEN 3 WHEN 's' THEN 2 WHEN 'xs' THEN 1 ELSE 0 END
    END) DESC,
-  (CASE WHEN $12::text = 'updatedAt' THEN t.updated_at END) DESC,
+  (CASE WHEN $13::text = 'updatedAt' THEN t.updated_at END) DESC,
   t.due_on ASC,
   t.position ASC, t.created_at ASC
-LIMIT $13
+LIMIT $14
 `
 
 type ListTasksForMemberParams struct {
-	OwnerUserID   uuid.UUID   `json:"owner_user_id"`
-	Status        string      `json:"status"`
-	Priority      string      `json:"priority"`
-	Progress      string      `json:"progress"`
-	Size          string      `json:"size"`
-	DueBefore     pgtype.Date `json:"due_before"`
-	DueAfter      pgtype.Date `json:"due_after"`
-	StartedBefore pgtype.Date `json:"started_before"`
-	ProjectIds    []uuid.UUID `json:"project_ids"`
-	AssigneeMe    bool        `json:"assignee_me"`
-	Q             string      `json:"q"`
-	Sort          string      `json:"sort"`
-	LimitCount    int32       `json:"limit_count"`
+	AssigneeUserID     pgtype.UUID `json:"assignee_user_id"`
+	OwnerUserID        uuid.UUID   `json:"owner_user_id"`
+	Status             string      `json:"status"`
+	Priority           string      `json:"priority"`
+	Progress           string      `json:"progress"`
+	Size               string      `json:"size"`
+	DueBefore          pgtype.Date `json:"due_before"`
+	DueAfter           pgtype.Date `json:"due_after"`
+	StartedBefore      pgtype.Date `json:"started_before"`
+	ProjectIds         []uuid.UUID `json:"project_ids"`
+	AssigneeUnassigned bool        `json:"assignee_unassigned"`
+	Q                  string      `json:"q"`
+	Sort               string      `json:"sort"`
+	LimitCount         int32       `json:"limit_count"`
 }
 
 type ListTasksForMemberRow struct {
@@ -749,6 +777,7 @@ type ListTasksForMemberRow struct {
 	Priority               string             `json:"priority"`
 	Progress               string             `json:"progress"`
 	Size                   string             `json:"size"`
+	AssigneeUserID         pgtype.UUID        `json:"assignee_user_id"`
 	ProjectName            string             `json:"project_name"`
 }
 
@@ -770,14 +799,17 @@ type ListTasksForMemberRow struct {
 // sorts NULL last on ASC, first on DESC) is exactly "tasks with no due date
 // sink to the bottom", so it works unguarded both as sort=dueOn's primary
 // key and as every other sort's final tiebreak.
-// ListTasksForMember's assignee_me filter follows the same
-// gitlab_connections/user_gitlab_identities join ListTasksByProject uses
-// (issue #102), joined per-project since the cross-project list spans
-// however many projects and GitLab connections the caller belongs to.
+// ListTasksForMember's assignee_user_id/assignee_unassigned filters follow
+// the same two-axis rule ListTasksByProject's do, with the
+// gitlab_connections/user_gitlab_identities join resolved per-project since
+// the cross-project list spans however many projects and GitLab connections
+// the caller belongs to. Note owner_user_id still scopes *membership* here
+// (pm.user_id) and is independent of who is being filtered for.
 // ListTasksForMember's q filter is the same search_vector match
 // ListTasksByProject's is (issue #106).
 func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error) {
 	rows, err := q.db.Query(ctx, listTasksForMember,
+		arg.AssigneeUserID,
 		arg.OwnerUserID,
 		arg.Status,
 		arg.Priority,
@@ -787,7 +819,7 @@ func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMember
 		arg.DueAfter,
 		arg.StartedBefore,
 		arg.ProjectIds,
-		arg.AssigneeMe,
+		arg.AssigneeUnassigned,
 		arg.Q,
 		arg.Sort,
 		arg.LimitCount,
@@ -819,6 +851,7 @@ func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMember
 			&i.Priority,
 			&i.Progress,
 			&i.Size,
+			&i.AssigneeUserID,
 			&i.ProjectName,
 		); err != nil {
 			return nil, err
@@ -840,7 +873,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id
 `
 
 type MarkTaskDesignStartedParams struct {
@@ -880,6 +913,7 @@ func (q *Queries) MarkTaskDesignStarted(ctx context.Context, arg MarkTaskDesignS
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -892,7 +926,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id
 `
 
 type MarkTaskImplementationStartedParams struct {
@@ -926,6 +960,7 @@ func (q *Queries) MarkTaskImplementationStarted(ctx context.Context, arg MarkTas
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -938,7 +973,7 @@ WHERE t.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = t.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id
 `
 
 type ReopenTaskForOwnerParams struct {
@@ -972,6 +1007,7 @@ func (q *Queries) ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwner
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -1014,13 +1050,14 @@ const updateTaskForOwner = `-- name: UpdateTaskForOwner :one
 UPDATE tasks t
 SET backlog_id = $2, title = $3, description = $4,
     assignee_gitlab_user_id = $5, assignee_gitlab_username = $6,
-    labels = $7, due_on = $8, start_date = $9, priority = $10, progress = $11, size = $12, position = $13, updated_at = now()
+    labels = $7, due_on = $8, start_date = $9, priority = $10, progress = $11, size = $12, position = $13,
+    assignee_user_id = $14, updated_at = now()
 WHERE t.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = t.project_id AND pm.user_id = $14 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = t.project_id AND pm.user_id = $15 AND pm.role IN ('member', 'owner')
   )
-RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size
+RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id
 `
 
 type UpdateTaskForOwnerParams struct {
@@ -1037,6 +1074,7 @@ type UpdateTaskForOwnerParams struct {
 	Progress               string      `json:"progress"`
 	Size                   string      `json:"size"`
 	Position               int32       `json:"position"`
+	AssigneeUserID         pgtype.UUID `json:"assignee_user_id"`
 	OwnerUserID            uuid.UUID   `json:"owner_user_id"`
 }
 
@@ -1055,6 +1093,7 @@ func (q *Queries) UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwner
 		arg.Progress,
 		arg.Size,
 		arg.Position,
+		arg.AssigneeUserID,
 		arg.OwnerUserID,
 	)
 	var i Task
@@ -1081,6 +1120,7 @@ func (q *Queries) UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwner
 		&i.DesignStartedAt,
 		&i.ImplementationStartedAt,
 		&i.Size,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }

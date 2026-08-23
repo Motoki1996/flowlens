@@ -20,6 +20,7 @@ type createTaskRequest struct {
 	BacklogID              *uuid.UUID `json:"backlogId"`
 	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
 	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
+	AssigneeUserID         *uuid.UUID `json:"assigneeUserId"`
 	Labels                 []string   `json:"labels"`
 	DueOn                  *time.Time `json:"dueOn"`
 	StartDate              *time.Time `json:"startDate"`
@@ -37,6 +38,7 @@ type updateTaskRequest struct {
 	BacklogID              task.Optional[*uuid.UUID] `json:"backlogId"`
 	AssigneeGitlabUserID   task.Optional[*int64]     `json:"assigneeGitlabUserId"`
 	AssigneeGitlabUsername task.Optional[string]     `json:"assigneeGitlabUsername"`
+	AssigneeUserID         task.Optional[*uuid.UUID] `json:"assigneeUserId"`
 	Labels                 task.Optional[[]string]   `json:"labels"`
 	DueOn                  task.Optional[*time.Time] `json:"dueOn"`
 	StartDate              task.Optional[*time.Time] `json:"startDate"`
@@ -68,16 +70,17 @@ type bulkCreateTasksRequest struct {
 }
 
 type bulkTaskRequest struct {
-	Ref         string                      `json:"ref"`
-	Title       string                      `json:"title"`
-	Description string                      `json:"description"`
-	BacklogID   *uuid.UUID                  `json:"backlogId"`
-	Labels      []string                    `json:"labels"`
-	DueOn       *time.Time                  `json:"dueOn"`
-	StartDate   *time.Time                  `json:"startDate"`
-	Priority    string                      `json:"priority"`
-	Size        string                      `json:"size"`
-	AIContext   *upsertTaskAIContextRequest `json:"aiContext"`
+	Ref            string                      `json:"ref"`
+	Title          string                      `json:"title"`
+	Description    string                      `json:"description"`
+	BacklogID      *uuid.UUID                  `json:"backlogId"`
+	AssigneeUserID *uuid.UUID                  `json:"assigneeUserId"`
+	Labels         []string                    `json:"labels"`
+	DueOn          *time.Time                  `json:"dueOn"`
+	StartDate      *time.Time                  `json:"startDate"`
+	Priority       string                      `json:"priority"`
+	Size           string                      `json:"size"`
+	AIContext      *upsertTaskAIContextRequest `json:"aiContext"`
 }
 
 type bulkDependencyRequest struct {
@@ -137,9 +140,10 @@ func isValidSize(v string) bool {
 // "high" or "urgent"; progress accepts "not_started", "in_progress",
 // "on_hold" or "done" (FlowLens's own work state, independent of status);
 // sort accepts "priority" or "progress" to rank by either instead of the
-// default manual/position order; assignee accepts only the literal "me"
-// (issue #102); q free-text matches a task's title or description (issue
-// #106). Any may be omitted to mean "no filter"/"default order".
+// default manual/position order; assignee accepts "me", a user UUID or
+// "unassigned" (issue #102, widened to any member by 000031); q free-text
+// matches a task's title or description (issue #106). Any may be omitted to
+// mean "no filter"/"default order".
 func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 	var filter task.ListFilter
 
@@ -194,16 +198,48 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 		filter.Sort = v
 	}
 
-	if v := r.URL.Query().Get("assignee"); v != "" {
-		if v != "me" {
-			return task.ListFilter{}, errors.New("assignee must be \"me\"")
-		}
-		filter.AssigneeMe = true
+	assigneeID, unassigned, err := parseAssigneeFilter(r)
+	if err != nil {
+		return task.ListFilter{}, err
 	}
+	filter.AssigneeUserID, filter.AssigneeUnassigned = assigneeID, unassigned
 
 	filter.Query = r.URL.Query().Get("q")
 
 	return filter, nil
+}
+
+// parseAssigneeFilter reads ?assignee=, shared by the project-scoped and
+// cross-project task collections and by the backlog collection so the three
+// can never disagree about what a value means. It accepts "me" (resolved to
+// the caller's own user ID, so the rest of the stack has one code path), a
+// user UUID, or "unassigned". An unparseable value is an error rather than a
+// silently ignored filter — a typo'd assignee that returns everyone else's
+// work is worse than a 400.
+func parseAssigneeFilter(r *http.Request) (*uuid.UUID, bool, error) {
+	v := r.URL.Query().Get("assignee")
+	if v == "" {
+		return nil, false, nil
+	}
+	if v == "unassigned" {
+		return nil, true, nil
+	}
+	if v == "me" {
+		// Every route this parses for is behind auth, and a bearer token
+		// resolves to its project's owner (internal/apitoken, ADR-0009), so
+		// "me" always has someone to mean. The guard is defensive only.
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			return nil, false, errors.New("assignee=me requires an authenticated caller")
+		}
+		id := u.ID
+		return &id, false, nil
+	}
+	id, err := uuid.Parse(v)
+	if err != nil {
+		return nil, false, errors.New("assignee must be \"me\", \"unassigned\" or a user UUID")
+	}
+	return &id, false, nil
 }
 
 // handleListTasks returns the project's tasks matching the backlog_id/status
@@ -303,7 +339,7 @@ func isValidCrossProjectSort(v string) bool {
 // /api/v1/tasks accepts (issue #76): ?status=, ?priority=, ?progress=, ?dueBefore=,
 // ?dueAfter=, ?startedBefore= (all YYYY-MM-DD), ?projectId= (repeatable —
 // still scoped to the caller's own projects, never a way to reach someone
-// else's), ?sort=, ?limit=, ?assignee= (only the literal "me", issue #102)
+// else's), ?sort=, ?limit=, ?assignee= ("me", a user UUID or "unassigned")
 // and ?q= (free-text, matching a task's title or description, issue #106).
 // Every filter may be omitted; sort and limit
 // are defaulted by task.Service.ListForOwner itself, not here.
@@ -373,12 +409,11 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 
 	filter.Limit = atoiOrZero(r.URL.Query().Get("limit"))
 
-	if v := r.URL.Query().Get("assignee"); v != "" {
-		if v != "me" {
-			return task.CrossProjectFilter{}, errors.New("assignee must be \"me\"")
-		}
-		filter.AssigneeMe = true
+	assigneeID, unassigned, err := parseAssigneeFilter(r)
+	if err != nil {
+		return task.CrossProjectFilter{}, err
 	}
+	filter.AssigneeUserID, filter.AssigneeUnassigned = assigneeID, unassigned
 
 	filter.Query = r.URL.Query().Get("q")
 
@@ -430,6 +465,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		BacklogID:              req.BacklogID,
 		AssigneeGitlabUserID:   req.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: req.AssigneeGitlabUsername,
+		AssigneeUserID:         req.AssigneeUserID,
 		Labels:                 req.Labels,
 		DueOn:                  req.DueOn,
 		StartDate:              req.StartDate,
@@ -470,14 +506,15 @@ func (s *Server) handleBulkCreateTasks(w http.ResponseWriter, r *http.Request) {
 		bt := task.BulkTaskParams{
 			Ref: t.Ref,
 			CreateParams: task.CreateParams{
-				Title:       t.Title,
-				Description: t.Description,
-				BacklogID:   t.BacklogID,
-				Labels:      t.Labels,
-				DueOn:       t.DueOn,
-				StartDate:   t.StartDate,
-				Priority:    t.Priority,
-				Size:        t.Size,
+				Title:          t.Title,
+				Description:    t.Description,
+				BacklogID:      t.BacklogID,
+				AssigneeUserID: t.AssigneeUserID,
+				Labels:         t.Labels,
+				DueOn:          t.DueOn,
+				StartDate:      t.StartDate,
+				Priority:       t.Priority,
+				Size:           t.Size,
 			},
 		}
 		if t.AIContext != nil {
@@ -557,6 +594,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		BacklogID:              req.BacklogID,
 		AssigneeGitlabUserID:   req.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: req.AssigneeGitlabUsername,
+		AssigneeUserID:         req.AssigneeUserID,
 		Labels:                 req.Labels,
 		DueOn:                  req.DueOn,
 		StartDate:              req.StartDate,
@@ -769,6 +807,8 @@ func taskErrorDetails(err error) (status int, code, message string) {
 		return http.StatusBadRequest, "invalid_progress", "progress must be one of not_started, in_progress, on_hold, done"
 	case errors.Is(err, task.ErrBacklogNotInProject):
 		return http.StatusBadRequest, "invalid_backlog", "backlog belongs to a different project"
+	case errors.Is(err, task.ErrAssigneeNotMember):
+		return http.StatusBadRequest, "invalid_assignee", "assignee must be a member of the project"
 	case errors.Is(err, task.ErrAIContextFieldTooLong):
 		return http.StatusBadRequest, "ai_context_field_too_long", "AI context fields must be at most 20000 characters"
 	case errors.Is(err, task.ErrSyncNotFailed):

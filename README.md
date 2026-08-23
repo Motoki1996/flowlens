@@ -1305,6 +1305,66 @@ creating or editing one never reads or writes the other. Priority is no longer
 the board's axis — see [Task & backlog progress](#task--backlog-progress)
 below — but it stays a badge on every board card.
 
+### Task & backlog assignee
+
+A task and a backlog each carry an `assigneeUserId` — the **FlowLens project
+member who owns the work**, drawn from `project_members`. It is optional
+everywhere: nullable in the schema, never in a `required` request field, and
+every object starts unassigned.
+
+This is deliberately a second axis alongside a task's existing
+`assigneeGitlabUserId`, which mirrors the GitLab issue's own assignee and
+syncs both ways. The two are connected by a **one-way bridge**:
+
+- Setting `assigneeUserId` also sets the GitLab assignee, when that member has
+  a GitLab identity registered for the project's connection
+  (`user_gitlab_identities`, see [Linking your GitLab account](#linking-your-gitlab-account)).
+  That is what puts the assignment on the issue.
+- A member with no registered identity is still a perfectly good assignee —
+  the task is simply assigned inside FlowLens only, and the GitLab assignee is
+  cleared rather than left pointing at someone else.
+- **A GitLab-side assignee change never writes back to `assigneeUserId`.** The
+  FlowLens assignee records what a human decided, so an inbound sync cannot
+  silently reassign the work.
+- An explicit `assigneeGitlabUserId` in the same request always wins over the
+  bridge, which is how assigning a GitLab user who has no FlowLens account
+  keeps working.
+
+A backlog's assignee has no bridge at all: a backlog has no GitLab
+counterpart, so it is app-only end to end, like `baseBranch` and
+`allowedScope`.
+
+- `POST`/`PATCH` on `/api/v1/projects/{projectID}/tasks` /
+  `/api/v1/tasks/{taskID}`, `/api/v1/projects/{projectID}/backlogs` /
+  `/api/v1/backlogs/{backlogID}`, and `POST .../tasks/bulk` all accept
+  `assigneeUserId`. It follows the same partial-update contract as the rest of
+  the object: a body without the key leaves both axes alone — which is what
+  stops a PATCH of some unrelated field from reassigning the GitLab issue as a
+  side effect — and an explicit `null` unassigns. A user who is not a member of
+  the project is rejected with 400 `invalid_assignee`.
+- `GET .../tasks`, `GET /api/v1/tasks` (cross-project) and `GET .../backlogs`
+  accept `?assignee=`, which takes **`me`, a user UUID, or `unassigned`**.
+  Previously it took only `me`; a UUID is what lets a lead see what someone
+  else is carrying. For a task the filter matches on *either* axis — the
+  FlowLens assignee or that same user's GitLab identity — so a task synced in
+  from GitLab and a purely local one both show up for the same person.
+  `unassigned` is the complement: assigned to nobody on either axis. Over a
+  bearer token, `me` resolves to the token's project owner, since a token acts
+  as that owner everywhere else in the API ([ADR-0009](docs/decisions/0009-why-project-scoped-api-tokens.md)).
+- `GET /api/v1/tasks/{taskID}/context` carries the assignee too, so an AI agent
+  reading its context knows whether the work is already someone's, and whose.
+
+`assigneeUsername`/`assigneeDisplayName` are resolved from `users` on read
+rather than stored, so a rename is picked up without a backfill; both are `""`
+when unassigned. Deleting a user unassigns their work rather than deleting it
+(`ON DELETE SET NULL`).
+
+The 000031 migration backfills `assignee_user_id` for tasks already assigned to
+a GitLab user who is both a project member and has that identity registered —
+without it every pre-existing task would read as unassigned. Skipping the
+backfill loses nothing but display, since the `?assignee=` filter ORs the two
+axes anyway.
+
 ### Task size
 
 A task carries a `size` — one of `xs`, `s`, `m`, `l`, `xl`, defaulting to

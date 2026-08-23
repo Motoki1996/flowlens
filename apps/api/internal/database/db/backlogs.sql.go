@@ -14,7 +14,7 @@ import (
 
 const createBacklog = `-- name: CreateBacklog :one
 
-INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope)
+INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)
 VALUES (
     $1,
     $2,
@@ -27,9 +27,10 @@ VALUES (
     $8,
     $9,
     $10,
-    $11
+    $11,
+    $12
 )
-RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope
+RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id
 `
 
 type CreateBacklogParams struct {
@@ -44,6 +45,7 @@ type CreateBacklogParams struct {
 	BaseBranch                   string      `json:"base_branch"`
 	AllowedScope                 string      `json:"allowed_scope"`
 	ForbiddenScope               string      `json:"forbidden_scope"`
+	AssigneeUserID               pgtype.UUID `json:"assignee_user_id"`
 }
 
 // Backlogs have no owner column of their own; ownership is always checked
@@ -73,6 +75,7 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		arg.BaseBranch,
 		arg.AllowedScope,
 		arg.ForbiddenScope,
+		arg.AssigneeUserID,
 	)
 	var i Backlog
 	err := row.Scan(
@@ -91,6 +94,7 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		&i.BaseBranch,
 		&i.AllowedScope,
 		&i.ForbiddenScope,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -118,7 +122,7 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 }
 
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope
+SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -151,6 +155,7 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 		&i.BaseBranch,
 		&i.AllowedScope,
 		&i.ForbiddenScope,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }
@@ -196,7 +201,7 @@ const listBacklogsByProject = `-- name: ListBacklogsByProject :many
 SELECT
   b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
   b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch,
-  b.allowed_scope, b.forbidden_scope,
+  b.allowed_scope, b.forbidden_scope, b.assignee_user_id,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM backlogs b
@@ -204,23 +209,27 @@ LEFT JOIN tasks t ON t.backlog_id = b.id
 WHERE b.project_id = $1
   AND ($2::text = '' OR b.priority = $2)
   AND ($3::text = '' OR b.progress = $3)
+  AND ($4::uuid IS NULL OR b.assignee_user_id = $4)
+  AND (NOT $5::boolean OR b.assignee_user_id IS NULL)
 GROUP BY b.id
 ORDER BY
-  (CASE WHEN $4::boolean THEN
+  (CASE WHEN $6::boolean THEN
      CASE b.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
-  (CASE WHEN $5::boolean THEN
+  (CASE WHEN $7::boolean THEN
      CASE b.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
   b.position ASC, b.created_at ASC
 `
 
 type ListBacklogsByProjectParams struct {
-	ProjectID      uuid.UUID `json:"project_id"`
-	Priority       string    `json:"priority"`
-	Progress       string    `json:"progress"`
-	SortByPriority bool      `json:"sort_by_priority"`
-	SortByProgress bool      `json:"sort_by_progress"`
+	ProjectID          uuid.UUID   `json:"project_id"`
+	Priority           string      `json:"priority"`
+	Progress           string      `json:"progress"`
+	AssigneeUserID     pgtype.UUID `json:"assignee_user_id"`
+	AssigneeUnassigned bool        `json:"assignee_unassigned"`
+	SortByPriority     bool        `json:"sort_by_priority"`
+	SortByProgress     bool        `json:"sort_by_progress"`
 }
 
 type ListBacklogsByProjectRow struct {
@@ -239,6 +248,7 @@ type ListBacklogsByProjectRow struct {
 	BaseBranch                   string             `json:"base_branch"`
 	AllowedScope                 string             `json:"allowed_scope"`
 	ForbiddenScope               string             `json:"forbidden_scope"`
+	AssigneeUserID               pgtype.UUID        `json:"assignee_user_id"`
 	TaskCount                    int64              `json:"task_count"`
 	ClosedTaskCount              int64              `json:"closed_task_count"`
 }
@@ -261,6 +271,8 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 		arg.ProjectID,
 		arg.Priority,
 		arg.Progress,
+		arg.AssigneeUserID,
+		arg.AssigneeUnassigned,
 		arg.SortByPriority,
 		arg.SortByProgress,
 	)
@@ -287,6 +299,7 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 			&i.BaseBranch,
 			&i.AllowedScope,
 			&i.ForbiddenScope,
+			&i.AssigneeUserID,
 			&i.TaskCount,
 			&i.ClosedTaskCount,
 		); err != nil {
@@ -330,13 +343,14 @@ func (q *Queries) ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams
 
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12, updated_at = now()
+SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12,
+    assignee_user_id = $13, updated_at = now()
 WHERE b.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = b.project_id AND pm.user_id = $13 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = b.project_id AND pm.user_id = $14 AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope
+RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
 `
 
 type UpdateBacklogForOwnerParams struct {
@@ -352,6 +366,7 @@ type UpdateBacklogForOwnerParams struct {
 	BaseBranch                   string      `json:"base_branch"`
 	AllowedScope                 string      `json:"allowed_scope"`
 	ForbiddenScope               string      `json:"forbidden_scope"`
+	AssigneeUserID               pgtype.UUID `json:"assignee_user_id"`
 	OwnerUserID                  uuid.UUID   `json:"owner_user_id"`
 }
 
@@ -374,6 +389,7 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		arg.BaseBranch,
 		arg.AllowedScope,
 		arg.ForbiddenScope,
+		arg.AssigneeUserID,
 		arg.OwnerUserID,
 	)
 	var i Backlog
@@ -393,6 +409,7 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		&i.BaseBranch,
 		&i.AllowedScope,
 		&i.ForbiddenScope,
+		&i.AssigneeUserID,
 	)
 	return i, err
 }

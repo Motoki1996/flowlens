@@ -11,6 +11,41 @@ import (
 	"github.com/google/uuid"
 )
 
+const getProjectAssigneeGitlabIdentity = `-- name: GetProjectAssigneeGitlabIdentity :one
+
+SELECT ugi.gitlab_user_id, ugi.gitlab_username
+FROM gitlab_connections gc
+JOIN user_gitlab_identities ugi
+  ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = $2
+WHERE gc.project_id = $1
+`
+
+type GetProjectAssigneeGitlabIdentityParams struct {
+	ProjectID uuid.UUID `json:"project_id"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
+type GetProjectAssigneeGitlabIdentityRow struct {
+	GitlabUserID   int64  `json:"gitlab_user_id"`
+	GitlabUsername string `json:"gitlab_username"`
+}
+
+// GetProjectAssigneeGitlabIdentity is the one-way assignee bridge's lookup
+// (000031): given a project and the FlowLens user being assigned to one of
+// its tasks, resolve that user's GitLab identity *on the instance this
+// project is connected to*. internal/task uses it to set
+// assignee_gitlab_user_id alongside assignee_user_id, which is what puts the
+// assignment on the GitLab issue. No rows means the assignment stays
+// FlowLens-only: either the project has no GitLab connection, or the user
+// has not registered an identity for that base_url. Both are ordinary, not
+// errors. The equality join on base_url is why 000030 normalized it.
+func (q *Queries) GetProjectAssigneeGitlabIdentity(ctx context.Context, arg GetProjectAssigneeGitlabIdentityParams) (GetProjectAssigneeGitlabIdentityRow, error) {
+	row := q.db.QueryRow(ctx, getProjectAssigneeGitlabIdentity, arg.ProjectID, arg.UserID)
+	var i GetProjectAssigneeGitlabIdentityRow
+	err := row.Scan(&i.GitlabUserID, &i.GitlabUsername)
+	return i, err
+}
+
 const listUserGitlabIdentitiesByUser = `-- name: ListUserGitlabIdentitiesByUser :many
 SELECT id, user_id, gitlab_base_url, gitlab_user_id, gitlab_username, created_at, updated_at
 FROM user_gitlab_identities

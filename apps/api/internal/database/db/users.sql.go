@@ -96,6 +96,43 @@ func (q *Queries) GetUserByUsernameOrEmail(ctx context.Context, username string)
 	return i, err
 }
 
+const listUsersByIDs = `-- name: ListUsersByIDs :many
+
+SELECT id, username, display_name FROM users WHERE id = ANY($1::uuid[])
+`
+
+type ListUsersByIDsRow struct {
+	ID          uuid.UUID `json:"id"`
+	Username    string    `json:"username"`
+	DisplayName string    `json:"display_name"`
+}
+
+// ListUsersByIDs resolves a batch of user IDs to the username/display name a
+// response needs to render an assignee (000031). Batched rather than joined
+// into the task/backlog queries themselves: a computed column would push
+// every one of those queries off the plain db.Task/db.Backlog row type and
+// into a per-query Row struct, for a lookup that is one extra round trip per
+// list. Like ListProjectMembersWithUser it deliberately omits email.
+func (q *Queries) ListUsersByIDs(ctx context.Context, ids []uuid.UUID) ([]ListUsersByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listUsersByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUsersByIDsRow{}
+	for rows.Next() {
+		var i ListUsersByIDsRow
+		if err := rows.Scan(&i.ID, &i.Username, &i.DisplayName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1
 `

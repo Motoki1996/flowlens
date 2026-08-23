@@ -277,5 +277,12 @@ func (s *Service) BulkCreate(ctx context.Context, ownerID, projectID uuid.UUID, 
 	if err != nil {
 		return BulkCreateResult{}, err
 	}
+	created := make([]*Task, len(result.Tasks))
+	for i := range result.Tasks {
+		created[i] = &result.Tasks[i].Task
+	}
+	if err := s.attachAssigneeNames(ctx, created); err != nil {
+		return BulkCreateResult{}, err
+	}
 	return result, nil
 }

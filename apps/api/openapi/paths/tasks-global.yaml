@@ -19,6 +19,10 @@ allTasks:
         name: progress
         schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
       - in: query
+        name: assignee
+        description: '"me", a user UUID, or "unassigned".'
+        schema: { type: string }
+      - in: query
         name: sort
         schema: { type: string }
     responses:

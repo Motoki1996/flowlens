@@ -31,6 +31,9 @@ type createBacklogRequest struct {
 	// may/may not touch; omitted leaves them unset.
 	AllowedScope   string `json:"allowedScope"`
 	ForbiddenScope string `json:"forbiddenScope"`
+	// AssigneeUserID is the project member who owns this backlog; omitted or
+	// null leaves it unassigned.
+	AssigneeUserID *uuid.UUID `json:"assigneeUserId"`
 }
 
 // The dates, priority, progress, base branch and scope are Optional so
@@ -56,6 +59,7 @@ type updateBacklogRequest struct {
 	BaseBranch                   optional.Optional[string]     `json:"baseBranch"`
 	AllowedScope                 optional.Optional[string]     `json:"allowedScope"`
 	ForbiddenScope               optional.Optional[string]     `json:"forbiddenScope"`
+	AssigneeUserID               optional.Optional[*uuid.UUID] `json:"assigneeUserId"`
 }
 
 // reorderBacklogsRequest carries a project's full, newly-ordered backlog ID
@@ -147,9 +151,11 @@ func isValidBacklogProgress(v string) bool {
 	}
 }
 
-// parseBacklogListFilter reads the ?priority=, ?progress= and ?sort= query
-// parameters, the same way parseTaskListFilter does for tasks. Any may be
-// omitted to mean "no filter"/"default order".
+// parseBacklogListFilter reads the ?priority=, ?progress=, ?assignee= and
+// ?sort= query parameters, the same way parseTaskListFilter does for tasks —
+// ?assignee= shares parseAssigneeFilter with it, so "me"/a UUID/"unassigned"
+// mean the same thing on both collections. Any may be omitted to mean "no
+// filter"/"default order".
 func parseBacklogListFilter(r *http.Request) (backlog.ListFilter, error) {
 	var filter backlog.ListFilter
 
@@ -173,6 +179,12 @@ func parseBacklogListFilter(r *http.Request) (backlog.ListFilter, error) {
 		}
 		filter.Sort = v
 	}
+
+	assigneeID, unassigned, err := parseAssigneeFilter(r)
+	if err != nil {
+		return backlog.ListFilter{}, err
+	}
+	filter.AssigneeUserID, filter.AssigneeUnassigned = assigneeID, unassigned
 
 	return filter, nil
 }
@@ -204,6 +216,7 @@ func (s *Server) handleCreateBacklog(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:                   req.BaseBranch,
 		AllowedScope:                 req.AllowedScope,
 		ForbiddenScope:               req.ForbiddenScope,
+		AssigneeUserID:               req.AssigneeUserID,
 	})
 	if err != nil {
 		writeBacklogError(w, err)
@@ -265,6 +278,7 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:                   req.BaseBranch,
 		AllowedScope:                 req.AllowedScope,
 		ForbiddenScope:               req.ForbiddenScope,
+		AssigneeUserID:               req.AssigneeUserID,
 	}, actorKind)
 	if err != nil {
 		writeBacklogError(w, err)
@@ -306,6 +320,8 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_base_branch", "baseBranch must be a valid git branch name, at most 255 characters")
 	case errors.Is(err, backlog.ErrInvalidScope):
 		writeError(w, http.StatusBadRequest, "invalid_scope", "allowedScope/forbiddenScope must be at most 20000 characters")
+	case errors.Is(err, backlog.ErrAssigneeNotMember):
+		writeError(w, http.StatusBadRequest, "invalid_assignee", "assignee must be a member of the project")
 	case errors.Is(err, backlog.ErrLinkNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_linked_gitlab_project", "defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	case errors.Is(err, backlog.ErrBacklogIDsMismatch):

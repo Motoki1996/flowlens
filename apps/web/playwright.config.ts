@@ -62,8 +62,10 @@ export default defineConfig({
     },
     {
       // Not `npm run dev -- -p ...`: that script already hardcodes `-p 4000`,
-      // and appending a second `-p` is fragile. Invoke next directly instead.
-      command: `npx next dev -p ${WEB_PORT}`,
+      // and appending a second `-p` is fragile. Invoke next directly instead
+      // — which means --turbopack has to be repeated here to keep the suite
+      // on the same bundler `npm run dev` uses.
+      command: `npx next dev -p ${WEB_PORT} --turbopack`,
       url: WEB_URL,
       reuseExistingServer: !process.env.CI,
       env: {

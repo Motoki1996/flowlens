@@ -134,6 +134,12 @@ Requires Docker and an editor with Dev Containers support (VS Code + the
    available there. `Ctrl+C` stops both. The forwarded ports expose the web
    app on 4000 and the API on 8080.
 
+   It also warms the web dev server in the background: Next.js compiles a
+   route the first time it is requested, so without this the first screen
+   you open after every restart waits for it. `make dev-container` requests
+   the common routes itself while you are still switching to the browser.
+   Set `FLOWLENS_DEV_WARM=0` to turn that off.
+
 Inside the container Postgres is reachable at `db:5432` (the app picks this up
 from the container environment). `.env` points at the host port instead
 (`localhost:55432`), but the Makefile keeps the environment's `DATABASE_URL` in

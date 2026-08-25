@@ -15,6 +15,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CreateFormRegion } from "@/components/CreateFormRegion";
 import {
   Select,
   SelectContent,
@@ -493,14 +494,16 @@ export function ProjectMemberSection({
         ) : (
           <>
             {adding ? (
-              <AddMemberForm
-                projectId={projectId}
-                onAdded={() => {
-                  setAdding(false);
-                  router.refresh();
-                }}
-                onCancel={() => setAdding(false)}
-              />
+              <CreateFormRegion>
+                <AddMemberForm
+                  projectId={projectId}
+                  onAdded={() => {
+                    setAdding(false);
+                    router.refresh();
+                  }}
+                  onCancel={() => setAdding(false)}
+                />
+              </CreateFormRegion>
             ) : null}
             {members.length === 0 ? (
               <p className="text-muted-foreground text-sm">No members yet.</p>

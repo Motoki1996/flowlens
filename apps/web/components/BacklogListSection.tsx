@@ -24,6 +24,7 @@ import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { CreateFormRegion } from "@/components/CreateFormRegion";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -709,13 +710,13 @@ export function BacklogListSection({
       </CardHeader>
       <CardContent>
         {creating ? (
-          <div className="mb-4">
+          <CreateFormRegion>
             <NewBacklogForm
               projectId={projectId}
               links={links}
               onCancel={() => setCreating(false)}
             />
-          </div>
+          </CreateFormRegion>
         ) : null}
         {error ? (
           <p className="text-destructive text-sm">

@@ -8,6 +8,7 @@ import { csrfHeaders } from "@/lib/csrf";
 import { linkedGitlabProjectPath } from "@/lib/routes";
 import type { ApiError, GitlabProjectOption, LinkedGitlabProject, SyncScope } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { CreateFormRegion } from "@/components/CreateFormRegion";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -270,11 +271,13 @@ export function LinkedGitlabProjectListSection({
       </CardHeader>
       <CardContent className="space-y-3">
         {linking ? (
-          <LinkProjectForm
-            projectId={projectId}
-            onDone={() => setLinking(false)}
-            onCancel={() => setLinking(false)}
-          />
+          <CreateFormRegion>
+            <LinkProjectForm
+              projectId={projectId}
+              onDone={() => setLinking(false)}
+              onCancel={() => setLinking(false)}
+            />
+          </CreateFormRegion>
         ) : null}
         {!connected ? (
           <p className="text-muted-foreground text-sm">

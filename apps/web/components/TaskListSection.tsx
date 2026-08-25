@@ -37,6 +37,7 @@ import {
 import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { NewTaskForm } from "@/components/NewTaskForm";
+import { CreateFormRegion } from "@/components/CreateFormRegion";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SizeBadge } from "@/components/SizeBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
@@ -982,7 +983,7 @@ export function TaskListSection({
       </CardHeader>
       <CardContent>
         {creating ? (
-          <div className="mb-4">
+          <CreateFormRegion>
             <NewTaskForm
               projectId={projectId}
               backlogs={backlogs}
@@ -991,7 +992,7 @@ export function TaskListSection({
               defaultEpicId={epicFilter !== "all" && epicFilter !== NO_EPIC ? epicFilter : null}
               onCancel={() => setCreating(false)}
             />
-          </div>
+          </CreateFormRegion>
         ) : null}
         {error ? (
           <p className="text-destructive text-sm">Failed to load tasks. Try refreshing the page.</p>

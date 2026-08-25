@@ -15,6 +15,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { CreateFormRegion } from "@/components/CreateFormRegion";
 import {
   Dialog,
   DialogContent,
@@ -304,14 +305,16 @@ export function ProjectInviteSection({
           the way to add people while registration is closed. Each link works once.
         </p>
         {creating ? (
-          <CreateInviteForm
-            projectId={projectId}
-            onCreated={(invite) => {
-              setCreating(false);
-              setCreatedInvite(invite);
-            }}
-            onCancel={() => setCreating(false)}
-          />
+          <CreateFormRegion>
+            <CreateInviteForm
+              projectId={projectId}
+              onCreated={(invite) => {
+                setCreating(false);
+                setCreatedInvite(invite);
+              }}
+              onCancel={() => setCreating(false)}
+            />
+          </CreateFormRegion>
         ) : null}
         {invites.length === 0 ? (
           <p className="text-muted-foreground text-sm">No invites created yet.</p>

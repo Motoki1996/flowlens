@@ -4,9 +4,11 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
+import { toApiDate } from "@/lib/dates";
 import type { ApiError, ApiToken, ApiTokenScope, ApiTokenWithSecret } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { CreateFormRegion } from "@/components/CreateFormRegion";
+import { DateField } from "@/components/DateField";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,7 +66,7 @@ function IssueTokenForm({
   const router = useRouter();
   const [name, setName] = useState("");
   const [scope, setScope] = useState<ApiTokenScope>("read");
-  const [expiresOn, setExpiresOn] = useState("");
+  const [expiresOn, setExpiresOn] = useState<Date | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -85,7 +87,7 @@ function IssueTokenForm({
         body: JSON.stringify({
           name,
           scopes: scope === "write" ? ["read", "write"] : ["read"],
-          expiresAt: expiresOn ? new Date(expiresOn).toISOString() : null,
+          expiresAt: toApiDate(expiresOn),
         }),
       });
       if (!res.ok) {
@@ -140,15 +142,12 @@ function IssueTokenForm({
         </label>
       </fieldset>
       <div>
-        <label htmlFor="api-token-expires" className="text-foreground block text-sm font-medium">
-          Expires on (optional)
-        </label>
-        <Input
+        <DateField
           id="api-token-expires"
-          type="date"
+          label="Expires on (optional)"
           value={expiresOn}
-          onChange={(e) => setExpiresOn(e.target.value)}
-          className="mt-1"
+          onChange={setExpiresOn}
+          placeholder="Never"
         />
       </div>
       <div className="flex gap-2">

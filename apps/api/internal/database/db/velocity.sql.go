@@ -141,3 +141,68 @@ func (q *Queries) ListTaskCompletionsForVelocity(ctx context.Context, arg ListTa
 	}
 	return items, nil
 }
+
+const listUnbrokenDownEpicEstimatesForVelocity = `-- name: ListUnbrokenDownEpicEstimatesForVelocity :many
+SELECT e.id, e.estimated_points FROM epics e
+WHERE e.project_id = $1
+  AND e.progress <> 'done'
+  AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.epic_id = e.id)
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = $2
+  )
+`
+
+type ListUnbrokenDownEpicEstimatesForVelocityParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+type ListUnbrokenDownEpicEstimatesForVelocityRow struct {
+	ID              uuid.UUID   `json:"id"`
+	EstimatedPoints pgtype.Int4 `json:"estimated_points"`
+}
+
+// ListUnbrokenDownEpicEstimatesForVelocity returns one row per epic in
+// projectID that has no tasks at all, carrying its estimated_points (000033),
+// NULL when nobody has estimated it. It is the other half of the remaining
+// work: CountOpenTasksBySizeForVelocity above sees only tasks, so before
+// issue #234 an epic created by /flowlens:breakdown-epics but not yet broken
+// down weighed exactly nothing and the forecast quietly understated itself.
+//
+// The NOT EXISTS is the whole correctness argument and the easiest thing here
+// to get wrong: an epic that *does* have tasks is already counted, task by
+// task, by CountOpenTasksBySizeForVelocity. Dropping the clause would add its
+// pre-breakdown estimate on top of its real tasks and count it twice. The
+// estimate is deliberately never deleted when the tasks appear (it is the
+// only record of what was guessed), so "has tasks" is the only signal that it
+// has stopped being the truth.
+//
+// A done epic is excluded for the same reason CountOpenTasksBySizeForVelocity
+// excludes progress='done': the forecast is about work still outstanding. Its
+// status is not checked, because an epic has none — epics are app-only and
+// have no GitLab issue state to close.
+//
+// Rows with a NULL estimate are returned rather than filtered out: how many
+// epics nobody has estimated is itself part of the answer (internal/velocity
+// reports it as unestimatedEpicCount), and silently dropping them is how the
+// number gets understated a second time.
+func (q *Queries) ListUnbrokenDownEpicEstimatesForVelocity(ctx context.Context, arg ListUnbrokenDownEpicEstimatesForVelocityParams) ([]ListUnbrokenDownEpicEstimatesForVelocityRow, error) {
+	rows, err := q.db.Query(ctx, listUnbrokenDownEpicEstimatesForVelocity, arg.ProjectID, arg.OwnerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnbrokenDownEpicEstimatesForVelocityRow{}
+	for rows.Next() {
+		var i ListUnbrokenDownEpicEstimatesForVelocityRow
+		if err := rows.Scan(&i.ID, &i.EstimatedPoints); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

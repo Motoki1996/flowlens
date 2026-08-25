@@ -8,10 +8,12 @@
 -- Every column here mirrors backlogs.sql's, deliberately — see the 000032
 -- migration. backlog_id is the one addition, and it is nullable: an epic
 -- outside any backlog is the Unclassified group, exactly as an unfiled task
--- is.
+-- is. estimated_points (000033) is the second, and is nullable for a reason
+-- of its own: NULL means "nobody has estimated this epic", which is not the
+-- same statement as any number, least of all 0.
 
 -- name: CreateEpic :one
-INSERT INTO epics (project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)
+INSERT INTO epics (project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id, estimated_points)
 VALUES (
     $1,
     $2,
@@ -26,7 +28,8 @@ VALUES (
     $10,
     $11,
     $12,
-    $13
+    $13,
+    $14
 )
 RETURNING *;
 
@@ -40,7 +43,7 @@ RETURNING *;
 SELECT
   e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.created_at, e.updated_at,
   e.start_date, e.due_on, e.priority, e.progress, e.default_linked_gitlab_project_id, e.base_branch,
-  e.allowed_scope, e.forbidden_scope, e.assignee_user_id,
+  e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM epics e
@@ -115,7 +118,7 @@ WHERE epics.id = ordered.id
 -- name: UpdateEpicForOwner :one
 UPDATE epics e
 SET backlog_id = $2, name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, progress = $9, default_linked_gitlab_project_id = $10, base_branch = $11, allowed_scope = $12, forbidden_scope = $13,
-    assignee_user_id = $14, updated_at = now()
+    assignee_user_id = $14, estimated_points = $15, updated_at = now()
 WHERE e.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm

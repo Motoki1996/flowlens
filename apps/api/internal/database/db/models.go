@@ -56,6 +56,7 @@ type Epic struct {
 	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	EstimatedPoints              pgtype.Int4        `json:"estimated_points"`
 }
 
 type GitlabConnection struct {

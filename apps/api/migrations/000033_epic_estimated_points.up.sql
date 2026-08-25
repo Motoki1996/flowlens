@@ -1,0 +1,30 @@
+-- An epic's pre-breakdown estimate.
+--
+-- Epics (000032) deliberately have no size column: "an epic's size is the sum
+-- of its tasks'". That holds once the tasks exist — but the whole point of the
+-- epic rung is that it is created *before* them (/flowlens:breakdown-epics
+-- creates no tasks at all), so between the two steps an epic's size is
+-- structurally zero. internal/velocity's forecast counts only tasks, so a
+-- project with three refined-but-unbroken-down backlogs was being told its
+-- remaining work was one period away.
+--
+-- This is deliberately not called size, and is not one of the xs..xl values
+-- tasks.size (000025) takes. Naming it size would recreate exactly the "two
+-- disagreeing truths" the 000032 comment refuses: an epic-level number that
+-- can contradict the sum of its tasks. estimated_points is a different unit
+-- (raw points, the same scale internal/velocity.sizePoints weights tasks onto)
+-- carrying a different promise: it is a provisional value that loses authority
+-- the moment the epic has tasks — see internal/epic.EffectivePoints, which
+-- prefers the tasks' sum whenever there is one.
+--
+-- It is never cleared or overwritten when tasks do appear. The estimate and
+-- the eventual real breakdown side by side are the only data an
+-- estimate-vs-actual calibration could ever be built from.
+--
+-- NULL — the only value an epic predating this migration can have — means
+-- "not estimated", which is exactly right, so there is nothing to backfill.
+-- The CHECK rejects 0 rather than allowing it: an epic estimated at zero
+-- points and an epic nobody has estimated must stay distinguishable, and with
+-- 0 permitted they would not be.
+ALTER TABLE epics ADD COLUMN estimated_points INTEGER
+    CHECK (estimated_points IS NULL OR estimated_points > 0);

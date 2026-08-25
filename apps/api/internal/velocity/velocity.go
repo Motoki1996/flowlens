@@ -33,6 +33,17 @@
 // and is only reachable via closed_at, with no actor breakdown — that gap
 // cannot be backfilled and is expected, not a bug.
 //
+// The forecast side of this package counts remaining work from two places,
+// not one (issue #234): the open tasks, and the epics that have not been
+// broken down into tasks yet, through their pre-breakdown estimate
+// (epics.estimated_points, 000033). Counting only tasks was a real
+// understatement rather than a missing feature — the epic rung exists
+// precisely to be created before its tasks are, so every refined-but-not-yet
+// broken-down backlog weighed zero. The two sources are kept in separate
+// fields (OpenTaskPoints / UnbrokenDownEpicPoints) and the epics that have
+// tasks are excluded in SQL, so no work is counted twice; epics nobody has
+// estimated are reported as a count rather than silently treated as zero.
+//
 // Unlike flowmetrics/deliverymetrics, which bucket by each row's creation
 // time, velocity buckets by completion time and from/to bound completion
 // time too — this endpoint answers "how much finished in this window", so
@@ -47,6 +58,7 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/metricsperiod"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
@@ -149,15 +161,48 @@ type Metrics struct {
 	// whenever AverageVelocity is nil or zero.
 	ForecastPeriods *float64 `json:"forecastPeriods"`
 
-	// OpenTaskPoints is OpenTaskCount weighted by size, and
-	// AverageVelocityPoints/ForecastPeriodsByPoints are the point-denominated
-	// counterparts of the two fields above, computed by the identical rules
-	// (in particular AverageVelocityPoints also excludes still-running
-	// periods). The points forecast is the more trustworthy of the two once
-	// sizes are actually being set, since it accounts for the remaining work
-	// being unusually large or small rather than assuming an average task.
-	OpenTaskPoints          int      `json:"openTaskPoints"`
-	AverageVelocityPoints   *float64 `json:"averageVelocityPoints"`
+	// OpenTaskPoints is OpenTaskCount weighted by size — tasks only, exactly
+	// as its name says. AverageVelocityPoints is the point-denominated
+	// counterpart of AverageVelocity, computed by the identical rules (in
+	// particular it also excludes still-running periods). The points forecast
+	// is the more trustworthy of the two once sizes are actually being set,
+	// since it accounts for the remaining work being unusually large or small
+	// rather than assuming an average task.
+	OpenTaskPoints        int      `json:"openTaskPoints"`
+	AverageVelocityPoints *float64 `json:"averageVelocityPoints"`
+
+	// UnbrokenDownEpicPoints is the remaining work that has no tasks yet: the
+	// summed pre-breakdown estimates (epics.estimated_points, 000033) of the
+	// project's not-done epics that have not been broken down at all. An epic
+	// that *does* have tasks contributes nothing here — its work is already in
+	// OpenTaskPoints, task by task, and adding its estimate on top would count
+	// the same work twice.
+	//
+	// This is the fix for issue #234. /flowlens:breakdown-epics deliberately
+	// creates no tasks, so between cutting a backlog into epics and breaking
+	// each epic down, the work was structurally invisible: three refined
+	// backlogs could be sitting in the project and the forecast would still
+	// say one period.
+	UnbrokenDownEpicPoints int `json:"unbrokenDownEpicPoints"`
+	// UnestimatedEpicCount is how many of those unbroken-down epics nobody has
+	// estimated. They contribute 0 to OpenPointsTotal because there is nothing
+	// to contribute — not because they are no work. It is reported so a caller
+	// can say the forecast is a lower bound rather than presenting it as the
+	// whole picture; a nonzero value here means the real number is larger by
+	// an unknown amount.
+	UnestimatedEpicCount int `json:"unestimatedEpicCount"`
+	// OpenPointsTotal is OpenTaskPoints + UnbrokenDownEpicPoints: all the
+	// remaining work that can be quantified at all. It is the numerator of
+	// ForecastPeriodsByPoints.
+	OpenPointsTotal int `json:"openPointsTotal"`
+	// ForecastPeriodsByPoints is OpenPointsTotal / AverageVelocityPoints: how
+	// many more periods, at the recent pace, the remaining work would take.
+	// nil whenever AverageVelocityPoints is nil or zero.
+	//
+	// Note the count-denominated ForecastPeriods above deliberately stays
+	// task-only. An epic has no idea how many tasks it will become, so there
+	// is no honest number to add to a count — which is the whole reason the
+	// estimate is denominated in points.
 	ForecastPeriodsByPoints *float64 `json:"forecastPeriodsByPoints"`
 
 	// SizedTaskRatio is the fraction of the completed tasks counted here
@@ -241,11 +286,38 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 	if err != nil {
 		return Metrics{}, fmt.Errorf("velocity: count open tasks: %w", err)
 	}
-	var openCount, openPoints int
+	var openCount, openTaskPoints int
 	for _, row := range openRows {
 		openCount += int(row.Count)
-		openPoints += int(row.Count) * sizePoints[row.Size]
+		openTaskPoints += int(row.Count) * sizePoints[row.Size]
 	}
+
+	// The other half of the remaining work: epics that have no tasks to count.
+	// The query already excludes the ones that do, so taskPoints is nil at
+	// every call below and epic.EffectivePoints resolves to the estimate, or
+	// to unknown when there isn't one.
+	epicRows, err := s.q.ListUnbrokenDownEpicEstimatesForVelocity(ctx, db.ListUnbrokenDownEpicEstimatesForVelocityParams{
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		return Metrics{}, fmt.Errorf("velocity: list unbroken-down epic estimates: %w", err)
+	}
+	var epicPoints, unestimatedEpics int
+	for _, row := range epicRows {
+		var estimate *int
+		if row.EstimatedPoints.Valid {
+			n := int(row.EstimatedPoints.Int32)
+			estimate = &n
+		}
+		points, known := epic.EffectivePoints(nil, estimate)
+		if !known {
+			unestimatedEpics++
+			continue
+		}
+		epicPoints += points
+	}
+	openPointsTotal := openTaskPoints + epicPoints
 
 	var completions []completion
 	for _, row := range rows {
@@ -362,7 +434,7 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		pv := float64(pointSum) / float64(count)
 		averageVelocityPoints = &pv
 		if pv > 0 {
-			pf := float64(openPoints) / pv
+			pf := float64(openPointsTotal) / pv
 			forecastPeriodsByPoints = &pf
 		}
 	}
@@ -381,8 +453,11 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		OpenTaskCount:           openCount,
 		AverageVelocity:         averageVelocity,
 		ForecastPeriods:         forecastPeriods,
-		OpenTaskPoints:          openPoints,
+		OpenTaskPoints:          openTaskPoints,
 		AverageVelocityPoints:   averageVelocityPoints,
+		UnbrokenDownEpicPoints:  epicPoints,
+		UnestimatedEpicCount:    unestimatedEpics,
+		OpenPointsTotal:         openPointsTotal,
 		ForecastPeriodsByPoints: forecastPeriodsByPoints,
 		SizedTaskRatio:          sizedRatio,
 	}, nil

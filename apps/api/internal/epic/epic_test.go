@@ -442,3 +442,157 @@ func TestService_SetTasks_ForeignEpicIsNotFound(t *testing.T) {
 	assert.ErrorIs(t, svc.SetTasks(ctx, stranger, created.ID, []uuid.UUID{tsk.ID}), epic.ErrNotFound)
 	assert.False(t, q.TaskByID(tsk.ID).EpicID.Valid)
 }
+
+// estimatedPoints is the pre-breakdown estimate (000033). It is nullable on
+// purpose — "nobody has estimated this" is a distinct answer from any number,
+// which is why 0 is rejected rather than accepted as a shorthand for it.
+func TestService_EstimatedPoints(t *testing.T) {
+	zero, negative, five := 0, -3, 5
+
+	tests := []struct {
+		name string
+		// create runs first; update, when non-nil, runs on the created epic.
+		create     epic.CreateParams
+		update     *epic.UpdateParams
+		wantErr    error
+		wantPoints *int
+	}{
+		{
+			name:       "created unestimated",
+			create:     epic.CreateParams{Name: "Screens"},
+			wantPoints: nil,
+		},
+		{
+			name:       "created with an estimate",
+			create:     epic.CreateParams{Name: "Screens", EstimatedPoints: &five},
+			wantPoints: &five,
+		},
+		{
+			name:    "zero is rejected on create",
+			create:  epic.CreateParams{Name: "Screens", EstimatedPoints: &zero},
+			wantErr: epic.ErrInvalidEstimate,
+		},
+		{
+			name:    "negative is rejected on create",
+			create:  epic.CreateParams{Name: "Screens", EstimatedPoints: &negative},
+			wantErr: epic.ErrInvalidEstimate,
+		},
+		{
+			name:       "absent on update keeps the stored estimate",
+			create:     epic.CreateParams{Name: "Screens", EstimatedPoints: &five},
+			update:     &epic.UpdateParams{Name: "Screens"},
+			wantPoints: &five,
+		},
+		{
+			name:       "an explicit null clears it",
+			create:     epic.CreateParams{Name: "Screens", EstimatedPoints: &five},
+			update:     &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present[*int](nil)},
+			wantPoints: nil,
+		},
+		{
+			name:       "an estimate can be added after the fact",
+			create:     epic.CreateParams{Name: "Screens"},
+			update:     &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present(&five)},
+			wantPoints: &five,
+		},
+		{
+			name:    "zero is rejected on update",
+			create:  epic.CreateParams{Name: "Screens", EstimatedPoints: &five},
+			update:  &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present(&zero)},
+			wantErr: epic.ErrInvalidEstimate,
+		},
+		{
+			name:    "negative is rejected on update",
+			create:  epic.CreateParams{Name: "Screens"},
+			update:  &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present(&negative)},
+			wantErr: epic.ErrInvalidEstimate,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			ctx := context.Background()
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+
+			got, err := svc.Create(ctx, owner, p.ID, tt.create)
+			if tt.update == nil {
+				if tt.wantErr != nil {
+					assert.ErrorIs(t, err, tt.wantErr)
+					return
+				}
+				require.NoError(t, err)
+			} else {
+				require.NoError(t, err)
+				got, err = svc.Update(ctx, owner, got.ID, *tt.update)
+				if tt.wantErr != nil {
+					assert.ErrorIs(t, err, tt.wantErr)
+					return
+				}
+				require.NoError(t, err)
+			}
+
+			if tt.wantPoints == nil {
+				assert.Nil(t, got.EstimatedPoints)
+				return
+			}
+			require.NotNil(t, got.EstimatedPoints)
+			assert.Equal(t, *tt.wantPoints, *got.EstimatedPoints)
+		})
+	}
+}
+
+// The estimate survives the epic being broken down. It stops being consulted
+// (EffectivePoints prefers the tasks' sum) but is never deleted: the guess and
+// the eventual real breakdown side by side are the only data an
+// estimate-vs-actual calibration could be built from.
+func TestService_EstimatedPoints_SurvivesBreakdown(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	eight := 8
+	created, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens", BacklogID: &b.ID, EstimatedPoints: &eight})
+	require.NoError(t, err)
+
+	task := q.SeedTask(p.ID, owner, "Build the list view")
+	require.NoError(t, svc.SetTasks(ctx, owner, created.ID, []uuid.UUID{task.ID}))
+
+	got, err := svc.Get(ctx, owner, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.EstimatedPoints)
+	assert.Equal(t, 8, *got.EstimatedPoints)
+}
+
+// EffectivePoints is the one place the two point sources are reconciled: the
+// tasks win once they exist, the estimate stands in until then, and neither
+// present is *unknown* rather than zero — collapsing that last case to 0 is
+// the bug issue #234 was filed for.
+func TestEffectivePoints(t *testing.T) {
+	taskPoints, estimate := 12, 5
+
+	tests := []struct {
+		name       string
+		taskPoints *int
+		estimate   *int
+		wantPoints int
+		wantKnown  bool
+	}{
+		{"tasks win over the estimate", &taskPoints, &estimate, 12, true},
+		{"tasks alone", &taskPoints, nil, 12, true},
+		{"estimate stands in while there are no tasks", nil, &estimate, 5, true},
+		{"neither is unknown, not zero", nil, nil, 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			points, known := epic.EffectivePoints(tt.taskPoints, tt.estimate)
+			assert.Equal(t, tt.wantKnown, known)
+			assert.Equal(t, tt.wantPoints, points)
+		})
+	}
+}

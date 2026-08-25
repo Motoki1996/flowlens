@@ -139,6 +139,8 @@ func TestHandleCreateEpic_MapsValidationErrors(t *testing.T) {
 		{"bad branch", createEpicRequest{Name: "Screens", BaseBranch: "no spaces"}, "invalid_base_branch"},
 		{"foreign backlog", createEpicRequest{Name: "Screens", BacklogID: &foreignBacklog.ID}, "invalid_backlog"},
 		{"non-member assignee", createEpicRequest{Name: "Screens", AssigneeUserID: &stranger}, "invalid_assignee"},
+		{"zero estimate", createEpicRequest{Name: "Screens", EstimatedPoints: intPtr(0)}, "invalid_estimated_points"},
+		{"negative estimate", createEpicRequest{Name: "Screens", EstimatedPoints: intPtr(-1)}, "invalid_estimated_points"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -330,4 +332,47 @@ func TestHandleEpics_BearerAuth(t *testing.T) {
 		doBearerRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/epics", nil, foreignToken).Code)
 	assert.Equal(t, http.StatusNotFound,
 		doBearerRequest(t, s, http.MethodGet, "/api/v1/epics/"+e.ID.String(), nil, foreignToken).Code)
+}
+
+func intPtr(v int) *int { return &v }
+
+// estimatedPoints goes through the same absent/null/value handling as every
+// other optional field, which is what makes PATCH safe to send from a form
+// that doesn't know the field exists: an epic estimated by
+// /flowlens:breakdown-epics must not lose that estimate the next time someone
+// renames it from the web app.
+func TestHandleUpdateEpic_EstimatedPoints(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+
+	created := doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/epics",
+		createEpicRequest{Name: "Screens", EstimatedPoints: intPtr(21)}, token)
+	require.Equal(t, http.StatusCreated, created.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &body))
+	require.Equal(t, float64(21), body["estimatedPoints"])
+	id := body["id"].(string)
+
+	// Absent: kept.
+	renamed := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+id, map[string]any{"name": "Screens v2"}, token)
+	require.Equal(t, http.StatusOK, renamed.Code)
+	require.NoError(t, json.Unmarshal(renamed.Body.Bytes(), &body))
+	assert.Equal(t, float64(21), body["estimatedPoints"], "an absent key must not clear the estimate")
+
+	// A value: replaced.
+	revised := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+id, map[string]any{"name": "Screens v2", "estimatedPoints": 13}, token)
+	require.Equal(t, http.StatusOK, revised.Code)
+	require.NoError(t, json.Unmarshal(revised.Body.Bytes(), &body))
+	assert.Equal(t, float64(13), body["estimatedPoints"])
+
+	// An explicit null: cleared back to unestimated.
+	cleared := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+id, map[string]any{"name": "Screens v2", "estimatedPoints": nil}, token)
+	require.Equal(t, http.StatusOK, cleared.Code)
+	require.NoError(t, json.Unmarshal(cleared.Body.Bytes(), &body))
+	assert.Nil(t, body["estimatedPoints"])
+
+	// And a non-positive value is refused on the update path too.
+	rejected := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+id, map[string]any{"name": "Screens v2", "estimatedPoints": 0}, token)
+	assert.Equal(t, http.StatusBadRequest, rejected.Code)
 }

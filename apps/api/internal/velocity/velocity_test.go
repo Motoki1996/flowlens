@@ -465,3 +465,143 @@ func TestService_Compute_SizedTaskRatio(t *testing.T) {
 		})
 	}
 }
+
+// Issue #234: an epic that has not been broken down into tasks yet is
+// remaining work too, and counting only tasks understated the forecast — the
+// epic rung exists precisely to be created before its tasks are.
+//
+// Table-driven over the ways an epic can (and must not) contribute. openTasks
+// is always the same three tasks (xl+m+xs = 12 points) so every case shares
+// the same task-side baseline and only the epic side varies.
+func TestService_Compute_UnbrokenDownEpicPoints(t *testing.T) {
+	type epicSeed struct {
+		estimatedPoints int    // 0 = unestimated
+		progress        string // "" = not_started
+		taskSizes       []string
+	}
+
+	tests := []struct {
+		name             string
+		epics            []epicSeed
+		wantEpicPoints   int
+		wantUnestimated  int
+		wantExtraTaskPts int // points the epics' own tasks add to openTaskPoints
+	}{
+		{
+			name: "no epics at all behaves exactly as before",
+		},
+		{
+			name:           "an unbroken-down estimated epic is counted",
+			epics:          []epicSeed{{estimatedPoints: 21}},
+			wantEpicPoints: 21,
+		},
+		{
+			name:           "several are summed",
+			epics:          []epicSeed{{estimatedPoints: 21}, {estimatedPoints: 13}},
+			wantEpicPoints: 34,
+		},
+		{
+			// The double-counting guard, and the whole reason the query
+			// excludes epics with tasks: those 5 points are already in
+			// openTaskPoints, once.
+			name:             "an epic with tasks is not counted again from its estimate",
+			epics:            []epicSeed{{estimatedPoints: 21, taskSizes: []string{"l"}}},
+			wantEpicPoints:   0,
+			wantExtraTaskPts: 5,
+		},
+		{
+			name:             "one broken down, one not",
+			epics:            []epicSeed{{estimatedPoints: 21, taskSizes: []string{"l"}}, {estimatedPoints: 13}},
+			wantEpicPoints:   13,
+			wantExtraTaskPts: 5,
+		},
+		{
+			// Unknown is not zero: it adds nothing to the total, but it is
+			// reported so the forecast can be read as the lower bound it is.
+			name:            "an unestimated epic is counted as unknown, not as zero",
+			epics:           []epicSeed{{estimatedPoints: 0}},
+			wantEpicPoints:  0,
+			wantUnestimated: 1,
+		},
+		{
+			name:            "estimated and unestimated side by side",
+			epics:           []epicSeed{{estimatedPoints: 8}, {estimatedPoints: 0}, {estimatedPoints: 0}},
+			wantEpicPoints:  8,
+			wantUnestimated: 2,
+		},
+		{
+			// Same rule as CountOpenTasksBySizeForVelocity's progress<>'done':
+			// the forecast is about work still outstanding.
+			name:           "a done epic is not remaining work",
+			epics:          []epicSeed{{estimatedPoints: 21, progress: "done"}, {estimatedPoints: 13}},
+			wantEpicPoints: 13,
+		},
+		{
+			name:            "a done epic is not counted as unestimated either",
+			epics:           []epicSeed{{estimatedPoints: 0, progress: "done"}},
+			wantEpicPoints:  0,
+			wantUnestimated: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			weekStart := metricsperiod.BucketStart(time.Now().AddDate(0, 0, -14), metricsperiod.Week)
+
+			// Two completed 'm' tasks (3 points each) in one complete week:
+			// 6 points/week of velocity.
+			for j := 0; j < 2; j++ {
+				task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", weekStart)
+				f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", weekStart.Add(time.Hour), "agent")
+				f.q.SeedTaskProgress(task.ID, "done")
+			}
+			// Three open tasks sitting directly in the backlog: 8+3+1 = 12.
+			for _, size := range []string{"xl", "m", "xs"} {
+				open := f.q.SeedTask(f.project.ID, f.owner, "Open")
+				f.q.SeedTaskSize(open.ID, size)
+				f.q.SeedTaskProgress(open.ID, "in_progress")
+			}
+
+			for _, seed := range tt.epics {
+				e := f.q.SeedEpic(f.project.ID, uuid.Nil, "Screens")
+				f.q.SeedEpicEstimatedPoints(e.ID, seed.estimatedPoints)
+				if seed.progress != "" {
+					f.q.SeedEpicProgress(e.ID, seed.progress)
+				}
+				for _, size := range seed.taskSizes {
+					task := f.q.SeedTask(f.project.ID, f.owner, "Epic task")
+					f.q.SeedTaskSize(task.ID, size)
+					f.q.SeedTaskProgress(task.ID, "in_progress")
+					f.q.SeedTaskEpic(task.ID, e.ID)
+				}
+			}
+
+			got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+			require.NoError(t, err)
+
+			wantTaskPoints := 12 + tt.wantExtraTaskPts
+			assert.Equal(t, wantTaskPoints, got.OpenTaskPoints, "openTaskPoints stays tasks-only, as its name says")
+			assert.Equal(t, tt.wantEpicPoints, got.UnbrokenDownEpicPoints)
+			assert.Equal(t, tt.wantUnestimated, got.UnestimatedEpicCount)
+			assert.Equal(t, got.OpenTaskPoints+got.UnbrokenDownEpicPoints, got.OpenPointsTotal)
+
+			// The forecast divides the *total* by the point velocity.
+			require.NotNil(t, got.AverageVelocityPoints)
+			assert.InDelta(t, 6.0, *got.AverageVelocityPoints, 0.001)
+			require.NotNil(t, got.ForecastPeriodsByPoints)
+			assert.InDelta(t, float64(got.OpenPointsTotal)/6.0, *got.ForecastPeriodsByPoints, 0.001)
+
+			// The count series is deliberately untouched by epics: an epic
+			// does not know how many tasks it will become, so only the tasks
+			// it really has (already counted above) move this number.
+			epicTasks := 0
+			for _, seed := range tt.epics {
+				epicTasks += len(seed.taskSizes)
+			}
+			assert.Equal(t, 3+epicTasks, got.OpenTaskCount)
+			require.NotNil(t, got.ForecastPeriods)
+			assert.InDelta(t, float64(got.OpenTaskCount)/2.0, *got.ForecastPeriods, 0.001)
+		})
+	}
+}

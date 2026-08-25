@@ -17,6 +17,7 @@ import (
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -73,7 +74,8 @@ func TestBulkCreate_AllOrNothing_RealPostgres(t *testing.T) {
 
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, database.NewTxRunner(pool), projects)
-	svc := task.NewService(q, database.NewTxRunner(pool), projects, backlogs)
+	epics := epic.NewService(q, database.NewTxRunner(pool), projects)
+	svc := task.NewService(q, database.NewTxRunner(pool), projects, backlogs, epics)
 
 	// Second task is invalid at the write step (title normalizes fine, but
 	// the transaction should still fail cleanly): use a cyclic dependency
@@ -112,7 +114,8 @@ func TestBulkCreate_Commits_RealPostgres(t *testing.T) {
 
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, database.NewTxRunner(pool), projects)
-	svc := task.NewService(q, database.NewTxRunner(pool), projects, backlogs)
+	epics := epic.NewService(q, database.NewTxRunner(pool), projects)
+	svc := task.NewService(q, database.NewTxRunner(pool), projects, backlogs, epics)
 
 	result, err := svc.BulkCreate(ctx, user.ID, p.ID, task.BulkCreateParams{
 		Tasks: []task.BulkTaskParams{

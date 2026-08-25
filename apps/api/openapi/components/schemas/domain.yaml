@@ -341,6 +341,10 @@ Epic:
         longer consulted. It is never cleared or overwritten when tasks
         appear. null means nobody has estimated it, which is distinct from
         any number including 0 — 0 is rejected for exactly that reason.
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: The FlowLens project member who owns this epic. App-only; an epic has no GitLab counterpart.
     assigneeUsername: { type: string, description: Resolved from users on read; "" when unassigned. }
     assigneeDisplayName: { type: string, description: Resolved from users on read; "" when unassigned. }
     taskCount: { type: integer, format: int64, description: Populated by the list endpoint only; 0 elsewhere. }
@@ -479,8 +483,11 @@ TaskContext:
     aiContext: { type: string }
     allowedScope: { type: string }
     forbiddenScope: { type: string }
-    recentComments:
+    comments:
       type: array
+      description: >-
+        The task's most recent activity-log entries, oldest first. Present
+        on the single-task read; the bulk list omits it.
       items: { $ref: '#/TaskComment' }
 
 TaskContextPage:

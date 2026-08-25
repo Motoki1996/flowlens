@@ -43,7 +43,7 @@ type createBacklogRequest struct {
 // date (priority and progress have no null case — see
 // backlog.normalizePriority/normalizeProgress — and an explicit empty
 // string clears baseBranch/allowedScope/forbiddenScope instead, since none
-// of them has a null case either). Name/description/position predate that
+// of them has a null case either). Name and description predate that
 // and are still overwritten wholesale.
 type updateBacklogRequest struct {
 	Name        string                        `json:"name"`

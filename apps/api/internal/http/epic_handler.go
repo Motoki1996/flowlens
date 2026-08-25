@@ -46,7 +46,7 @@ type createEpicRequest struct {
 	AssigneeUserID *uuid.UUID `json:"assigneeUserId"`
 }
 
-// Everything except name/description/position is Optional, so PATCH stays a
+// Everything except name/description is Optional, so PATCH stays a
 // partial update: an absent key keeps the stored value, an explicit null
 // clears a nullable field, and an explicit empty string clears baseBranch/
 // allowedScope/forbiddenScope (none of which has a null case) or resets
@@ -109,7 +109,7 @@ func (s *Server) handleListEpics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, epics)
 }
 
-// parseEpicListFilter reads ?backlogId=, ?priority=, ?progress=, ?assignee=
+// parseEpicListFilter reads ?backlog_id=, ?priority=, ?progress=, ?assignee=
 // and ?sort=, sharing parseAssigneeFilter with the task and backlog
 // collections so the assignee vocabulary ("me"/a UUID/"unassigned") means the
 // same thing everywhere. ?backlog_id=unassigned narrows to the epics in no

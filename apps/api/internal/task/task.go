@@ -20,6 +20,7 @@ import (
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/issuesync"
 	"github.com/flowlens/api/internal/project"
@@ -40,6 +41,7 @@ var (
 	ErrInvalidSize           = errors.New("task: size must be one of xs, s, m, l, xl")
 	ErrNotFound              = errors.New("task: not found")
 	ErrBacklogNotInProject   = errors.New("task: backlog belongs to a different project")
+	ErrEpicNotInProject      = errors.New("task: epic belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
 	ErrSyncNotFailed         = errors.New("task: gitlab sync is not currently failed")
 	ErrTaskIDsMismatch       = errors.New("task: taskIds must exactly match the current tasks in that backlog")
@@ -206,9 +208,17 @@ func validateAIContextParams(params AIContextParams) error {
 
 // Task is the API-facing representation of a task.
 type Task struct {
-	ID                     uuid.UUID  `json:"id"`
-	ProjectID              uuid.UUID  `json:"projectId"`
-	BacklogID              *uuid.UUID `json:"backlogId"`
+	ID        uuid.UUID  `json:"id"`
+	ProjectID uuid.UUID  `json:"projectId"`
+	BacklogID *uuid.UUID `json:"backlogId"`
+	// EpicID is the epic this task belongs to, the optional rung between a
+	// backlog and its tasks (000032). nil means the task sits directly in its
+	// backlog, which is where every task predating the epic layer sits. A
+	// task's epic and backlog always agree: setting one writes the other (see
+	// resolveEpic), so this is never an epic from some other backlog.
+	// App-only, deliberately absent from mirroredFieldsChanged — moving a
+	// task between epics never enqueues an issue.update.
+	EpicID                 *uuid.UUID `json:"epicId"`
 	Title                  string     `json:"title"`
 	Description            string     `json:"description"`
 	Status                 string     `json:"status"`
@@ -252,6 +262,7 @@ func fromRow(row db.Task) Task {
 		ID:                      row.ID,
 		ProjectID:               row.ProjectID,
 		BacklogID:               uuidPtr(row.BacklogID),
+		EpicID:                  uuidPtr(row.EpicID),
 		Title:                   row.Title,
 		Description:             row.Description,
 		Status:                  row.Status,
@@ -354,9 +365,13 @@ type TaskWithProject struct {
 // CreateParams holds the fields accepted when creating a task. A nil
 // BacklogID leaves the task unfiled (Unclassified).
 type CreateParams struct {
-	Title                  string
-	Description            string
-	BacklogID              *uuid.UUID
+	Title       string
+	Description string
+	BacklogID   *uuid.UUID
+	// EpicID files the task under an epic. Non-nil overrides BacklogID with
+	// the epic's own backlog, so the two can never disagree; an epic in
+	// another project is rejected with ErrEpicNotInProject.
+	EpicID                 *uuid.UUID
 	AssigneeGitlabUserID   *int64
 	AssigneeGitlabUsername string
 	// AssigneeUserID assigns the new task to a project member. Nil leaves it
@@ -385,9 +400,14 @@ type CreateParams struct {
 // Nullable fields (backlog, assignee ID, the two dates) are Optional[*T], so
 // an explicit null clears them.
 type UpdateParams struct {
-	Title                  Optional[string]
-	Description            Optional[string]
-	BacklogID              Optional[*uuid.UUID]
+	Title       Optional[string]
+	Description Optional[string]
+	BacklogID   Optional[*uuid.UUID]
+	// EpicID absent keeps the task's current epic — except when BacklogID is
+	// explicitly sent without it, which moves the task out from under an epic
+	// that lives in the old backlog. An explicit null unfiles the task from
+	// its epic while leaving it in its backlog.
+	EpicID                 Optional[*uuid.UUID]
 	AssigneeGitlabUserID   Optional[*int64]
 	AssigneeGitlabUsername Optional[string]
 	// AssigneeUserID left absent keeps the current assignee *and* leaves the
@@ -419,6 +439,7 @@ type resolvedUpdate struct {
 	Title                  string
 	Description            string
 	BacklogID              *uuid.UUID
+	EpicID                 *uuid.UUID
 	AssigneeGitlabUserID   *int64
 	AssigneeGitlabUsername string
 	AssigneeUserID         *uuid.UUID
@@ -436,6 +457,7 @@ func (p UpdateParams) resolve(current Task) resolvedUpdate {
 		Title:                  p.Title.Or(current.Title),
 		Description:            p.Description.Or(current.Description),
 		BacklogID:              p.BacklogID.Or(current.BacklogID),
+		EpicID:                 p.epicIDFor(current),
 		AssigneeGitlabUserID:   p.AssigneeGitlabUserID.Or(current.AssigneeGitlabUserID),
 		AssigneeGitlabUsername: p.AssigneeGitlabUsername.Or(current.AssigneeGitlabUsername),
 		AssigneeUserID:         p.AssigneeUserID.Or(current.AssigneeUserID),
@@ -498,15 +520,16 @@ type Service struct {
 	txRunner database.TxRunner
 	projects *project.Service
 	backlogs *backlog.Service
+	epics    *epic.Service
 }
 
-// NewService constructs a task Service. projects and backlogs are used to
-// verify project ownership and backlog membership before any write.
+// NewService constructs a task Service. projects, backlogs and epics are used
+// to verify project ownership and backlog/epic membership before any write.
 // txRunner runs each write that must enqueue an outbound sync job (Create,
 // Update, Close, Reopen) atomically with that enqueue, per
 // docs/plans/issue-sync.md's "Outbound" section.
-func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service, backlogs *backlog.Service) *Service {
-	return &Service{q: q, txRunner: txRunner, projects: projects, backlogs: backlogs}
+func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service, backlogs *backlog.Service, epics *epic.Service) *Service {
+	return &Service{q: q, txRunner: txRunner, projects: projects, backlogs: backlogs, epics: epics}
 }
 
 // authorize requires ownerID to hold at least min on projectID, mapping
@@ -598,6 +621,48 @@ func (s *Service) validateBacklog(ctx context.Context, ownerID, projectID uuid.U
 	return nil
 }
 
+// epicIDFor decides which epic a PATCH means. Absent keeps the current one,
+// except when the caller explicitly moved the task to another backlog without
+// naming an epic: the current epic lives in the old backlog, so keeping it
+// would leave the task pointing at an epic it is no longer under. Naming both
+// is allowed — resolveEpic then makes the backlog follow the epic, not the
+// other way round.
+func (p UpdateParams) epicIDFor(current Task) *uuid.UUID {
+	if _, sent := p.EpicID.Get(); sent {
+		return p.EpicID.Or(current.EpicID)
+	}
+	if _, backlogSent := p.BacklogID.Get(); backlogSent {
+		return nil
+	}
+	return current.EpicID
+}
+
+// resolveEpic enforces the rule the schema cannot express: a task's epic and
+// its backlog must agree. When an epic is named, the task's backlog becomes
+// that epic's backlog, whatever the caller sent — the epic is the more
+// specific statement of where the task belongs, and an epic filed nowhere
+// (backlog_id NULL) unfiles the task with it. When no epic is named the
+// backlog stands as given.
+//
+// An epic outside projectID, or one the caller cannot see, is rejected with
+// ErrEpicNotInProject — the same posture validateBacklog takes.
+func (s *Service) resolveEpic(ctx context.Context, ownerID, projectID uuid.UUID, epicID, backlogID *uuid.UUID) (*uuid.UUID, error) {
+	if epicID == nil {
+		return backlogID, nil
+	}
+	e, err := s.epics.Get(ctx, ownerID, *epicID)
+	if err != nil {
+		if errors.Is(err, epic.ErrNotFound) {
+			return nil, ErrEpicNotInProject
+		}
+		return nil, fmt.Errorf("task: validate epic: %w", err)
+	}
+	if e.ProjectID != projectID {
+		return nil, ErrEpicNotInProject
+	}
+	return e.BacklogID, nil
+}
+
 func normalizeLabels(labels []string) []string {
 	if labels == nil {
 		return []string{}
@@ -639,6 +704,14 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, para
 	if err != nil {
 		return Task{}, err
 	}
+	// The epic has the last word on which backlog the task lands in, so it is
+	// resolved before the backlog is validated — otherwise a caller naming
+	// only an epic would be checked against a backlog they never sent.
+	backlogID, err := s.resolveEpic(ctx, ownerID, projectID, params.EpicID, params.BacklogID)
+	if err != nil {
+		return Task{}, err
+	}
+	params.BacklogID = backlogID
 	if err := s.validateBacklog(ctx, ownerID, projectID, params.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -673,7 +746,7 @@ func createTaskInTx(ctx context.Context, q db.Querier, ownerID, projectID uuid.U
 		}
 	}
 
-	link, hasLink, err := resolveLinkedGitlabProject(ctx, q, ownerID, projectID, params.BacklogID)
+	link, hasLink, err := resolveLinkedGitlabProject(ctx, q, ownerID, projectID, params.EpicID, params.BacklogID)
 	if err != nil {
 		return Task{}, fmt.Errorf("task: create: %w", err)
 	}
@@ -698,6 +771,7 @@ func createTaskInTx(ctx context.Context, q db.Querier, ownerID, projectID uuid.U
 	row, err := q.CreateTask(ctx, db.CreateTaskParams{
 		ProjectID:              projectID,
 		BacklogID:              toUUID(params.BacklogID),
+		EpicID:                 toUUID(params.EpicID),
 		Title:                  title,
 		Description:            params.Description,
 		AssigneeGitlabUserID:   toInt8(assigneeID),
@@ -739,16 +813,29 @@ func createTaskInTx(ctx context.Context, q db.Querier, ownerID, projectID uuid.U
 }
 
 // resolveLinkedGitlabProject decides where a new task's issue is created:
-// the task's backlog's own linked GitLab project first (migration 000021),
-// then projectID's default link, then nowhere at all — a project with no
-// linked GitLab project yet is not an error, the task is simply created as a
-// purely local one.
+// the task's epic's own linked GitLab project first (migration 000032), then
+// its backlog's (000021), then projectID's default link, then nowhere at
+// all — a project with no linked GitLab project yet is not an error, the task
+// is simply created as a purely local one.
 //
 // This runs at task-create time only. Once an issue exists, its linked
 // project is recorded in task_gitlab_links and every later update follows
-// that row, so moving a task between backlogs afterwards never moves (or
-// re-targets) the issue.
-func resolveLinkedGitlabProject(ctx context.Context, q db.Querier, ownerID, projectID uuid.UUID, backlogID *uuid.UUID) (db.LinkedGitlabProject, bool, error) {
+// that row, so moving a task between epics or backlogs afterwards never moves
+// (or re-targets) the issue.
+func resolveLinkedGitlabProject(ctx context.Context, q db.Querier, ownerID, projectID uuid.UUID, epicID, backlogID *uuid.UUID) (db.LinkedGitlabProject, bool, error) {
+	if epicID != nil {
+		link, err := q.GetEpicLinkedGitlabProjectForOwner(ctx, db.GetEpicLinkedGitlabProjectForOwnerParams{
+			ID:          *epicID,
+			OwnerUserID: ownerID,
+		})
+		if err == nil {
+			return link, true, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return db.LinkedGitlabProject{}, false, err
+		}
+		// The epic names no link of its own: fall through to its backlog.
+	}
 	if backlogID != nil {
 		link, err := q.GetBacklogLinkedGitlabProjectForOwner(ctx, db.GetBacklogLinkedGitlabProjectForOwnerParams{
 			ID:          *backlogID,
@@ -811,10 +898,15 @@ func defaultAssignee(ctx context.Context, q db.Querier, ownerID, projectID uuid.
 type ListFilter struct {
 	BacklogID  *uuid.UUID // non-nil: only this backlog's tasks
 	Unassigned bool       // true: only unfiled tasks (backlog_id IS NULL); mutually exclusive with BacklogID
-	Status     string     // "open" | "closed" | "" (no filter)
-	Priority   string     // one of the Priority* constants, or "" (no filter)
-	Progress   string     // one of the Progress* constants, or "" (no filter)
-	Size       string     // one of the Size* constants, or "" (no filter)
+	// EpicID, when non-nil, returns only that epic's tasks; EpicUnfiled only
+	// the tasks in no epic at all — the ones sitting directly in a backlog,
+	// which is every task predating the epic layer. Mutually exclusive.
+	EpicID      *uuid.UUID
+	EpicUnfiled bool
+	Status      string // "open" | "closed" | "" (no filter)
+	Priority    string // one of the Priority* constants, or "" (no filter)
+	Progress    string // one of the Progress* constants, or "" (no filter)
+	Size        string // one of the Size* constants, or "" (no filter)
 	// Sort is "" (position ASC, created_at ASC, the manual/DnD order),
 	// SortPriority (priority rank DESC), SortProgress (progress rank ASC,
 	// not_started first), SortSize (size rank DESC, biggest first),
@@ -858,6 +950,8 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		ProjectID:          projectID,
 		Unassigned:         filter.Unassigned,
 		BacklogID:          toUUID(filter.BacklogID),
+		EpicID:             toUUID(filter.EpicID),
+		EpicUnfiled:        filter.EpicUnfiled,
 		Status:             filter.Status,
 		Priority:           filter.Priority,
 		Progress:           filter.Progress,
@@ -932,6 +1026,12 @@ type CrossProjectFilter struct {
 	DueAfter      *time.Time  // non-nil: only tasks due on or after this date
 	StartedBefore *time.Time  // non-nil: only tasks whose start date has arrived (start_date <= this date)
 	ProjectIDs    []uuid.UUID // non-empty: only these projects, still scoped to the caller's own
+	// EpicID/EpicUnfiled are ListFilter's epic filters. An epic belongs to one
+	// project, so filtering the cross-project list by one narrows it to that
+	// project as a side effect — which is exactly what a caller asking for an
+	// epic's tasks wants.
+	EpicID      *uuid.UUID
+	EpicUnfiled bool
 	// Sort is one of SortDueOn (default), SortPriority, SortProgress,
 	// SortSize or SortUpdatedAt.
 	Sort string
@@ -981,6 +1081,8 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 		DueBefore:          toDate(filter.DueBefore),
 		DueAfter:           toDate(filter.DueAfter),
 		StartedBefore:      toDate(filter.StartedBefore),
+		EpicID:             toUUID(filter.EpicID),
+		EpicUnfiled:        filter.EpicUnfiled,
 		ProjectIds:         projectIDs,
 		AssigneeUserID:     toUUID(filter.AssigneeUserID),
 		AssigneeUnassigned: filter.AssigneeUnassigned,
@@ -1011,6 +1113,7 @@ func fromCrossProjectRow(row db.ListTasksForMemberRow) TaskWithProject {
 			ID:                     row.ID,
 			ProjectID:              row.ProjectID,
 			BacklogID:              row.BacklogID,
+			EpicID:                 row.EpicID,
 			Title:                  row.Title,
 			Description:            row.Description,
 			Status:                 row.Status,
@@ -1249,6 +1352,11 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 		return Task{}, err
 	}
 	resolved.Size = size
+	backlogID, err := s.resolveEpic(ctx, ownerID, current.ProjectID, resolved.EpicID, resolved.BacklogID)
+	if err != nil {
+		return Task{}, err
+	}
+	resolved.BacklogID = backlogID
 	if err := s.validateBacklog(ctx, ownerID, current.ProjectID, resolved.BacklogID); err != nil {
 		return Task{}, err
 	}
@@ -1268,6 +1376,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			ID:                     taskID,
 			OwnerUserID:            ownerID,
 			BacklogID:              toUUID(resolved.BacklogID),
+			EpicID:                 toUUID(resolved.EpicID),
 			Title:                  resolved.Title,
 			Description:            resolved.Description,
 			AssigneeGitlabUserID:   toInt8(resolved.AssigneeGitlabUserID),
@@ -1729,9 +1838,14 @@ const ProgressGuidance = `Update this task's progress as you work, via PATCH /ap
 // external AI integration parses this contract, so its field names and
 // nesting must stay stable regardless of what Task does.
 type Context struct {
-	ID               uuid.UUID  `json:"id"`
-	ProjectID        uuid.UUID  `json:"projectId"`
-	BacklogID        *uuid.UUID `json:"backlogId"`
+	ID        uuid.UUID  `json:"id"`
+	ProjectID uuid.UUID  `json:"projectId"`
+	BacklogID *uuid.UUID `json:"backlogId"`
+	// EpicID is the task's epic, the optional rung between its backlog and
+	// itself (000032). nil means the task sits directly in its backlog. It is
+	// where BaseBranch/AllowedScope/ForbiddenScope below are resolved from
+	// first.
+	EpicID           *uuid.UUID `json:"epicId"`
 	Title            string     `json:"title"`
 	Description      string     `json:"description"`
 	Status           string     `json:"status"`
@@ -1753,15 +1867,19 @@ type Context struct {
 	Labels              []string   `json:"labels"`
 	DueOn               *time.Time `json:"dueOn"`
 	UpdatedAt           time.Time  `json:"updatedAt"`
-	// BaseBranch is the task's backlog's base_branch (internal/backlog,
-	// issue's own migration) — the branch an agent working this task should
-	// branch from. "" when the task is unfiled or its backlog has none set.
+	// BaseBranch is the branch an agent working this task should branch from,
+	// resolved epic-first: the task's epic's base_branch (internal/epic,
+	// 000032), then its backlog's (internal/backlog, 000024), then "" when
+	// neither sets one.
 	BaseBranch string `json:"baseBranch"`
-	// AllowedScope/ForbiddenScope are the task's backlog's own
-	// AllowedScope/ForbiddenScope (internal/backlog, 000029 migration) —
-	// the paths an agent working this task may/may not touch. "" when the
-	// task is unfiled or its backlog has none set, the same rule
-	// BaseBranch follows.
+	// AllowedScope/ForbiddenScope are the paths an agent working this task
+	// may/may not touch, resolved through the same epic-then-backlog chain
+	// BaseBranch follows (internal/epic 000032, internal/backlog 000029).
+	//
+	// The chain runs **per field**, not per object: an epic that sets only
+	// base_branch still inherits its backlog's scope. That is what makes an
+	// epic able to redirect one branch without having to restate the whole
+	// context its backlog already carries.
 	AllowedScope       string         `json:"allowedScope"`
 	ForbiddenScope     string         `json:"forbiddenScope"`
 	Gitlab             *GitlabContext `json:"gitlab"`
@@ -1769,10 +1887,10 @@ type Context struct {
 	AIContext          string         `json:"aiContext"`
 }
 
-// backlogTaskDefaults is a task's backlog's own AI-facing defaults —
-// base_branch, allowed_scope, forbidden_scope — resolved once and threaded
-// into Context.
-type backlogTaskDefaults struct {
+// taskDefaults are a task's inherited AI-facing defaults — base_branch,
+// allowed_scope, forbidden_scope — resolved once from its epic and backlog
+// and threaded into Context.
+type taskDefaults struct {
 	BaseBranch     string
 	AllowedScope   string
 	ForbiddenScope string
@@ -1780,11 +1898,12 @@ type backlogTaskDefaults struct {
 
 // toContext combines t with its already-resolved GitLab and AI context into
 // the AI-facing Context shape.
-func toContext(t Task, gc *GitlabContext, ai AIContext, bd backlogTaskDefaults) Context {
+func toContext(t Task, gc *GitlabContext, ai AIContext, bd taskDefaults) Context {
 	return Context{
 		ID:                     t.ID,
 		ProjectID:              t.ProjectID,
 		BacklogID:              t.BacklogID,
+		EpicID:                 t.EpicID,
 		Title:                  t.Title,
 		Description:            t.Description,
 		Status:                 t.Status,
@@ -1846,7 +1965,7 @@ func (s *Service) contextForTask(ctx context.Context, t Task) (Context, error) {
 	if err != nil {
 		return Context{}, err
 	}
-	bd, err := s.backlogTaskDefaultsForTask(ctx, t.BacklogID)
+	bd, err := s.defaultsForTask(ctx, t.EpicID, t.BacklogID)
 	if err != nil {
 		return Context{}, err
 	}
@@ -1857,25 +1976,49 @@ func (s *Service) contextForTask(ctx context.Context, t Task) (Context, error) {
 	return toContext(t, gc, ai, bd), nil
 }
 
-// backlogTaskDefaultsForTask resolves backlogID's base_branch/
-// allowed_scope/forbidden_scope, or the zero value if the task is unfiled
-// (backlogID nil) or its backlog has none set.
-func (s *Service) backlogTaskDefaultsForTask(ctx context.Context, backlogID *uuid.UUID) (backlogTaskDefaults, error) {
-	if backlogID == nil {
-		return backlogTaskDefaults{}, nil
+// defaultsForTask resolves a task's base_branch/allowed_scope/
+// forbidden_scope from its epic first and its backlog second, per field: a
+// value the epic leaves empty falls through to the backlog's, so an epic can
+// redirect the branch without restating the scope. The zero value is
+// returned when the task is in neither, or when neither sets anything.
+func (s *Service) defaultsForTask(ctx context.Context, epicID, backlogID *uuid.UUID) (taskDefaults, error) {
+	var out taskDefaults
+	if epicID != nil {
+		row, err := s.q.GetEpicTaskDefaults(ctx, *epicID)
+		switch {
+		case err == nil:
+			out = taskDefaults{
+				BaseBranch:     row.BaseBranch,
+				AllowedScope:   row.AllowedScope,
+				ForbiddenScope: row.ForbiddenScope,
+			}
+		case errors.Is(err, pgx.ErrNoRows):
+			// The epic was deleted between reading the task and here; the
+			// backlog below still applies.
+		default:
+			return taskDefaults{}, fmt.Errorf("task: get epic task defaults: %w", err)
+		}
+	}
+	if backlogID == nil || (out.BaseBranch != "" && out.AllowedScope != "" && out.ForbiddenScope != "") {
+		return out, nil
 	}
 	row, err := s.q.GetBacklogTaskDefaults(ctx, *backlogID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return backlogTaskDefaults{}, nil
+			return out, nil
 		}
-		return backlogTaskDefaults{}, fmt.Errorf("task: get backlog task defaults: %w", err)
+		return taskDefaults{}, fmt.Errorf("task: get backlog task defaults: %w", err)
 	}
-	return backlogTaskDefaults{
-		BaseBranch:     row.BaseBranch,
-		AllowedScope:   row.AllowedScope,
-		ForbiddenScope: row.ForbiddenScope,
-	}, nil
+	if out.BaseBranch == "" {
+		out.BaseBranch = row.BaseBranch
+	}
+	if out.AllowedScope == "" {
+		out.AllowedScope = row.AllowedScope
+	}
+	if out.ForbiddenScope == "" {
+		out.ForbiddenScope = row.ForbiddenScope
+	}
+	return out, nil
 }
 
 // ContextListFilter narrows ListContext/ListContextForProject to a subset of
@@ -1883,6 +2026,7 @@ func (s *Service) backlogTaskDefaultsForTask(ctx context.Context, backlogID *uui
 // page, default page size".
 type ContextListFilter struct {
 	BacklogID    *uuid.UUID // non-nil: only this backlog's tasks
+	EpicID       *uuid.UUID // non-nil: only this epic's tasks
 	Status       string     // "open" | "closed" | "" (no filter)
 	UpdatedSince *time.Time // non-nil: only tasks updated at or after this time
 	Page         int
@@ -1934,6 +2078,7 @@ func (s *Service) listContext(ctx context.Context, projectID uuid.UUID, filter C
 	rows, err := s.q.ListTasksByProjectPaged(ctx, db.ListTasksByProjectPagedParams{
 		ProjectID:    projectID,
 		BacklogID:    toUUID(filter.BacklogID),
+		EpicID:       toUUID(filter.EpicID),
 		Status:       filter.Status,
 		UpdatedSince: toTimestamptz(filter.UpdatedSince),
 		LimitCount:   int32(perPage + 1),

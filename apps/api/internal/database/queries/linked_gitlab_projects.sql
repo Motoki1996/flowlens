@@ -71,6 +71,22 @@ WHERE lgp.id = $1
     WHERE pm.project_id = gc.project_id AND pm.user_id = sqlc.arg(owner_user_id)
   );
 
+-- name: GetEpicLinkedGitlabProjectForOwner :one
+-- The epic-scoped rung above GetBacklogLinkedGitlabProjectForOwner (000032):
+-- internal/task resolves a new task's issue destination from its epic first,
+-- then the epic's backlog, then the project default. Joining through epics
+-- keeps the check that the link and the epic share a project inside the query.
+SELECT lgp.*
+FROM epics e
+JOIN linked_gitlab_projects lgp ON lgp.id = e.default_linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE e.id = $1
+  AND gc.project_id = e.project_id
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );
+
 -- name: GetBacklogLinkedGitlabProjectForOwner :one
 -- The backlog-scoped half of GetDefaultLinkedGitlabProjectForOwner:
 -- internal/task resolves a new task's issue destination from its backlog

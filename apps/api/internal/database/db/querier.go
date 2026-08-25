@@ -305,6 +305,11 @@ type Querier interface {
 	// backlog it belongs to so the chain can fall through to that backlog's link
 	// and then the project default.
 	GetEpicIssueDestination(ctx context.Context, id uuid.UUID) (GetEpicIssueDestinationRow, error)
+	// The epic-scoped rung above GetBacklogLinkedGitlabProjectForOwner (000032):
+	// internal/task resolves a new task's issue destination from its epic first,
+	// then the epic's backlog, then the project default. Joining through epics
+	// keeps the check that the link and the epic share a project inside the query.
+	GetEpicLinkedGitlabProjectForOwner(ctx context.Context, arg GetEpicLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
 	// GetEpicProjectID is the lightweight project lookup
 	// requireTokenResourceProject (internal/http) uses to enforce a bearer
 	// token's project boundary on a single-epic URL, without GetEpicForOwner's

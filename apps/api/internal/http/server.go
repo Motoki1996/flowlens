@@ -13,6 +13,7 @@ import (
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/deliverymetrics"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/flowmetrics"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
@@ -49,6 +50,7 @@ type Server struct {
 	users                *user.Service
 	projects             *project.Service
 	backlogs             *backlog.Service
+	epics                *epic.Service
 	apiTokens            *apitoken.Service
 	projectMembers       *projectmember.Service
 	projectInvites       *projectinvite.Service
@@ -94,6 +96,7 @@ type Server struct {
 func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRunner database.TxRunner, cipher *crypto.Cipher, clientFactory func(baseURL string) gitlab.Client) (*Server, error) {
 	projects := project.NewService(queries)
 	backlogs := backlog.NewService(queries, txRunner, projects)
+	epics := epic.NewService(queries, txRunner, projects)
 	apiTokens := apitoken.NewService(queries, projects)
 	users := user.NewService(queries)
 	projectMembers := projectmember.NewService(queries, projects, users)
@@ -102,12 +105,13 @@ func NewServer(cfg *config.Config, queries database.Querier, health Pinger, txRu
 		clientFactory = func(baseURL string) gitlab.Client { return gitlab.NewHTTPClient(baseURL) }
 	}
 	gitlabConns := gitlabconn.NewService(queries, projects, cipher, clientFactory)
-	tasks := task.NewService(queries, txRunner, projects, backlogs)
+	tasks := task.NewService(queries, txRunner, projects, backlogs, epics)
 	return &Server{
 		health:               health,
 		users:                users,
 		projects:             projects,
 		backlogs:             backlogs,
+		epics:                epics,
 		apiTokens:            apiTokens,
 		projectMembers:       projectMembers,
 		projectInvites:       projectInvites,

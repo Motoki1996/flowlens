@@ -12,10 +12,10 @@
 INSERT INTO tasks (
     project_id, backlog_id, title, description,
     assignee_gitlab_user_id, assignee_gitlab_username,
-    labels, due_on, start_date, priority, progress, size, created_by_user_id, assignee_user_id, position
+    labels, due_on, start_date, priority, progress, size, created_by_user_id, assignee_user_id, epic_id, position
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
     COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1 AND backlog_id IS NOT DISTINCT FROM $2), 0)
 )
 RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id, epic_id;
@@ -58,6 +58,8 @@ LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ug
 WHERE tasks.project_id = sqlc.arg(project_id)
   AND (NOT sqlc.arg(unassigned)::boolean OR tasks.backlog_id IS NULL)
   AND (sqlc.narg(backlog_id)::uuid IS NULL OR tasks.backlog_id = sqlc.narg(backlog_id))
+  AND (sqlc.narg(epic_id)::uuid IS NULL OR tasks.epic_id = sqlc.narg(epic_id))
+  AND (NOT sqlc.arg(epic_unfiled)::boolean OR tasks.epic_id IS NULL)
   AND (sqlc.arg(status)::text = '' OR tasks.status = sqlc.arg(status))
   AND (sqlc.arg(priority)::text = '' OR tasks.priority = sqlc.arg(priority))
   AND (sqlc.arg(progress)::text = '' OR tasks.progress = sqlc.arg(progress))
@@ -94,6 +96,7 @@ SELECT id, project_id, backlog_id, title, description, status, closed_at, assign
 FROM tasks
 WHERE project_id = sqlc.arg(project_id)
   AND (sqlc.narg(backlog_id)::uuid IS NULL OR backlog_id = sqlc.narg(backlog_id))
+  AND (sqlc.narg(epic_id)::uuid IS NULL OR epic_id = sqlc.narg(epic_id))
   AND (sqlc.arg(status)::text = '' OR status = sqlc.arg(status))
   AND (sqlc.narg(updated_since)::timestamptz IS NULL OR updated_at >= sqlc.narg(updated_since))
 ORDER BY position ASC, created_at ASC
@@ -139,6 +142,8 @@ WHERE pm.user_id = sqlc.arg(owner_user_id)
   AND (sqlc.arg(priority)::text = '' OR t.priority = sqlc.arg(priority))
   AND (sqlc.arg(progress)::text = '' OR t.progress = sqlc.arg(progress))
   AND (sqlc.arg(size)::text = '' OR t.size = sqlc.arg(size))
+  AND (sqlc.narg(epic_id)::uuid IS NULL OR t.epic_id = sqlc.narg(epic_id))
+  AND (NOT sqlc.arg(epic_unfiled)::boolean OR t.epic_id IS NULL)
   AND (sqlc.narg(due_before)::date IS NULL OR t.due_on <= sqlc.narg(due_before))
   AND (sqlc.narg(due_after)::date IS NULL OR t.due_on >= sqlc.narg(due_after))
   AND (sqlc.narg(started_before)::date IS NULL OR t.start_date <= sqlc.narg(started_before))
@@ -220,7 +225,7 @@ UPDATE tasks t
 SET backlog_id = $2, title = $3, description = $4,
     assignee_gitlab_user_id = $5, assignee_gitlab_username = $6,
     labels = $7, due_on = $8, start_date = $9, priority = $10, progress = $11, size = $12, position = $13,
-    assignee_user_id = $14, updated_at = now()
+    assignee_user_id = $14, epic_id = $15, updated_at = now()
 WHERE t.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
@@ -230,7 +235,12 @@ RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.
 
 -- name: AssignTaskBacklogForOwner :one
 UPDATE tasks t
-SET backlog_id = $2, updated_at = now()
+SET backlog_id = $2,
+    -- A task's epic and backlog must agree, so a move that leaves the epic's
+    -- backlog behind clears the epic rather than pointing at one that lives
+    -- somewhere else (000032). Moving inside the same backlog keeps it.
+    epic_id = (SELECT e.id FROM epics e WHERE e.id = t.epic_id AND e.backlog_id IS NOT DISTINCT FROM $2),
+    updated_at = now()
 WHERE t.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm

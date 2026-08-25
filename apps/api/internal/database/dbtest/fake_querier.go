@@ -1308,6 +1308,7 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 		ID:                     uuid.New(),
 		ProjectID:              arg.ProjectID,
 		BacklogID:              arg.BacklogID,
+		EpicID:                 arg.EpicID,
 		Title:                  arg.Title,
 		Description:            arg.Description,
 		Status:                 "open",
@@ -1396,6 +1397,12 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.BacklogID.Valid && (!t.BacklogID.Valid || t.BacklogID.Bytes != arg.BacklogID.Bytes) {
 			continue
 		}
+		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
+			continue
+		}
+		if arg.EpicUnfiled && t.EpicID.Valid {
+			continue
+		}
 		if arg.Status != "" && t.Status != arg.Status {
 			continue
 		}
@@ -1453,6 +1460,9 @@ func (f *FakeQuerier) ListTasksByProjectPaged(_ context.Context, arg db.ListTask
 			continue
 		}
 		if arg.BacklogID.Valid && (!t.BacklogID.Valid || t.BacklogID.Bytes != arg.BacklogID.Bytes) {
+			continue
+		}
+		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
 			continue
 		}
 		if arg.Status != "" && t.Status != arg.Status {
@@ -1813,6 +1823,12 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 		if arg.Progress != "" && t.Progress != arg.Progress {
 			continue
 		}
+		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
+			continue
+		}
+		if arg.EpicUnfiled && t.EpicID.Valid {
+			continue
+		}
 		if arg.DueBefore.Valid && (!t.DueOn.Valid || t.DueOn.Time.After(arg.DueBefore.Time)) {
 			continue
 		}
@@ -1999,6 +2015,7 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	}
 
 	existing.BacklogID = arg.BacklogID
+	existing.EpicID = arg.EpicID
 	existing.Title = arg.Title
 	existing.Description = arg.Description
 	existing.AssigneeGitlabUserID = arg.AssigneeGitlabUserID
@@ -2026,6 +2043,13 @@ func (f *FakeQuerier) AssignTaskBacklogForOwner(_ context.Context, arg db.Assign
 		return db.Task{}, pgx.ErrNoRows
 	}
 	existing.BacklogID = arg.BacklogID
+	// Mirrors the SQL subquery: the epic survives only if it lives in the
+	// backlog the task just moved to (000032).
+	if existing.EpicID.Valid {
+		if e, ok := f.epicsByID[uuid.UUID(existing.EpicID.Bytes)]; !ok || e.BacklogID != arg.BacklogID {
+			existing.EpicID = pgtype.UUID{}
+		}
+	}
 	existing.UpdatedAt = now()
 	f.storeTask(existing)
 	return existing, nil
@@ -2785,6 +2809,27 @@ func (f *FakeQuerier) GetLinkedGitlabProjectInProjectForOwner(_ context.Context,
 	}
 	projectID, ok := f.linkedProjectProjectID(l)
 	if !ok || projectID != arg.ProjectID || !f.hasMembership(projectID, arg.OwnerUserID) {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+// GetEpicLinkedGitlabProjectForOwner mirrors the SQL: the epic's own link,
+// the first rung of a new task's issue-destination chain (000032).
+func (f *FakeQuerier) GetEpicLinkedGitlabProjectForOwner(_ context.Context, arg db.GetEpicLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	e, ok := f.epicsByID[arg.ID]
+	if !ok || !e.DefaultLinkedGitlabProjectID.Valid {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	if !f.hasMembership(e.ProjectID, arg.OwnerUserID) {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	l, ok := f.linkedGitlabProjectsByID[uuid.UUID(e.DefaultLinkedGitlabProjectID.Bytes)]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	projectID, ok := f.linkedProjectProjectID(l)
+	if !ok || projectID != e.ProjectID {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	return l, nil

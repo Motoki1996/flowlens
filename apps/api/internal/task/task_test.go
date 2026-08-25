@@ -11,6 +11,7 @@ import (
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/issuesync"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
@@ -23,7 +24,7 @@ import (
 func newService(q *dbtest.FakeQuerier) *task.Service {
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects)
-	return task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs)
+	return task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs, epic.NewService(q, dbtest.FakeTxRunner{Q: q}, projects))
 }
 
 // seedLinkedGitlabProject links a fake GitLab project (id 100) to
@@ -1805,4 +1806,259 @@ func TestBuildGitlabIssuePayload_OmitsSize(t *testing.T) {
 	before := task.BuildGitlabIssuePayload(task.Task{Title: "Fix bug", Size: task.SizeXS})
 	after := task.BuildGitlabIssuePayload(task.Task{Title: "Fix bug", Size: task.SizeXL})
 	assert.Equal(t, before, after, "changing size must not change what is pushed to GitLab")
+}
+
+// --- The epic rung (000032) -------------------------------------------------
+//
+// A task's epic and backlog must always agree, and the epic is the more
+// specific statement of the two: it wins. These tests pin that rule and the
+// two resolution chains that hang off it, since neither can be expressed in
+// the schema.
+
+func TestService_Create_EpicSetsTheBacklog(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	right := q.SeedBacklog(p.ID, "Sprint 1")
+	wrong := q.SeedBacklog(p.ID, "Sprint 2")
+	e := q.SeedEpic(p.ID, right.ID, "Screens")
+
+	// Even when the caller names a different backlog outright, the epic's own
+	// backlog is what the task lands in.
+	got, err := svc.Create(ctx, owner, p.ID, task.CreateParams{
+		Title:     "Build the list screen",
+		EpicID:    &e.ID,
+		BacklogID: &wrong.ID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, got.EpicID)
+	assert.Equal(t, e.ID, *got.EpicID)
+	require.NotNil(t, got.BacklogID)
+	assert.Equal(t, right.ID, *got.BacklogID)
+}
+
+func TestService_Create_RejectsForeignEpic(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	other := q.SeedProject(owner, "Beta")
+	foreign := q.SeedEpic(other.ID, uuid.Nil, "Their epic")
+
+	_, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", EpicID: &foreign.ID})
+	assert.ErrorIs(t, err, task.ErrEpicNotInProject)
+
+	missing := uuid.New()
+	_, err = svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Fix bug", EpicID: &missing})
+	assert.ErrorIs(t, err, task.ErrEpicNotInProject)
+}
+
+// The issue destination chain gains a rung at the top: epic's link, then its
+// backlog's, then the project default.
+func TestService_Create_ResolvesIssueDestinationEpicFirst(t *testing.T) {
+	q := dbtest.New()
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	defaultLink := seedLinkedGitlabProject(t, q, conn.ID)
+	epicLink, err := q.CreateLinkedGitlabProject(ctx, db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: conn.ID,
+		GitlabProjectID:    200,
+		PathWithNamespace:  "group/other",
+		Name:               "other",
+		WebUrl:             "https://gitlab.example.com/group/other",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+
+	svc := newService(q)
+	epics := epic.NewService(q, dbtest.FakeTxRunner{Q: q}, project.NewService(q))
+	b, err := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, project.NewService(q)).
+		Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1"})
+	require.NoError(t, err)
+	e, err := epics.Create(ctx, owner, p.ID, epic.CreateParams{
+		Name:                         "Screens",
+		BacklogID:                    &b.ID,
+		DefaultLinkedGitlabProjectID: &epicLink.ID,
+	})
+	require.NoError(t, err)
+
+	tsk, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Build the list screen", EpicID: &e.ID})
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(tsk.ID)
+	require.Len(t, jobs, 1)
+	var payload issuesync.CreatePayload
+	require.NoError(t, json.Unmarshal(jobs[0].Payload, &payload))
+	assert.Equal(t, epicLink.ID, payload.LinkedGitlabProjectID)
+	assert.NotEqual(t, defaultLink.ID, payload.LinkedGitlabProjectID)
+}
+
+// An epic that names no link of its own falls through to its backlog's, and
+// then to the project default — the chain is per rung, not all-or-nothing.
+func TestService_Create_FallsThroughToBacklogLink(t *testing.T) {
+	q := dbtest.New()
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	defaultLink := seedLinkedGitlabProject(t, q, conn.ID)
+	backlogLink, err := q.CreateLinkedGitlabProject(ctx, db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: conn.ID,
+		GitlabProjectID:    200,
+		PathWithNamespace:  "group/other",
+		Name:               "other",
+		WebUrl:             "https://gitlab.example.com/group/other",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+
+	projects := project.NewService(q)
+	b, err := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects).
+		Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1", DefaultLinkedGitlabProjectID: &backlogLink.ID})
+	require.NoError(t, err)
+	e, err := epic.NewService(q, dbtest.FakeTxRunner{Q: q}, projects).
+		Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens", BacklogID: &b.ID})
+	require.NoError(t, err)
+
+	tsk, err := newService(q).Create(ctx, owner, p.ID, task.CreateParams{Title: "Build it", EpicID: &e.ID})
+	require.NoError(t, err)
+
+	jobs := q.SyncJobsForTask(tsk.ID)
+	require.Len(t, jobs, 1)
+	var payload issuesync.CreatePayload
+	require.NoError(t, json.Unmarshal(jobs[0].Payload, &payload))
+	assert.Equal(t, backlogLink.ID, payload.LinkedGitlabProjectID)
+	assert.NotEqual(t, defaultLink.ID, payload.LinkedGitlabProjectID)
+}
+
+// epic_id is app-only: moving a task between epics must never push anything
+// to GitLab, exactly as assignee_user_id never does on its own.
+func TestService_Update_EpicChangeEnqueuesNothing(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	e := q.SeedEpic(p.ID, b.ID, "Screens")
+	tsk := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Fix bug")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLinkedGitlabProject(t, q, conn.ID)
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	got, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
+		Title:  task.Present("Fix bug"),
+		EpicID: task.Present(&e.ID),
+	}, task.ActorKindUser)
+	require.NoError(t, err)
+	require.NotNil(t, got.EpicID)
+	assert.Equal(t, e.ID, *got.EpicID)
+	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
+}
+
+// Moving a task to another backlog without naming an epic drops the epic:
+// keeping it would leave the task under an epic that lives somewhere else.
+func TestService_Update_BacklogChangeClearsStaleEpic(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	from := q.SeedBacklog(p.ID, "Sprint 1")
+	to := q.SeedBacklog(p.ID, "Sprint 2")
+	e := q.SeedEpic(p.ID, from.ID, "Screens")
+	tsk := q.SeedTaskInBacklog(p.ID, from.ID, owner, "Fix bug")
+	q.SeedTaskEpic(tsk.ID, e.ID)
+
+	got, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
+		Title:     task.Present("Fix bug"),
+		BacklogID: task.Present(&to.ID),
+	}, task.ActorKindUser)
+	require.NoError(t, err)
+	assert.Nil(t, got.EpicID)
+	require.NotNil(t, got.BacklogID)
+	assert.Equal(t, to.ID, *got.BacklogID)
+}
+
+// An unrelated PATCH keeps the epic — only an explicit backlog move drops it.
+func TestService_Update_KeepsEpicOnUnrelatedEdit(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	e := q.SeedEpic(p.ID, b.ID, "Screens")
+	tsk := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Fix bug")
+	q.SeedTaskEpic(tsk.ID, e.ID)
+
+	got, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
+		Title: task.Present("Fix bug harder"),
+	}, task.ActorKindUser)
+	require.NoError(t, err)
+	require.NotNil(t, got.EpicID)
+	assert.Equal(t, e.ID, *got.EpicID)
+}
+
+// The agent-facing defaults resolve per field, not per object: an epic that
+// sets only baseBranch still inherits its backlog's scope.
+func TestService_Context_ResolvesDefaultsEpicFirstPerField(t *testing.T) {
+	q := dbtest.New()
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	projects := project.NewService(q)
+	b, err := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects).Create(ctx, owner, p.ID, backlog.CreateParams{
+		Name:           "Sprint 1",
+		BaseBranch:     "main",
+		AllowedScope:   "apps/**",
+		ForbiddenScope: "migrations/**",
+	})
+	require.NoError(t, err)
+	e, err := epic.NewService(q, dbtest.FakeTxRunner{Q: q}, projects).Create(ctx, owner, p.ID, epic.CreateParams{
+		Name:       "Screens",
+		BacklogID:  &b.ID,
+		BaseBranch: "release/2.4",
+	})
+	require.NoError(t, err)
+
+	svc := newService(q)
+	tsk, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Build it", EpicID: &e.ID})
+	require.NoError(t, err)
+
+	got, err := svc.Context(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "release/2.4", got.BaseBranch, "the epic overrides the backlog's branch")
+	assert.Equal(t, "apps/**", got.AllowedScope, "the epic sets no scope, so the backlog's stands")
+	assert.Equal(t, "migrations/**", got.ForbiddenScope)
+	require.NotNil(t, got.EpicID)
+	assert.Equal(t, e.ID, *got.EpicID)
+}
+
+func TestService_List_FiltersByEpic(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	e := q.SeedEpic(p.ID, b.ID, "Screens")
+	inEpic := q.SeedTaskInBacklog(p.ID, b.ID, owner, "In the epic")
+	q.SeedTaskEpic(inEpic.ID, e.ID)
+	q.SeedTaskInBacklog(p.ID, b.ID, owner, "Directly in the backlog")
+
+	filed, err := svc.List(ctx, owner, p.ID, task.ListFilter{EpicID: &e.ID})
+	require.NoError(t, err)
+	require.Len(t, filed, 1)
+	assert.Equal(t, inEpic.ID, filed[0].ID)
+
+	loose, err := svc.List(ctx, owner, p.ID, task.ListFilter{EpicUnfiled: true})
+	require.NoError(t, err)
+	require.Len(t, loose, 1)
+	assert.Equal(t, "Directly in the backlog", loose[0].Title)
 }

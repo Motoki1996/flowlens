@@ -147,7 +147,12 @@ func (q *Queries) ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTa
 
 const assignTaskBacklogForOwner = `-- name: AssignTaskBacklogForOwner :one
 UPDATE tasks t
-SET backlog_id = $2, updated_at = now()
+SET backlog_id = $2,
+    -- A task's epic and backlog must agree, so a move that leaves the epic's
+    -- backlog behind clears the epic rather than pointing at one that lives
+    -- somewhere else (000032). Moving inside the same backlog keeps it.
+    epic_id = (SELECT e.id FROM epics e WHERE e.id = t.epic_id AND e.backlog_id IS NOT DISTINCT FROM $2),
+    updated_at = now()
 WHERE t.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
@@ -275,10 +280,10 @@ const createTask = `-- name: CreateTask :one
 INSERT INTO tasks (
     project_id, backlog_id, title, description,
     assignee_gitlab_user_id, assignee_gitlab_username,
-    labels, due_on, start_date, priority, progress, size, created_by_user_id, assignee_user_id, position
+    labels, due_on, start_date, priority, progress, size, created_by_user_id, assignee_user_id, epic_id, position
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
     COALESCE((SELECT MAX(position) + 1 FROM tasks WHERE project_id = $1 AND backlog_id IS NOT DISTINCT FROM $2), 0)
 )
 RETURNING id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id, epic_id
@@ -299,6 +304,7 @@ type CreateTaskParams struct {
 	Size                   string      `json:"size"`
 	CreatedByUserID        uuid.UUID   `json:"created_by_user_id"`
 	AssigneeUserID         pgtype.UUID `json:"assignee_user_id"`
+	EpicID                 pgtype.UUID `json:"epic_id"`
 }
 
 // Tasks are scoped through their parent project the same way backlogs are:
@@ -326,6 +332,7 @@ func (q *Queries) CreateTask(ctx context.Context, arg CreateTaskParams) (Task, e
 		arg.Size,
 		arg.CreatedByUserID,
 		arg.AssigneeUserID,
+		arg.EpicID,
 	)
 	var i Task
 	err := row.Scan(
@@ -500,24 +507,26 @@ LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ug
 WHERE tasks.project_id = $2
   AND (NOT $3::boolean OR tasks.backlog_id IS NULL)
   AND ($4::uuid IS NULL OR tasks.backlog_id = $4)
-  AND ($5::text = '' OR tasks.status = $5)
-  AND ($6::text = '' OR tasks.priority = $6)
-  AND ($7::text = '' OR tasks.progress = $7)
-  AND ($8::text = '' OR tasks.size = $8)
+  AND ($5::uuid IS NULL OR tasks.epic_id = $5)
+  AND (NOT $6::boolean OR tasks.epic_id IS NULL)
+  AND ($7::text = '' OR tasks.status = $7)
+  AND ($8::text = '' OR tasks.priority = $8)
+  AND ($9::text = '' OR tasks.progress = $9)
+  AND ($10::text = '' OR tasks.size = $10)
   AND ($1::uuid IS NULL
        OR tasks.assignee_user_id = $1
        OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
-  AND (NOT $9::boolean
+  AND (NOT $11::boolean
        OR (tasks.assignee_user_id IS NULL AND tasks.assignee_gitlab_user_id IS NULL))
-  AND ($10::text = '' OR tasks.search_vector @@ websearch_to_tsquery('simple', $10::text))
+  AND ($12::text = '' OR tasks.search_vector @@ websearch_to_tsquery('simple', $12::text))
 ORDER BY
-  (CASE WHEN $11::boolean THEN
+  (CASE WHEN $13::boolean THEN
      CASE tasks.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
-  (CASE WHEN $12::boolean THEN
+  (CASE WHEN $14::boolean THEN
      CASE tasks.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  (CASE WHEN $13::boolean THEN
+  (CASE WHEN $15::boolean THEN
      CASE tasks.size WHEN 'xl' THEN 5 WHEN 'l' THEN 4 WHEN 'm' THEN 3 WHEN 's' THEN 2 WHEN 'xs' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
   tasks.position ASC, tasks.created_at ASC
@@ -528,6 +537,8 @@ type ListTasksByProjectParams struct {
 	ProjectID          uuid.UUID   `json:"project_id"`
 	Unassigned         bool        `json:"unassigned"`
 	BacklogID          pgtype.UUID `json:"backlog_id"`
+	EpicID             pgtype.UUID `json:"epic_id"`
+	EpicUnfiled        bool        `json:"epic_unfiled"`
 	Status             string      `json:"status"`
 	Priority           string      `json:"priority"`
 	Progress           string      `json:"progress"`
@@ -575,6 +586,8 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 		arg.ProjectID,
 		arg.Unassigned,
 		arg.BacklogID,
+		arg.EpicID,
+		arg.EpicUnfiled,
 		arg.Status,
 		arg.Priority,
 		arg.Progress,
@@ -634,15 +647,17 @@ SELECT id, project_id, backlog_id, title, description, status, closed_at, assign
 FROM tasks
 WHERE project_id = $1
   AND ($2::uuid IS NULL OR backlog_id = $2)
-  AND ($3::text = '' OR status = $3)
-  AND ($4::timestamptz IS NULL OR updated_at >= $4)
+  AND ($3::uuid IS NULL OR epic_id = $3)
+  AND ($4::text = '' OR status = $4)
+  AND ($5::timestamptz IS NULL OR updated_at >= $5)
 ORDER BY position ASC, created_at ASC
-LIMIT $6 OFFSET $5
+LIMIT $7 OFFSET $6
 `
 
 type ListTasksByProjectPagedParams struct {
 	ProjectID    uuid.UUID          `json:"project_id"`
 	BacklogID    pgtype.UUID        `json:"backlog_id"`
+	EpicID       pgtype.UUID        `json:"epic_id"`
 	Status       string             `json:"status"`
 	UpdatedSince pgtype.Timestamptz `json:"updated_since"`
 	OffsetCount  int32              `json:"offset_count"`
@@ -661,6 +676,7 @@ func (q *Queries) ListTasksByProjectPaged(ctx context.Context, arg ListTasksByPr
 	rows, err := q.db.Query(ctx, listTasksByProjectPaged,
 		arg.ProjectID,
 		arg.BacklogID,
+		arg.EpicID,
 		arg.Status,
 		arg.UpdatedSince,
 		arg.OffsetCount,
@@ -723,30 +739,32 @@ WHERE pm.user_id = $2
   AND ($4::text = '' OR t.priority = $4)
   AND ($5::text = '' OR t.progress = $5)
   AND ($6::text = '' OR t.size = $6)
-  AND ($7::date IS NULL OR t.due_on <= $7)
-  AND ($8::date IS NULL OR t.due_on >= $8)
-  AND ($9::date IS NULL OR t.start_date <= $9)
-  AND (cardinality($10::uuid[]) = 0 OR t.project_id = ANY($10::uuid[]))
+  AND ($7::uuid IS NULL OR t.epic_id = $7)
+  AND (NOT $8::boolean OR t.epic_id IS NULL)
+  AND ($9::date IS NULL OR t.due_on <= $9)
+  AND ($10::date IS NULL OR t.due_on >= $10)
+  AND ($11::date IS NULL OR t.start_date <= $11)
+  AND (cardinality($12::uuid[]) = 0 OR t.project_id = ANY($12::uuid[]))
   AND ($1::uuid IS NULL
        OR t.assignee_user_id = $1
        OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
-  AND (NOT $11::boolean
+  AND (NOT $13::boolean
        OR (t.assignee_user_id IS NULL AND t.assignee_gitlab_user_id IS NULL))
-  AND ($12::text = '' OR t.search_vector @@ websearch_to_tsquery('simple', $12::text))
+  AND ($14::text = '' OR t.search_vector @@ websearch_to_tsquery('simple', $14::text))
 ORDER BY
-  (CASE WHEN $13::text = 'priority' THEN
+  (CASE WHEN $15::text = 'priority' THEN
      CASE t.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    END) DESC,
-  (CASE WHEN $13::text = 'progress' THEN
+  (CASE WHEN $15::text = 'progress' THEN
      CASE t.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    END) ASC,
-  (CASE WHEN $13::text = 'size' THEN
+  (CASE WHEN $15::text = 'size' THEN
      CASE t.size WHEN 'xl' THEN 5 WHEN 'l' THEN 4 WHEN 'm' THEN 3 WHEN 's' THEN 2 WHEN 'xs' THEN 1 ELSE 0 END
    END) DESC,
-  (CASE WHEN $13::text = 'updatedAt' THEN t.updated_at END) DESC,
+  (CASE WHEN $15::text = 'updatedAt' THEN t.updated_at END) DESC,
   t.due_on ASC,
   t.position ASC, t.created_at ASC
-LIMIT $14
+LIMIT $16
 `
 
 type ListTasksForMemberParams struct {
@@ -756,6 +774,8 @@ type ListTasksForMemberParams struct {
 	Priority           string      `json:"priority"`
 	Progress           string      `json:"progress"`
 	Size               string      `json:"size"`
+	EpicID             pgtype.UUID `json:"epic_id"`
+	EpicUnfiled        bool        `json:"epic_unfiled"`
 	DueBefore          pgtype.Date `json:"due_before"`
 	DueAfter           pgtype.Date `json:"due_after"`
 	StartedBefore      pgtype.Date `json:"started_before"`
@@ -825,6 +845,8 @@ func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMember
 		arg.Priority,
 		arg.Progress,
 		arg.Size,
+		arg.EpicID,
+		arg.EpicUnfiled,
 		arg.DueBefore,
 		arg.DueAfter,
 		arg.StartedBefore,
@@ -1065,11 +1087,11 @@ UPDATE tasks t
 SET backlog_id = $2, title = $3, description = $4,
     assignee_gitlab_user_id = $5, assignee_gitlab_username = $6,
     labels = $7, due_on = $8, start_date = $9, priority = $10, progress = $11, size = $12, position = $13,
-    assignee_user_id = $14, updated_at = now()
+    assignee_user_id = $14, epic_id = $15, updated_at = now()
 WHERE t.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = t.project_id AND pm.user_id = $15 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = t.project_id AND pm.user_id = $16 AND pm.role IN ('member', 'owner')
   )
 RETURNING t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.position, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id, t.epic_id
 `
@@ -1089,6 +1111,7 @@ type UpdateTaskForOwnerParams struct {
 	Size                   string      `json:"size"`
 	Position               int32       `json:"position"`
 	AssigneeUserID         pgtype.UUID `json:"assignee_user_id"`
+	EpicID                 pgtype.UUID `json:"epic_id"`
 	OwnerUserID            uuid.UUID   `json:"owner_user_id"`
 }
 
@@ -1108,6 +1131,7 @@ func (q *Queries) UpdateTaskForOwner(ctx context.Context, arg UpdateTaskForOwner
 		arg.Size,
 		arg.Position,
 		arg.AssigneeUserID,
+		arg.EpicID,
 		arg.OwnerUserID,
 	)
 	var i Task

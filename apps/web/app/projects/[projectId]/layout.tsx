@@ -13,7 +13,8 @@ import {
 } from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
 import { ProjectSidebar, type ProjectSidebarCounts } from "@/components/ProjectSidebar";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarToggle } from "@/components/SidebarToggle";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import {
   SIDEBAR_STATE_COOKIE,
   SIDEBAR_WIDTH_COOKIE,
@@ -121,7 +122,7 @@ export default async function ProjectLayout({
           already one — this is that element with the landmark left to the
           content below, where it belongs. */}
       <div className="bg-background relative flex min-w-0 flex-1 flex-col">
-        <AppHeader user={user} leading={<SidebarTrigger className="-ml-1" />} />
+        <AppHeader user={user} leading={<SidebarToggle />} />
         <main className="mx-auto w-full max-w-6xl min-w-0 flex-1 px-8 py-8">{children}</main>
       </div>
     </SidebarProvider>

@@ -13,16 +13,17 @@ import {
 } from "lucide-react";
 import { projectSectionPath, type ProjectSection } from "@/lib/routes";
 import { BoundaryHeader } from "@/components/BoundaryHeader";
+import { SidebarToggle } from "@/components/SidebarToggle";
 import { Button } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 
 const SECTIONS: { section: ProjectSection; label: string; icon: LucideIcon }[] = [
@@ -60,6 +61,11 @@ export default function ProjectError({
   return (
     <SidebarProvider>
       <Sidebar collapsible="icon">
+        {/* No switcher to sit beside it here — this boundary has no project
+            data — but the toggle still belongs to the sidebar it collapses. */}
+        <SidebarHeader className="flex-row items-center justify-end">
+          <SidebarToggle placement="sidebar" />
+        </SidebarHeader>
         <SidebarContent>
           <nav aria-label="Project sections" className="p-2">
             <SidebarMenu>
@@ -90,7 +96,7 @@ export default function ProjectError({
         </SidebarFooter>
       </Sidebar>
       <div className="bg-background relative flex min-w-0 flex-1 flex-col">
-        <BoundaryHeader leading={<SidebarTrigger className="-ml-1" />} />
+        <BoundaryHeader leading={<SidebarToggle />} />
         <main className="flex min-w-0 flex-1 flex-col items-start gap-4 px-8 py-16">
           <h1 className="text-foreground text-2xl font-semibold">Something went wrong</h1>
           <p className="text-muted-foreground text-sm">

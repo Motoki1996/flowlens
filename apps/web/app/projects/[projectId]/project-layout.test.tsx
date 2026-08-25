@@ -160,14 +160,23 @@ describe("ProjectLayout", () => {
     });
   });
 
-  it("collapses the sidebar from the header's toggle, and remembers it", async () => {
+  it("collapses the sidebar from its own toggle, and remembers it", async () => {
     const { container } = render(await renderLayout());
-    await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+    const sidebar = container.querySelector('[data-slot="sidebar"]') as HTMLElement;
+    await userEvent.click(within(sidebar).getByRole("button", { name: "Collapse sidebar" }));
     expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
       "data-state",
       "collapsed",
     );
     expect(document.cookie).toContain("sidebar_state=false");
+  });
+
+  it("keeps the header's toggle for mobile only, where the drawer hides the sidebar's own", async () => {
+    const { container } = render(await renderLayout());
+    const header = container.querySelector("header") as HTMLElement;
+    expect(within(header).getByRole("button", { name: "Collapse sidebar" })).toHaveClass(
+      "md:hidden",
+    );
   });
 
   it("still renders the screen when the sidebar's counts fail to load", async () => {

@@ -1,6 +1,6 @@
 ---
-description: 具体化済みの FlowLens backlog を、コードの影響範囲を踏まえてタスクに分解し、依存関係とともに一括登録する
-argument-hint: <backlogId>
+description: 具体化済みの FlowLens backlog または epic を、コードの影響範囲を踏まえてタスクに分解し、依存関係とともに一括登録する
+argument-hint: <backlogId|epicId>
 allowed-tools: Bash(cat .flowlens/config.json), Bash(curl:*), Read, Grep, Glob
 ---
 
@@ -8,14 +8,20 @@ Read the `flowlens` skill first for auth and shared conventions. This
 command expects the backlog to already have numbered requirements
 (`R1`, `R2`, …) — run `/flowlens:refine-backlog` first if it doesn't.
 
-## Target backlog
+## Target
 
-Backlog ID: $1
+ID: $1 — either a **backlog** or an **epic**, whichever the caller named.
+The tasks are filed under that object.
 
 ## Steps
 
-1. Load `.flowlens/config.json` and the token, and `GET
-   {baseUrl}/api/v1/backlogs/$1` for the refined requirements.
+1. Load `.flowlens/config.json` and the token, then resolve what `$1` is:
+   `GET {baseUrl}/api/v1/epics/$1` first, and on 404 `GET
+   {baseUrl}/api/v1/backlogs/$1`. Read the refined requirements from
+   whichever one answered. For an epic, also `GET
+   {baseUrl}/api/v1/backlogs/{its backlogId}` — the epic's own
+   requirements are a slice of the backlog's, and its empty fields fall
+   through to the backlog's.
 2. Read the relevant parts of this repository to ground the breakdown in
    actual code structure, not just the requirement text.
 3. Split the work into tasks. For each task, decide:
@@ -26,18 +32,22 @@ Backlog ID: $1
      task's `aiContext`, e.g. "Implements R2.")
    - `acceptanceCriteria`
 
-   `allowedScope`/`forbiddenScope` (paths tasks may/may not touch) are not
-   a per-task field — they live on the backlog itself (already fetched in
-   step 1) and apply to every task filed in it. If this backlog's own
-   scope needs setting or refining, do that with `PATCH
-   {baseUrl}/api/v1/backlogs/$1` rather than inventing a per-task scope.
+   `baseBranch` and `allowedScope`/`forbiddenScope` are not per-task
+   fields — they live on the epic and the backlog (both fetched in step 1)
+   and apply to every task filed there. They resolve **epic first, then
+   backlog, per field**: an epic that sets only `baseBranch` still
+   inherits the backlog's scope. If the scope needs setting or refining,
+   `PATCH` the object you were given — the *epic* when `$1` is an epic,
+   not the backlog above it — rather than inventing a per-task scope.
 4. Decide dependencies between the new tasks (predecessor → successor).
    These determine the order `/flowlens:work` can run them in — a task
    whose predecessor isn't closed yet should not be started.
 5. Submit everything in one call: `POST
    {baseUrl}/api/v1/projects/{projectId}/tasks/bulk` with `tasks` (each
-   carrying a request-scoped `ref`, `backlogId: "$1"`, and an inline
-   `aiContext`) and `dependencies` (`{predecessorRef, successorRef}`
+   carrying a request-scoped `ref`, either `epicId: "$1"` or
+   `backlogId: "$1"` — whichever `$1` turned out to be, never both, since
+   an `epicId` already files the task in that epic's backlog — and an
+   inline `aiContext`) and `dependencies` (`{predecessorRef, successorRef}`
    pairs referencing those same `ref`s). This is all-or-nothing — a
    validation failure on any task or dependency leaves nothing written, so
    fix and resubmit rather than retrying piecemeal.

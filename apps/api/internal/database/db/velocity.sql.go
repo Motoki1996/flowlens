@@ -183,6 +183,12 @@ type ListUnbrokenDownEpicEstimatesForVelocityRow struct {
 // status is not checked, because an epic has none — epics are app-only and
 // have no GitLab issue state to close.
 //
+// The flip side of that argument, and the accepted cost: NOT EXISTS is
+// all-or-nothing, so a *partially* broken-down epic drops out of this figure
+// while most of its work is still uncut. See the "Known limitation" note on
+// Result.UnbrokenDownEpicPoints in internal/velocity for why that is
+// preferred to reconciling the estimate against the tasks.
+//
 // Rows with a NULL estimate are returned rather than filtered out: how many
 // epics nobody has estimated is itself part of the answer (internal/velocity
 // reports it as unestimatedEpicCount), and silently dropping them is how the

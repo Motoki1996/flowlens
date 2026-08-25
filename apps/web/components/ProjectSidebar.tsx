@@ -29,6 +29,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { SidebarResizer } from "@/components/SidebarResizer";
+import { SidebarToggle } from "@/components/SidebarToggle";
 import { cn } from "@/lib/utils";
 
 /** Counts shown next to each section. `null` means the count failed to load —
@@ -81,8 +82,9 @@ function summaryOf(section: ProjectSection, counts: ProjectSidebarCounts) {
  * body.
  *
  * Built on shadcn's Sidebar, so it collapses to an icon rail (⌘B, or the
- * trigger in the header) and becomes a drawer on mobile; SidebarResizer adds
- * the width drag shadcn leaves out. Both pieces of that state live in cookies
+ * SidebarToggle in its own header — the app header carries a second copy for
+ * mobile, where the sidebar is a drawer) and becomes a drawer on mobile;
+ * SidebarResizer adds the width drag shadcn leaves out. Both pieces of that state live in cookies
  * the layout above reads, so a reload comes back the way it was left. It must
  * be rendered inside a SidebarProvider.
  */
@@ -110,8 +112,10 @@ export function ProjectSidebar({
   return (
     <Sidebar collapsible="icon">
       {/* The switcher needs a text field to be worth anything, so the icon
-          rail drops it rather than shrinking it into an unusable stub. */}
-      <SidebarHeader className="group-data-[collapsible=icon]:hidden">
+          rail drops it rather than shrinking it into an unusable stub — but
+          the toggle beside it stays, so a collapsed sidebar carries its own
+          way back out instead of sending the user up to the app header. */}
+      <SidebarHeader className="flex-row items-center gap-1">
         <Combobox
           options={options}
           value={project.id}
@@ -120,8 +124,9 @@ export function ProjectSidebar({
           searchPlaceholder="Search projects…"
           emptyText="No project found."
           size="sm"
-          className="w-full"
+          className="w-full min-w-0 flex-1 group-data-[collapsible=icon]:hidden"
         />
+        <SidebarToggle placement="sidebar" />
       </SidebarHeader>
 
       <SidebarContent>

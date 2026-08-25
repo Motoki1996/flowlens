@@ -124,4 +124,24 @@ describe("ProjectSidebar", () => {
     renderSidebar({ projects: [] });
     expect(screen.getByRole("combobox", { name: "Switch project" })).toHaveTextContent("Alpha");
   });
+
+  it("collapses from its own toggle, and keeps that toggle in the icon rail", async () => {
+    const { container } = renderSidebar();
+    await userEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      "data-state",
+      "collapsed",
+    );
+    // The switcher is gone in the rail, but the way back out is not.
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
+  });
+
+  it("expands again from the collapsed rail's toggle", async () => {
+    const { container } = renderSidebar({}, { defaultOpen: false });
+    await userEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
+    expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      "data-state",
+      "expanded",
+    );
+  });
 });

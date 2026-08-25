@@ -212,10 +212,19 @@ A filter that another screen wants to hand off through belongs in the URL. The
 Task collection reads `?backlog=` and `?epic=`, and the Backlog and Epic
 screens link to `/projects/[id]/tasks?backlog=[backlogId]` (or `?epic=`)
 instead of growing task browsing of their own — one place to browse tasks, reachable pre-filtered. The Backlog
-single view keeps a read-only preview of its tasks and an "Open in Tasks" link
-(and, when it has any, an Epics card with the same "Open in Epics" handoff);
-filtering, the timeline mode, and task creation stay with the collection that
-owns them.
+single view keeps read-only previews of both its children — epics and tasks —
+in **one card with an Epics / Tasks tab switch**, each tab carrying its own
+count and its own "Open in Epics" / "Open in Tasks" handoff. Two stacked lists
+would have doubled the screen's height to show two things only one of which is
+being read at a time; the tab labels also stand in for a card title, since
+each names the object it shows. Filtering, the board and timeline modes, and
+task creation all stay with the collection that owns them.
+
+The one action that does live here is **New epic**, which opens the Epic
+collection's own form inline with this backlog pre-filled. It is the
+deliberate exception to the handoff rule above: an epic is created *into* a
+backlog, so the backlog is the context the decision is made in — whereas a
+task is created into whichever backlog the Task collection's own form names.
 
 `Backlog` and `Epic` share their Board and Timeline view modes
 (`GroupBoardSection` / `GroupTimelineSection`, `lib/groups.ts`): an epic is

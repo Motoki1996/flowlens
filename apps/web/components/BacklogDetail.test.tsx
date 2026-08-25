@@ -343,7 +343,10 @@ describe("BacklogDetail", () => {
   // The epic rung is optional, so the card is present only when this backlog
   // actually uses it — and hands off to the Epic collection rather than
   // growing a second place to manage epics.
-  it("lists this backlog's epics, or hides the card when it has none", () => {
+  // Epics and tasks are one card with two tabs, not two stacked lists: both
+  // are this backlog's children, only one is read at a time, and stacking
+  // them doubled the height of the screen for no gain.
+  describe("the Epics / Tasks tabs", () => {
     const epic = {
       id: "e1",
       projectId: "p1",
@@ -368,20 +371,113 @@ describe("BacklogDetail", () => {
       updatedAt: "2026-01-01T00:00:00Z",
     };
 
-    const { unmount } = render(
-      <BacklogDetail backlog={backlog} project={project} epics={[epic]} />,
-    );
-    expect(screen.getByRole("link", { name: /Screens/ })).toHaveAttribute(
-      "href",
-      "/projects/p1/epics/e1",
-    );
-    expect(screen.getByRole("link", { name: "Open in Epics" })).toHaveAttribute(
-      "href",
-      "/projects/p1/epics?backlog=b1",
-    );
-    unmount();
+    it("opens on Epics when the backlog uses them, and counts both sides", () => {
+      render(
+        <BacklogDetail
+          backlog={backlog}
+          project={project}
+          epics={[epic]}
+          tasks={[makeTask({ id: "t1", title: "Fix the bug" })]}
+        />,
+      );
 
-    render(<BacklogDetail backlog={backlog} project={project} />);
-    expect(screen.queryByText("Epics")).not.toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: "Epics 1" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      // The hidden side still reports its size.
+      expect(screen.getByRole("tab", { name: "Tasks 1" })).toHaveAttribute(
+        "aria-selected",
+        "false",
+      );
+      expect(screen.getByRole("link", { name: /Screens/ })).toHaveAttribute(
+        "href",
+        "/projects/p1/epics/e1",
+      );
+      expect(screen.queryByRole("link", { name: /Fix the bug/ })).not.toBeInTheDocument();
+    });
+
+    // A backlog that hasn't adopted the rung shouldn't have it pushed in
+    // front of the work it actually holds.
+    it("opens on Tasks when the backlog has no epics, and still offers the Epics tab", () => {
+      render(
+        <BacklogDetail
+          backlog={backlog}
+          project={project}
+          tasks={[makeTask({ id: "t1", title: "Fix the bug" })]}
+        />,
+      );
+
+      expect(screen.getByRole("tab", { name: "Tasks 1" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      expect(screen.getByRole("link", { name: /Fix the bug/ })).toBeInTheDocument();
+      // Present at zero, because it is the only place a first epic is made.
+      expect(screen.getByRole("tab", { name: "Epics 0" })).toBeInTheDocument();
+    });
+
+    it("switches the list, the action and the handoff link together", () => {
+      render(
+        <BacklogDetail
+          backlog={backlog}
+          project={project}
+          epics={[epic]}
+          tasks={[makeTask({ id: "t1", title: "Fix the bug" })]}
+        />,
+      );
+
+      expect(screen.getByRole("link", { name: "Open in Epics" })).toHaveAttribute(
+        "href",
+        "/projects/p1/epics?backlog=b1",
+      );
+      expect(screen.getByRole("button", { name: /New epic/ })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Tasks 1" }));
+
+      expect(screen.getByRole("link", { name: /Fix the bug/ })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /Screens/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Open in Tasks" })).toHaveAttribute(
+        "href",
+        "/projects/p1/tasks?backlog=b1",
+      );
+      // "New epic" belongs to the epic list, not to the card.
+      expect(screen.queryByRole("button", { name: /New epic/ })).not.toBeInTheDocument();
+    });
+
+    it("creates an epic in place, filed in this backlog", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => epic });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<BacklogDetail backlog={backlog} project={project} epics={[epic]} />);
+
+      fireEvent.click(screen.getByRole("button", { name: /New epic/ }));
+      fireEvent.change(screen.getByLabelText("Name"), { target: { value: "API endpoints" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create epic" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("/api/v1/projects/p1/epics");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        name: "API endpoints",
+        backlogId: "b1",
+      });
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+
+      vi.unstubAllGlobals();
+    });
+
+    it("abandons a half-written epic when the tab is left", () => {
+      render(<BacklogDetail backlog={backlog} project={project} epics={[epic]} />);
+
+      fireEvent.click(screen.getByRole("button", { name: /New epic/ }));
+      expect(screen.getByRole("form", { name: "New epic" })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("tab", { name: "Tasks 0" }));
+      fireEvent.click(screen.getByRole("tab", { name: "Epics 1" }));
+
+      expect(screen.queryByRole("form", { name: "New epic" })).not.toBeInTheDocument();
+    });
   });
 });

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Plus } from "lucide-react";
 import type { Backlog, Epic, LinkedGitlabProject, Task, TaskStatus } from "@/types";
 import { backlogsPath, epicPath, epicsPath, taskPath, tasksPath } from "@/lib/routes";
 import { backlogCompletion, groupTaskCompletion } from "@/lib/timeline";
@@ -20,6 +21,8 @@ import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { BacklogEditForm } from "@/components/BacklogEditForm";
 import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
+import { EpicForm } from "@/components/EpicForm";
+import { MetricTabs } from "@/components/MetricTabs";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -67,9 +70,10 @@ export function BacklogDetail({
 }: {
   backlog: Backlog;
   project: { id: string; name: string };
-  /** This backlog's epics (issue: the epic rung, ADR-0012). Empty — a
-   *  backlog broken straight down into tasks — hides the card entirely
-   *  rather than advertising a layer this backlog doesn't use. */
+  /** This backlog's epics (the optional rung, ADR-0012). Empty is a normal
+   *  state — a backlog broken straight down into tasks — and only decides
+   *  which tab opens first; the Epics tab itself is always present, since
+   *  it is where the first epic gets created. */
   epics?: Epic[];
   tasks?: Task[];
   /** The project's linked GitLab projects (issue #180), used to name this
@@ -80,6 +84,11 @@ export function BacklogDetail({
   const router = useRouter();
   const [backlog, setBacklog] = useState(initialBacklog);
   const [editing, setEditing] = useState(false);
+  // Epics open first when this backlog uses them, tasks otherwise: a backlog
+  // that hasn't adopted the rung shouldn't have it pushed in front of the
+  // work it actually holds.
+  const [tab, setTab] = useState<"epics" | "tasks">(epics.length > 0 ? "epics" : "tasks");
+  const [creatingEpic, setCreatingEpic] = useState(false);
   // A save writes the API's response straight into state so the card reads
   // back the saved values without waiting for the server round trip. The
   // page around it (the breadcrumb names the backlog too) still needs the
@@ -268,75 +277,120 @@ export function BacklogDetail({
         )}
       </Card>
 
-      {epics.length > 0 ? (
-        <Card className="mt-8">
-          <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <CardTitle className="text-base font-medium">Epics</CardTitle>
-              {/* Filtering, the board and epic creation all belong to the Epic
-                  collection, so this hands off rather than duplicating them —
-                  the same rule the Tasks card below follows. */}
-              <Link
-                href={`${epicsPath(project.id)}?backlog=${backlog.id}`}
-                className="text-muted-foreground hover:text-foreground text-sm hover:underline"
-              >
-                Open in Epics
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2">
-              {epics.map((epic) => {
-                const completion = groupTaskCompletion(epic);
-                return (
-                  <li key={epic.id}>
-                    <Link
-                      href={epicPath(project.id, epic.id)}
-                      className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
-                    >
-                      <span className="text-foreground">{epic.name}</span>
-                      <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
-                        {epic.baseBranch ? <code>{epic.baseBranch}</code> : null}
-                        <span className="tabular-nums">
-                          {completion.total === 0
-                            ? "No tasks"
-                            : `${completion.closed}/${completion.total} closed`}
-                        </span>
-                        <ProgressBadge progress={epic.progress} />
-                      </span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </CardContent>
-        </Card>
-      ) : null}
+      {/* One card, two tabs, rather than an Epics list stacked on a Tasks
+          list: both are this backlog's children, and showing them at once
+          made the screen twice as tall for no gain — only one of them is
+          being read at a time. The tabs carry counts so the hidden side
+          still reports its size, and the tab labels stand in for a card
+          title: each one names the object it shows, which no invented noun
+          ("Contents") would have done as well.
 
+          The choice is deliberately local state, not the URL: nothing is
+          refetched by it, so it is a reading preference on data the page
+          already has — the same reasoning MetricTabs' own doc comment
+          gives. */}
       <Card className="mt-8">
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle className="text-base font-medium">Tasks</CardTitle>
-            {/* The list below is a read-only preview; filtering, the timeline
-                view and task creation all belong to the Task collection, so
-                this link hands off rather than duplicating them. */}
-            <Link
-              href={tasksPath(project.id, { backlogId: backlog.id })}
-              className="text-muted-foreground hover:text-foreground text-sm hover:underline"
-            >
-              Open in Tasks
-            </Link>
+            <MetricTabs
+              label="Contents"
+              tabs={[
+                { key: "epics", label: `Epics ${epics.length}` },
+                { key: "tasks", label: `Tasks ${tasks.length}` },
+              ]}
+              value={tab}
+              onChange={(next) => {
+                setTab(next);
+                // Leaving the tab abandons a half-written epic rather than
+                // hiding a form that would reappear later out of context.
+                setCreatingEpic(false);
+              }}
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              {tab === "epics" && !creatingEpic ? (
+                <Button variant="outline" size="sm" onClick={() => setCreatingEpic(true)}>
+                  <Plus className="size-4" aria-hidden />
+                  New epic
+                </Button>
+              ) : null}
+              {/* The lists below are read-only previews; filtering, the
+                  board/timeline modes and (for tasks) creation all belong to
+                  the collection that owns the object, so this hands off
+                  rather than duplicating them. */}
+              <Link
+                href={
+                  tab === "epics"
+                    ? `${epicsPath(project.id)}?backlog=${backlog.id}`
+                    : tasksPath(project.id, { backlogId: backlog.id })
+                }
+                className="text-muted-foreground hover:text-foreground text-sm hover:underline"
+              >
+                {tab === "epics" ? "Open in Epics" : "Open in Tasks"}
+              </Link>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          {tasksError ? (
+          {tab === "epics" ? (
+            <>
+              {creatingEpic ? (
+                <div className="mb-4">
+                  {/* The parent is this backlog, so the form's own backlog
+                      picker has exactly one thing to offer — the field stays
+                      rather than being special-cased away, so the created
+                      epic still states where it landed. */}
+                  <EpicForm
+                    projectId={project.id}
+                    backlogs={[backlog]}
+                    links={links}
+                    defaultBacklogId={backlog.id}
+                    onSaved={() => {
+                      router.refresh();
+                      setCreatingEpic(false);
+                    }}
+                    onCancel={() => setCreatingEpic(false)}
+                  />
+                </div>
+              ) : null}
+              {epics.length === 0 ? (
+                <p className="text-muted-foreground text-sm">
+                  No epics in this backlog. Tasks can sit in it directly — an epic is
+                  the optional middle rung, for when the work is worth cutting into
+                  coarser units first.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {epics.map((epic) => {
+                    const epicCompletion = groupTaskCompletion(epic);
+                    return (
+                      <li key={epic.id}>
+                        <Link
+                          href={epicPath(project.id, epic.id)}
+                          className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
+                        >
+                          <span className="text-foreground">{epic.name}</span>
+                          <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
+                            {epic.baseBranch ? <code>{epic.baseBranch}</code> : null}
+                            <span className="tabular-nums">
+                              {epicCompletion.total === 0
+                                ? "No tasks"
+                                : `${epicCompletion.closed}/${epicCompletion.total} closed`}
+                            </span>
+                            <ProgressBadge progress={epic.progress} />
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </>
+          ) : tasksError ? (
             <p className="text-destructive text-sm">
               Failed to load tasks. Try refreshing the page.
             </p>
           ) : tasks.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No tasks in this backlog yet.
-            </p>
+            <p className="text-muted-foreground text-sm">No tasks in this backlog yet.</p>
           ) : (
             <ul className="space-y-2">
               {tasks.map((task) => (
@@ -350,9 +404,7 @@ export function BacklogDetail({
                       {task.assigneeGitlabUsername ? (
                         <span>{task.assigneeGitlabUsername}</span>
                       ) : null}
-                      {task.dueOn ? (
-                        <span>Due {formatDate(task.dueOn)}</span>
-                      ) : null}
+                      {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
                       <StatusBadge status={task.status} />
                     </span>
                   </Link>

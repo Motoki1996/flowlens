@@ -126,6 +126,68 @@ export const WithTasks: Story = {
   },
 };
 
+/** A backlog that uses the epic rung: the card opens on Epics rather than
+ *  Tasks, and "New epic" files a new one in this backlog without leaving the
+ *  screen. Both lists are the same card, one tab apart. */
+export const WithEpics: Story = {
+  args: {
+    backlog,
+    project,
+    epics: [
+      {
+        id: "e1",
+        projectId: "p1",
+        backlogId: "b1",
+        name: "Screens",
+        description: "",
+        position: 0,
+        startDate: null,
+        dueOn: null,
+        priority: "medium",
+        progress: "in_progress",
+        defaultLinkedGitlabProjectId: null,
+        baseBranch: "release/2.4",
+        allowedScope: "",
+        forbiddenScope: "",
+        assigneeUserId: null,
+        assigneeUsername: "",
+        assigneeDisplayName: "",
+        taskCount: 6,
+        closedTaskCount: 4,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+      {
+        id: "e2",
+        projectId: "p1",
+        backlogId: "b1",
+        name: "API endpoints",
+        description: "",
+        position: 1,
+        startDate: null,
+        dueOn: null,
+        priority: "high",
+        progress: "not_started",
+        defaultLinkedGitlabProjectId: null,
+        baseBranch: "",
+        allowedScope: "",
+        forbiddenScope: "",
+        assigneeUserId: null,
+        assigneeUsername: "",
+        assigneeDisplayName: "",
+        taskCount: 3,
+        closedTaskCount: 0,
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      },
+    ],
+    tasks: [
+      makeTask({ id: "t1", title: "Fix the bug" }),
+      makeTask({ id: "t2", title: "Write docs", status: "closed", assigneeGitlabUsername: "" }),
+    ],
+  },
+};
+
 /** A backlog that files its tasks' issues in a GitLab project of its own,
  *  rather than following the project's default link (issue #180). */
 export const WithOwnGitlabProject: Story = {

@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { BacklogEditForm } from "@/components/BacklogEditForm";
 import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
 import { EpicForm } from "@/components/EpicForm";
+import { NewTaskForm } from "@/components/NewTaskForm";
 import { MetricTabs } from "@/components/MetricTabs";
 
 function formatDateTime(iso: string) {
@@ -40,6 +41,16 @@ function formatDate(iso: string) {
     month: "short",
     day: "numeric",
   });
+}
+
+/**
+ * CreateFormRegion separates an inline "New …" form from the list it sits
+ * above. A form and a list of rows are both stacks of bordered boxes, so
+ * without a rule between them it is genuinely unclear where the form ends —
+ * the reader has to work it out from the buttons.
+ */
+function CreateFormRegion({ children }: { children: React.ReactNode }) {
+  return <div className="border-border mb-6 border-b pb-6">{children}</div>;
 }
 
 function StatusBadge({ status }: { status: TaskStatus }) {
@@ -88,7 +99,9 @@ export function BacklogDetail({
   // that hasn't adopted the rung shouldn't have it pushed in front of the
   // work it actually holds.
   const [tab, setTab] = useState<"epics" | "tasks">(epics.length > 0 ? "epics" : "tasks");
-  const [creatingEpic, setCreatingEpic] = useState(false);
+  // One flag, not two: the create form belongs to whichever tab is open, so
+  // leaving the tab closes it either way (see the tab's onChange).
+  const [creating, setCreating] = useState(false);
   // A save writes the API's response straight into state so the card reads
   // back the saved values without waiting for the server round trip. The
   // page around it (the breadcrumb names the backlog too) still needs the
@@ -301,16 +314,21 @@ export function BacklogDetail({
               value={tab}
               onChange={(next) => {
                 setTab(next);
-                // Leaving the tab abandons a half-written epic rather than
+                // Leaving the tab abandons a half-written object rather than
                 // hiding a form that would reappear later out of context.
-                setCreatingEpic(false);
+                setCreating(false);
               }}
             />
             <div className="flex flex-wrap items-center gap-3">
-              {tab === "epics" && !creatingEpic ? (
-                <Button variant="outline" size="sm" onClick={() => setCreatingEpic(true)}>
+              {/* Both children of this backlog can be created here, and for
+                  the same reason: an epic and a task are each created *into*
+                  a backlog, so the backlog is the context the decision is
+                  made in — the collections' own forms have to ask which
+                  backlog, and this screen already knows. */}
+              {!creating ? (
+                <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
                   <Plus className="size-4" aria-hidden />
-                  New epic
+                  {tab === "epics" ? "New epic" : "New task"}
                 </Button>
               ) : null}
               {/* The lists below are read-only previews; filtering, the
@@ -333,8 +351,8 @@ export function BacklogDetail({
         <CardContent>
           {tab === "epics" ? (
             <>
-              {creatingEpic ? (
-                <div className="mb-4">
+              {creating ? (
+                <CreateFormRegion>
                   {/* The parent is this backlog, so the form's own backlog
                       picker has exactly one thing to offer — the field stays
                       rather than being special-cased away, so the created
@@ -346,11 +364,11 @@ export function BacklogDetail({
                     defaultBacklogId={backlog.id}
                     onSaved={() => {
                       router.refresh();
-                      setCreatingEpic(false);
+                      setCreating(false);
                     }}
-                    onCancel={() => setCreatingEpic(false)}
+                    onCancel={() => setCreating(false)}
                   />
-                </div>
+                </CreateFormRegion>
               ) : null}
               {epics.length === 0 ? (
                 <p className="text-muted-foreground text-sm">
@@ -385,32 +403,46 @@ export function BacklogDetail({
                 </ul>
               )}
             </>
-          ) : tasksError ? (
-            <p className="text-destructive text-sm">
-              Failed to load tasks. Try refreshing the page.
-            </p>
-          ) : tasks.length === 0 ? (
-            <p className="text-muted-foreground text-sm">No tasks in this backlog yet.</p>
           ) : (
-            <ul className="space-y-2">
-              {tasks.map((task) => (
-                <li key={task.id}>
-                  <Link
-                    href={taskPath(project.id, task.id)}
-                    className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
-                  >
-                    <span className="text-foreground">{task.title}</span>
-                    <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
-                      {task.assigneeGitlabUsername ? (
-                        <span>{task.assigneeGitlabUsername}</span>
-                      ) : null}
-                      {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
-                      <StatusBadge status={task.status} />
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <>
+              {creating ? (
+                <CreateFormRegion>
+                  <NewTaskForm
+                    projectId={project.id}
+                    backlogs={[backlog]}
+                    defaultBacklogId={backlog.id}
+                    onCancel={() => setCreating(false)}
+                  />
+                </CreateFormRegion>
+              ) : null}
+              {tasksError ? (
+                <p className="text-destructive text-sm">
+                  Failed to load tasks. Try refreshing the page.
+                </p>
+              ) : tasks.length === 0 ? (
+                <p className="text-muted-foreground text-sm">No tasks in this backlog yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {tasks.map((task) => (
+                    <li key={task.id}>
+                      <Link
+                        href={taskPath(project.id, task.id)}
+                        className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
+                      >
+                        <span className="text-foreground">{task.title}</span>
+                        <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
+                          {task.assigneeGitlabUsername ? (
+                            <span>{task.assigneeGitlabUsername}</span>
+                          ) : null}
+                          {task.dueOn ? <span>Due {formatDate(task.dueOn)}</span> : null}
+                          <StatusBadge status={task.status} />
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

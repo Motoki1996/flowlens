@@ -441,8 +441,9 @@ describe("BacklogDetail", () => {
         "href",
         "/projects/p1/tasks?backlog=b1",
       );
-      // "New epic" belongs to the epic list, not to the card.
+      // The action follows the tab: each one creates its own object.
       expect(screen.queryByRole("button", { name: /New epic/ })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /New task/ })).toBeInTheDocument();
     });
 
     it("creates an epic in place, filed in this backlog", async () => {
@@ -461,6 +462,31 @@ describe("BacklogDetail", () => {
       expect(init.method).toBe("POST");
       expect(JSON.parse(init.body as string)).toMatchObject({
         name: "API endpoints",
+        backlogId: "b1",
+      });
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+
+      vi.unstubAllGlobals();
+    });
+
+    it("creates a task in place, filed in this backlog", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => makeTask({ id: "t9" }) });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
+
+      fireEvent.click(screen.getByRole("button", { name: /New task/ }));
+      fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Fix the bug" } });
+      fireEvent.click(screen.getByRole("button", { name: "Create task" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("/api/v1/projects/p1/tasks");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        title: "Fix the bug",
         backlogId: "b1",
       });
       await waitFor(() => expect(refresh).toHaveBeenCalled());

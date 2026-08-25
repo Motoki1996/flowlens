@@ -220,11 +220,18 @@ being read at a time; the tab labels also stand in for a card title, since
 each names the object it shows. Filtering, the board and timeline modes, and
 task creation all stay with the collection that owns them.
 
-The one action that does live here is **New epic**, which opens the Epic
-collection's own form inline with this backlog pre-filled. It is the
-deliberate exception to the handoff rule above: an epic is created *into* a
-backlog, so the backlog is the context the decision is made in — whereas a
-task is created into whichever backlog the Task collection's own form names.
+**Creation is the deliberate exception to that handoff.** Both tabs carry a
+"New epic" / "New task" action that opens the owning collection's own form
+inline, with this backlog pre-filled. An epic and a task are each created
+*into* a backlog: the collections' forms have to ask which one, and this
+screen already knows — so making the user go there to answer a question the
+context already answers is the worse trade. The forms themselves are shared
+(`EpicForm`, `NewTaskForm`), so the two screens can't drift on what a field
+is.
+
+An inline "New …" form is separated from the list below it by a rule and
+generous spacing. A form and a list of rows are both stacks of bordered
+boxes; without the separation it is genuinely unclear where the form ends.
 
 `Backlog` and `Epic` share their Board and Timeline view modes
 (`GroupBoardSection` / `GroupTimelineSection`, `lib/groups.ts`): an epic is

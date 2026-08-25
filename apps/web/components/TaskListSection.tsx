@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -8,7 +8,7 @@ import { ChevronDown, ChevronUp, GripVertical, Plus, X } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { gitlabConnectionPath, taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
-import { fromDateParam, toApiDate } from "@/lib/dates";
+import { fromDateParam } from "@/lib/dates";
 import { dueStatus } from "@/lib/dashboard";
 import { useViewMode } from "@/lib/useViewMode";
 import type {
@@ -16,7 +16,6 @@ import type {
   Backlog,
   Epic,
   Priority,
-  Size,
   Progress,
   Task,
   TaskDependency,
@@ -24,13 +23,10 @@ import type {
 } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { PRIORITY_COLUMNS } from "@/lib/priority";
-import { SIZE_OPTIONS, SIZE_POINTS } from "@/lib/size";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -38,10 +34,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { DateField } from "@/components/DateField";
 import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
+import { NewTaskForm } from "@/components/NewTaskForm";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SizeBadge } from "@/components/SizeBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
@@ -181,204 +176,6 @@ function StatusBadge({ status }: { status: TaskStatus }) {
     <Badge variant={status === "open" ? "default" : "secondary"}>
       {status === "open" ? "Open" : "Closed"}
     </Badge>
-  );
-}
-
-/**
- * NewTaskForm is the inline creation form shown in the task list. Assignee and
- * labels are deliberately absent: on a project with a linked GitLab project the
- * API fills the assignee in itself, and both fields are edited on the task
- * single view instead (issue #80), once the task exists.
- */
-function NewTaskForm({
-  projectId,
-  backlogs,
-  onCancel,
-}: {
-  projectId: string;
-  backlogs: Backlog[];
-  onCancel: () => void;
-}) {
-  const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [backlogId, setBacklogId] = useState(UNCLASSIFIED);
-  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
-  const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
-  const [priority, setPriority] = useState<Priority>("medium");
-  // Sizing at creation time, not only in the edit form: a size nobody sets
-  // leaves every task at the default, which makes points-based velocity a
-  // flat multiple of the task count and the whole feature inert.
-  const [size, setSize] = useState<Size>("m");
-  const [progress, setProgress] = useState<Progress>("not_started");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-
-  // Unclassified leads the list so a task can always be filed later, and so the
-  // control has a selected label even on a project with no backlogs yet.
-  const backlogOptions = useMemo(
-    () => [
-      { value: UNCLASSIFIED, label: UNCLASSIFIED_LABEL },
-      ...backlogs.map((b) => ({ value: b.id, label: b.name })),
-    ],
-    [backlogs],
-  );
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!title.trim()) {
-      setError("Task title is required.");
-      return;
-    }
-
-    setPending(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/tasks`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", ...csrfHeaders() },
-        body: JSON.stringify({
-          title,
-          description,
-          backlogId: backlogId === UNCLASSIFIED ? null : backlogId,
-          startDate: toApiDate(startDate),
-          dueOn: toApiDate(dueOn),
-          priority,
-          size,
-          progress,
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.error.message ?? "Failed to create task.");
-        return;
-      }
-      router.refresh();
-      onCancel();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3" aria-label="New task">
-      {error ? (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-      <div>
-        <label htmlFor="new-task-title" className="text-foreground block text-sm font-medium">
-          Title
-        </label>
-        <Input
-          id="new-task-title"
-          name="title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="mt-1"
-        />
-      </div>
-      <div>
-        <label htmlFor="new-task-description" className="text-foreground block text-sm font-medium">
-          Description
-        </label>
-        <Textarea
-          id="new-task-description"
-          name="description"
-          aria-describedby="new-task-description-hint"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="mt-1 min-h-[150px]"
-        />
-        <p id="new-task-description-hint" className="text-muted-foreground mt-1 text-xs">
-          Markdown supported — pasted URLs become links.
-        </p>
-      </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div>
-          <label htmlFor="new-task-backlog" className="text-foreground block text-sm font-medium">
-            Backlog
-          </label>
-          <Combobox
-            id="new-task-backlog"
-            options={backlogOptions}
-            value={backlogId}
-            onChange={setBacklogId}
-            searchPlaceholder="Search backlogs…"
-            emptyText="No backlog found."
-            className="mt-1"
-          />
-        </div>
-        <DateField
-          id="new-task-start-date"
-          label="Start date"
-          value={startDate}
-          onChange={setStartDate}
-        />
-        <DateField id="new-task-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
-      </div>
-      <div>
-        <label htmlFor="new-task-priority" className="text-foreground block text-sm font-medium">
-          Priority
-        </label>
-        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
-          <SelectTrigger id="new-task-priority" className="mt-1 w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PRIORITY_COLUMNS.map((option) => (
-              <SelectItem key={option.priority} value={option.priority}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <label htmlFor="new-task-size" className="text-foreground block text-sm font-medium">
-          Size
-        </label>
-        <Select value={size} onValueChange={(value) => setSize(value as Size)}>
-          <SelectTrigger id="new-task-size" className="mt-1 w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SIZE_OPTIONS.map((option) => (
-              <SelectItem key={option.size} value={option.size}>
-                {option.label} ({SIZE_POINTS[option.size]} pts)
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <label htmlFor="new-task-progress" className="text-foreground block text-sm font-medium">
-          Progress
-        </label>
-        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
-          <SelectTrigger id="new-task-progress" className="mt-1 w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PROGRESS_COLUMNS.map((option) => (
-              <SelectItem key={option.progress} value={option.progress}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? "Creating…" : "Create task"}
-        </Button>
-        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={pending}>
-          Cancel
-        </Button>
-      </div>
-    </form>
   );
 }
 

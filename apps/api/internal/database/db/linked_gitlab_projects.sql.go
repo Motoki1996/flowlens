@@ -239,6 +239,53 @@ func (q *Queries) GetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg
 	return i, err
 }
 
+const getEpicLinkedGitlabProjectForOwner = `-- name: GetEpicLinkedGitlabProjectForOwner :one
+SELECT lgp.id, lgp.gitlab_connection_id, lgp.gitlab_project_id, lgp.path_with_namespace, lgp.name, lgp.web_url, lgp.sync_scope, lgp.sync_labels, lgp.webhook_id, lgp.encrypted_webhook_secret, lgp.webhook_registered_at, lgp.initial_import_status, lgp.last_synced_at, lgp.created_at, lgp.updated_at, lgp.is_default, lgp.webhook_registration_error
+FROM epics e
+JOIN linked_gitlab_projects lgp ON lgp.id = e.default_linked_gitlab_project_id
+JOIN gitlab_connections gc ON gc.id = lgp.gitlab_connection_id
+WHERE e.id = $1
+  AND gc.project_id = e.project_id
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = $2
+  )
+`
+
+type GetEpicLinkedGitlabProjectForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// The epic-scoped rung above GetBacklogLinkedGitlabProjectForOwner (000032):
+// internal/task resolves a new task's issue destination from its epic first,
+// then the epic's backlog, then the project default. Joining through epics
+// keeps the check that the link and the epic share a project inside the query.
+func (q *Queries) GetEpicLinkedGitlabProjectForOwner(ctx context.Context, arg GetEpicLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error) {
+	row := q.db.QueryRow(ctx, getEpicLinkedGitlabProjectForOwner, arg.ID, arg.OwnerUserID)
+	var i LinkedGitlabProject
+	err := row.Scan(
+		&i.ID,
+		&i.GitlabConnectionID,
+		&i.GitlabProjectID,
+		&i.PathWithNamespace,
+		&i.Name,
+		&i.WebUrl,
+		&i.SyncScope,
+		&i.SyncLabels,
+		&i.WebhookID,
+		&i.EncryptedWebhookSecret,
+		&i.WebhookRegisteredAt,
+		&i.InitialImportStatus,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDefault,
+		&i.WebhookRegistrationError,
+	)
+	return i, err
+}
+
 const getLinkedGitlabProjectByID = `-- name: GetLinkedGitlabProjectByID :one
 SELECT id, gitlab_connection_id, gitlab_project_id, path_with_namespace, name, web_url, sync_scope, sync_labels, webhook_id, encrypted_webhook_secret, webhook_registered_at, initial_import_status, last_synced_at, created_at, updated_at, is_default, webhook_registration_error FROM linked_gitlab_projects WHERE id = $1
 `

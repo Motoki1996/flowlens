@@ -36,6 +36,7 @@ const task: Task = {
   id: "t1",
   projectId: "p1",
   backlogId: "b1",
+  epicId: null,
   title: "Fix login",
   description: "",
   status: "open",

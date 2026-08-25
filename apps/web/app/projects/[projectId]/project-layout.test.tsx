@@ -36,6 +36,7 @@ const getCurrentUser = vi.fn();
 const getProject = vi.fn();
 const getProjects = vi.fn();
 const getBacklogs = vi.fn();
+const getEpics = vi.fn();
 const getTasks = vi.fn();
 const getGitlabConnection = vi.fn();
 const getLinkedGitlabProjects = vi.fn();
@@ -45,6 +46,7 @@ vi.mock("@/lib/api", () => ({
   getProject: (id: string) => getProject(id),
   getProjects: () => getProjects(),
   getBacklogs: (id: string) => getBacklogs(id),
+  getEpics: (id: string) => getEpics(id),
   getTasks: (id: string) => getTasks(id),
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
@@ -88,6 +90,7 @@ describe("ProjectLayout", () => {
     getProject.mockResolvedValue(project);
     getProjects.mockResolvedValue([project]);
     getBacklogs.mockResolvedValue([{ id: "b1" }, { id: "b2" }]);
+    getEpics.mockResolvedValue([{ id: "e1" }]);
     getTasks.mockResolvedValue([
       { id: "t1", status: "open" },
       { id: "t2", status: "closed" },
@@ -111,6 +114,7 @@ describe("ProjectLayout", () => {
     expect(screen.getByText("screen content")).toBeInTheDocument();
     const nav = within(screen.getByRole("navigation", { name: "Project sections" }));
     expect(nav.getByRole("link", { name: /^Backlogs/ })).toHaveTextContent("2");
+    expect(nav.getByRole("link", { name: /^Epics/ })).toHaveTextContent("1");
     expect(nav.getByRole("link", { name: /^Tasks/ })).toHaveTextContent("1/2");
     expect(nav.getByRole("link", { name: /^GitLab connection/ })).toHaveTextContent("1");
   });

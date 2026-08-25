@@ -15,6 +15,7 @@ This writes:
 | --- | --- | --- |
 | `.claude/skills/flowlens/SKILL.md` | Shared knowledge (auth, task lifecycle order, branch naming) | yes |
 | `.claude/commands/flowlens/refine-backlog.md` | `/flowlens:refine-backlog` | yes |
+| `.claude/commands/flowlens/breakdown-epics.md` | `/flowlens:breakdown-epics` | yes |
 | `.claude/commands/flowlens/breakdown.md` | `/flowlens:breakdown` | yes |
 | `.claude/commands/flowlens/work.md` | `/flowlens:work` | yes |
 | `.flowlens/openapi.yaml` | The connected instance's OpenAPI spec | yes |

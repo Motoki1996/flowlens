@@ -28,6 +28,12 @@ Rules:
 - [`project-screen-api-gaps.md`](project-screen-api-gaps.md) — closing the
   API/UI gaps under `/projects/[projectId]` (agreed, not started).
 
+The epic-layer plan shipped (all 7 phases) and was deleted per phase 7's own
+instruction; what survives it lives in
+[`README.md`](../../README.md#epics-an-optional-layer-between-a-backlog-and-its-tasks),
+[`docs/ui-design.md`](../ui-design.md) and
+[ADR-0012](../decisions/0012-why-an-epic-layer.md).
+
 The issue-sync MVP plan shipped (all 7 phases) and was
 deleted per phase 7's own instruction; what survives it lives in
 [`README.md`](../../README.md#gitlab-ce-connection--sync),

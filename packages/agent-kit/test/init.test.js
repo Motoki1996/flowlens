@@ -57,7 +57,7 @@ describe("runInit", () => {
     const skill = await readFile(join(cwd, ".claude/skills/flowlens/SKILL.md"), "utf8");
     expect(skill).toContain("name: flowlens");
 
-    for (const cmd of ["refine-backlog", "breakdown", "work"]) {
+    for (const cmd of ["refine-backlog", "breakdown-epics", "breakdown", "work"]) {
       const content = await readFile(join(cwd, `.claude/commands/flowlens/${cmd}.md`), "utf8");
       expect(content.length).toBeGreaterThan(0);
     }

@@ -198,6 +198,12 @@ func (s *Service) BulkCreate(ctx context.Context, ownerID, projectID uuid.UUID, 
 		if err != nil {
 			return BulkCreateResult{}, &BulkError{Ref: tp.Ref, Err: err}
 		}
+		// The epic has the last word on the backlog, the same as Create.
+		backlogID, err := s.resolveEpic(ctx, ownerID, projectID, tp.EpicID, tp.BacklogID)
+		if err != nil {
+			return BulkCreateResult{}, &BulkError{Ref: tp.Ref, Err: err}
+		}
+		tp.BacklogID = backlogID
 		if err := s.validateBacklog(ctx, ownerID, projectID, tp.BacklogID); err != nil {
 			return BulkCreateResult{}, &BulkError{Ref: tp.Ref, Err: err}
 		}

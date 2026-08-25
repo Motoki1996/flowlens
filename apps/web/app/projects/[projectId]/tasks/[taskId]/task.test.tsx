@@ -45,6 +45,7 @@ const task: Task = {
   id: "t1",
   projectId: "p1",
   backlogId: "b1",
+  epicId: null,
   title: "Fix the bug",
   description: "",
   status: "open",
@@ -78,12 +79,14 @@ const getCurrentUser = vi.fn();
 const getTask = vi.fn();
 const getProject = vi.fn();
 const getBacklogs = vi.fn();
+const getEpics = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
   getTask: (id: string) => getTask(id),
   getProject: (id: string) => getProject(id),
   getBacklogs: (id: string) => getBacklogs(id),
+  getEpics: (id: string) => getEpics(id),
   getTasks: () => Promise.resolve([]),
   getTaskDependencies: () => Promise.resolve([]),
   // The single view loads the project's default linked GitLab project to fill
@@ -113,6 +116,7 @@ describe("TaskPage", () => {
     getTask.mockResolvedValue(task);
     getProject.mockResolvedValue(project);
     getBacklogs.mockResolvedValue([backlog]);
+    getEpics.mockResolvedValue([]);
   });
 
   it("renders the task's single view with its backlog resolved by name", async () => {

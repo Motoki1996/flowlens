@@ -38,6 +38,26 @@ type BacklogProgressEvent struct {
 	OccurredAt   pgtype.Timestamptz `json:"occurred_at"`
 }
 
+type Epic struct {
+	ID                           uuid.UUID          `json:"id"`
+	ProjectID                    uuid.UUID          `json:"project_id"`
+	BacklogID                    pgtype.UUID        `json:"backlog_id"`
+	Name                         string             `json:"name"`
+	Description                  string             `json:"description"`
+	Position                     int32              `json:"position"`
+	StartDate                    pgtype.Date        `json:"start_date"`
+	DueOn                        pgtype.Date        `json:"due_on"`
+	Priority                     string             `json:"priority"`
+	Progress                     string             `json:"progress"`
+	AssigneeUserID               pgtype.UUID        `json:"assignee_user_id"`
+	BaseBranch                   string             `json:"base_branch"`
+	AllowedScope                 string             `json:"allowed_scope"`
+	ForbiddenScope               string             `json:"forbidden_scope"`
+	DefaultLinkedGitlabProjectID pgtype.UUID        `json:"default_linked_gitlab_project_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type GitlabConnection struct {
 	ID                  uuid.UUID          `json:"id"`
 	ProjectID           uuid.UUID          `json:"project_id"`
@@ -262,6 +282,7 @@ type Task struct {
 	ImplementationStartedAt pgtype.Timestamptz `json:"implementation_started_at"`
 	Size                    string             `json:"size"`
 	AssigneeUserID          pgtype.UUID        `json:"assignee_user_id"`
+	EpicID                  pgtype.UUID        `json:"epic_id"`
 }
 
 type TaskAiContext struct {

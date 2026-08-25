@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import {
   getBacklogs,
+  getEpics,
   getGitlabConnection,
   getMyGitlabIdentities,
   getProject,
@@ -9,7 +10,7 @@ import {
 } from "@/lib/api";
 import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { toDateParam } from "@/lib/dates";
-import { TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
+import { NO_EPIC, TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
 import type { TaskStatus } from "@/types";
 
@@ -39,6 +40,14 @@ function normalizeBacklogFilter(value: string | undefined): string {
   return "all";
 }
 
+/** normalizeEpicFilter is normalizeBacklogFilter for `?epic=`: an epic UUID,
+ *  NO_EPIC for the tasks sitting directly in a backlog, or "all". */
+function normalizeEpicFilter(value: string | undefined): string {
+  if (!value) return "all";
+  if (value === NO_EPIC || UUID_RE.test(value)) return value;
+  return "all";
+}
+
 /**
  * The Task collection view of one project — Board (the default), List and
  * Timeline are view modes of this one screen, per docs/ui-design.md rule 5,
@@ -62,6 +71,7 @@ export default async function TasksPage({
   params: Promise<{ projectId: string }>;
   searchParams?: Promise<{
     backlog?: string;
+    epic?: string;
     q?: string;
     status?: string;
     assignee?: string;
@@ -72,6 +82,7 @@ export default async function TasksPage({
   const { projectId } = await params;
   const resolvedSearchParams = await searchParams;
   const backlogFilter = normalizeBacklogFilter(resolvedSearchParams?.backlog);
+  const epicFilter = normalizeEpicFilter(resolvedSearchParams?.epic);
   const search = resolvedSearchParams?.q;
   const assigneeMe = resolvedSearchParams?.assignee === "me";
   const statusParam = resolvedSearchParams?.status;
@@ -94,13 +105,14 @@ export default async function TasksPage({
 
   let tasks: Awaited<ReturnType<typeof getTasks>> = [];
   let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
+  let epics: Awaited<ReturnType<typeof getEpics>> = [];
   let totalCount: number | undefined;
   let tasksError = false;
   try {
     // The unfiltered fetch alongside the filtered one is the "母数" (issue
     // #150): the project's task count with no filter applied at all, so the
     // screen can show "N / total tasks" instead of just the filtered count.
-    const [fetchedTasks, fetchedBacklogs, allTasks] = await Promise.all([
+    const [fetchedTasks, fetchedBacklogs, fetchedEpics, allTasks] = await Promise.all([
       getTasks(projectId, {
         // The UI's Unclassified group is the API's "unassigned" backlog_id;
         // "all" is no filter at all.
@@ -110,16 +122,22 @@ export default async function TasksPage({
             : backlogFilter === UNCLASSIFIED_BACKLOG
               ? "unassigned"
               : backlogFilter,
+        // The UI says "none"; the API spells the same thing "unassigned" on
+        // epic_id, matching backlog_id's own vocabulary.
+        epicId:
+          epicFilter === "all" ? undefined : epicFilter === NO_EPIC ? "unassigned" : epicFilter,
         status: status === "all" ? undefined : (status as TaskStatus),
         sort: sort === "manual" ? undefined : sort,
         assignee: assigneeMe ? "me" : undefined,
         q: search,
       }),
       getBacklogs(projectId),
+      getEpics(projectId),
       getTasks(projectId, {}),
     ]);
     tasks = fetchedTasks;
     backlogs = fetchedBacklogs;
+    epics = fetchedEpics;
     totalCount = allTasks.length;
   } catch {
     tasksError = true;
@@ -158,8 +176,10 @@ export default async function TasksPage({
       projectId={project.id}
       tasks={tasks}
       backlogs={backlogs}
+      epics={epics}
       dependencies={taskDependencies}
       backlogFilter={backlogFilter}
+      epicFilter={epicFilter}
       search={search}
       statusFilter={status}
       assigneeMe={assigneeMe}

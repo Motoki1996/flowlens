@@ -8,6 +8,7 @@
 // `duration` segment), and a stack has to accumulate from zero.
 
 import type { Backlog, Priority, Progress, Task } from "@/types";
+import type { Grouping } from "@/lib/groups";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -279,14 +280,14 @@ export function backlogCompletion(tasks: Task[], backlogId: string): TaskComplet
 }
 
 /**
- * backlogTaskCompletion reads a backlog's own taskCount/closedTaskCount,
+ * groupTaskCompletion reads a backlog's or epic's own taskCount/closedTaskCount,
  * aggregated server-side (issue #144), rather than filtering a full task
  * list the way backlogCompletion does. The Backlog collection's Board and
  * Timeline modes use this so they don't need to fetch every task in the
  * project just to show a ratio; the Backlog single view still has its own
  * (already backlog-scoped) task list and uses backlogCompletion instead.
  */
-export function backlogTaskCompletion(backlog: {
+export function groupTaskCompletion(backlog: {
   taskCount: number;
   closedTaskCount: number;
 }): TaskCompletion {
@@ -298,13 +299,13 @@ export function backlogTaskCompletion(backlog: {
 }
 
 /**
- * toBacklogGanttRows converts scheduled backlogs into stacked-bar rows carrying
- * their completion, read off each backlog's own taskCount/closedTaskCount
+ * toGroupGanttRows converts scheduled backlogs or epics into stacked-bar rows
+ * carrying their completion, read off each one's own taskCount/closedTaskCount
  * (see backlogTaskCompletion). A backlog's state comes from that ratio, not
  * from a status column it doesn't have: it is "closed" once every task in it
  * is closed, and "overdue" while unfinished work sits past its due date.
  */
-export function toBacklogGanttRows(backlogs: Backlog[], bounds: DateRange, now: Date): GanttRow[] {
+export function toGroupGanttRows(backlogs: Grouping[], bounds: DateRange, now: Date): GanttRow[] {
   return backlogs
     .map((backlog) => {
       const progress = backlogTaskCompletion(backlog);
@@ -332,3 +333,9 @@ export function todayOffset(bounds: DateRange, now: Date): number | null {
   }
   return today.getTime() - bounds.start.getTime();
 }
+
+/** backlogTaskCompletion and toBacklogGanttRows are the two group helpers
+ *  under their original names, kept because the Backlog screens read better
+ *  saying "backlog". */
+export const backlogTaskCompletion = groupTaskCompletion;
+export const toBacklogGanttRows = toGroupGanttRows;

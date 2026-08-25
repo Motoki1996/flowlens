@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -8,14 +8,14 @@ import { ChevronDown, ChevronUp, GripVertical, Plus, X } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { gitlabConnectionPath, taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
-import { fromDateParam, toApiDate } from "@/lib/dates";
+import { fromDateParam } from "@/lib/dates";
 import { dueStatus } from "@/lib/dashboard";
 import { useViewMode } from "@/lib/useViewMode";
 import type {
   ApiError,
   Backlog,
+  Epic,
   Priority,
-  Size,
   Progress,
   Task,
   TaskDependency,
@@ -23,13 +23,10 @@ import type {
 } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { PRIORITY_COLUMNS } from "@/lib/priority";
-import { SIZE_OPTIONS, SIZE_POINTS } from "@/lib/size";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -37,10 +34,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
-import { DateField } from "@/components/DateField";
 import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
+import { NewTaskForm } from "@/components/NewTaskForm";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SizeBadge } from "@/components/SizeBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
@@ -103,6 +99,12 @@ export type AssigneeAvailability = "available" | "no-connection" | "no-identity"
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
 
+/** The `?epic=` value standing for "tasks in no epic at all" — the tasks
+ *  sitting directly in a backlog, which is every task in a project that
+ *  hasn't adopted the epic rung. The API spells the same thing "unassigned"
+ *  on epic_id. */
+export const NO_EPIC = "none";
+
 /** A row shows at most this many labels before rolling the rest into a "+n"
  *  badge (issue #154) — a task with a handful of GitLab labels was crowding
  *  the row's fixed-width meta section on top of assignee/due/the four
@@ -116,6 +118,7 @@ const MAX_VISIBLE_ROW_LABELS = 3;
  *  control read from here, rather than each repeating the same literal. */
 const FILTER_DEFAULTS = {
   backlog: "all",
+  epic: "all",
   status: "open",
   progress: "all",
   priority: "all",
@@ -173,204 +176,6 @@ function StatusBadge({ status }: { status: TaskStatus }) {
     <Badge variant={status === "open" ? "default" : "secondary"}>
       {status === "open" ? "Open" : "Closed"}
     </Badge>
-  );
-}
-
-/**
- * NewTaskForm is the inline creation form shown in the task list. Assignee and
- * labels are deliberately absent: on a project with a linked GitLab project the
- * API fills the assignee in itself, and both fields are edited on the task
- * single view instead (issue #80), once the task exists.
- */
-function NewTaskForm({
-  projectId,
-  backlogs,
-  onCancel,
-}: {
-  projectId: string;
-  backlogs: Backlog[];
-  onCancel: () => void;
-}) {
-  const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [backlogId, setBacklogId] = useState(UNCLASSIFIED);
-  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
-  const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
-  const [priority, setPriority] = useState<Priority>("medium");
-  // Sizing at creation time, not only in the edit form: a size nobody sets
-  // leaves every task at the default, which makes points-based velocity a
-  // flat multiple of the task count and the whole feature inert.
-  const [size, setSize] = useState<Size>("m");
-  const [progress, setProgress] = useState<Progress>("not_started");
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-
-  // Unclassified leads the list so a task can always be filed later, and so the
-  // control has a selected label even on a project with no backlogs yet.
-  const backlogOptions = useMemo(
-    () => [
-      { value: UNCLASSIFIED, label: UNCLASSIFIED_LABEL },
-      ...backlogs.map((b) => ({ value: b.id, label: b.name })),
-    ],
-    [backlogs],
-  );
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!title.trim()) {
-      setError("Task title is required.");
-      return;
-    }
-
-    setPending(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/tasks`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", ...csrfHeaders() },
-        body: JSON.stringify({
-          title,
-          description,
-          backlogId: backlogId === UNCLASSIFIED ? null : backlogId,
-          startDate: toApiDate(startDate),
-          dueOn: toApiDate(dueOn),
-          priority,
-          size,
-          progress,
-        }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setError(body?.error.message ?? "Failed to create task.");
-        return;
-      }
-      router.refresh();
-      onCancel();
-    } finally {
-      setPending(false);
-    }
-  }
-
-  return (
-    <form onSubmit={handleSubmit} className="space-y-3" aria-label="New task">
-      {error ? (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-      <div>
-        <label htmlFor="new-task-title" className="text-foreground block text-sm font-medium">
-          Title
-        </label>
-        <Input
-          id="new-task-title"
-          name="title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="mt-1"
-        />
-      </div>
-      <div>
-        <label htmlFor="new-task-description" className="text-foreground block text-sm font-medium">
-          Description
-        </label>
-        <Textarea
-          id="new-task-description"
-          name="description"
-          aria-describedby="new-task-description-hint"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="mt-1 min-h-[150px]"
-        />
-        <p id="new-task-description-hint" className="text-muted-foreground mt-1 text-xs">
-          Markdown supported — pasted URLs become links.
-        </p>
-      </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div>
-          <label htmlFor="new-task-backlog" className="text-foreground block text-sm font-medium">
-            Backlog
-          </label>
-          <Combobox
-            id="new-task-backlog"
-            options={backlogOptions}
-            value={backlogId}
-            onChange={setBacklogId}
-            searchPlaceholder="Search backlogs…"
-            emptyText="No backlog found."
-            className="mt-1"
-          />
-        </div>
-        <DateField
-          id="new-task-start-date"
-          label="Start date"
-          value={startDate}
-          onChange={setStartDate}
-        />
-        <DateField id="new-task-due-on" label="Due date" value={dueOn} onChange={setDueOn} />
-      </div>
-      <div>
-        <label htmlFor="new-task-priority" className="text-foreground block text-sm font-medium">
-          Priority
-        </label>
-        <Select value={priority} onValueChange={(value) => setPriority(value as Priority)}>
-          <SelectTrigger id="new-task-priority" className="mt-1 w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PRIORITY_COLUMNS.map((option) => (
-              <SelectItem key={option.priority} value={option.priority}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <label htmlFor="new-task-size" className="text-foreground block text-sm font-medium">
-          Size
-        </label>
-        <Select value={size} onValueChange={(value) => setSize(value as Size)}>
-          <SelectTrigger id="new-task-size" className="mt-1 w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SIZE_OPTIONS.map((option) => (
-              <SelectItem key={option.size} value={option.size}>
-                {option.label} ({SIZE_POINTS[option.size]} pts)
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div>
-        <label htmlFor="new-task-progress" className="text-foreground block text-sm font-medium">
-          Progress
-        </label>
-        <Select value={progress} onValueChange={(value) => setProgress(value as Progress)}>
-          <SelectTrigger id="new-task-progress" className="mt-1 w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PROGRESS_COLUMNS.map((option) => (
-              <SelectItem key={option.progress} value={option.progress}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? "Creating…" : "Create task"}
-        </Button>
-        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={pending}>
-          Cancel
-        </Button>
-      </div>
-    </form>
   );
 }
 
@@ -450,8 +255,10 @@ export function TaskListSection({
   projectId,
   tasks,
   backlogs,
+  epics = [],
   dependencies = [],
   backlogFilter = "all",
+  epicFilter = "all",
   search = "",
   statusFilter = "open",
   sort = "manual",
@@ -467,10 +274,17 @@ export function TaskListSection({
    *  so this is what every view mode renders as-is. */
   tasks: Task[];
   backlogs: Backlog[];
+  /** The project's epics, for the `?epic=` filter's options and for naming
+   *  each task's epic on its row. Empty — the case for a project that
+   *  doesn't use the epic rung at all — drops the filter entirely. */
+  epics?: Epic[];
   dependencies?: TaskDependency[];
   /** The applied `?backlog=`: a backlog id, UNCLASSIFIED_BACKLOG, or "all" —
    *  how the backlog screens hand off to this collection. */
   backlogFilter?: string;
+  /** The applied `?epic=`: an epic id, NO_EPIC, or "all" — how the epic
+   *  screens hand off to this collection, the same way the backlog ones do. */
+  epicFilter?: string;
   /** The applied `?q=`, if any. Matched server-side against a task's title
    *  and description (`websearch_to_tsquery`), so it matches whole words
    *  rather than any substring. */
@@ -591,6 +405,22 @@ export function TaskListSection({
     [backlogs],
   );
 
+  // The epic filter's own options, the same shape: every epic, plus "all" and
+  // the tasks sitting directly in a backlog — which is every task in a
+  // project that hasn't adopted the epic rung, hence its own option rather
+  // than being folded into "all".
+  const epicFilterOptions = useMemo(
+    () => [
+      { value: "all", label: "All epics" },
+      ...epics.map((e) => ({ value: e.id, label: e.name })),
+      { value: NO_EPIC, label: "No epic" },
+    ],
+    [epics],
+  );
+
+  // Each task's epic name, for the row/card labels below.
+  const epicNames = useMemo(() => new Map(epics.map((e) => [e.id, e.name])), [epics]);
+
   // Bulk assign can move a task into any backlog, or back to Unclassified —
   // both are valid destinations, unlike the backlog filter's "all" option.
   const assignOptions = useMemo(
@@ -653,6 +483,10 @@ export function TaskListSection({
     updateQuery({ backlog: value === FILTER_DEFAULTS.backlog ? undefined : value });
   }
 
+  function changeEpicFilter(value: string) {
+    updateQuery({ epic: value === FILTER_DEFAULTS.epic ? undefined : value });
+  }
+
   function changeStatusFilter(value: "all" | TaskStatus) {
     updateQuery({ status: value === FILTER_DEFAULTS.status ? undefined : value });
   }
@@ -684,6 +518,7 @@ export function TaskListSection({
   // other filter is.
   const hasActiveFilters =
     backlogFilter !== FILTER_DEFAULTS.backlog ||
+    epicFilter !== FILTER_DEFAULTS.epic ||
     search.trim() !== "" ||
     statusFilter !== FILTER_DEFAULTS.status ||
     assigneeMe ||
@@ -709,6 +544,14 @@ export function TaskListSection({
     const query = search.trim();
     if (query) {
       return `No tasks match "${query}".`;
+    }
+    if (epicFilter !== "all") {
+      const label =
+        epicFilter === NO_EPIC
+          ? "no epic"
+          : (epics.find((e) => e.id === epicFilter)?.name ?? "this epic");
+      const statusPart = statusFilter === "all" ? "" : `${statusFilter} `;
+      return `No ${statusPart}tasks in ${label}.`;
     }
     if (backlogFilter !== "all") {
       const label = filterOptions.find((o) => o.value === backlogFilter)?.label ?? "this backlog";
@@ -1035,6 +878,21 @@ export function TaskListSection({
                   <SelectItem value="undated">No due date</SelectItem>
                 </SelectContent>
               </Select>
+              {/* Only offered once the project actually uses the epic rung:
+                  it is optional, and a filter with nothing behind it is just
+                  a question the screen can't answer. */}
+              {epics.length > 0 ? (
+                <Combobox
+                  aria-label="Epic"
+                  options={epicFilterOptions}
+                  value={epicFilter}
+                  onChange={changeEpicFilter}
+                  size="sm"
+                  className="w-44"
+                  searchPlaceholder="Search epics…"
+                  emptyText="No epic found."
+                />
+              ) : null}
               <Combobox
                 aria-label="Backlog"
                 options={filterOptions}
@@ -1128,6 +986,9 @@ export function TaskListSection({
             <NewTaskForm
               projectId={projectId}
               backlogs={backlogs}
+              epics={epics}
+              defaultBacklogId={backlogFilter !== "all" && backlogFilter !== UNCLASSIFIED ? backlogFilter : null}
+              defaultEpicId={epicFilter !== "all" && epicFilter !== NO_EPIC ? epicFilter : null}
               onCancel={() => setCreating(false)}
             />
           </div>
@@ -1432,6 +1293,14 @@ export function TaskListSection({
                                   ) : null}
                                 </span>
                                 <span className="text-muted-foreground flex w-full flex-wrap items-center gap-3 text-xs sm:w-auto sm:flex-nowrap">
+                                  {/* The rows are grouped by backlog, so the
+                                      backlog is already stated by the group
+                                      header above — the epic is the rung it
+                                      doesn't say, and one backlog group
+                                      routinely holds several. */}
+                                  {task.epicId && epicNames.has(task.epicId) ? (
+                                    <span className="truncate">{epicNames.get(task.epicId)}</span>
+                                  ) : null}
                                   {task.assigneeGitlabUsername ? (
                                     <span>{task.assigneeGitlabUsername}</span>
                                   ) : null}

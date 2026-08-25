@@ -7,6 +7,7 @@ import (
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/progresssync"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
@@ -17,7 +18,7 @@ import (
 func newTaskService(q *dbtest.FakeQuerier) *task.Service {
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects)
-	return task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs)
+	return task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs, epic.NewService(q, dbtest.FakeTxRunner{Q: q}, projects))
 }
 
 func TestApplyOnClose_TableDriven(t *testing.T) {

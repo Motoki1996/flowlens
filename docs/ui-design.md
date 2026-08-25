@@ -38,6 +38,7 @@ The objects the UI is built from, and where they live today:
 | `User` | An account of this app | `users` |
 | `Project` | A workspace owned by one user: backlogs, tasks, one GitLab connection | `projects` |
 | `Backlog` | An app-only grouping of tasks inside a project | `backlogs` |
+| `Epic` | An optional, app-only grouping between a `Backlog` and its tasks — the coarse unit (one screen, one endpoint group) a backlog is cut into | `epics` |
 | `Task` | One unit of work, optionally mirrored by a GitLab issue | `tasks` (+ `task_ai_contexts`, `task_gitlab_links`) |
 | `GitLabConnection` | A GitLab CE base URL and access token for one project | `gitlab_connections` |
 | `LinkedGitLabProject` | A GitLab project a `Project` syncs issues with | `linked_gitlab_projects` |
@@ -81,6 +82,8 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]` | `Project` | Single |
 | `/projects/[projectId]/backlogs` | `Backlog` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress) |
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single (editing is inline here — no `/edit` route, per rule 4; the collection view's List rows share the same form) |
+| `/projects/[projectId]/epics` | `Epic` | Collection (Board / List / Timeline view modes, exactly as `Backlog`; `?backlog=`/`?priority=`/`?progress=`/`?sort=` filters) |
+| `/projects/[projectId]/epics/[epicId]` | `Epic` | Single (editing is inline here — no `/edit` route, per rule 4; the collection view's List rows share the same form) |
 | `/projects/[projectId]/tasks` | `Task` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress; `?backlog=`/`?progress=` filters) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |
 | `/tasks` | `Task` | Collection, cross-project (`?status=`/`?priority=`/`?progress=`/`?sort=`/`?projectId=` filters) |
@@ -110,7 +113,7 @@ what happened to this one.
 Every screen under `/projects/[projectId]` shares one layout
 (`app/projects/[projectId]/layout.tsx`), which holds the app header and a
 **persistent project sidebar**: a switcher for the project itself, then one
-entry per section (Overview, Backlogs, Tasks, Merge requests, GitLab connection) with the same
+entry per section (Overview, Backlogs, Epics, Tasks, Merge requests, GitLab connection) with the same
 count the hub shows. The hub being the only way between sibling collections was
 the original mistake — going from Backlogs to Tasks meant a detour up and back
 down. The sidebar makes that lateral move one click, and the sections are the
@@ -206,12 +209,56 @@ own attributes (state, author, project, merged-at), so the user filters in the
 same vocabulary the object is described in.
 
 A filter that another screen wants to hand off through belongs in the URL. The
-Task collection reads `?backlog=`, and the Backlog screens link to
-`/projects/[id]/tasks?backlog=[backlogId]` instead of growing task browsing of
-their own — one place to browse tasks, reachable pre-filtered. The Backlog
-single view keeps a read-only preview of its tasks and an "Open in Tasks" link;
-filtering, the timeline mode, and task creation stay with the collection that
-owns them.
+Task collection reads `?backlog=` and `?epic=`, and the Backlog and Epic
+screens link to `/projects/[id]/tasks?backlog=[backlogId]` (or `?epic=`)
+instead of growing task browsing of their own — one place to browse tasks, reachable pre-filtered. The Backlog
+single view keeps read-only previews of both its children — epics and tasks —
+in **one card with an Epics / Tasks tab switch**, each tab carrying its own
+count and its own "Open in Epics" / "Open in Tasks" handoff. Two stacked lists
+would have doubled the screen's height to show two things only one of which is
+being read at a time; the tab labels also stand in for a card title, since
+each names the object it shows. Filtering, the board and timeline modes, and
+task creation all stay with the collection that owns them.
+
+**Creation is the deliberate exception to that handoff.** Both tabs carry a
+"New epic" / "New task" action that opens the owning collection's own form
+inline, with this backlog pre-filled. An epic and a task are each created
+*into* a backlog: the collections' forms have to ask which one, and this
+screen already knows — so making the user go there to answer a question the
+context already answers is the worse trade. The forms themselves are shared
+(`EpicForm`, `NewTaskForm`), so the two screens can't drift on what a field
+is.
+
+An inline "New …" form is separated from the list below it by a rule and
+generous spacing. A form and a list of rows are both stacks of bordered
+boxes; without the separation it is genuinely unclear where the form ends.
+
+A relationship between two objects is editable from both ends, in the
+vocabulary of whichever object you are looking at. A task names its epic
+(the Epic control on the Task single view, and the Epic field when creating
+one); an epic names its tasks (a tickable list of its backlog's free tasks, on
+the epic's own form and single view). Neither is "the" place — which one you
+reach for depends on whether you are thinking about one task or about the
+shape of a coarse unit.
+
+A list you pick several things out of has to survive a backlog with hundreds
+of tasks, so the epic's task picker is built on the `Command` primitive
+(cmdk): arrow keys move, Enter ticks, and a search box narrows as you type.
+It also hides closed tasks by default and offers a "selected only" view.
+
+Two rules hold there, and hold anywhere a filter meets a multi-selection:
+**a filter changes what is shown, never what is selected** — the set is saved
+whole, so a row hidden by a search is still in it — and **a bulk action reaches
+only the rows currently visible**, stating its own count ("Select all (12)").
+A "clear" that also dropped hidden selections would unfile work the reader
+never saw.
+
+`Backlog` and `Epic` share their Board and Timeline view modes
+(`GroupBoardSection` / `GroupTimelineSection`, `lib/groups.ts`): an epic is
+deliberately shaped as a backlog that lives inside a backlog, and a board that
+only needs a name, a progress and a task ratio has nothing to tell the two
+apart. Each object still names its own component, so a screen reads as being
+about the object it is about.
 
 ### 6. Single views present attributes in a fixed order
 

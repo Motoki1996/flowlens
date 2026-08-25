@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect, notFound } from "next/navigation";
 import {
   getBacklogs,
+  getEpics,
   getCurrentUser,
   getGitlabConnection,
   getLinkedGitlabProjects,
@@ -53,16 +54,22 @@ export default async function ProjectLayout({
   // count from the sidebar but must never take down the screen inside it.
   let counts: ProjectSidebarCounts = {
     backlogs: null,
+    epics: null,
     openTasks: null,
     totalTasks: null,
     mergeRequests: null,
     gitlab: null,
   };
   try {
-    const [backlogs, tasks] = await Promise.all([getBacklogs(projectId), getTasks(projectId)]);
+    const [backlogs, epics, tasks] = await Promise.all([
+      getBacklogs(projectId),
+      getEpics(projectId),
+      getTasks(projectId),
+    ]);
     counts = {
       ...counts,
       backlogs: backlogs.length,
+      epics: epics.length,
       openTasks: tasks.filter((t) => t.status === "open").length,
       totalTasks: tasks.length,
     };

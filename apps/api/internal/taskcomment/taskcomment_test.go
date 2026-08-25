@@ -7,6 +7,7 @@ import (
 
 	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/dbtest"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/project"
 	"github.com/flowlens/api/internal/task"
 	"github.com/flowlens/api/internal/taskcomment"
@@ -18,7 +19,7 @@ import (
 func newService(q *dbtest.FakeQuerier) (*taskcomment.Service, *task.Service) {
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects)
-	tasks := task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs)
+	tasks := task.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, backlogs, epic.NewService(q, dbtest.FakeTxRunner{Q: q}, projects))
 	return taskcomment.NewService(q, dbtest.FakeTxRunner{Q: q}, projects, tasks), tasks
 }
 

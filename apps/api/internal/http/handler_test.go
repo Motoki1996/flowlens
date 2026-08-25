@@ -15,6 +15,7 @@ import (
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/deliverymetrics"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/flowmetrics"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/gitlabconn"
@@ -77,11 +78,13 @@ func newTestServerWithAppPublicURL(t *testing.T, fake *gitlab.FakeClient, appPub
 	projectMembers := projectmember.NewService(q, projects, users)
 	clientFactory := func(string) gitlab.Client { return fake }
 	gitlabConns := gitlabconn.NewService(q, projects, cipher, clientFactory)
-	tasks := task.NewService(q, txRunner, projects, backlogs)
+	epics := epic.NewService(q, txRunner, projects)
+	tasks := task.NewService(q, txRunner, projects, backlogs, epics)
 	return &Server{
 		users:            users,
 		projects:         projects,
 		backlogs:         backlogs,
+		epics:            epics,
 		apiTokens:        apiTokens,
 		projectMembers:   projectMembers,
 		projectInvites:   projectinvite.NewService(q, txRunner, projects),

@@ -1846,6 +1846,321 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/epics:
+    get:
+      summary: List a project's epics
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: backlog_id
+          description: A backlog UUID, or "unassigned" for the epics in no backlog at all.
+          schema:
+            type: string
+        - in: query
+          name: priority
+          schema:
+            type: string
+            enum:
+              - low
+              - medium
+              - high
+              - urgent
+        - in: query
+          name: progress
+          schema:
+            type: string
+            enum:
+              - not_started
+              - in_progress
+              - on_hold
+              - done
+        - in: query
+          name: assignee
+          description: '"me", a user UUID, or "unassigned".'
+          schema:
+            type: string
+        - in: query
+          name: sort
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The project's epics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Epic'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Create an epic
+      description: Requires write scope for a bearer token.
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEpicRequest'
+      responses:
+        '201':
+          description: The created epic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Epic'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/epics/order:
+    patch:
+      summary: Bulk-reorder a project's epics
+      description: All-or-nothing; the ID list must be exactly the project's current epics. Requires write scope for a bearer token.
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReorderEpicsRequest'
+      responses:
+        '200':
+          description: The reordered epics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Epic'
+        '400':
+          description: Invalid input (ID list mismatch)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/epics/{epicID}:
+    get:
+      summary: Get an epic
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/epicID'
+      responses:
+        '200':
+          description: The epic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Epic'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      summary: Update an epic
+      description: Requires write scope for a bearer token.
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/epicID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEpicRequest'
+      responses:
+        '200':
+          description: The updated epic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Epic'
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete an epic
+      description: 'Requires write scope for a bearer token. Tasks in the epic are not deleted: they drop back to sitting directly in their backlog.'
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/epicID'
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/epics/{epicID}/tasks:
+    patch:
+      summary: Replace an epic's task set
+      description: 'Files every named task under the epic and unfiles every task currently in it that is not named. All-or-nothing: an id from another project moves nothing. A task filed here also moves to the epic''s own backlog, since a task''s epic and backlog must always agree. Requires write scope for a bearer token.'
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/epicID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetEpicTasksRequest'
+      responses:
+        '200':
+          description: The epic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Epic'
+        '400':
+          description: Invalid input (a task outside this project)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/projects/{projectID}/backlogs:
     get:
       summary: List a project's backlogs
@@ -3264,6 +3579,12 @@ components:
             - string
             - 'null'
           format: uuid
+        epicId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The epic this task belongs to; null means it sits directly in its backlog. Always agrees with backlogId — setting one writes the other.
         title:
           type: string
         description:
@@ -4186,6 +4507,227 @@ components:
           type: string
         color:
           type: string
+    Epic:
+      type: object
+      description: 'The optional rung between a backlog and its tasks: the coarse unit (one screen, one endpoint group) a refined backlog is cut into before each is broken into tasks. App-only — no epic is ever created in, or read from, GitLab. Every field means what a Backlog''s does, plus backlogId.'
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The backlog this epic belongs to; null means unfiled.
+        name:
+          type: string
+        description:
+          type: string
+        position:
+          type: integer
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+        defaultLinkedGitlabProjectId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Where this epic's new tasks get their issue created; null falls through to the backlog's, then the project default.
+        baseBranch:
+          type: string
+          description: The branch tasks in this epic should branch from; "" falls through to the backlog's.
+        allowedScope:
+          type: string
+          description: Paths tasks in this epic may touch; "" falls through to the backlog's.
+        forbiddenScope:
+          type: string
+          description: Paths tasks in this epic must not touch; "" falls through to the backlog's.
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The FlowLens project member who owns this epic. App-only; an epic has no GitLab counterpart.
+        assigneeUsername:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
+        assigneeDisplayName:
+          type: string
+          description: Resolved from users on read; "" when unassigned.
+        taskCount:
+          type: integer
+          format: int64
+          description: Populated by the list endpoint only; 0 elsewhere.
+        closedTaskCount:
+          type: integer
+          format: int64
+          description: Populated by the list endpoint only; 0 elsewhere.
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateEpicRequest:
+      type: object
+      properties:
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The backlog to file this epic in. Rejected with invalid_backlog if it belongs to another project.
+        name:
+          type: string
+        description:
+          type: string
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+        defaultLinkedGitlabProjectId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Where this epic's new tasks get their issue created; omitted falls through to the backlog's link.
+        baseBranch:
+          type: string
+        allowedScope:
+          type: string
+        forbiddenScope:
+          type: string
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: A project member to assign this epic to. Rejected with invalid_assignee if the user is not a member.
+      required:
+        - name
+    ReorderEpicsRequest:
+      type: object
+      description: All-or-nothing. epicIds must be exactly the project's current epics.
+      properties:
+        epicIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+        - epicIds
+    UpdateEpicRequest:
+      type: object
+      description: Every field is optional-if-omitted (the update leaves it unchanged); send null to clear a nullable field, or "" to clear baseBranch/allowedScope/ forbiddenScope. Moving an epic to another backlog moves its tasks with it.
+      properties:
+        backlogId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        position:
+          type: integer
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+        defaultLinkedGitlabProjectId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        baseBranch:
+          type: string
+        allowedScope:
+          type: string
+        forbiddenScope:
+          type: string
+        assigneeUserId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+    SetEpicTasksRequest:
+      type: object
+      description: The epic's complete task set. Tasks currently in the epic but absent here are unfiled from it (they keep their backlog). All-or-nothing.
+      properties:
+        taskIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+        - taskIds
     Backlog:
       type: object
       properties:
@@ -4234,6 +4776,7 @@ components:
           type: string
         allowedScope:
           type: string
+          description: Resolved epic-first, then backlog, the same per-field chain baseBranch follows.
         forbiddenScope:
           type: string
         assigneeUserId:
@@ -4350,6 +4893,12 @@ components:
             - string
             - 'null'
           format: uuid
+        epicId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: 'The epic to file this task under. It wins over backlogId: the task lands in the epic''s own backlog. Rejected with invalid_epic if the epic belongs to another project.'
         assigneeGitlabUserId:
           type:
             - integer
@@ -4433,6 +4982,12 @@ components:
             - string
             - 'null'
           format: uuid
+        epicId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: 'The epic to file this task under. It wins over backlogId: the task lands in the epic''s own backlog. Rejected with invalid_epic if the epic belongs to another project.'
         labels:
           type: array
           items:
@@ -4586,7 +5141,7 @@ components:
     TaskContext:
       type: object
       description: |
-        The AI-facing combined view of a task, its backlog's base branch and its GitLab context, returned by GET /tasks/{taskID}/context and GET /projects/{projectID}/tasks/context.
+        The AI-facing combined view of a task, its inherited base branch and change scope, and its GitLab context, returned by GET /tasks/{taskID}/context and GET /projects/{projectID}/tasks/context.
       properties:
         id:
           type: string
@@ -4599,6 +5154,12 @@ components:
             - string
             - 'null'
           format: uuid
+        epicId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: The epic this task belongs to; null means it sits directly in its backlog.
         title:
           type: string
         description:
@@ -4658,6 +5219,7 @@ components:
           format: date-time
         baseBranch:
           type: string
+          description: 'Resolved epic-first: the task''s epic''s base branch, else its backlog''s, else "". The chain runs per field, so an epic that overrides only this still inherits the backlog''s scope below.'
         gitlab:
           anyOf:
             - $ref: '#/components/schemas/TaskGitlabContext'
@@ -4697,6 +5259,12 @@ components:
             - string
             - 'null'
           format: uuid
+        epicId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: 'The epic to file this task under. It wins over backlogId: the task lands in the epic''s own backlog. Rejected with invalid_epic if the epic belongs to another project.'
         assigneeGitlabUserId:
           type:
             - integer
@@ -4893,6 +5461,13 @@ components:
     eventID:
       in: path
       name: eventID
+      required: true
+      schema:
+        type: string
+        format: uuid
+    epicID:
+      in: path
+      name: epicID
       required: true
       schema:
         type: string

@@ -29,6 +29,7 @@ const beta = project("p2", "Beta");
 
 const counts: ProjectSidebarCounts = {
   backlogs: 2,
+  epics: 2,
   openTasks: 3,
   totalTasks: 7,
   mergeRequests: 5,
@@ -80,7 +81,7 @@ describe("ProjectSidebar", () => {
 
   it("drops the summary rather than the link when a count is unavailable", () => {
     renderSidebar({
-      counts: { backlogs: null, openTasks: null, totalTasks: null, mergeRequests: null, gitlab: null },
+      counts: { backlogs: null, epics: null, openTasks: null, totalTasks: null, mergeRequests: null, gitlab: null },
     });
     const nav = within(screen.getByRole("navigation", { name: "Project sections" }));
     expect(nav.getByRole("link", { name: "Backlogs" })).toHaveAttribute(

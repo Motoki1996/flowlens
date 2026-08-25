@@ -1,0 +1,287 @@
+list:
+  get:
+    summary: List a project's epics
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+      - in: query
+        name: backlog_id
+        description: 'A backlog UUID, or "unassigned" for the epics in no backlog at all.'
+        schema: { type: string }
+      - in: query
+        name: priority
+        schema: { type: string, enum: [low, medium, high, urgent] }
+      - in: query
+        name: progress
+        schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
+      - in: query
+        name: assignee
+        description: '"me", a user UUID, or "unassigned".'
+        schema: { type: string }
+      - in: query
+        name: sort
+        schema: { type: string }
+    responses:
+      "200":
+        description: The project's epics
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  post:
+    summary: Create an epic
+    description: Requires write scope for a bearer token.
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/CreateEpicRequest'
+    responses:
+      "201":
+        description: The created epic
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+order:
+  patch:
+    summary: Bulk-reorder a project's epics
+    description: All-or-nothing; the ID list must be exactly the project's current epics. Requires write scope for a bearer token.
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/projectID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/ReorderEpicsRequest'
+    responses:
+      "200":
+        description: The reordered epics
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "400":
+        description: Invalid input (ID list mismatch)
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+epic:
+  get:
+    summary: Get an epic
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/epicID'
+    responses:
+      "200":
+        description: The epic
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  patch:
+    summary: Update an epic
+    description: Requires write scope for a bearer token.
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/epicID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/UpdateEpicRequest'
+    responses:
+      "200":
+        description: The updated epic
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "400":
+        description: Invalid input
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+  delete:
+    summary: Delete an epic
+    description: >-
+      Requires write scope for a bearer token. Tasks in the epic are not
+      deleted: they drop back to sitting directly in their backlog.
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/epicID'
+    responses:
+      "204":
+        description: Deleted
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+tasks:
+  patch:
+    summary: Replace an epic's task set
+    description: >-
+      Files every named task under the epic and unfiles every task currently
+      in it that is not named. All-or-nothing: an id from another project
+      moves nothing. A task filed here also moves to the epic's own backlog,
+      since a task's epic and backlog must always agree. Requires write scope
+      for a bearer token.
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/epicID'
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/requests.yaml#/SetEpicTasksRequest'
+    responses:
+      "200":
+        description: The epic
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "400":
+        description: Invalid input (a task outside this project)
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+components:
+  parameters:
+    projectID:
+      in: path
+      name: projectID
+      required: true
+      schema: { type: string, format: uuid }
+    epicID:
+      in: path
+      name: epicID
+      required: true
+      schema: { type: string, format: uuid }

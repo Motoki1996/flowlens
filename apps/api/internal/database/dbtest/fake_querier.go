@@ -35,6 +35,9 @@ type FakeQuerier struct {
 	backlogs     []db.Backlog // insertion order, newest last
 	backlogsByID map[uuid.UUID]db.Backlog
 
+	epics     []db.Epic // insertion order, newest last
+	epicsByID map[uuid.UUID]db.Epic
+
 	tasks     []db.Task // insertion order, newest last
 	tasksByID map[uuid.UUID]db.Task
 
@@ -121,6 +124,7 @@ func New() *FakeQuerier {
 		projectsByID:        map[uuid.UUID]db.Project{},
 		projectsByOwnerName: map[string]db.Project{},
 		backlogsByID:        map[uuid.UUID]db.Backlog{},
+		epicsByID:           map[uuid.UUID]db.Epic{},
 		tasksByID:           map[uuid.UUID]db.Task{},
 
 		taskAIContextsByTaskID: map[uuid.UUID]db.TaskAiContext{},
@@ -867,6 +871,340 @@ func (f *FakeQuerier) DeleteBacklogForOwner(_ context.Context, arg db.DeleteBack
 	return 1, nil
 }
 
+// SeedEpic inserts a ready-made epic directly, bypassing validation, the way
+// SeedBacklog does. backlogID may be the zero UUID for an unfiled epic.
+func (f *FakeQuerier) SeedEpic(projectID, backlogID uuid.UUID, name string) db.Epic {
+	e := db.Epic{
+		ID:        uuid.New(),
+		ProjectID: projectID,
+		Name:      name,
+		Position:  f.nextEpicPosition(projectID),
+		Priority:  "medium",
+		Progress:  "not_started",
+		CreatedAt: now(),
+		UpdatedAt: now(),
+	}
+	if backlogID != uuid.Nil {
+		e.BacklogID = pgtype.UUID{Bytes: backlogID, Valid: true}
+	}
+	f.epics = append(f.epics, e)
+	f.epicsByID[e.ID] = e
+	return e
+}
+
+func (f *FakeQuerier) nextEpicPosition(projectID uuid.UUID) int32 {
+	var max int32 = -1
+	for _, e := range f.epics {
+		if e.ProjectID == projectID && e.Position > max {
+			max = e.Position
+		}
+	}
+	return max + 1
+}
+
+func (f *FakeQuerier) CreateEpic(_ context.Context, arg db.CreateEpicParams) (db.Epic, error) {
+	e := db.Epic{
+		ID:                           uuid.New(),
+		ProjectID:                    arg.ProjectID,
+		BacklogID:                    arg.BacklogID,
+		Name:                         arg.Name,
+		Description:                  arg.Description,
+		Position:                     f.nextEpicPosition(arg.ProjectID),
+		StartDate:                    arg.StartDate,
+		DueOn:                        arg.DueOn,
+		Priority:                     arg.Priority,
+		Progress:                     arg.Progress,
+		DefaultLinkedGitlabProjectID: arg.DefaultLinkedGitlabProjectID,
+		BaseBranch:                   arg.BaseBranch,
+		AllowedScope:                 arg.AllowedScope,
+		ForbiddenScope:               arg.ForbiddenScope,
+		AssigneeUserID:               arg.AssigneeUserID,
+		CreatedAt:                    now(),
+		UpdatedAt:                    now(),
+	}
+	f.epics = append(f.epics, e)
+	f.epicsByID[e.ID] = e
+	return e, nil
+}
+
+// ListEpicsByProject mirrors the SQL, including its LEFT JOIN task-count
+// aggregate — the same shape as ListBacklogsByProject, plus the backlog
+// filters.
+func (f *FakeQuerier) ListEpicsByProject(_ context.Context, arg db.ListEpicsByProjectParams) ([]db.ListEpicsByProjectRow, error) {
+	items := []db.ListEpicsByProjectRow{}
+	for _, e := range f.epics {
+		if e.ProjectID != arg.ProjectID {
+			continue
+		}
+		if arg.BacklogID.Valid && e.BacklogID != arg.BacklogID {
+			continue
+		}
+		if arg.BacklogUnfiled && e.BacklogID.Valid {
+			continue
+		}
+		if arg.Priority != "" && e.Priority != arg.Priority {
+			continue
+		}
+		if arg.Progress != "" && e.Progress != arg.Progress {
+			continue
+		}
+		if arg.AssigneeUserID.Valid && e.AssigneeUserID != arg.AssigneeUserID {
+			continue
+		}
+		if arg.AssigneeUnassigned && e.AssigneeUserID.Valid {
+			continue
+		}
+		taskCount, closedTaskCount := f.epicTaskCounts(e.ID)
+		items = append(items, db.ListEpicsByProjectRow{
+			ID:                           e.ID,
+			ProjectID:                    e.ProjectID,
+			BacklogID:                    e.BacklogID,
+			Name:                         e.Name,
+			Description:                  e.Description,
+			Position:                     e.Position,
+			CreatedAt:                    e.CreatedAt,
+			UpdatedAt:                    e.UpdatedAt,
+			StartDate:                    e.StartDate,
+			DueOn:                        e.DueOn,
+			Priority:                     e.Priority,
+			Progress:                     e.Progress,
+			DefaultLinkedGitlabProjectID: e.DefaultLinkedGitlabProjectID,
+			BaseBranch:                   e.BaseBranch,
+			AllowedScope:                 e.AllowedScope,
+			ForbiddenScope:               e.ForbiddenScope,
+			AssigneeUserID:               e.AssigneeUserID,
+			TaskCount:                    taskCount,
+			ClosedTaskCount:              closedTaskCount,
+		})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if arg.SortByPriority {
+			if ri, rj := priorityRank(items[i].Priority), priorityRank(items[j].Priority); ri != rj {
+				return ri > rj
+			}
+		}
+		if arg.SortByProgress {
+			if ri, rj := progressRank(items[i].Progress), progressRank(items[j].Progress); ri != rj {
+				return ri < rj
+			}
+		}
+		return items[i].Position < items[j].Position
+	})
+	return items, nil
+}
+
+// epicTaskCounts mirrors ListEpicsByProject's LEFT JOIN aggregate.
+func (f *FakeQuerier) epicTaskCounts(epicID uuid.UUID) (taskCount, closedTaskCount int64) {
+	for _, t := range f.tasks {
+		if !t.EpicID.Valid || t.EpicID.Bytes != epicID {
+			continue
+		}
+		taskCount++
+		if t.Status == "closed" {
+			closedTaskCount++
+		}
+	}
+	return taskCount, closedTaskCount
+}
+
+// GetEpicForOwner mirrors the SQL: viewer-minimum (any project_members role)
+// on the epic's project.
+func (f *FakeQuerier) GetEpicForOwner(_ context.Context, arg db.GetEpicForOwnerParams) (db.Epic, error) {
+	e, ok := f.epicsByID[arg.ID]
+	if !ok || !f.hasMembership(e.ProjectID, arg.OwnerUserID) {
+		return db.Epic{}, pgx.ErrNoRows
+	}
+	return e, nil
+}
+
+// GetEpicProjectID mirrors the SQL: no owner join, just the epic's own
+// project_id.
+func (f *FakeQuerier) GetEpicProjectID(_ context.Context, id uuid.UUID) (uuid.UUID, error) {
+	e, ok := f.epicsByID[id]
+	if !ok {
+		return uuid.Nil, pgx.ErrNoRows
+	}
+	return e.ProjectID, nil
+}
+
+// GetEpicTaskDefaults mirrors the SQL: the epic's own base_branch/
+// allowed_scope/forbidden_scope, plus the backlog the chain falls through to.
+func (f *FakeQuerier) GetEpicTaskDefaults(_ context.Context, id uuid.UUID) (db.GetEpicTaskDefaultsRow, error) {
+	e, ok := f.epicsByID[id]
+	if !ok {
+		return db.GetEpicTaskDefaultsRow{}, pgx.ErrNoRows
+	}
+	return db.GetEpicTaskDefaultsRow{
+		BaseBranch:     e.BaseBranch,
+		AllowedScope:   e.AllowedScope,
+		ForbiddenScope: e.ForbiddenScope,
+		BacklogID:      e.BacklogID,
+	}, nil
+}
+
+// GetEpicIssueDestination mirrors the SQL: the epic's own link and its
+// backlog, the two rungs internal/task's create-time resolution needs.
+func (f *FakeQuerier) GetEpicIssueDestination(_ context.Context, id uuid.UUID) (db.GetEpicIssueDestinationRow, error) {
+	e, ok := f.epicsByID[id]
+	if !ok {
+		return db.GetEpicIssueDestinationRow{}, pgx.ErrNoRows
+	}
+	return db.GetEpicIssueDestinationRow{
+		DefaultLinkedGitlabProjectID: e.DefaultLinkedGitlabProjectID,
+		BacklogID:                    e.BacklogID,
+	}, nil
+}
+
+// UpdateEpicForOwner mirrors the SQL: member-minimum, every column written.
+func (f *FakeQuerier) UpdateEpicForOwner(_ context.Context, arg db.UpdateEpicForOwnerParams) (db.Epic, error) {
+	existing, ok := f.epicsByID[arg.ID]
+	if !ok || !f.hasRoleAtLeast(existing.ProjectID, arg.OwnerUserID, "member") {
+		return db.Epic{}, pgx.ErrNoRows
+	}
+
+	existing.BacklogID = arg.BacklogID
+	existing.Name = arg.Name
+	existing.Description = arg.Description
+	existing.Position = arg.Position
+	existing.StartDate = arg.StartDate
+	existing.DueOn = arg.DueOn
+	existing.Priority = arg.Priority
+	existing.Progress = arg.Progress
+	existing.DefaultLinkedGitlabProjectID = arg.DefaultLinkedGitlabProjectID
+	existing.BaseBranch = arg.BaseBranch
+	existing.AllowedScope = arg.AllowedScope
+	existing.ForbiddenScope = arg.ForbiddenScope
+	existing.AssigneeUserID = arg.AssigneeUserID
+	existing.UpdatedAt = now()
+
+	f.epicsByID[arg.ID] = existing
+	for i, e := range f.epics {
+		if e.ID == existing.ID {
+			f.epics[i] = existing
+			break
+		}
+	}
+	return existing, nil
+}
+
+// MoveEpicTasksToBacklog mirrors the SQL: every task in the epic follows it to
+// its new backlog, so a task never reports a backlog its own epic left.
+func (f *FakeQuerier) MoveEpicTasksToBacklog(_ context.Context, arg db.MoveEpicTasksToBacklogParams) error {
+	for i, t := range f.tasks {
+		if t.EpicID != arg.EpicID || t.BacklogID == arg.BacklogID {
+			continue
+		}
+		t.BacklogID = arg.BacklogID
+		t.UpdatedAt = now()
+		f.tasks[i] = t
+		f.tasksByID[t.ID] = t
+	}
+	return nil
+}
+
+// CountTasksInProjectByIDs mirrors the SQL: how many of the given ids are
+// tasks in that project, which is SetTasks' pre-check.
+func (f *FakeQuerier) CountTasksInProjectByIDs(_ context.Context, arg db.CountTasksInProjectByIDsParams) (int64, error) {
+	var count int64
+	for _, id := range arg.TaskIds {
+		if t, ok := f.tasksByID[id]; ok && t.ProjectID == arg.ProjectID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// ClearEpicTasksExcept mirrors the SQL: every task in the epic that the new
+// set no longer names drops out of it, keeping its backlog.
+func (f *FakeQuerier) ClearEpicTasksExcept(_ context.Context, arg db.ClearEpicTasksExceptParams) error {
+	keep := make(map[uuid.UUID]struct{}, len(arg.TaskIds))
+	for _, id := range arg.TaskIds {
+		keep[id] = struct{}{}
+	}
+	for i, t := range f.tasks {
+		if t.EpicID != arg.EpicID {
+			continue
+		}
+		if _, ok := keep[t.ID]; ok {
+			continue
+		}
+		t.EpicID = pgtype.UUID{}
+		t.UpdatedAt = now()
+		f.tasks[i] = t
+		f.tasksByID[t.ID] = t
+	}
+	return nil
+}
+
+// AssignTasksToEpic mirrors the SQL, including its project check and its row
+// count — a task outside the epic's project simply doesn't match, which is
+// how internal/epic detects a foreign id.
+func (f *FakeQuerier) AssignTasksToEpic(_ context.Context, arg db.AssignTasksToEpicParams) (int64, error) {
+	e, ok := f.epicsByID[arg.EpicID]
+	if !ok {
+		return 0, nil
+	}
+	var affected int64
+	for _, id := range arg.TaskIds {
+		t, ok := f.tasksByID[id]
+		if !ok || t.ProjectID != e.ProjectID {
+			continue
+		}
+		t.EpicID = pgtype.UUID{Bytes: e.ID, Valid: true}
+		t.BacklogID = e.BacklogID
+		t.UpdatedAt = now()
+		f.storeTask(t)
+		affected++
+	}
+	return affected, nil
+}
+
+// ReorderEpics mirrors the SQL: resequences position 0..n-1 for every epic in
+// arg.EpicIds belonging to arg.ProjectID, in the order given.
+func (f *FakeQuerier) ReorderEpics(_ context.Context, arg db.ReorderEpicsParams) error {
+	for i, id := range arg.EpicIds {
+		e, ok := f.epicsByID[id]
+		if !ok || e.ProjectID != arg.ProjectID {
+			continue
+		}
+		e.Position = int32(i)
+		e.UpdatedAt = now()
+		f.epicsByID[id] = e
+		for j, x := range f.epics {
+			if x.ID == id {
+				f.epics[j] = e
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// DeleteEpicForOwner returns the number of rows affected, and mirrors the
+// schema's ON DELETE SET NULL: the epic's tasks survive, unfiled from the
+// epic but still in their backlog.
+func (f *FakeQuerier) DeleteEpicForOwner(_ context.Context, arg db.DeleteEpicForOwnerParams) (int64, error) {
+	e, ok := f.epicsByID[arg.ID]
+	if !ok || !f.hasRoleAtLeast(e.ProjectID, arg.OwnerUserID, "member") {
+		return 0, nil
+	}
+	delete(f.epicsByID, e.ID)
+	for i, x := range f.epics {
+		if x.ID == e.ID {
+			f.epics = append(f.epics[:i], f.epics[i+1:]...)
+			break
+		}
+	}
+	for i, t := range f.tasks {
+		if t.EpicID.Valid && t.EpicID.Bytes == e.ID {
+			t.EpicID = pgtype.UUID{}
+			f.tasks[i] = t
+			f.tasksByID[t.ID] = t
+		}
+	}
+	return 1, nil
+}
+
 // SeedTask inserts a ready-made, unfiled (backlog_id = NULL) task directly,
 // bypassing validation. Use it in tests that need a pre-existing task but
 // don't exercise creation. Returns the stored row.
@@ -949,6 +1287,30 @@ func (f *FakeQuerier) SeedTaskSize(taskID uuid.UUID, size string) db.Task {
 	return t
 }
 
+// SeedTaskEpic files an existing task under epicID directly, for tests that
+// need a task in an epic without going through the update path.
+func (f *FakeQuerier) SeedTaskEpic(taskID, epicID uuid.UUID) db.Task {
+	t := f.tasksByID[taskID]
+	t.EpicID = pgtype.UUID{Bytes: epicID, Valid: true}
+	f.storeTask(t)
+	return t
+}
+
+// SeedTaskStatus sets an existing task's status directly, for tests that need
+// a closed task without running the close path.
+func (f *FakeQuerier) SeedTaskStatus(taskID uuid.UUID, status string) db.Task {
+	t := f.tasksByID[taskID]
+	t.Status = status
+	f.storeTask(t)
+	return t
+}
+
+// TaskByID returns the stored task row, so a test can assert on a column no
+// query exposes on its own (e.g. epic_id after a cascade).
+func (f *FakeQuerier) TaskByID(taskID uuid.UUID) db.Task {
+	return f.tasksByID[taskID]
+}
+
 func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title string, backlogID pgtype.UUID) db.Task {
 	t := db.Task{
 		ID:              uuid.New(),
@@ -1003,6 +1365,7 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 		ID:                     uuid.New(),
 		ProjectID:              arg.ProjectID,
 		BacklogID:              arg.BacklogID,
+		EpicID:                 arg.EpicID,
 		Title:                  arg.Title,
 		Description:            arg.Description,
 		Status:                 "open",
@@ -1091,6 +1454,12 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.BacklogID.Valid && (!t.BacklogID.Valid || t.BacklogID.Bytes != arg.BacklogID.Bytes) {
 			continue
 		}
+		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
+			continue
+		}
+		if arg.EpicUnfiled && t.EpicID.Valid {
+			continue
+		}
 		if arg.Status != "" && t.Status != arg.Status {
 			continue
 		}
@@ -1148,6 +1517,9 @@ func (f *FakeQuerier) ListTasksByProjectPaged(_ context.Context, arg db.ListTask
 			continue
 		}
 		if arg.BacklogID.Valid && (!t.BacklogID.Valid || t.BacklogID.Bytes != arg.BacklogID.Bytes) {
+			continue
+		}
+		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
 			continue
 		}
 		if arg.Status != "" && t.Status != arg.Status {
@@ -1508,6 +1880,12 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 		if arg.Progress != "" && t.Progress != arg.Progress {
 			continue
 		}
+		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
+			continue
+		}
+		if arg.EpicUnfiled && t.EpicID.Valid {
+			continue
+		}
 		if arg.DueBefore.Valid && (!t.DueOn.Valid || t.DueOn.Time.After(arg.DueBefore.Time)) {
 			continue
 		}
@@ -1694,6 +2072,7 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	}
 
 	existing.BacklogID = arg.BacklogID
+	existing.EpicID = arg.EpicID
 	existing.Title = arg.Title
 	existing.Description = arg.Description
 	existing.AssigneeGitlabUserID = arg.AssigneeGitlabUserID
@@ -1721,6 +2100,13 @@ func (f *FakeQuerier) AssignTaskBacklogForOwner(_ context.Context, arg db.Assign
 		return db.Task{}, pgx.ErrNoRows
 	}
 	existing.BacklogID = arg.BacklogID
+	// Mirrors the SQL subquery: the epic survives only if it lives in the
+	// backlog the task just moved to (000032).
+	if existing.EpicID.Valid {
+		if e, ok := f.epicsByID[uuid.UUID(existing.EpicID.Bytes)]; !ok || e.BacklogID != arg.BacklogID {
+			existing.EpicID = pgtype.UUID{}
+		}
+	}
 	existing.UpdatedAt = now()
 	f.storeTask(existing)
 	return existing, nil
@@ -2480,6 +2866,27 @@ func (f *FakeQuerier) GetLinkedGitlabProjectInProjectForOwner(_ context.Context,
 	}
 	projectID, ok := f.linkedProjectProjectID(l)
 	if !ok || projectID != arg.ProjectID || !f.hasMembership(projectID, arg.OwnerUserID) {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	return l, nil
+}
+
+// GetEpicLinkedGitlabProjectForOwner mirrors the SQL: the epic's own link,
+// the first rung of a new task's issue-destination chain (000032).
+func (f *FakeQuerier) GetEpicLinkedGitlabProjectForOwner(_ context.Context, arg db.GetEpicLinkedGitlabProjectForOwnerParams) (db.LinkedGitlabProject, error) {
+	e, ok := f.epicsByID[arg.ID]
+	if !ok || !e.DefaultLinkedGitlabProjectID.Valid {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	if !f.hasMembership(e.ProjectID, arg.OwnerUserID) {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	l, ok := f.linkedGitlabProjectsByID[uuid.UUID(e.DefaultLinkedGitlabProjectID.Bytes)]
+	if !ok {
+		return db.LinkedGitlabProject{}, pgx.ErrNoRows
+	}
+	projectID, ok := f.linkedProjectProjectID(l)
+	if !ok || projectID != e.ProjectID {
 		return db.LinkedGitlabProject{}, pgx.ErrNoRows
 	}
 	return l, nil

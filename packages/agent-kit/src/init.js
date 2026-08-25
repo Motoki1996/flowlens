@@ -10,6 +10,7 @@ const TEMPLATES_DIR = join(__dirname, "..", "templates");
 const INSTALL_FILES = [
   { template: "skills/flowlens/SKILL.md", dest: ".claude/skills/flowlens/SKILL.md" },
   { template: "commands/flowlens/refine-backlog.md", dest: ".claude/commands/flowlens/refine-backlog.md" },
+  { template: "commands/flowlens/breakdown-epics.md", dest: ".claude/commands/flowlens/breakdown-epics.md" },
   { template: "commands/flowlens/breakdown.md", dest: ".claude/commands/flowlens/breakdown.md" },
   { template: "commands/flowlens/work.md", dest: ".claude/commands/flowlens/work.md" },
 ];

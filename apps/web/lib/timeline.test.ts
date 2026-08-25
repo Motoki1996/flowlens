@@ -41,6 +41,7 @@ function makeTask(overrides: Partial<Task>): Task {
     id: "t1",
     projectId: "p1",
     backlogId: null,
+    epicId: null,
     title: "Task",
     description: "",
     status: "open",

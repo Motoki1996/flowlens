@@ -91,10 +91,27 @@ invocation at a time, until a claim mechanism exists.
 
 ## Commands
 
+Call order: `refine-backlog` → `breakdown-epics` (optional) →
+`breakdown` → `work`.
+
 - `/flowlens:refine-backlog <backlogId>` — turns a backlog's rough
   description into numbered requirements (`R1`, `R2`, …) and a
   `baseBranch`, written back to the backlog.
-- `/flowlens:breakdown <backlogId>` — splits a refined backlog into sized,
-  scoped, dependency-ordered tasks, created in one bulk call.
+- `/flowlens:breakdown-epics <backlogId>` — splits a refined backlog into
+  **epics**: coarse units of a few tasks each (one screen, one endpoint
+  group), each able to carry its own base branch and change scope.
+  Optional — a backlog small enough to break straight into tasks skips it.
+- `/flowlens:breakdown <backlogId|epicId>` — splits a refined backlog *or*
+  one epic into sized, scoped, dependency-ordered tasks, created in one
+  bulk call.
 - `/flowlens:work <taskId>` — runs the lifecycle above for one task, after
   checking its dependencies are closed.
+
+## Where baseBranch and scope come from
+
+A task's `baseBranch`, `allowedScope` and `forbiddenScope` are never its
+own fields. `GET /api/v1/tasks/{taskID}/context` resolves them **epic
+first, then backlog, per field**: an epic that overrides only the base
+branch still inherits its backlog's scope. Read the context endpoint
+rather than the backlog directly — it is the only place that resolution
+is applied for you.

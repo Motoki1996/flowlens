@@ -1,6 +1,6 @@
 /**
- * Route builders for the object hierarchy under a project. Backlogs and tasks
- * only exist inside a project, so their collection and single views are nested
+ * Route builders for the object hierarchy under a project. Backlogs, epics and
+ * tasks only exist inside a project, so their collection and single views are nested
  * under it (docs/ui-design.md rule 3) — keeping the paths here means a route
  * change is one edit rather than a grep across every Link.
  */
@@ -25,14 +25,31 @@ export function backlogPath(projectId: string, backlogId: string) {
   return `/projects/${projectId}/backlogs/${backlogId}`;
 }
 
+export function epicsPath(projectId: string) {
+  return `/projects/${projectId}/epics`;
+}
+
+export function epicPath(projectId: string, epicId: string) {
+  return `/projects/${projectId}/epics/${epicId}`;
+}
+
 /** The Task collection. `backlogId` pre-selects the collection's backlog
  *  filter — the backlog screens link here rather than listing tasks of their
  *  own (docs/ui-design.md rule 5). Pass UNCLASSIFIED_BACKLOG for the Unclassified
  *  group. */
-export function tasksPath(projectId: string, options?: { backlogId?: string }) {
+export function tasksPath(
+  projectId: string,
+  options?: { backlogId?: string; epicId?: string },
+) {
   const base = `/projects/${projectId}/tasks`;
-  if (!options?.backlogId) return base;
-  return `${base}?backlog=${encodeURIComponent(options.backlogId)}`;
+  const params = new URLSearchParams();
+  if (options?.backlogId) params.set("backlog", options.backlogId);
+  // An epic belongs to exactly one backlog, so naming both would be
+  // redundant at best and contradictory at worst — the epic wins, the same
+  // way it does server-side when a task names both.
+  if (options?.epicId) params.set("epic", options.epicId);
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 /** The filter value standing for "tasks with no backlog"; shared by
@@ -73,12 +90,20 @@ export function linkedGitlabProjectPath(projectId: string, linkId: string) {
  * the section of the collection above it, which is what lets the project
  * switcher keep you on the same section when you change projects.
  */
-export type ProjectSection = "overview" | "backlogs" | "tasks" | "merge-requests" | "gitlab-connection";
+export type ProjectSection =
+  | "overview"
+  | "backlogs"
+  | "epics"
+  | "tasks"
+  | "merge-requests"
+  | "gitlab-connection";
 
 export function projectSectionPath(projectId: string, section: ProjectSection) {
   switch (section) {
     case "backlogs":
       return backlogsPath(projectId);
+    case "epics":
+      return epicsPath(projectId);
     case "tasks":
       return tasksPath(projectId);
     case "merge-requests":
@@ -100,6 +125,8 @@ export function projectSectionOf(pathname: string): ProjectSection {
   switch (segment) {
     case "backlogs":
       return "backlogs";
+    case "epics":
+      return "epics";
     case "tasks":
       return "tasks";
     case "merge-requests":

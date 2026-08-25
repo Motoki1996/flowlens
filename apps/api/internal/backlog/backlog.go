@@ -13,13 +13,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/flowlens/api/internal/assignee"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/fieldnorm"
 	"github.com/flowlens/api/internal/optional"
 	"github.com/flowlens/api/internal/project"
 	"github.com/google/uuid"
@@ -48,12 +47,12 @@ var (
 // the 000010 migration). SortPriority is the ListFilter.Sort value that
 // switches List's ORDER BY from position to priority rank.
 const (
-	PriorityLow    = "low"
-	PriorityMedium = "medium"
-	PriorityHigh   = "high"
-	PriorityUrgent = "urgent"
+	PriorityLow    = fieldnorm.PriorityLow
+	PriorityMedium = fieldnorm.PriorityMedium
+	PriorityHigh   = fieldnorm.PriorityHigh
+	PriorityUrgent = fieldnorm.PriorityUrgent
 
-	SortPriority = "priority"
+	SortPriority = fieldnorm.SortPriority
 )
 
 // Progress values, the backlog's own four-stage work state. App-only and
@@ -63,12 +62,12 @@ const (
 // the ListFilter.Sort value that switches List's ORDER BY from position to
 // progress rank, running not_started first through done.
 const (
-	ProgressNotStarted = "not_started"
-	ProgressInProgress = "in_progress"
-	ProgressOnHold     = "on_hold"
-	ProgressDone       = "done"
+	ProgressNotStarted = fieldnorm.ProgressNotStarted
+	ProgressInProgress = fieldnorm.ProgressInProgress
+	ProgressOnHold     = fieldnorm.ProgressOnHold
+	ProgressDone       = fieldnorm.ProgressDone
 
-	SortProgress = "progress"
+	SortProgress = fieldnorm.SortProgress
 )
 
 // Actor kind values Update accepts to attribute a backlog_progress_events
@@ -218,88 +217,48 @@ func toUUID(v *uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: *v, Valid: true}
 }
 
-// validateSchedule rejects a period that ends before it starts. Either date
-// alone is fine: a backlog with only a due date is a deadline without a
-// committed start, and the timeline draws it as a single day.
+// The field rules below are internal/fieldnorm's, wrapped only to attach this
+// package's own sentinel errors. internal/epic wraps the same functions: a
+// backlog and an epic share these fields by design (see the 000032
+// migration), and a second copy of the rules could only drift.
+
 func validateSchedule(startDate, dueOn *time.Time) error {
-	if startDate != nil && dueOn != nil && startDate.After(*dueOn) {
+	if err := fieldnorm.Schedule(startDate, dueOn); err != nil {
 		return ErrInvalidSchedule
 	}
 	return nil
 }
 
-// normalizePriority defaults an empty raw to PriorityMedium — Create leaves
-// it unset when the caller doesn't specify one, and Update's Optional
-// resolves an explicit empty string the same way — and otherwise rejects
-// anything outside the fixed set.
 func normalizePriority(raw string) (string, error) {
-	switch raw {
-	case "":
-		return PriorityMedium, nil
-	case PriorityLow, PriorityMedium, PriorityHigh, PriorityUrgent:
-		return raw, nil
-	default:
+	v, err := fieldnorm.Priority(raw)
+	if err != nil {
 		return "", ErrInvalidPriority
 	}
+	return v, nil
 }
 
-// normalizeProgress defaults an empty raw to ProgressNotStarted, the same
-// absent/explicit-empty rule normalizePriority follows, and otherwise rejects
-// anything outside the fixed set.
 func normalizeProgress(raw string) (string, error) {
-	switch raw {
-	case "":
-		return ProgressNotStarted, nil
-	case ProgressNotStarted, ProgressInProgress, ProgressOnHold, ProgressDone:
-		return raw, nil
-	default:
+	v, err := fieldnorm.Progress(raw)
+	if err != nil {
 		return "", ErrInvalidProgress
 	}
+	return v, nil
 }
 
-// normalizeBaseBranch trims raw and, if non-empty, validates it as a git
-// branch name (git-check-ref-format's rules, the subset relevant to a
-// single branch component: no control characters or spaces, none of
-// ~ ^ : ? * [ \, no "..", no "@{", doesn't start or end with "/", doesn't
-// start with "." or end with "." or ".lock"). An empty raw means "not set"
-// and is always valid — this is an optional field.
 func normalizeBaseBranch(raw string) (string, error) {
-	branch := strings.TrimSpace(raw)
-	if branch == "" {
-		return "", nil
-	}
-	if utf8.RuneCountInString(branch) > 255 {
+	v, err := fieldnorm.BaseBranch(raw)
+	if err != nil {
 		return "", ErrInvalidBaseBranch
 	}
-	if strings.ContainsAny(branch, " ~^:?*[\\") || strings.Contains(branch, "..") || strings.Contains(branch, "@{") {
-		return "", ErrInvalidBaseBranch
-	}
-	if strings.HasPrefix(branch, "/") || strings.HasSuffix(branch, "/") ||
-		strings.HasPrefix(branch, ".") || strings.HasSuffix(branch, ".") ||
-		strings.HasSuffix(branch, ".lock") {
-		return "", ErrInvalidBaseBranch
-	}
-	for _, r := range branch {
-		if r < 0x20 || r == 0x7f {
-			return "", ErrInvalidBaseBranch
-		}
-	}
-	return branch, nil
+	return v, nil
 }
 
-// maxScopeFieldLength bounds AllowedScope/ForbiddenScope, matching
-// internal/task's maxAIContextFieldLength cap on acceptanceCriteria/
-// aiContext.
-const maxScopeFieldLength = 20000
-
-// normalizeScope enforces the length cap on an AllowedScope/ForbiddenScope
-// value. Unlike normalizeBaseBranch, this is free-text (path globs, prose),
-// not a git ref name, so there is no format restriction.
 func normalizeScope(raw string) (string, error) {
-	if utf8.RuneCountInString(raw) > maxScopeFieldLength {
+	v, err := fieldnorm.Scope(raw)
+	if err != nil {
 		return "", ErrInvalidScope
 	}
-	return raw, nil
+	return v, nil
 }
 
 // Service manages backlogs inside projects owned by a single user.
@@ -359,8 +318,8 @@ func (s *Service) validateLink(ctx context.Context, ownerID, projectID uuid.UUID
 
 // normalizeName trims raw and enforces the 1-100 character rule.
 func normalizeName(raw string) (string, error) {
-	name := strings.TrimSpace(raw)
-	if n := utf8.RuneCountInString(name); n < 1 || n > 100 {
+	name, err := fieldnorm.Name(raw)
+	if err != nil {
 		return "", ErrInvalidName
 	}
 	return name, nil

@@ -8,6 +8,8 @@ procedure itself.
 
 ## Unreleased
 
+## v0.2.0 — 2026-08-25
+
 ### Added
 
 - **Epics: an optional rung between a backlog and its tasks**

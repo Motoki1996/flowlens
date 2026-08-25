@@ -98,7 +98,7 @@ docker compose exec -T db pg_dump -U flowlens flowlens | gzip > "backup-$(date +
 cp .env .env.backup
 
 # 3. Move the pin.
-sed -i 's/^FLOWLENS_VERSION=.*/FLOWLENS_VERSION=v0.1.2/' .env
+sed -i 's/^FLOWLENS_VERSION=.*/FLOWLENS_VERSION=v0.2.0/' .env
 
 # 4. Apply.
 docker compose pull
@@ -227,9 +227,9 @@ On-prem GitLab CE often lives somewhere that cannot reach `ghcr.io`.
 ```bash
 # On a machine with internet access
 for image in flowlens-api flowlens-web; do
-  docker pull ghcr.io/motoki1996/$image:v0.1.2
-  docker tag ghcr.io/motoki1996/$image:v0.1.2 registry.example.local/flowlens/$image:v0.1.2
-  docker push registry.example.local/flowlens/$image:v0.1.2
+  docker pull ghcr.io/motoki1996/$image:v0.2.0
+  docker tag ghcr.io/motoki1996/$image:v0.2.0 registry.example.local/flowlens/$image:v0.2.0
+  docker push registry.example.local/flowlens/$image:v0.2.0
 done
 
 # In .env on the target
@@ -241,7 +241,7 @@ FLOWLENS_REGISTRY=registry.example.local/flowlens
 and Postgres images:
 
 ```bash
-docker load < flowlens-v0.1.2-images-amd64.tar.gz
+docker load < flowlens-v0.2.0-images-amd64.tar.gz
 docker compose up -d
 ```
 

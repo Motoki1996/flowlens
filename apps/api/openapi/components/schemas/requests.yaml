@@ -141,6 +141,62 @@ UpdateProjectMemberRequest:
     role: { type: string, enum: [owner, member, viewer] }
   required: [role]
 
+CreateEpicRequest:
+  type: object
+  properties:
+    backlogId:
+      type: [string, "null"]
+      format: uuid
+      description: The backlog to file this epic in. Rejected with invalid_backlog if it belongs to another project.
+    name: { type: string }
+    description: { type: string }
+    startDate: { type: [string, "null"], format: date-time }
+    dueOn: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+    defaultLinkedGitlabProjectId:
+      type: [string, "null"]
+      format: uuid
+      description: Where this epic's new tasks get their issue created; omitted falls through to the backlog's link.
+    baseBranch: { type: string }
+    allowedScope: { type: string }
+    forbiddenScope: { type: string }
+    assigneeUserId:
+      type: [string, "null"]
+      format: uuid
+      description: A project member to assign this epic to. Rejected with invalid_assignee if the user is not a member.
+  required: [name]
+
+UpdateEpicRequest:
+  type: object
+  description: >-
+    Every field is optional-if-omitted (the update leaves it unchanged); send
+    null to clear a nullable field, or "" to clear baseBranch/allowedScope/
+    forbiddenScope. Moving an epic to another backlog moves its tasks with it.
+  properties:
+    backlogId: { type: [string, "null"], format: uuid }
+    name: { type: string }
+    description: { type: string }
+    position: { type: integer }
+    startDate: { type: [string, "null"], format: date-time }
+    dueOn: { type: [string, "null"], format: date-time }
+    priority: { type: string, enum: [low, medium, high, urgent] }
+    progress: { type: string, enum: [not_started, in_progress, on_hold, done] }
+    defaultLinkedGitlabProjectId: { type: [string, "null"], format: uuid }
+    baseBranch: { type: string }
+    allowedScope: { type: string }
+    forbiddenScope: { type: string }
+    assigneeUserId: { type: [string, "null"], format: uuid }
+
+ReorderEpicsRequest:
+  type: object
+  description: All-or-nothing. epicIds must be exactly the project's current epics.
+  properties:
+    epicIds:
+      type: array
+      items: { type: string, format: uuid }
+  required: [epicIds]
+
 CreateBacklogRequest:
   type: object
   properties:
@@ -187,6 +243,13 @@ CreateTaskRequest:
     title: { type: string }
     description: { type: string }
     backlogId: { type: [string, "null"], format: uuid }
+    epicId:
+      type: [string, "null"]
+      format: uuid
+      description: >-
+        The epic to file this task under. It wins over backlogId: the task
+        lands in the epic's own backlog. Rejected with invalid_epic if the
+        epic belongs to another project.
     assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
     assigneeGitlabUsername: { type: string }
     assigneeUserId:
@@ -212,6 +275,13 @@ UpdateTaskRequest:
     title: { type: string }
     description: { type: string }
     backlogId: { type: [string, "null"], format: uuid }
+    epicId:
+      type: [string, "null"]
+      format: uuid
+      description: >-
+        The epic to file this task under. It wins over backlogId: the task
+        lands in the epic's own backlog. Rejected with invalid_epic if the
+        epic belongs to another project.
     assigneeGitlabUserId: { type: [integer, "null"], format: int64 }
     assigneeGitlabUsername: { type: string }
     assigneeUserId:
@@ -281,6 +351,13 @@ BulkCreateTaskItem:
     title: { type: string }
     description: { type: string }
     backlogId: { type: [string, "null"], format: uuid }
+    epicId:
+      type: [string, "null"]
+      format: uuid
+      description: >-
+        The epic to file this task under. It wins over backlogId: the task
+        lands in the epic's own backlog. Rejected with invalid_epic if the
+        epic belongs to another project.
     labels:
       type: array
       items: { type: string }

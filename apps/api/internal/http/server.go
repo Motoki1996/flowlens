@@ -350,7 +350,7 @@ func (s *Server) Router() chi.Router {
 		// Every route below is registered as a flat, full-path leaf (never
 		// through a nested shared.Route(prefix, ...) sub-mount) precisely
 		// because `protected` above already owns a chi.Mount() at each of
-		// these same prefixes (/projects, /backlogs, /tasks,
+		// these same prefixes (/projects, /backlogs, /epics, /tasks,
 		// /task-dependencies, /linked-gitlab-projects) for its own
 		// session-only routes; a second, independent sub-mount at an
 		// identical prefix is untested territory, whereas a flat leaf route
@@ -370,6 +370,13 @@ func (s *Server) Router() chi.Router {
 			// below, the same coexistence this file's own doc comment
 			// already relies on for /tasks and /tasks/{taskID}.
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Patch("/projects/{projectID}/backlogs/order", s.handleReorderBacklogs)
+
+			// Epics (000032) sit on the same allowlist as backlogs, and for
+			// the same reason: an agent breaking a backlog down into epics
+			// and then epics into tasks needs to read and write both rungs.
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/epics", s.handleListEpics)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/epics", s.handleCreateEpic)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Patch("/projects/{projectID}/epics/order", s.handleReorderEpics)
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks", s.handleListTasks)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/tasks", s.handleCreateTask)
@@ -394,6 +401,11 @@ func (s *Server) Router() chi.Router {
 			shared.With(backlogResource).Get("/backlogs/{backlogID}", s.handleGetBacklog)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Patch("/backlogs/{backlogID}", s.handleUpdateBacklog)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Delete("/backlogs/{backlogID}", s.handleDeleteBacklog)
+
+			epicResource := requireTokenResourceProject("epicID", epic.ErrNotFound, s.epics.ProjectID)
+			shared.With(epicResource).Get("/epics/{epicID}", s.handleGetEpic)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Patch("/epics/{epicID}", s.handleUpdateEpic)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Delete("/epics/{epicID}", s.handleDeleteEpic)
 
 			depResource := requireTokenResourceProject("dependencyID", taskdependency.ErrNotFound, s.taskDependencies.ProjectID)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), depResource).Delete("/task-dependencies/{dependencyID}", s.handleDeleteTaskDependency)

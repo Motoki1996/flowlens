@@ -18,6 +18,7 @@ type createTaskRequest struct {
 	Title                  string     `json:"title"`
 	Description            string     `json:"description"`
 	BacklogID              *uuid.UUID `json:"backlogId"`
+	EpicID                 *uuid.UUID `json:"epicId"`
 	AssigneeGitlabUserID   *int64     `json:"assigneeGitlabUserId"`
 	AssigneeGitlabUsername string     `json:"assigneeGitlabUsername"`
 	AssigneeUserID         *uuid.UUID `json:"assigneeUserId"`
@@ -36,6 +37,7 @@ type updateTaskRequest struct {
 	Title                  task.Optional[string]     `json:"title"`
 	Description            task.Optional[string]     `json:"description"`
 	BacklogID              task.Optional[*uuid.UUID] `json:"backlogId"`
+	EpicID                 task.Optional[*uuid.UUID] `json:"epicId"`
 	AssigneeGitlabUserID   task.Optional[*int64]     `json:"assigneeGitlabUserId"`
 	AssigneeGitlabUsername task.Optional[string]     `json:"assigneeGitlabUsername"`
 	AssigneeUserID         task.Optional[*uuid.UUID] `json:"assigneeUserId"`
@@ -74,6 +76,7 @@ type bulkTaskRequest struct {
 	Title          string                      `json:"title"`
 	Description    string                      `json:"description"`
 	BacklogID      *uuid.UUID                  `json:"backlogId"`
+	EpicID         *uuid.UUID                  `json:"epicId"`
 	AssigneeUserID *uuid.UUID                  `json:"assigneeUserId"`
 	Labels         []string                    `json:"labels"`
 	DueOn          *time.Time                  `json:"dueOn"`
@@ -133,9 +136,11 @@ func isValidSize(v string) bool {
 	}
 }
 
-// parseTaskListFilter reads the ?backlog_id=, ?status=, ?priority=,
-// ?progress=, ?sort=, ?assignee= and ?q= query parameters. backlog_id
-// accepts a UUID or the literal "unassigned"; status accepts "open" or
+// parseTaskListFilter reads the ?backlog_id=, ?epic_id=, ?status=,
+// ?priority=, ?progress=, ?sort=, ?assignee= and ?q= query parameters.
+// backlog_id and epic_id each accept a UUID or the literal "unassigned"
+// (for epic_id that means the tasks sitting directly in a backlog, which is
+// every task predating the epic layer); status accepts "open" or
 // "closed" (the GitLab issue state); priority accepts "low", "medium",
 // "high" or "urgent"; progress accepts "not_started", "in_progress",
 // "on_hold" or "done" (FlowLens's own work state, independent of status);
@@ -156,6 +161,18 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 				return task.ListFilter{}, errors.New("backlog_id must be a UUID or \"unassigned\"")
 			}
 			filter.BacklogID = &id
+		}
+	}
+
+	if v := r.URL.Query().Get("epic_id"); v != "" {
+		if v == "unassigned" {
+			filter.EpicUnfiled = true
+		} else {
+			id, err := uuid.Parse(v)
+			if err != nil {
+				return task.ListFilter{}, errors.New("epic_id must be a UUID or \"unassigned\"")
+			}
+			filter.EpicID = &id
 		}
 	}
 
@@ -392,6 +409,18 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 	}
 	filter.StartedBefore = startedBefore
 
+	if v := r.URL.Query().Get("epic_id"); v != "" {
+		if v == "unassigned" {
+			filter.EpicUnfiled = true
+		} else {
+			id, err := uuid.Parse(v)
+			if err != nil {
+				return task.CrossProjectFilter{}, errors.New("epic_id must be a UUID or \"unassigned\"")
+			}
+			filter.EpicID = &id
+		}
+	}
+
 	for _, v := range r.URL.Query()["projectId"] {
 		id, err := uuid.Parse(v)
 		if err != nil {
@@ -463,6 +492,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Title:                  req.Title,
 		Description:            req.Description,
 		BacklogID:              req.BacklogID,
+		EpicID:                 req.EpicID,
 		AssigneeGitlabUserID:   req.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: req.AssigneeGitlabUsername,
 		AssigneeUserID:         req.AssigneeUserID,
@@ -509,6 +539,7 @@ func (s *Server) handleBulkCreateTasks(w http.ResponseWriter, r *http.Request) {
 				Title:          t.Title,
 				Description:    t.Description,
 				BacklogID:      t.BacklogID,
+				EpicID:         t.EpicID,
 				AssigneeUserID: t.AssigneeUserID,
 				Labels:         t.Labels,
 				DueOn:          t.DueOn,
@@ -592,6 +623,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		Title:                  req.Title,
 		Description:            req.Description,
 		BacklogID:              req.BacklogID,
+		EpicID:                 req.EpicID,
 		AssigneeGitlabUserID:   req.AssigneeGitlabUserID,
 		AssigneeGitlabUsername: req.AssigneeGitlabUsername,
 		AssigneeUserID:         req.AssigneeUserID,

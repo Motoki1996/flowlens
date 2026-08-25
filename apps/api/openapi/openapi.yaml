@@ -127,6 +127,12 @@ paths:
   /api/v1/linked-gitlab-projects/{linkID}/labels:
     $ref: './paths/linked-gitlab-projects.yaml#/labels'
 
+  /api/v1/projects/{projectID}/epics:
+    $ref: './paths/epics.yaml#/list'
+  /api/v1/projects/{projectID}/epics/order:
+    $ref: './paths/epics.yaml#/order'
+  /api/v1/epics/{epicID}:
+    $ref: './paths/epics.yaml#/epic'
   /api/v1/projects/{projectID}/backlogs:
     $ref: './paths/backlogs.yaml#/list'
   /api/v1/projects/{projectID}/backlogs/order:

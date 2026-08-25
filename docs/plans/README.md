@@ -27,6 +27,9 @@ Rules:
 
 - [`project-screen-api-gaps.md`](project-screen-api-gaps.md) — closing the
   API/UI gaps under `/projects/[projectId]` (agreed, not started).
+- [`epic-layer.md`](epic-layer.md) — `Epic`, an optional layer between
+  `Backlog` and `Task`, carrying its own base branch and change scope
+  (agreed, not started).
 
 The issue-sync MVP plan shipped (all 7 phases) and was
 deleted per phase 7's own instruction; what survives it lives in

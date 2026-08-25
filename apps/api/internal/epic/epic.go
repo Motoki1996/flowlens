@@ -1,0 +1,667 @@
+// Package epic contains the epic domain model and the service that manages
+// the epics inside a project.
+//
+// An epic is the optional rung between a backlog and its tasks (000032
+// migration): the coarse unit — one screen, one endpoint group — a refined
+// backlog is first cut into, before each of those is broken down into tasks
+// someone actually works. It is deliberately shaped as "a backlog that lives
+// inside a backlog": every field here exists on internal/backlog.Backlog with
+// the same meaning, minus size (an epic's size is the sum of its tasks'), plus
+// BacklogID.
+//
+// Epics carry no owner column of their own: every method takes the acting
+// user's ID and ownership is always checked through the parent project, the
+// same posture as internal/backlog. An epic belonging to another user's
+// project is indistinguishable from a missing one (ErrNotFound).
+package epic
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/flowlens/api/internal/assignee"
+	"github.com/flowlens/api/internal/backlog"
+	"github.com/flowlens/api/internal/database"
+	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/optional"
+	"github.com/flowlens/api/internal/project"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+// Sentinel errors returned by Service. Handlers map these to HTTP status
+// codes. ErrNotFound is returned both when an epic/project does not exist and
+// when it belongs to another user.
+var (
+	ErrInvalidName         = errors.New("epic: name must be 1-100 characters")
+	ErrInvalidSchedule     = errors.New("epic: start date must not be after due date")
+	ErrInvalidPriority     = errors.New("epic: priority must be one of low, medium, high, urgent")
+	ErrInvalidProgress     = errors.New("epic: progress must be one of not_started, in_progress, on_hold, done")
+	ErrInvalidBaseBranch   = errors.New("epic: baseBranch must be a valid git branch name, at most 255 characters")
+	ErrInvalidScope        = errors.New("epic: allowedScope/forbiddenScope must be at most 20000 characters")
+	ErrLinkNotInProject    = errors.New("epic: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
+	ErrBacklogNotInProject = errors.New("epic: backlogId must be a backlog in this project")
+	ErrNotFound            = errors.New("epic: not found")
+	ErrForbidden           = errors.New("epic: forbidden")
+	ErrEpicIDsMismatch     = errors.New("epic: epicIds must exactly match the project's current epics")
+)
+
+// ErrAssigneeNotMember re-exports internal/assignee's sentinel so handlers can
+// map it without importing that package directly.
+var ErrAssigneeNotMember = assignee.ErrNotMember
+
+// Priority and Progress values, and the ListFilter.Sort values that switch
+// List's ORDER BY. These are internal/backlog's own constants rather than
+// copies: an epic's priority and progress mean exactly what a backlog's do,
+// and a second set of string literals could only drift from the CHECK
+// constraint they share.
+const (
+	PriorityLow    = backlog.PriorityLow
+	PriorityMedium = backlog.PriorityMedium
+	PriorityHigh   = backlog.PriorityHigh
+	PriorityUrgent = backlog.PriorityUrgent
+
+	ProgressNotStarted = backlog.ProgressNotStarted
+	ProgressInProgress = backlog.ProgressInProgress
+	ProgressOnHold     = backlog.ProgressOnHold
+	ProgressDone       = backlog.ProgressDone
+
+	SortPriority = backlog.SortPriority
+	SortProgress = backlog.SortProgress
+)
+
+// Epic is the API-facing representation of an epic.
+type Epic struct {
+	ID        uuid.UUID `json:"id"`
+	ProjectID uuid.UUID `json:"projectId"`
+	// BacklogID is the backlog this epic belongs to. nil means unfiled — the
+	// Unclassified group, exactly as a task with no backlog is. An epic
+	// cannot be filed in another project's backlog (ErrBacklogNotInProject).
+	BacklogID   *uuid.UUID `json:"backlogId"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Position    int32      `json:"position"`
+	StartDate   *time.Time `json:"startDate"`
+	DueOn       *time.Time `json:"dueOn"`
+	Priority    string     `json:"priority"`
+	Progress    string     `json:"progress"`
+	// DefaultLinkedGitlabProjectID is the GitLab project a task filed in this
+	// epic gets its issue created in, overriding its backlog's own override of
+	// the project default. nil means "fall through to the backlog". Read only
+	// when a task is created: moving a task between epics afterwards never
+	// moves an issue that already exists.
+	DefaultLinkedGitlabProjectID *uuid.UUID `json:"defaultLinkedGitlabProjectId"`
+	// BaseBranch is the branch tasks in this epic are meant to branch from,
+	// and the field this whole rung exists for. Optional, app-only, never
+	// synced to GitLab. Resolved epic-first, backlog-second into
+	// GET /api/v1/tasks/{taskID}/context.
+	BaseBranch string `json:"baseBranch"`
+	// AllowedScope/ForbiddenScope are the paths tasks in this epic may/may not
+	// touch, resolved the same way BaseBranch is.
+	AllowedScope   string `json:"allowedScope"`
+	ForbiddenScope string `json:"forbiddenScope"`
+	// AssigneeUserID is the project member who owns this epic. App-only end to
+	// end, with no GitLab bridge — a backlog's rule, not a task's, since an
+	// epic has no GitLab counterpart to mirror onto. AssigneeUsername/
+	// AssigneeDisplayName are resolved from users on read rather than stored.
+	AssigneeUserID      *uuid.UUID `json:"assigneeUserId"`
+	AssigneeUsername    string     `json:"assigneeUsername"`
+	AssigneeDisplayName string     `json:"assigneeDisplayName"`
+	// TaskCount and ClosedTaskCount come from ListEpicsByProject's LEFT JOIN
+	// aggregate, so the Epic collection screen doesn't fetch every task just
+	// to show a count and a completion ratio. Populated only by List (and
+	// Reorder, which returns List's result) — zero on every other response,
+	// mirroring internal/backlog.
+	TaskCount       int64     `json:"taskCount"`
+	ClosedTaskCount int64     `json:"closedTaskCount"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+func fromRow(row db.Epic) Epic {
+	return Epic{
+		ID:                           row.ID,
+		ProjectID:                    row.ProjectID,
+		BacklogID:                    uuidPtr(row.BacklogID),
+		Name:                         row.Name,
+		Description:                  row.Description,
+		Position:                     row.Position,
+		StartDate:                    datePtr(row.StartDate),
+		DueOn:                        datePtr(row.DueOn),
+		Priority:                     row.Priority,
+		Progress:                     row.Progress,
+		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
+		BaseBranch:                   row.BaseBranch,
+		AllowedScope:                 row.AllowedScope,
+		ForbiddenScope:               row.ForbiddenScope,
+		AssigneeUserID:               uuidPtr(row.AssigneeUserID),
+		CreatedAt:                    row.CreatedAt.Time,
+		UpdatedAt:                    row.UpdatedAt.Time,
+	}
+}
+
+// fromListRow maps a ListEpicsByProject row, which additionally carries the
+// LEFT JOIN's task counts, to the domain model.
+func fromListRow(row db.ListEpicsByProjectRow) Epic {
+	return Epic{
+		ID:                           row.ID,
+		ProjectID:                    row.ProjectID,
+		BacklogID:                    uuidPtr(row.BacklogID),
+		Name:                         row.Name,
+		Description:                  row.Description,
+		Position:                     row.Position,
+		StartDate:                    datePtr(row.StartDate),
+		DueOn:                        datePtr(row.DueOn),
+		Priority:                     row.Priority,
+		Progress:                     row.Progress,
+		DefaultLinkedGitlabProjectID: uuidPtr(row.DefaultLinkedGitlabProjectID),
+		BaseBranch:                   row.BaseBranch,
+		AllowedScope:                 row.AllowedScope,
+		ForbiddenScope:               row.ForbiddenScope,
+		AssigneeUserID:               uuidPtr(row.AssigneeUserID),
+		TaskCount:                    row.TaskCount,
+		ClosedTaskCount:              row.ClosedTaskCount,
+		CreatedAt:                    row.CreatedAt.Time,
+		UpdatedAt:                    row.UpdatedAt.Time,
+	}
+}
+
+func datePtr(v pgtype.Date) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := v.Time
+	return &t
+}
+
+func toDate(v *time.Time) pgtype.Date {
+	if v == nil {
+		return pgtype.Date{}
+	}
+	return pgtype.Date{Time: *v, Valid: true}
+}
+
+func uuidPtr(v pgtype.UUID) *uuid.UUID {
+	if !v.Valid {
+		return nil
+	}
+	id := uuid.UUID(v.Bytes)
+	return &id
+}
+
+func toUUID(v *uuid.UUID) pgtype.UUID {
+	if v == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *v, Valid: true}
+}
+
+// Service manages epics inside a project.
+type Service struct {
+	q        db.Querier
+	txRunner database.TxRunner
+	projects *project.Service
+}
+
+// NewService constructs an epic Service. projects verifies project access
+// before any project-scoped operation. txRunner is used only by Update, to
+// move the epic's tasks to a new backlog in the same transaction as the epic
+// itself (see MoveEpicTasksToBacklog).
+func NewService(q db.Querier, txRunner database.TxRunner, projects *project.Service) *Service {
+	return &Service{q: q, txRunner: txRunner, projects: projects}
+}
+
+// authorize requires ownerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, ownerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, ownerID, projectID, min)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, project.ErrNotFound):
+		return ErrNotFound
+	case errors.Is(err, project.ErrForbidden):
+		return ErrForbidden
+	default:
+		return fmt.Errorf("epic: authorize: %w", err)
+	}
+}
+
+// validateBacklog checks that backlogID, if set, is a backlog in projectID.
+// The FK only guarantees the backlog exists, not that it belongs to this
+// project, and an epic filed in another project's backlog would appear in
+// that project's screens while carrying this project's tasks.
+func (s *Service) validateBacklog(ctx context.Context, ownerID, projectID uuid.UUID, backlogID *uuid.UUID) error {
+	if backlogID == nil {
+		return nil
+	}
+	row, err := s.q.GetBacklogForOwner(ctx, db.GetBacklogForOwnerParams{
+		ID:          *backlogID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrBacklogNotInProject
+		}
+		return fmt.Errorf("epic: validate backlog: %w", err)
+	}
+	if row.ProjectID != projectID {
+		return ErrBacklogNotInProject
+	}
+	return nil
+}
+
+// validateLink checks that linkID, if set, is a GitLab project linked to
+// projectID's own GitLab connection — the same rule, and the same reason, as
+// internal/backlog.Service.validateLink.
+func (s *Service) validateLink(ctx context.Context, ownerID, projectID uuid.UUID, linkID *uuid.UUID) error {
+	if linkID == nil {
+		return nil
+	}
+	_, err := s.q.GetLinkedGitlabProjectInProjectForOwner(ctx, db.GetLinkedGitlabProjectInProjectForOwnerParams{
+		ID:          *linkID,
+		ProjectID:   projectID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrLinkNotInProject
+		}
+		return fmt.Errorf("epic: validate linked gitlab project: %w", err)
+	}
+	return nil
+}
+
+// CreateParams are the attributes of a new epic. Every optional field means
+// the same thing it does on internal/backlog.CreateParams.
+type CreateParams struct {
+	// BacklogID is optional: nil leaves the epic unfiled. A backlog outside
+	// this project is rejected with ErrBacklogNotInProject.
+	BacklogID   *uuid.UUID
+	Name        string
+	Description string
+	StartDate   *time.Time
+	DueOn       *time.Time
+	// Priority defaults to PriorityMedium when empty.
+	Priority string
+	// Progress defaults to ProgressNotStarted when empty.
+	Progress string
+	// DefaultLinkedGitlabProjectID is optional: nil falls the epic through to
+	// its backlog's link.
+	DefaultLinkedGitlabProjectID *uuid.UUID
+	// BaseBranch is optional; empty means "not set", and the task context
+	// falls through to the backlog's.
+	BaseBranch string
+	// AllowedScope/ForbiddenScope are optional and fall through the same way.
+	AllowedScope   string
+	ForbiddenScope string
+	// AssigneeUserID is optional: nil leaves the epic unassigned. A non-member
+	// is rejected with ErrAssigneeNotMember.
+	AssigneeUserID *uuid.UUID
+}
+
+// Create validates and creates an epic at the end of projectID's epic order.
+// It returns ErrNotFound if projectID does not exist or the caller cannot see
+// it.
+func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p CreateParams) (Epic, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return Epic{}, err
+	}
+
+	fields, err := normalize(normalizeInput{
+		Name:           p.Name,
+		StartDate:      p.StartDate,
+		DueOn:          p.DueOn,
+		Priority:       p.Priority,
+		Progress:       p.Progress,
+		BaseBranch:     p.BaseBranch,
+		AllowedScope:   p.AllowedScope,
+		ForbiddenScope: p.ForbiddenScope,
+	})
+	if err != nil {
+		return Epic{}, err
+	}
+	if err := s.validateBacklog(ctx, ownerID, projectID, p.BacklogID); err != nil {
+		return Epic{}, err
+	}
+	if err := s.validateLink(ctx, ownerID, projectID, p.DefaultLinkedGitlabProjectID); err != nil {
+		return Epic{}, err
+	}
+	if p.AssigneeUserID != nil {
+		if err := assignee.ValidateMember(ctx, s.q, projectID, *p.AssigneeUserID); err != nil {
+			return Epic{}, err
+		}
+	}
+
+	row, err := s.q.CreateEpic(ctx, db.CreateEpicParams{
+		ProjectID:                    projectID,
+		BacklogID:                    toUUID(p.BacklogID),
+		Name:                         fields.Name,
+		Description:                  p.Description,
+		StartDate:                    toDate(p.StartDate),
+		DueOn:                        toDate(p.DueOn),
+		Priority:                     fields.Priority,
+		Progress:                     fields.Progress,
+		DefaultLinkedGitlabProjectID: toUUID(p.DefaultLinkedGitlabProjectID),
+		BaseBranch:                   fields.BaseBranch,
+		AllowedScope:                 fields.AllowedScope,
+		ForbiddenScope:               fields.ForbiddenScope,
+		AssigneeUserID:               toUUID(p.AssigneeUserID),
+	})
+	if err != nil {
+		return Epic{}, fmt.Errorf("epic: create: %w", err)
+	}
+	e := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &e); err != nil {
+		return Epic{}, err
+	}
+	return e, nil
+}
+
+// ListFilter narrows List to a subset of a project's epics. The zero value
+// means "no filter, default (position) order".
+type ListFilter struct {
+	// BacklogID, when non-nil, only returns epics filed in that backlog;
+	// BacklogUnfiled only those in no backlog at all. Mutually exclusive.
+	BacklogID      *uuid.UUID
+	BacklogUnfiled bool
+	Priority       string // one of the Priority* constants, or "" (no filter)
+	Progress       string // one of the Progress* constants, or "" (no filter)
+	// AssigneeUserID/AssigneeUnassigned behave exactly as a backlog's: there
+	// is no GitLab axis to OR against, since an epic has no GitLab
+	// counterpart. Mutually exclusive.
+	AssigneeUserID     *uuid.UUID
+	AssigneeUnassigned bool
+	// Sort is "" (position ASC, created_at ASC, the manual order),
+	// SortPriority or SortProgress.
+	Sort string
+}
+
+// List returns projectID's epics matching filter. It returns ErrNotFound if
+// projectID does not exist or the caller cannot see it.
+func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Epic, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.q.ListEpicsByProject(ctx, db.ListEpicsByProjectParams{
+		ProjectID:          projectID,
+		BacklogID:          toUUID(filter.BacklogID),
+		BacklogUnfiled:     filter.BacklogUnfiled,
+		Priority:           filter.Priority,
+		Progress:           filter.Progress,
+		AssigneeUserID:     toUUID(filter.AssigneeUserID),
+		AssigneeUnassigned: filter.AssigneeUnassigned,
+		SortByPriority:     filter.Sort == SortPriority,
+		SortByProgress:     filter.Sort == SortProgress,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("epic: list: %w", err)
+	}
+	out := make([]Epic, len(rows))
+	for i, row := range rows {
+		out[i] = fromListRow(row)
+	}
+	if err := s.attachAssigneeNamesToList(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Get returns the epic by ID, scoped through its project's members. It
+// returns ErrNotFound both when the epic does not exist and when its project
+// belongs to someone else.
+func (s *Service) Get(ctx context.Context, ownerID, epicID uuid.UUID) (Epic, error) {
+	row, err := s.q.GetEpicForOwner(ctx, db.GetEpicForOwnerParams{
+		ID:          epicID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Epic{}, ErrNotFound
+		}
+		return Epic{}, fmt.Errorf("epic: get: %w", err)
+	}
+	e := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &e); err != nil {
+		return Epic{}, err
+	}
+	return e, nil
+}
+
+// ProjectID returns the project epicID belongs to, with no owner check — only
+// requireTokenResourceProject (internal/http) uses this, to compare against a
+// bearer token's own project, which has no owner to join against.
+func (s *Service) ProjectID(ctx context.Context, epicID uuid.UUID) (uuid.UUID, error) {
+	projectID, err := s.q.GetEpicProjectID(ctx, epicID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, ErrNotFound
+		}
+		return uuid.Nil, fmt.Errorf("epic: project id: %w", err)
+	}
+	return projectID, nil
+}
+
+// UpdateParams are the attributes Update writes. Name, Description and
+// Position are always overwritten; everything else is Optional, so a caller
+// that only renames an epic leaves the rest untouched rather than clearing
+// it. An explicit null clears a nullable field; an explicit empty string
+// resets a defaulted one.
+type UpdateParams struct {
+	// BacklogID absent keeps the epic where it is; an explicit null unfiles
+	// it. Either way the epic's tasks follow it, in the same transaction.
+	BacklogID   optional.Optional[*uuid.UUID]
+	Name        string
+	Description string
+	Position    int32
+	StartDate   optional.Optional[*time.Time]
+	DueOn       optional.Optional[*time.Time]
+	// Priority absent keeps the current value; an explicit empty string resets
+	// it to PriorityMedium.
+	Priority optional.Optional[string]
+	// Progress follows the same rule, resetting to ProgressNotStarted.
+	Progress optional.Optional[string]
+	// DefaultLinkedGitlabProjectID absent keeps the current value; an explicit
+	// null falls the epic back to its backlog's link.
+	DefaultLinkedGitlabProjectID optional.Optional[*uuid.UUID]
+	// BaseBranch, AllowedScope and ForbiddenScope follow the
+	// absent-keeps/empty-clears rule.
+	BaseBranch     optional.Optional[string]
+	AllowedScope   optional.Optional[string]
+	ForbiddenScope optional.Optional[string]
+	// AssigneeUserID absent keeps the current assignee; an explicit null
+	// unassigns.
+	AssigneeUserID optional.Optional[*uuid.UUID]
+}
+
+// Update overwrites name, description and position, and applies whichever of
+// the optional fields the caller set. Ownership is enforced by the query, so a
+// non-member gets ErrNotFound and nothing is written.
+//
+// When the epic moves to a different backlog, its tasks move with it in the
+// same transaction: a task's backlog_id and its epic's must agree, or the task
+// would report a backlog its own epic no longer belongs to.
+func (s *Service) Update(ctx context.Context, ownerID, epicID uuid.UUID, p UpdateParams) (Epic, error) {
+	// The UPDATE writes every column, so absent fields have to be resolved
+	// against the stored row first. Get is viewer-scoped, so a foreign epic
+	// stops here with ErrNotFound before anything is written; the
+	// member-minimum write check happens once current.ProjectID is known.
+	current, err := s.Get(ctx, ownerID, epicID)
+	if err != nil {
+		return Epic{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Epic{}, err
+	}
+
+	fields, err := normalize(normalizeInput{
+		Name:           p.Name,
+		StartDate:      p.StartDate.Or(current.StartDate),
+		DueOn:          p.DueOn.Or(current.DueOn),
+		Priority:       p.Priority.Or(current.Priority),
+		Progress:       p.Progress.Or(current.Progress),
+		BaseBranch:     p.BaseBranch.Or(current.BaseBranch),
+		AllowedScope:   p.AllowedScope.Or(current.AllowedScope),
+		ForbiddenScope: p.ForbiddenScope.Or(current.ForbiddenScope),
+	})
+	if err != nil {
+		return Epic{}, err
+	}
+	startDate := p.StartDate.Or(current.StartDate)
+	dueOn := p.DueOn.Or(current.DueOn)
+
+	// Only a value the caller actually sent is re-validated: the stored one
+	// was checked when it was written, and a backlog/link since deleted is
+	// already NULL here (ON DELETE SET NULL).
+	backlogID := p.BacklogID.Or(current.BacklogID)
+	if _, changed := p.BacklogID.Get(); changed {
+		if err := s.validateBacklog(ctx, ownerID, current.ProjectID, backlogID); err != nil {
+			return Epic{}, err
+		}
+	}
+	link := p.DefaultLinkedGitlabProjectID.Or(current.DefaultLinkedGitlabProjectID)
+	if _, changed := p.DefaultLinkedGitlabProjectID.Get(); changed {
+		if err := s.validateLink(ctx, ownerID, current.ProjectID, link); err != nil {
+			return Epic{}, err
+		}
+	}
+	newAssignee := p.AssigneeUserID.Or(current.AssigneeUserID)
+	if _, changed := p.AssigneeUserID.Get(); changed && newAssignee != nil {
+		if err := assignee.ValidateMember(ctx, s.q, current.ProjectID, *newAssignee); err != nil {
+			return Epic{}, err
+		}
+	}
+
+	backlogChanged := !sameUUIDPtr(current.BacklogID, backlogID)
+
+	var result Epic
+	err = s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		row, err := q.UpdateEpicForOwner(ctx, db.UpdateEpicForOwnerParams{
+			ID:                           epicID,
+			OwnerUserID:                  ownerID,
+			BacklogID:                    toUUID(backlogID),
+			Name:                         fields.Name,
+			Description:                  p.Description,
+			Position:                     p.Position,
+			StartDate:                    toDate(startDate),
+			DueOn:                        toDate(dueOn),
+			Priority:                     fields.Priority,
+			Progress:                     fields.Progress,
+			DefaultLinkedGitlabProjectID: toUUID(link),
+			BaseBranch:                   fields.BaseBranch,
+			AllowedScope:                 fields.AllowedScope,
+			ForbiddenScope:               fields.ForbiddenScope,
+			AssigneeUserID:               toUUID(newAssignee),
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("epic: update: %w", err)
+		}
+		result = fromRow(row)
+
+		if backlogChanged {
+			if err := q.MoveEpicTasksToBacklog(ctx, db.MoveEpicTasksToBacklogParams{
+				EpicID:    toUUID(&epicID),
+				BacklogID: toUUID(backlogID),
+			}); err != nil {
+				return fmt.Errorf("epic: update: move tasks: %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return Epic{}, err
+	}
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
+		return Epic{}, err
+	}
+	return result, nil
+}
+
+// Reorder resequences the position of every epic in projectID to match
+// epicIDs' order — position 0 for the first ID, 1 for the second, and so on.
+// epicIDs must be exactly the project's current epic set (same length, no
+// duplicates, nothing missing or foreign), or it returns ErrEpicIDsMismatch
+// without writing anything, the same all-or-nothing guard
+// internal/backlog.Service.Reorder applies.
+func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, epicIDs []uuid.UUID) ([]Epic, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
+		return nil, err
+	}
+
+	current, err := s.q.ListEpicsByProject(ctx, db.ListEpicsByProjectParams{ProjectID: projectID})
+	if err != nil {
+		return nil, fmt.Errorf("epic: reorder: %w", err)
+	}
+	if !sameEpicIDSet(current, epicIDs) {
+		return nil, ErrEpicIDsMismatch
+	}
+
+	if err := s.q.ReorderEpics(ctx, db.ReorderEpicsParams{
+		EpicIds:   epicIDs,
+		ProjectID: projectID,
+	}); err != nil {
+		return nil, fmt.Errorf("epic: reorder: %w", err)
+	}
+
+	return s.List(ctx, ownerID, projectID, ListFilter{})
+}
+
+// sameEpicIDSet reports whether epicIDs is exactly current's IDs, in any
+// order: same length, no duplicates, nothing missing or foreign.
+func sameEpicIDSet(current []db.ListEpicsByProjectRow, epicIDs []uuid.UUID) bool {
+	if len(current) != len(epicIDs) {
+		return false
+	}
+	seen := make(map[uuid.UUID]struct{}, len(epicIDs))
+	for _, id := range epicIDs {
+		if _, dup := seen[id]; dup {
+			return false
+		}
+		seen[id] = struct{}{}
+	}
+	for _, e := range current {
+		if _, ok := seen[e.ID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// Delete removes the epic. Ownership is enforced by the query, so a non-member
+// gets ErrNotFound and nothing is deleted. Tasks in the epic are not deleted:
+// the schema's ON DELETE SET NULL drops them back to sitting directly in their
+// backlog, which is exactly where they were before the epic existed.
+func (s *Service) Delete(ctx context.Context, ownerID, epicID uuid.UUID) error {
+	current, err := s.Get(ctx, ownerID, epicID)
+	if err != nil {
+		return err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return err
+	}
+	affected, err := s.q.DeleteEpicForOwner(ctx, db.DeleteEpicForOwnerParams{
+		ID:          epicID,
+		OwnerUserID: ownerID,
+	})
+	if err != nil {
+		return fmt.Errorf("epic: delete: %w", err)
+	}
+	if affected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func sameUUIDPtr(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}

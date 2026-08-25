@@ -103,6 +103,18 @@ type Querier interface {
 	// filed in this backlog may/may not touch.
 	CreateBacklog(ctx context.Context, arg CreateBacklogParams) (Backlog, error)
 	CreateBacklogProgressEvent(ctx context.Context, arg CreateBacklogProgressEventParams) (BacklogProgressEvent, error)
+	// Epics (000032) are the optional rung between a backlog and its tasks.
+	// Like backlogs they have no owner column of their own: ownership is always
+	// checked through the parent project. CreateEpic/ListEpicsByProject trust the
+	// caller to have already verified project access (e.g. via
+	// project.Service.Authorize), while the single-epic queries join to
+	// project_members so a foreign epic is indistinguishable from a missing one.
+	//
+	// Every column here mirrors backlogs.sql's, deliberately — see the 000032
+	// migration. backlog_id is the one addition, and it is nullable: an epic
+	// outside any backlog is the Unclassified group, exactly as an unfiled task
+	// is.
+	CreateEpic(ctx context.Context, arg CreateEpicParams) (Epic, error)
 	// gitlab_sync_runs records one project.import / project.resync execution
 	// against a linked GitLab project (docs/plans/issue-sync.md's SyncRun
 	// object, issue #25). Concurrency is enforced at the database level, not by
@@ -216,6 +228,7 @@ type Querier interface {
 	// "Inbound").
 	CreateWebhookEvent(ctx context.Context, arg CreateWebhookEventParams) (WebhookEvent, error)
 	DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogForOwnerParams) (int64, error)
+	DeleteEpicForOwner(ctx context.Context, arg DeleteEpicForOwnerParams) (int64, error)
 	DeleteExpiredSessions(ctx context.Context) error
 	DeleteGitlabConnectionForOwner(ctx context.Context, arg DeleteGitlabConnectionForOwnerParams) (int64, error)
 	// Returns the deleted row (rather than an affected-row count) so the
@@ -286,6 +299,23 @@ type Querier interface {
 	// project has anywhere to push a new issue, and if so, where
 	// (docs/plans/issue-sync.md, "Outbound").
 	GetDefaultLinkedGitlabProjectForOwner(ctx context.Context, arg GetDefaultLinkedGitlabProjectForOwnerParams) (LinkedGitlabProject, error)
+	GetEpicForOwner(ctx context.Context, arg GetEpicForOwnerParams) (Epic, error)
+	// GetEpicIssueDestination is the create-time lookup internal/task uses to
+	// resolve where a new task's issue is filed: the epic's own link, and the
+	// backlog it belongs to so the chain can fall through to that backlog's link
+	// and then the project default.
+	GetEpicIssueDestination(ctx context.Context, id uuid.UUID) (GetEpicIssueDestinationRow, error)
+	// GetEpicProjectID is the lightweight project lookup
+	// requireTokenResourceProject (internal/http) uses to enforce a bearer
+	// token's project boundary on a single-epic URL, without GetEpicForOwner's
+	// member join — a token has no session owner to join against.
+	GetEpicProjectID(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	// GetEpicTaskDefaults is GetBacklogTaskDefaults' epic-rung twin: the
+	// lightweight lookup internal/task's Context uses to resolve a task's epic's
+	// base_branch/allowed_scope/forbidden_scope. The two are resolved per field
+	// (epic value if non-empty, else the backlog's), not per object, so an epic
+	// that sets only base_branch still inherits its backlog's scope.
+	GetEpicTaskDefaults(ctx context.Context, id uuid.UUID) (GetEpicTaskDefaultsRow, error)
 	// Unscoped, for the outbox worker (internal/issuesync): a linked_gitlab_projects
 	// row carries gitlab_connection_id but the worker has no acting user to
 	// scope through, the same reasoning as GetLinkedGitlabProjectByID.
@@ -503,6 +533,13 @@ type Querier interface {
 	// project with notifications turned on, regardless of caller, since the
 	// worker runs outside any request.
 	ListEnabledNotificationSettings(ctx context.Context) ([]NotificationSetting, error)
+	// ListEpicsByProject follows ListBacklogsByProject exactly — the same
+	// "empty/false disables it" filter convention, the same priority/progress
+	// sort ranks, and the same LEFT JOIN task counts so the Epic collection
+	// screen's List row count, Board card ratio and Timeline bar fill come from
+	// one query. backlog_id is the extra filter: sqlc.narg(backlog_id) narrows to
+	// one backlog's epics, and backlog_unfiled to the epics in no backlog at all.
+	ListEpicsByProject(ctx context.Context, arg ListEpicsByProjectParams) ([]ListEpicsByProjectRow, error)
 	ListFailedSyncJobsByProject(ctx context.Context, projectID uuid.UUID) ([]SyncJob, error)
 	// ListFailedSyncJobsByProjectForOwner backs GET
 	// /projects/{projectID}/sync-jobs?status=failed (issue #97): every
@@ -731,6 +768,11 @@ type Querier interface {
 	MarkWebhookEventFailed(ctx context.Context, arg MarkWebhookEventFailedParams) error
 	MarkWebhookEventProcessed(ctx context.Context, id uuid.UUID) error
 	MarkWebhookEventSkipped(ctx context.Context, arg MarkWebhookEventSkippedParams) error
+	// MoveEpicTasksToBacklog keeps a task's backlog_id in step with its epic's
+	// when the epic itself moves between backlogs (internal/epic.Service.Update
+	// runs it in the same transaction as UpdateEpicForOwner). Without it a task
+	// would report a backlog its own epic no longer belongs to.
+	MoveEpicTasksToBacklog(ctx context.Context, arg MoveEpicTasksToBacklogParams) error
 	// Used after deleting the default link: makes the oldest remaining link in
 	// the same connection the new default. A no-op if none remain.
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error
@@ -743,6 +785,12 @@ type Querier interface {
 	// (issue #79). internal/backlog.Service.Reorder checks backlog_ids is
 	// exactly the project's current backlog set before calling this.
 	ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams) error
+	// ReorderEpics resequences a project's epics to epic_ids' given order
+	// (position 0 for the first id, 1 for the second, ...) in a single
+	// statement, the same all-or-nothing shape as ReorderBacklogs.
+	// internal/epic.Service.Reorder checks epic_ids is exactly the project's
+	// current epic set before calling this.
+	ReorderEpics(ctx context.Context, arg ReorderEpicsParams) error
 	// ReorderTasks resequences one backlog bucket's tasks to task_ids' given
 	// order (position 0 for the first id, 1 for the second, ...) in a single
 	// statement, so a drag across many tasks either lands as one committed order
@@ -798,6 +846,10 @@ type Querier interface {
 	// current row first and fills in whatever the PATCH body left out (see its
 	// Update).
 	UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogForOwnerParams) (Backlog, error)
+	// UpdateEpicForOwner overwrites every editable column, so the optional ones
+	// must arrive already resolved: epic.Service reads the current row first and
+	// fills in whatever the PATCH body left out (see its Update).
+	UpdateEpicForOwner(ctx context.Context, arg UpdateEpicForOwnerParams) (Epic, error)
 	UpdateGitlabConnectionVerificationForOwner(ctx context.Context, arg UpdateGitlabConnectionVerificationForOwnerParams) (GitlabConnection, error)
 	// Unscoped, for the same reason as UpdateLinkedGitlabProjectLastSyncedAt.
 	// Values used: "pending" (default), "completed", "failed"

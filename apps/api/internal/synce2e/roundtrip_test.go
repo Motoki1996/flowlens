@@ -27,6 +27,7 @@ import (
 	"github.com/flowlens/api/internal/crypto"
 	"github.com/flowlens/api/internal/database"
 	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/epic"
 	"github.com/flowlens/api/internal/gitlab"
 	"github.com/flowlens/api/internal/issuesync"
 	"github.com/flowlens/api/internal/project"
@@ -180,7 +181,8 @@ func newEnv(t *testing.T) *env {
 
 	projects := project.NewService(q)
 	backlogs := backlog.NewService(q, txRunner, projects)
-	tasks := task.NewService(q, txRunner, projects, backlogs)
+	epics := epic.NewService(q, txRunner, projects)
+	tasks := task.NewService(q, txRunner, projects, backlogs, epics)
 	comments := taskcomment.NewService(q, txRunner, projects, tasks)
 
 	issuesyncSvc := issuesync.NewService(q, cipher, factory)

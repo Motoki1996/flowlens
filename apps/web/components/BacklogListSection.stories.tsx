@@ -8,7 +8,6 @@ const backlog: Backlog = {
   projectId: "p1",
   name: "Sprint 1",
   description: "",
-  position: 0,
   startDate: null,
   dueOn: null,
   priority: "medium",
@@ -47,8 +46,8 @@ export const Default: Story = {
     projectId: "p1",
     backlogs: [
       backlog,
-      { ...backlog, id: "b2", name: "Hotfixes", priority: "urgent", position: 1 },
-      { ...backlog, id: "b3", name: "Icebox", priority: "low", position: 2 },
+      { ...backlog, id: "b2", name: "Hotfixes", priority: "urgent" },
+      { ...backlog, id: "b3", name: "Icebox", priority: "low" },
     ],
   },
 };
@@ -73,7 +72,7 @@ export const ListWithCompletionAndUnclassified: Story = {
     projectId: "p1",
     backlogs: [
       { ...backlog, taskCount: 5, closedTaskCount: 2 },
-      { ...backlog, id: "b2", name: "Icebox", priority: "low", position: 1 },
+      { ...backlog, id: "b2", name: "Icebox", priority: "low" },
     ],
     unclassifiedCount: 3,
   },
@@ -129,8 +128,8 @@ export const SortedByDueDate: Story = {
   args: {
     projectId: "p1",
     backlogs: [
-      { ...backlog, id: "b2", name: "Icebox", dueOn: null, position: 0 },
-      { ...backlog, id: "b1", name: "Sprint 1", dueOn: "2026-08-15T00:00:00Z", position: 1 },
+      { ...backlog, id: "b2", name: "Icebox", dueOn: null },
+      { ...backlog, id: "b1", name: "Sprint 1", dueOn: "2026-08-15T00:00:00Z" },
     ],
     sort: "dueOn",
   },

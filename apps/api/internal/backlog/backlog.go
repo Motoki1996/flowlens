@@ -30,16 +30,15 @@ import (
 // codes. ErrNotFound is returned both when a backlog/project does not exist
 // and when it belongs to another user.
 var (
-	ErrInvalidName        = errors.New("backlog: name must be 1-100 characters")
-	ErrInvalidSchedule    = errors.New("backlog: start date must not be after due date")
-	ErrInvalidPriority    = errors.New("backlog: priority must be one of low, medium, high, urgent")
-	ErrInvalidProgress    = errors.New("backlog: progress must be one of not_started, in_progress, on_hold, done")
-	ErrInvalidBaseBranch  = errors.New("backlog: baseBranch must be a valid git branch name, at most 255 characters")
-	ErrInvalidScope       = errors.New("backlog: allowedScope/forbiddenScope must be at most 20000 characters")
-	ErrLinkNotInProject   = errors.New("backlog: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
-	ErrNotFound           = errors.New("backlog: not found")
-	ErrForbidden          = errors.New("backlog: forbidden")
-	ErrBacklogIDsMismatch = errors.New("backlog: backlogIds must exactly match the project's current backlogs")
+	ErrInvalidName       = errors.New("backlog: name must be 1-100 characters")
+	ErrInvalidSchedule   = errors.New("backlog: start date must not be after due date")
+	ErrInvalidPriority   = errors.New("backlog: priority must be one of low, medium, high, urgent")
+	ErrInvalidProgress   = errors.New("backlog: progress must be one of not_started, in_progress, on_hold, done")
+	ErrInvalidBaseBranch = errors.New("backlog: baseBranch must be a valid git branch name, at most 255 characters")
+	ErrInvalidScope      = errors.New("backlog: allowedScope/forbiddenScope must be at most 20000 characters")
+	ErrLinkNotInProject  = errors.New("backlog: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
+	ErrNotFound          = errors.New("backlog: not found")
+	ErrForbidden         = errors.New("backlog: forbidden")
 )
 
 // Priority values, app-only and never synced to GitLab, mirroring
@@ -89,7 +88,6 @@ type Backlog struct {
 	ProjectID   uuid.UUID  `json:"projectId"`
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
-	Position    int32      `json:"position"`
 	StartDate   *time.Time `json:"startDate"`
 	DueOn       *time.Time `json:"dueOn"`
 	Priority    string     `json:"priority"`
@@ -129,7 +127,7 @@ type Backlog struct {
 	// counts, computed by ListBacklogsByProject's LEFT JOIN aggregate (issue
 	// #144) so the Backlog collection screen doesn't need to fetch every task
 	// in the project just to show a count and a completion ratio. Populated
-	// only by List (and Reorder, which returns List's result) — zero on every
+	// only by List — zero on every
 	// other Backlog response (Create/Get/Update), which don't compute the
 	// join, mirroring internal/project's FailedSyncTaskCount.
 	TaskCount       int64     `json:"taskCount"`
@@ -147,7 +145,6 @@ func fromRow(row db.Backlog) Backlog {
 		ProjectID:                    row.ProjectID,
 		Name:                         row.Name,
 		Description:                  row.Description,
-		Position:                     row.Position,
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -170,7 +167,6 @@ func fromListRow(row db.ListBacklogsByProjectRow) Backlog {
 		ProjectID:                    row.ProjectID,
 		Name:                         row.Name,
 		Description:                  row.Description,
-		Position:                     row.Position,
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -505,15 +501,14 @@ func (s *Service) ProjectID(ctx context.Context, backlogID uuid.UUID) (uuid.UUID
 	return projectID, nil
 }
 
-// UpdateParams are the attributes Update writes. Name, Description and
-// Position are always overwritten; the two dates are Optional so a caller that
+// UpdateParams are the attributes Update writes. Name and Description are
+// always overwritten; the two dates are Optional so a caller that
 // only renames a backlog — the rename form in the web UI does exactly that —
 // leaves its planned period untouched rather than clearing it. An explicit
 // null clears the date.
 type UpdateParams struct {
 	Name        string
 	Description string
-	Position    int32
 	StartDate   optional.Optional[*time.Time]
 	DueOn       optional.Optional[*time.Time]
 	// Priority left absent keeps the backlog's current priority; an
@@ -626,7 +621,6 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 			OwnerUserID:                  ownerID,
 			Name:                         normalized,
 			Description:                  p.Description,
-			Position:                     p.Position,
 			StartDate:                    toDate(startDate),
 			DueOn:                        toDate(dueOn),
 			Priority:                     priority,
@@ -669,57 +663,6 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		return Backlog{}, err
 	}
 	return result, nil
-}
-
-// Reorder resequences the position of every backlog in projectID to match
-// backlogIDs' order — position 0 for the first ID, 1 for the second, and so
-// on. backlogIDs must be exactly the project's current backlog set (same
-// length, no duplicates, nothing missing or foreign), or it returns
-// ErrBacklogIDsMismatch without writing anything, the same all-or-nothing
-// guard internal/task.Service.Reorder applies to a backlog's tasks (issue
-// #79).
-func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, backlogIDs []uuid.UUID) ([]Backlog, error) {
-	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
-		return nil, err
-	}
-
-	current, err := s.q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{ProjectID: projectID})
-	if err != nil {
-		return nil, fmt.Errorf("backlog: reorder: %w", err)
-	}
-	if !sameBacklogIDSet(current, backlogIDs) {
-		return nil, ErrBacklogIDsMismatch
-	}
-
-	if err := s.q.ReorderBacklogs(ctx, db.ReorderBacklogsParams{
-		BacklogIds: backlogIDs,
-		ProjectID:  projectID,
-	}); err != nil {
-		return nil, fmt.Errorf("backlog: reorder: %w", err)
-	}
-
-	return s.List(ctx, ownerID, projectID, ListFilter{})
-}
-
-// sameBacklogIDSet reports whether backlogIDs is exactly current's IDs, in
-// any order: same length, no duplicates, nothing missing or foreign.
-func sameBacklogIDSet(current []db.ListBacklogsByProjectRow, backlogIDs []uuid.UUID) bool {
-	if len(current) != len(backlogIDs) {
-		return false
-	}
-	seen := make(map[uuid.UUID]struct{}, len(backlogIDs))
-	for _, id := range backlogIDs {
-		if _, dup := seen[id]; dup {
-			return false
-		}
-		seen[id] = struct{}{}
-	}
-	for _, b := range current {
-		if _, ok := seen[b.ID]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // Delete removes the backlog. Ownership is enforced by the query, so a

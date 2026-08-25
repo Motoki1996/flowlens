@@ -80,7 +80,7 @@ describe("TasksPage", () => {
 
   it("passes the URL query to the API as the request's filter (issue #143)", async () => {
     getBacklogs.mockResolvedValue([
-      { id: "b1", projectId: "p1", name: "Sprint 1", description: "", position: 0 },
+      { id: "b1", projectId: "p1", name: "Sprint 1", description: "" },
     ]);
     getTasks.mockResolvedValue([
       {
@@ -165,7 +165,7 @@ describe("TasksPage", () => {
   it("pre-selects the backlog filter from ?backlog=", async () => {
     const backlogId = "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21";
     getBacklogs.mockResolvedValue([
-      { id: backlogId, projectId: "p1", name: "Sprint 1", description: "", position: 0 },
+      { id: backlogId, projectId: "p1", name: "Sprint 1", description: "" },
     ]);
     render(
       await TasksPage({

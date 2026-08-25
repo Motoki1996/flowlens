@@ -117,7 +117,7 @@ function DeleteCommentButton({
 
 /**
  * CommentForm posts to a task's activity log. Posting is optimistic, the
- * same policy the Task/Backlog list's drag-and-drop reorder already uses
+ * same policy the Board views' drag-and-drop already uses
  * (issue #105): the comment is appended to the list immediately under a
  * temporary id, then reconciled with the real one on success or rolled back
  * on failure, rather than waiting on the round trip before showing anything.

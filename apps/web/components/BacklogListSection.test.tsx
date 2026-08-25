@@ -20,7 +20,6 @@ const backlog: Backlog = {
   projectId: "p1",
   name: "Sprint 1",
   description: "",
-  position: 0,
   startDate: null,
   dueOn: null,
   priority: "medium",
@@ -88,7 +87,6 @@ const otherBacklog: Backlog = {
   ...backlog,
   id: "b2",
   name: "Icebox",
-  position: 1,
 };
 
 /** The Board is the default view mode, so tests about the List mode's rows
@@ -339,51 +337,6 @@ describe("BacklogListSection", () => {
     );
   });
 
-  it("moves a backlog down with the move-down button, updating the display order optimistically", async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
-    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
-    showList();
-
-    fireEvent.click(screen.getByRole("button", { name: "Move Sprint 1 down" }));
-
-    const names = screen
-      .getAllByRole("link", { name: /^(Sprint 1|Icebox)$/ })
-      .map((el) => el.textContent);
-    expect(names).toEqual(["Icebox", "Sprint 1"]);
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/v1/projects/p1/backlogs/order",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({ backlogIds: ["b2", "b1"] }),
-      }),
-    );
-  });
-
-  it("reverts the order and shows an error when the reorder request fails", async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ error: { code: "backlog_ids_mismatch", message: "backlogIds must match" } }), {
-        status: 400,
-      }),
-    );
-    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
-    showList();
-
-    fireEvent.click(screen.getByRole("button", { name: "Move Sprint 1 down" }));
-
-    expect(await screen.findByText("backlogIds must match")).toBeInTheDocument();
-    const names = screen
-      .getAllByRole("link", { name: /^(Sprint 1|Icebox)$/ })
-      .map((el) => el.textContent);
-    expect(names).toEqual(["Sprint 1", "Icebox"]);
-  });
-
-  it("disables the move buttons at the ends of the list", () => {
-    render(<BacklogListSection projectId="p1" backlogs={[backlog, otherBacklog]} />);
-    showList();
-    expect(screen.getByRole("button", { name: "Move Sprint 1 up" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move Icebox down" })).toBeDisabled();
-  });
-
   describe("filters and sort (issue #151)", () => {
     it("pushes ?priority= alongside the other filters rather than replacing them", async () => {
       currentSearchParams = new URLSearchParams("progress=on_hold");
@@ -452,18 +405,6 @@ describe("BacklogListSection", () => {
         .getAllByRole("link", { name: /^(Sprint 1|Icebox)$/ })
         .map((el) => el.textContent);
       expect(names).toEqual(["Sprint 1", "Icebox"]);
-    });
-
-    it("hides the move buttons and drag handle while a priority filter narrows the list", () => {
-      render(<BacklogListSection projectId="p1" backlogs={[backlog]} priorityFilter="medium" />);
-      showList();
-      expect(screen.queryByRole("button", { name: "Move Sprint 1 up" })).not.toBeInTheDocument();
-    });
-
-    it("hides the move buttons and drag handle during a non-manual sort", () => {
-      render(<BacklogListSection projectId="p1" backlogs={[backlog]} sort="priority" />);
-      showList();
-      expect(screen.queryByRole("button", { name: "Move Sprint 1 up" })).not.toBeInTheDocument();
     });
 
     it("shows Clear filters once a filter differs from the default, and clears the whole query", () => {
@@ -545,11 +486,9 @@ describe("BacklogListSection", () => {
       expect(screen.queryByText('No backlogs match "unclass".')).not.toBeInTheDocument();
     });
 
-    it("has no grip, move or Edit/Delete controls on the Unclassified row", () => {
+    it("has no Edit/Delete controls on the Unclassified row", () => {
       render(<BacklogListSection projectId="p1" backlogs={[backlog]} unclassifiedCount={4} />);
       showList();
-      expect(screen.queryByRole("button", { name: "Move Unclassified up" })).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Move Unclassified down" })).not.toBeInTheDocument();
       // Sprint 1 still has its own Edit/Delete; Unclassified doesn't add a second pair.
       expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(1);
       expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);

@@ -46,9 +46,8 @@ const NO_BACKLOG = "no-backlog";
  * it's an action on the object and lives on the object's own screens
  * (docs/ui-design.md rule 4).
  *
- * `name`, `description` and `position` are always sent on an edit: they are
- * not optional on the API's side, and an omitted `position` would reset the
- * epic to the top of the order.
+ * `name` and `description` are always sent on an edit: they are not optional
+ * on the API's side.
  */
 export function EpicForm({
   projectId,
@@ -133,7 +132,6 @@ export function EpicForm({
             name,
             description,
             backlogId,
-            ...(editing ? { position: epic.position } : {}),
             startDate: toApiDate(startDate),
             dueOn: toApiDate(dueOn),
             priority,

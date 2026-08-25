@@ -12,7 +12,7 @@ import type { Priority, Progress } from "@/types";
 const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
 const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 
-// "manual" is the API's own position order, expressed by the absence of
+// "manual" is the API's own default (creation) order, expressed by the absence of
 // ?sort= rather than a named value, same as the Task collection. "dueOn" is
 // the one value the API doesn't accept (parseBacklogListFilter,
 // internal/http/backlog_handler.go, only takes priority/progress) — it's

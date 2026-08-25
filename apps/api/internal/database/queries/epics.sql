@@ -13,13 +13,12 @@
 -- same statement as any number, least of all 0.
 
 -- name: CreateEpic :one
-INSERT INTO epics (project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id, estimated_points)
+INSERT INTO epics (project_id, backlog_id, name, description, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id, estimated_points)
 VALUES (
     $1,
     $2,
     $3,
     $4,
-    COALESCE((SELECT MAX(position) + 1 FROM epics WHERE project_id = $1), 0),
     $5,
     $6,
     $7,
@@ -41,7 +40,7 @@ RETURNING *;
 -- one backlog's epics, and backlog_unfiled to the epics in no backlog at all.
 -- name: ListEpicsByProject :many
 SELECT
-  e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.created_at, e.updated_at,
+  e.id, e.project_id, e.backlog_id, e.name, e.description, e.created_at, e.updated_at,
   e.start_date, e.due_on, e.priority, e.progress, e.default_linked_gitlab_project_id, e.base_branch,
   e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points,
   COUNT(t.id) AS task_count,
@@ -63,7 +62,7 @@ ORDER BY
   (CASE WHEN sqlc.arg(sort_by_progress)::boolean THEN
      CASE e.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  e.position ASC, e.created_at ASC;
+  e.created_at ASC;
 
 -- name: GetEpicForOwner :one
 SELECT e.*
@@ -96,29 +95,13 @@ SELECT base_branch, allowed_scope, forbidden_scope, backlog_id FROM epics WHERE 
 -- name: GetEpicIssueDestination :one
 SELECT default_linked_gitlab_project_id, backlog_id FROM epics WHERE id = $1;
 
--- ReorderEpics resequences a project's epics to epic_ids' given order
--- (position 0 for the first id, 1 for the second, ...) in a single
--- statement, the same all-or-nothing shape as ReorderBacklogs.
--- internal/epic.Service.Reorder checks epic_ids is exactly the project's
--- current epic set before calling this.
--- name: ReorderEpics :exec
-WITH ordered AS (
-    SELECT id, (ord - 1)::int AS position
-    FROM unnest(sqlc.arg(epic_ids)::uuid[]) WITH ORDINALITY AS t(id, ord)
-)
-UPDATE epics
-SET position = ordered.position, updated_at = now()
-FROM ordered
-WHERE epics.id = ordered.id
-  AND epics.project_id = sqlc.arg(project_id);
-
 -- UpdateEpicForOwner overwrites every editable column, so the optional ones
 -- must arrive already resolved: epic.Service reads the current row first and
 -- fills in whatever the PATCH body left out (see its Update).
 -- name: UpdateEpicForOwner :one
 UPDATE epics e
-SET backlog_id = $2, name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, progress = $9, default_linked_gitlab_project_id = $10, base_branch = $11, allowed_scope = $12, forbidden_scope = $13,
-    assignee_user_id = $14, estimated_points = $15, updated_at = now()
+SET backlog_id = $2, name = $3, description = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12,
+    assignee_user_id = $13, estimated_points = $14, updated_at = now()
 WHERE e.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm

@@ -48,7 +48,6 @@ var (
 	ErrTaskNotInProject    = errors.New("epic: taskIds must all be tasks in this project")
 	ErrNotFound            = errors.New("epic: not found")
 	ErrForbidden           = errors.New("epic: forbidden")
-	ErrEpicIDsMismatch     = errors.New("epic: epicIds must exactly match the project's current epics")
 )
 
 // ErrAssigneeNotMember re-exports internal/assignee's sentinel so handlers can
@@ -85,7 +84,6 @@ type Epic struct {
 	BacklogID   *uuid.UUID `json:"backlogId"`
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
-	Position    int32      `json:"position"`
 	StartDate   *time.Time `json:"startDate"`
 	DueOn       *time.Time `json:"dueOn"`
 	Priority    string     `json:"priority"`
@@ -128,9 +126,8 @@ type Epic struct {
 	AssigneeDisplayName string     `json:"assigneeDisplayName"`
 	// TaskCount and ClosedTaskCount come from ListEpicsByProject's LEFT JOIN
 	// aggregate, so the Epic collection screen doesn't fetch every task just
-	// to show a count and a completion ratio. Populated only by List (and
-	// Reorder, which returns List's result) — zero on every other response,
-	// mirroring internal/backlog.
+	// to show a count and a completion ratio. Populated only by List — zero
+	// on every other response, mirroring internal/backlog.
 	TaskCount       int64     `json:"taskCount"`
 	ClosedTaskCount int64     `json:"closedTaskCount"`
 	CreatedAt       time.Time `json:"createdAt"`
@@ -144,7 +141,6 @@ func fromRow(row db.Epic) Epic {
 		BacklogID:                    uuidPtr(row.BacklogID),
 		Name:                         row.Name,
 		Description:                  row.Description,
-		Position:                     row.Position,
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -169,7 +165,6 @@ func fromListRow(row db.ListEpicsByProjectRow) Epic {
 		BacklogID:                    uuidPtr(row.BacklogID),
 		Name:                         row.Name,
 		Description:                  row.Description,
-		Position:                     row.Position,
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -487,8 +482,8 @@ func (s *Service) ProjectID(ctx context.Context, epicID uuid.UUID) (uuid.UUID, e
 	return projectID, nil
 }
 
-// UpdateParams are the attributes Update writes. Name, Description and
-// Position are always overwritten; everything else is Optional, so a caller
+// UpdateParams are the attributes Update writes. Name and Description are
+// always overwritten; everything else is Optional, so a caller
 // that only renames an epic leaves the rest untouched rather than clearing
 // it. An explicit null clears a nullable field; an explicit empty string
 // resets a defaulted one.
@@ -498,7 +493,6 @@ type UpdateParams struct {
 	BacklogID   optional.Optional[*uuid.UUID]
 	Name        string
 	Description string
-	Position    int32
 	StartDate   optional.Optional[*time.Time]
 	DueOn       optional.Optional[*time.Time]
 	// Priority absent keeps the current value; an explicit empty string resets
@@ -598,7 +592,6 @@ func (s *Service) Update(ctx context.Context, ownerID, epicID uuid.UUID, p Updat
 			BacklogID:                    toUUID(backlogID),
 			Name:                         fields.Name,
 			Description:                  p.Description,
-			Position:                     p.Position,
 			StartDate:                    toDate(startDate),
 			DueOn:                        toDate(dueOn),
 			Priority:                     fields.Priority,
@@ -711,56 +704,6 @@ func (s *Service) SetTasks(ctx context.Context, ownerID, epicID uuid.UUID, taskI
 		}
 		return nil
 	})
-}
-
-// Reorder resequences the position of every epic in projectID to match
-// epicIDs' order — position 0 for the first ID, 1 for the second, and so on.
-// epicIDs must be exactly the project's current epic set (same length, no
-// duplicates, nothing missing or foreign), or it returns ErrEpicIDsMismatch
-// without writing anything, the same all-or-nothing guard
-// internal/backlog.Service.Reorder applies.
-func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, epicIDs []uuid.UUID) ([]Epic, error) {
-	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
-		return nil, err
-	}
-
-	current, err := s.q.ListEpicsByProject(ctx, db.ListEpicsByProjectParams{ProjectID: projectID})
-	if err != nil {
-		return nil, fmt.Errorf("epic: reorder: %w", err)
-	}
-	if !sameEpicIDSet(current, epicIDs) {
-		return nil, ErrEpicIDsMismatch
-	}
-
-	if err := s.q.ReorderEpics(ctx, db.ReorderEpicsParams{
-		EpicIds:   epicIDs,
-		ProjectID: projectID,
-	}); err != nil {
-		return nil, fmt.Errorf("epic: reorder: %w", err)
-	}
-
-	return s.List(ctx, ownerID, projectID, ListFilter{})
-}
-
-// sameEpicIDSet reports whether epicIDs is exactly current's IDs, in any
-// order: same length, no duplicates, nothing missing or foreign.
-func sameEpicIDSet(current []db.ListEpicsByProjectRow, epicIDs []uuid.UUID) bool {
-	if len(current) != len(epicIDs) {
-		return false
-	}
-	seen := make(map[uuid.UUID]struct{}, len(epicIDs))
-	for _, id := range epicIDs {
-		if _, dup := seen[id]; dup {
-			return false
-		}
-		seen[id] = struct{}{}
-	}
-	for _, e := range current {
-		if _, ok := seen[e.ID]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // Delete removes the epic. Ownership is enforced by the query, so a non-member

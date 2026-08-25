@@ -89,50 +89,6 @@ list:
           application/json:
             schema: { $ref: '../components/schemas/error.yaml#/Error' }
 
-order:
-  patch:
-    summary: Bulk-reorder one backlog bucket's tasks
-    description: All-or-nothing; taskIds must be exactly that bucket's current tasks. Requires write scope for a bearer token.
-    tags: [tasks]
-    security:
-      - cookieAuth: []
-      - bearerAuth: []
-    parameters:
-      - $ref: '#/components/parameters/projectID'
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/requests.yaml#/ReorderTasksRequest'
-    responses:
-      "200":
-        description: The reordered tasks
-        content:
-          application/json:
-            schema:
-              type: array
-              items: { $ref: '../components/schemas/domain.yaml#/Task' }
-      "400":
-        description: Invalid input (ID list mismatch)
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
-      "401":
-        description: Not authenticated
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
-      "403":
-        description: Token missing write scope
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
-      "404":
-        description: Not found
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
 
 bulk:
   post:

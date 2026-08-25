@@ -7,7 +7,7 @@ import type { Priority, Progress } from "@/types";
 const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
 const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 
-// "manual" is the API's own position order, expressed by the absence of
+// "manual" is the API's own default (creation) order, expressed by the absence of
 // ?sort= rather than a named value, the same as the Backlog and Task
 // collections. "dueOn" is the one value the API doesn't accept — it's applied
 // client-side instead, so it's a recognised URL value that never reaches

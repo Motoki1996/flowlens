@@ -203,26 +203,6 @@ func TestHandleDeleteEpic(t *testing.T) {
 	assert.Equal(t, http.StatusOK, doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String(), nil, token).Code)
 }
 
-func TestHandleReorderEpics(t *testing.T) {
-	s, q := newTestServer(t)
-	ownerID, token := loginSession(t, s, q)
-	p := q.SeedProject(ownerID, "Alpha")
-	first := q.SeedEpic(p.ID, uuid.Nil, "First")
-	second := q.SeedEpic(p.ID, uuid.Nil, "Second")
-
-	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/epics/order",
-		reorderEpicsRequest{EpicIDs: []uuid.UUID{second.ID, first.ID}}, token)
-	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body, 2)
-	assert.Equal(t, "Second", body[0]["name"])
-
-	mismatch := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/epics/order",
-		reorderEpicsRequest{EpicIDs: []uuid.UUID{second.ID}}, token)
-	assert.Equal(t, http.StatusBadRequest, mismatch.Code)
-}
-
 // The epic's own half of the task<->epic relationship: PATCH .../tasks writes
 // the whole set, and PATCH /tasks/{id}'s epicId writes one task's side of it.
 func TestHandleSetEpicTasks(t *testing.T) {

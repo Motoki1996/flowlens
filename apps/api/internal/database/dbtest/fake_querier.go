@@ -575,7 +575,6 @@ func (f *FakeQuerier) SeedBacklog(projectID uuid.UUID, name string) db.Backlog {
 		ID:        uuid.New(),
 		ProjectID: projectID,
 		Name:      name,
-		Position:  f.nextBacklogPosition(projectID),
 		Priority:  "medium",
 		Progress:  "not_started",
 		CreatedAt: now(),
@@ -601,23 +600,12 @@ func (f *FakeQuerier) SeedBacklogWithCreatedAt(projectID uuid.UUID, name string,
 	return b
 }
 
-func (f *FakeQuerier) nextBacklogPosition(projectID uuid.UUID) int32 {
-	var max int32 = -1
-	for _, b := range f.backlogs {
-		if b.ProjectID == projectID && b.Position > max {
-			max = b.Position
-		}
-	}
-	return max + 1
-}
-
 func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParams) (db.Backlog, error) {
 	b := db.Backlog{
 		ID:                           uuid.New(),
 		ProjectID:                    arg.ProjectID,
 		Name:                         arg.Name,
 		Description:                  arg.Description,
-		Position:                     f.nextBacklogPosition(arg.ProjectID),
 		StartDate:                    arg.StartDate,
 		DueOn:                        arg.DueOn,
 		Priority:                     arg.Priority,
@@ -716,7 +704,6 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 			ProjectID:                    b.ProjectID,
 			Name:                         b.Name,
 			Description:                  b.Description,
-			Position:                     b.Position,
 			CreatedAt:                    b.CreatedAt,
 			UpdatedAt:                    b.UpdatedAt,
 			StartDate:                    b.StartDate,
@@ -743,7 +730,7 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 				return ri < rj
 			}
 		}
-		return items[i].Position < items[j].Position
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
 	return items, nil
 }
@@ -808,7 +795,6 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	// what resolves an absent one to its current value before calling here.
 	existing.Name = arg.Name
 	existing.Description = arg.Description
-	existing.Position = arg.Position
 	existing.StartDate = arg.StartDate
 	existing.DueOn = arg.DueOn
 	existing.Priority = arg.Priority
@@ -828,30 +814,6 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 		}
 	}
 	return existing, nil
-}
-
-// ReorderBacklogs mirrors the SQL: resequences position 0..n-1 for every
-// backlog in arg.BacklogIds belonging to arg.ProjectID, in the order given.
-// A backlog ID not in that project is silently skipped, matching the real
-// query's WHERE clause — internal/backlog.Service.Reorder is what guarantees
-// the set matches before calling this.
-func (f *FakeQuerier) ReorderBacklogs(_ context.Context, arg db.ReorderBacklogsParams) error {
-	for i, id := range arg.BacklogIds {
-		b, ok := f.backlogsByID[id]
-		if !ok || b.ProjectID != arg.ProjectID {
-			continue
-		}
-		b.Position = int32(i)
-		b.UpdatedAt = now()
-		f.backlogsByID[id] = b
-		for j, x := range f.backlogs {
-			if x.ID == id {
-				f.backlogs[j] = b
-				break
-			}
-		}
-	}
-	return nil
 }
 
 // DeleteBacklogForOwner returns the number of rows affected, so callers can
@@ -878,7 +840,6 @@ func (f *FakeQuerier) SeedEpic(projectID, backlogID uuid.UUID, name string) db.E
 		ID:        uuid.New(),
 		ProjectID: projectID,
 		Name:      name,
-		Position:  f.nextEpicPosition(projectID),
 		Priority:  "medium",
 		Progress:  "not_started",
 		CreatedAt: now(),
@@ -924,16 +885,6 @@ func (f *FakeQuerier) storeEpic(e db.Epic) {
 	}
 }
 
-func (f *FakeQuerier) nextEpicPosition(projectID uuid.UUID) int32 {
-	var max int32 = -1
-	for _, e := range f.epics {
-		if e.ProjectID == projectID && e.Position > max {
-			max = e.Position
-		}
-	}
-	return max + 1
-}
-
 func (f *FakeQuerier) CreateEpic(_ context.Context, arg db.CreateEpicParams) (db.Epic, error) {
 	e := db.Epic{
 		ID:                           uuid.New(),
@@ -941,7 +892,6 @@ func (f *FakeQuerier) CreateEpic(_ context.Context, arg db.CreateEpicParams) (db
 		BacklogID:                    arg.BacklogID,
 		Name:                         arg.Name,
 		Description:                  arg.Description,
-		Position:                     f.nextEpicPosition(arg.ProjectID),
 		StartDate:                    arg.StartDate,
 		DueOn:                        arg.DueOn,
 		Priority:                     arg.Priority,
@@ -994,7 +944,6 @@ func (f *FakeQuerier) ListEpicsByProject(_ context.Context, arg db.ListEpicsByPr
 			BacklogID:                    e.BacklogID,
 			Name:                         e.Name,
 			Description:                  e.Description,
-			Position:                     e.Position,
 			CreatedAt:                    e.CreatedAt,
 			UpdatedAt:                    e.UpdatedAt,
 			StartDate:                    e.StartDate,
@@ -1022,7 +971,7 @@ func (f *FakeQuerier) ListEpicsByProject(_ context.Context, arg db.ListEpicsByPr
 				return ri < rj
 			}
 		}
-		return items[i].Position < items[j].Position
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
 	return items, nil
 }
@@ -1099,7 +1048,6 @@ func (f *FakeQuerier) UpdateEpicForOwner(_ context.Context, arg db.UpdateEpicFor
 	existing.BacklogID = arg.BacklogID
 	existing.Name = arg.Name
 	existing.Description = arg.Description
-	existing.Position = arg.Position
 	existing.StartDate = arg.StartDate
 	existing.DueOn = arg.DueOn
 	existing.Priority = arg.Priority
@@ -1192,27 +1140,6 @@ func (f *FakeQuerier) AssignTasksToEpic(_ context.Context, arg db.AssignTasksToE
 		affected++
 	}
 	return affected, nil
-}
-
-// ReorderEpics mirrors the SQL: resequences position 0..n-1 for every epic in
-// arg.EpicIds belonging to arg.ProjectID, in the order given.
-func (f *FakeQuerier) ReorderEpics(_ context.Context, arg db.ReorderEpicsParams) error {
-	for i, id := range arg.EpicIds {
-		e, ok := f.epicsByID[id]
-		if !ok || e.ProjectID != arg.ProjectID {
-			continue
-		}
-		e.Position = int32(i)
-		e.UpdatedAt = now()
-		f.epicsByID[id] = e
-		for j, x := range f.epics {
-			if x.ID == id {
-				f.epics[j] = e
-				break
-			}
-		}
-	}
-	return nil
 }
 
 // DeleteEpicForOwner returns the number of rows affected, and mirrors the
@@ -1357,7 +1284,6 @@ func (f *FakeQuerier) seedTask(projectID, createdByUserID uuid.UUID, title strin
 		Priority:        "medium",
 		Progress:        "not_started",
 		Size:            "m",
-		Position:        f.nextTaskPosition(projectID, backlogID),
 		CreatedByUserID: createdByUserID,
 		CreatedAt:       now(),
 		UpdatedAt:       now(),
@@ -1379,22 +1305,6 @@ func (f *FakeQuerier) storeTask(t db.Task) {
 	f.tasks = append(f.tasks, t)
 }
 
-func (f *FakeQuerier) nextTaskPosition(projectID uuid.UUID, backlogID pgtype.UUID) int32 {
-	var max int32 = -1
-	for _, t := range f.tasks {
-		if t.ProjectID != projectID {
-			continue
-		}
-		if t.BacklogID.Valid != backlogID.Valid || (t.BacklogID.Valid && t.BacklogID.Bytes != backlogID.Bytes) {
-			continue
-		}
-		if t.Position > max {
-			max = t.Position
-		}
-	}
-	return max + 1
-}
-
 func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db.Task, error) {
 	t := db.Task{
 		ID:                     uuid.New(),
@@ -1413,7 +1323,6 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 		Priority:               arg.Priority,
 		Progress:               arg.Progress,
 		Size:                   arg.Size,
-		Position:               f.nextTaskPosition(arg.ProjectID, arg.BacklogID),
 		CreatedByUserID:        arg.CreatedByUserID,
 		CreatedAt:              now(),
 		UpdatedAt:              now(),
@@ -1537,14 +1446,14 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 				return ri > rj
 			}
 		}
-		return items[i].Position < items[j].Position
+		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
 	return items, nil
 }
 
 // ListTasksByProjectPaged mirrors the SQL: ListTasksByProject's
 // backlog_id/status filters plus updated_since and LIMIT/OFFSET paging,
-// ordered the same way (position ASC, created_at ASC).
+// ordered the same way (created_at ASC).
 func (f *FakeQuerier) ListTasksByProjectPaged(_ context.Context, arg db.ListTasksByProjectPagedParams) ([]db.Task, error) {
 	items := []db.Task{}
 	for _, t := range f.tasks {
@@ -1566,9 +1475,6 @@ func (f *FakeQuerier) ListTasksByProjectPaged(_ context.Context, arg db.ListTask
 		items = append(items, t)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Position != items[j].Position {
-			return items[i].Position < items[j].Position
-		}
 		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
 
@@ -1989,7 +1895,6 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 			Priority:               t.Priority,
 			Progress:               t.Progress,
 			Size:                   t.Size,
-			Position:               t.Position,
 			CreatedByUserID:        t.CreatedByUserID,
 			CreatedAt:              t.CreatedAt,
 			UpdatedAt:              t.UpdatedAt,
@@ -2018,9 +1923,6 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 		}
 		if !dueOnEqual(items[i].DueOn, items[j].DueOn) {
 			return dueOnLess(items[i].DueOn, items[j].DueOn)
-		}
-		if items[i].Position != items[j].Position {
-			return items[i].Position < items[j].Position
 		}
 		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
@@ -2149,7 +2051,6 @@ func (f *FakeQuerier) UpdateTaskForOwner(_ context.Context, arg db.UpdateTaskFor
 	existing.Priority = arg.Priority
 	existing.Progress = arg.Progress
 	existing.Size = arg.Size
-	existing.Position = arg.Position
 	existing.UpdatedAt = now()
 
 	f.storeTask(existing)
@@ -2175,29 +2076,6 @@ func (f *FakeQuerier) AssignTaskBacklogForOwner(_ context.Context, arg db.Assign
 	existing.UpdatedAt = now()
 	f.storeTask(existing)
 	return existing, nil
-}
-
-// ReorderTasks mirrors the SQL: resequences position 0..n-1 for every task
-// in arg.TaskIds belonging to arg.ProjectID and matching arg.BacklogID (nil
-// backlog_id matches Unclassified tasks, an IsNotDistinctFrom-style
-// comparison), in the order given. A task ID outside that project/backlog
-// bucket is silently skipped, matching the real query's WHERE clause —
-// internal/task.Service.Reorder is what guarantees the set matches before
-// calling this.
-func (f *FakeQuerier) ReorderTasks(_ context.Context, arg db.ReorderTasksParams) error {
-	for i, id := range arg.TaskIds {
-		t, ok := f.tasksByID[id]
-		if !ok || t.ProjectID != arg.ProjectID {
-			continue
-		}
-		if t.BacklogID.Valid != arg.BacklogID.Valid || (t.BacklogID.Valid && t.BacklogID.Bytes != arg.BacklogID.Bytes) {
-			continue
-		}
-		t.Position = int32(i)
-		t.UpdatedAt = now()
-		f.storeTask(t)
-	}
-	return nil
 }
 
 func (f *FakeQuerier) CloseTaskForOwner(_ context.Context, arg db.CloseTaskForOwnerParams) (db.Task, error) {

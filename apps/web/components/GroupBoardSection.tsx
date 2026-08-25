@@ -40,8 +40,7 @@ export function GroupBoardSection({
   const router = useRouter();
 
   // `items` mirrors `backlogs` but is updated optimistically on a drop, ahead
-  // of the PATCH round trip — the same arrangement the List mode's reordering
-  // uses, for the same reason: a router.refresh() per drag doesn't read as
+  // of the PATCH round trip: a router.refresh() per drag doesn't read as
   // drag-and-drop. It resyncs whenever the server data changes under it.
   const [items, setItems] = useState(backlogs);
   useEffect(() => setItems(backlogs), [backlogs]);
@@ -66,7 +65,6 @@ export function GroupBoardSection({
         body: JSON.stringify({
           name: backlog.name,
           description: backlog.description,
-          position: backlog.position,
           startDate: backlog.startDate,
           dueOn: backlog.dueOn,
           priority: backlog.priority,

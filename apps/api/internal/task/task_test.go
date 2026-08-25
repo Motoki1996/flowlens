@@ -1197,20 +1197,21 @@ func TestService_Update_DoesNotEnqueue_WhenTaskHasNoGitlabLink(t *testing.T) {
 	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
 }
 
-func TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange(t *testing.T) {
+func TestService_Update_DoesNotEnqueue_WhenOnlyBacklogChanges(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
 	ctx := context.Background()
 	owner := q.SeedUser("octocat", "octocat@example.com").ID
 	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
 	tsk := q.SeedTask(p.ID, owner, "Fix bug")
 	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
 	link := seedLinkedGitlabProject(t, q, conn.ID)
 	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
 
 	_, err := svc.Update(ctx, owner, tsk.ID, task.UpdateParams{
-		Title:    task.Present("Fix bug"), // unchanged
-		Position: task.Present(int32(5)),  // app-only, never mirrored to GitLab
+		Title:     task.Present("Fix bug"), // unchanged
+		BacklogID: task.Present(&b.ID),     // app-only, never mirrored to GitLab
 	}, task.ActorKindUser)
 	require.NoError(t, err)
 	assert.Empty(t, q.SyncJobsForTask(tsk.ID))
@@ -1219,8 +1220,7 @@ func TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange(t *testin
 // Update is a partial update: a field left unset in UpdateParams keeps its
 // current value, and a nullable field explicitly set to nil is cleared. This
 // is what lets the web edit form PATCH one attribute without echoing the
-// whole task back — and what keeps position from being reset to 0 by a form
-// that never shows it.
+// whole task back.
 func TestService_Update_PartialUpdate(t *testing.T) {
 	due := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
@@ -1260,7 +1260,6 @@ func TestService_Update_PartialUpdate(t *testing.T) {
 				assert.Equal(t, before.Labels, after.Labels)
 				assert.Equal(t, before.AssigneeGitlabUsername, after.AssigneeGitlabUsername)
 				assert.Equal(t, before.AssigneeGitlabUserID, after.AssigneeGitlabUserID)
-				assert.Equal(t, before.Position, after.Position)
 				require.NotNil(t, after.DueOn)
 				assert.True(t, due.Equal(*after.DueOn))
 				require.NotNil(t, after.StartDate)
@@ -1283,7 +1282,6 @@ func TestService_Update_PartialUpdate(t *testing.T) {
 				assert.Equal(t, before.Title, after.Title)
 				assert.Equal(t, before.Description, after.Description)
 				assert.Equal(t, before.Labels, after.Labels)
-				assert.Equal(t, before.Position, after.Position)
 			},
 		},
 	}
@@ -1323,7 +1321,7 @@ func TestService_Create_PersistsStartDate(t *testing.T) {
 // startDate is never mirrored to GitLab (it has no due_on-style
 // counterpart), so an update that only changes it must not enqueue an
 // issue.update job, even for an already-linked task — mirroring
-// TestService_Update_DoesNotEnqueue_WhenOnlyBacklogOrPositionChange.
+// TestService_Update_DoesNotEnqueue_WhenOnlyBacklogChanges.
 func TestService_Update_PersistsStartDate_WithoutEnqueuingSyncJob(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
@@ -1640,97 +1638,6 @@ func TestService_RetrySync_ResetsNeverLinkedTaskToPending(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Gitlab)
 	assert.Equal(t, task.SyncStatusPending, got.Gitlab.SyncStatus)
-}
-
-func TestService_Reorder_AppliesGivenOrderWithinBacklog(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	ctx := context.Background()
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	b := q.SeedBacklog(p.ID, "Sprint 1")
-	first := q.SeedTaskInBacklog(p.ID, b.ID, owner, "First")
-	second := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Second")
-	third := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Third")
-
-	got, err := svc.Reorder(ctx, owner, p.ID, &b.ID, []uuid.UUID{third.ID, first.ID, second.ID})
-	require.NoError(t, err)
-	require.Len(t, got, 3)
-	assert.Equal(t, []uuid.UUID{third.ID, first.ID, second.ID}, []uuid.UUID{got[0].ID, got[1].ID, got[2].ID})
-	assert.Equal(t, int32(0), got[0].Position)
-	assert.Equal(t, int32(1), got[1].Position)
-	assert.Equal(t, int32(2), got[2].Position)
-}
-
-func TestService_Reorder_AppliesGivenOrderWithinUnclassified(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	ctx := context.Background()
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	first := q.SeedTask(p.ID, owner, "First")
-	second := q.SeedTask(p.ID, owner, "Second")
-
-	got, err := svc.Reorder(ctx, owner, p.ID, nil, []uuid.UUID{second.ID, first.ID})
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Equal(t, second.ID, got[0].ID)
-	assert.Equal(t, first.ID, got[1].ID)
-}
-
-func TestService_Reorder_RejectsMismatchedTaskIDs(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	ctx := context.Background()
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	b := q.SeedBacklog(p.ID, "Sprint 1")
-	first := q.SeedTaskInBacklog(p.ID, b.ID, owner, "First")
-	second := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Second")
-
-	tests := []struct {
-		name    string
-		taskIDs []uuid.UUID
-	}{
-		{"missing a task", []uuid.UUID{first.ID}},
-		{"duplicates a task instead of including every one", []uuid.UUID{first.ID, first.ID}},
-		{"includes a foreign task", []uuid.UUID{first.ID, second.ID, uuid.New()}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := svc.Reorder(ctx, owner, p.ID, &b.ID, tt.taskIDs)
-			assert.ErrorIs(t, err, task.ErrTaskIDsMismatch)
-		})
-	}
-
-	// Nothing was written by the rejected calls above.
-	unchanged, err := svc.Get(ctx, owner, first.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int32(0), unchanged.Position)
-}
-
-func TestService_Reorder_RejectsBacklogFromAnotherProject(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	ctx := context.Background()
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	otherProject := q.SeedProject(owner, "Beta")
-	foreignBacklog := q.SeedBacklog(otherProject.ID, "Sprint 1")
-
-	_, err := svc.Reorder(ctx, owner, p.ID, &foreignBacklog.ID, nil)
-	assert.ErrorIs(t, err, task.ErrBacklogNotInProject)
-}
-
-func TestService_Reorder_ReturnsNotFoundForForeignProject(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	other := q.SeedUser("hubot", "hubot@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-
-	_, err := svc.Reorder(context.Background(), other, p.ID, nil, nil)
-	assert.ErrorIs(t, err, task.ErrNotFound)
 }
 
 // Size follows exactly the same absent/explicit-empty/reject rules priority

@@ -23,7 +23,7 @@ install, upgrade, backup and hardening instructions are in
 ## What you get
 
 - **Tasks and backlogs** with priority, a four-stage progress state,
-  start/due dates, dependencies, drag-and-drop ordering, and an activity log.
+  start/due dates, dependencies, and an activity log.
 - **Four ways to look at them** — List, Board (by progress), Timeline
   (Gantt), and a cross-project view — plus a dashboard of what is overdue,
   due soon, waiting to start, or failing to sync.
@@ -480,8 +480,7 @@ exactly as before, and an epic may sit outside any backlog. Nothing about an
 existing project changes until someone creates one.
 
 - `GET`/`POST /api/v1/projects/{projectID}/epics`
-  (`?backlog_id=`/`?priority=`/`?progress=`/`?assignee=`/`?sort=`),
-  `PATCH /api/v1/projects/{projectID}/epics/order`, and
+  (`?backlog_id=`/`?priority=`/`?progress=`/`?assignee=`/`?sort=`) and
   `GET`/`PATCH`/`DELETE /api/v1/epics/{epicID}` — the same route shape,
   bearer-token allowlisting and scopes a backlog's endpoints have.
 - The web app's screens are `/projects/[projectId]/epics` (Board / List /
@@ -491,7 +490,7 @@ existing project changes until someone creates one.
   the task collections take `?epic_id=<uuid>|unassigned`.
 
 An epic carries the same fields a backlog does — name, description,
-position, start/due dates, priority, progress, assignee, base branch,
+start/due dates, priority, progress, assignee, base branch,
 allowed/forbidden scope and its own `defaultLinkedGitlabProjectId` — minus
 `size`, since an epic's size is just the sum of its tasks', plus
 `estimatedPoints` (below). It is app-only:
@@ -1197,10 +1196,8 @@ field synced with the linked GitLab issue.
   other mirrored fields. It is a **partial** update: a key absent from the
   body leaves that field alone, and an explicit `null` clears a nullable one
   (backlog, assignee ID, either date). That is what lets a client edit one
-  attribute without echoing the whole task back — and what keeps `position`,
-  which no edit form shows, from being reset. An edit that touches only
-  app-only fields (`startDate`, backlog, position) enqueues no `issue.update`
-  job.
+  attribute without echoing the whole task back. An edit that touches only
+  app-only fields (`startDate`, backlog) enqueues no `issue.update` job.
 - `POST /api/v1/projects/{projectID}/task-dependencies` records that
   `predecessorTaskId` must finish before `successorTaskId` starts. Both
   tasks must belong to the project, and the edge is rejected with 409 if it
@@ -1214,7 +1211,7 @@ field synced with the linked GitLab issue.
   `PATCH /api/v1/backlogs/{backlogID}` accept `startDate` and `dueOn`. On the
   PATCH the two dates are **partial** in the same sense as a task's: absent
   leaves the stored value alone, an explicit `null` clears it. That is what
-  keeps a rename — which sends only name, description and position — from
+  keeps a rename — which sends only name and description — from
   wiping the backlog's planned period. A period whose start is after its due
   date is rejected with 400 `invalid_schedule`.
 
@@ -1308,11 +1305,11 @@ of the same filtered set (`docs/ui-design.md` rule 5):
 - The status filter (All / Open / Closed) defaults to **Open**, so closed
   tasks don't fill the list; the backlog filter (unchanged) narrows further,
   and a progress filter narrows by FlowLens's own work state.
-- Sort offers **Manual** (the API's own `position` order — the default),
-  **Due date**, **Priority**, **Progress** and **Recently updated**, the same
-  four non-manual values the cross-project Task collection's `?sort=` accepts
-  (below), so the two screens agree on what each one means. Sorting is a
-  display order only; it never rewrites `position`.
+- Sort offers **Default order** (the API's own creation order, expressed by
+  the absence of `?sort=`), **Due date**, **Priority**, **Progress** and
+  **Recently updated**, the same four named values the cross-project Task
+  collection's `?sort=` accepts (below), so the two screens agree on what
+  each one means. Sorting is a display order for the request only.
 - **The API applies all of it** (issue #143), not the browser: the filters
   are held in the URL (`?q=`, `?status=`, `?progress=`, `?sort=`, alongside
   the existing `?backlog=`), and changing one pushes a new query string that
@@ -1324,9 +1321,8 @@ of the same filtered set (`docs/ui-design.md` rule 5):
   filters over a full one. Note this makes `?q=` the API's full-text match
   (below) rather than a substring match: "logi" no longer finds "login".
 - There is deliberately **no pagination**: the matching tasks come back
-  whole, which is what lets the List view group them by backlog and lets a
-  bucket be reordered by drag-and-drop, since `PATCH .../tasks/order` wants
-  that bucket's entire task ID list. Capping the response is the follow-up
+  whole, which is what lets the List view group them by backlog.
+  Capping the response is the follow-up
   to make if a project ever grows past what one response should carry.
 
 The Backlog collection (`/projects/{projectId}/backlogs`, issue #151) carries
@@ -1411,13 +1407,10 @@ no GitLab-side counterpart to push to or pull from.
   `invalid_priority`.
 - `GET .../tasks` and `GET .../backlogs` accept `?priority=low|medium|high|urgent`
   to narrow the list, and `?sort=priority` to order results by priority
-  (`urgent` → `low`) instead of the manual/position order, falling back to
-  that same position order to break ties between equal priorities. Both
-  parameters are independent of the manual drag-reorder `position` field —
-  sorting by priority is a display order for this request only and never
-  rewrites `position`; see [Task & backlog reordering](#task--backlog-reordering)
-  below for how the web app disables drag-to-reorder while a non-manual sort
-  is active. The project-scoped task list also accepts `?sort=dueOn` (due date
+  (`urgent` → `low`) instead of the default creation order, falling back to
+  that same creation order to break ties between equal priorities. Sorting by
+  priority is a display order for this request only and is never stored.
+  The project-scoped task list also accepts `?sort=dueOn` (due date
   ascending, tasks with no due date last) and `?sort=updatedAt` (most recently
   updated first) — the same three values as the cross-project collection, so
   a screen's sort menu means one thing whichever list backs it. Backlogs take
@@ -1531,9 +1524,8 @@ one could only ever contradict them.
   `invalid_size`.
 - `GET .../tasks` and `GET /api/v1/tasks` accept `?size=xs|s|m|l|xl` to
   narrow the list and `?sort=size` to order biggest-first (`xl` → `xs`),
-  falling back to the manual position order to break ties — the same shape
-  `?priority=`/`?sort=priority` already has, and equally independent of the
-  drag-reorder `position` field.
+  falling back to the default creation order to break ties — the same shape
+  `?priority=`/`?sort=priority` already has.
 - `GET /api/v1/tasks/{taskID}/context` reports `size`, so an agent picking up
   a task knows how large the work is expected to be before it starts.
 
@@ -1607,8 +1599,8 @@ moves its progress to `done`:
   `?sort=progress` to order by progress. Progress ranks the **opposite** way
   from priority — `not_started` first through `done` — so the order reads as
   the work advancing and matches the board's left-to-right axis. Like
-  `?sort=priority` it is a display order for the request only and never
-  rewrites `position`. The cross-project collection `GET /api/v1/tasks`
+  `?sort=priority` it is a display order for the request only. The
+  cross-project collection `GET /api/v1/tasks`
   accepts both parameters too.
 
 In the web app, progress is selectable everywhere priority is (both create
@@ -1647,56 +1639,8 @@ same `PATCH /api/v1/backlogs/{backlogID}` / `PATCH /api/v1/tasks/{taskID}`,
 applied optimistically and rolled back with an error if the request fails.
 Dragging is the only way the board changes progress; the object's own edit form
 remains the keyboard path. Everything else stays in the List mode — creating,
-editing, deleting, manual reordering, and (for tasks) moving between backlogs
-— since the board's one axis is progress.
-
-### Task & backlog reordering
-
-A task's `position` within its backlog (or the Unclassified group) and a
-backlog's `position` within its project can be changed in bulk, one request
-per reorder, instead of one `PATCH` per moved row:
-
-- `PATCH /api/v1/projects/{projectID}/tasks/order` takes `{backlogId,
-  taskIds}` (`backlogId: null` targets Unclassified) and resequences that
-  bucket's tasks to `taskIds`' given order — position `0` for the first ID,
-  `1` for the second, and so on. `taskIds` must be exactly that bucket's
-  current task set (same length, no duplicates, nothing missing or foreign);
-  otherwise nothing is written and the request fails with 400
-  `task_ids_mismatch`, so a dropped request never leaves a bucket half
-  reordered.
-- `PATCH /api/v1/projects/{projectID}/backlogs/order` is the same shape for a
-  project's backlogs: `{backlogIds}`, all-or-nothing, 400
-  `backlog_ids_mismatch` on a mismatched set.
-- Moving a task to a *different* backlog is not part of either endpoint: it
-  still goes through `POST /tasks/{taskID}/assign-backlog` (or `PATCH`'s
-  `backlogId`) exactly as before, followed by a `tasks/order` call for the
-  destination bucket to place it at the intended position. `position` is
-  app-only on both tasks and backlogs and is never synced to GitLab, the same
-  as priority above — a position-only or order-only change never enqueues a
-  GitLab sync job.
-
-In the web app, the Task and Backlog collections' List views (Timeline is out
-of scope) support reordering both by dragging a row and, for keyboard users,
-by a pair of move-up/move-down buttons on each row — both call the same
-`.../order` endpoint. A task can also be dragged onto a different backlog's
-group to move it there. Reordering updates the on-screen order immediately
-and only calls the API in the background (rather than this app's usual
-`fetch` → `router.refresh()` pattern, which would otherwise force a full
-server-component re-render per drag); a failed request reverts the order and
-shows the error inline. Drag handles and move buttons are hidden while the
-Task collection is sorted by anything other than the manual order, since a
-drag would otherwise fight the display order it's shown in. The Backlog
-collection (issue #151) hides them under a wider condition — any priority/
-progress filter or name search active, not just a non-manual sort — because
-unlike a task's per-backlog bucket order, a backlog's order is project-wide
-and `PATCH .../backlogs/order` requires *every* current backlog in the
-request; a filtered or searched list is, by construction, less than that full
-set, and dragging within it would only produce a guaranteed
-`backlog_ids_mismatch`. The drag-and-drop itself is native HTML5
-drag-and-drop, not a dedicated library — no new frontend dependency was
-available to add when this shipped; swapping in a library like `@dnd-kit`
-later is a UI-only change, since it would still call the same `.../order`
-endpoints.
+editing, deleting, and (for tasks) moving between backlogs — since the
+board's one axis is progress.
 
 ### Bulk task creation
 

@@ -38,7 +38,7 @@ type Querier interface {
 	// GetLinkedGitlabProjectByID, because the task_gitlab_links row that names
 	// this task ID was already authorized when the link was first created (or,
 	// for a brand-new unclassified task, in the same transaction that just
-	// created it). It never touches backlog_id, position, priority, progress or
+	// created it). It never touches backlog_id, priority, progress or
 	// size, which are app-only — in particular an issue being closed on GitLab moves
 	// status, never progress (see the 000011 migration).
 	// closed_at only advances when status transitions into 'closed' — the CASE
@@ -546,7 +546,7 @@ type Querier interface {
 	// ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
 	// sorting by progress runs the other way, not_started first through done, so
 	// the order reads as the work advancing (and matches the Board view's
-	// left-to-right axis). Both fall back to the usual position/created_at order
+	// left-to-right axis). Both fall back to the usual created_at order
 	// as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 	// in practice — internal/backlog sets at most one from a single ?sort=.
 	//
@@ -669,10 +669,10 @@ type Querier interface {
 	// other way, not_started first through done, so the order reads as the work
 	// advancing (and matches the Board view's left-to-right axis). Sorting by size
 	// ranks xl > l > m > s > xs, biggest first, the same direction priority runs.
-	// All three fall back to the usual position/created_at order as a tiebreak,
-	// so equal-ranked tasks keep their manual order instead of shuffling; when a
+	// All three fall back to the usual created_at order as a tiebreak, so
+	// equal-ranked tasks keep a stable order instead of shuffling; when a
 	// sort_by_* flag is false its CASE always evaluates to 0, leaving the
-	// original position/created_at order untouched. The three flags are mutually
+	// original created_at order untouched. The three flags are mutually
 	// exclusive in practice — internal/task sets at most one from a single
 	// ?sort=.
 	// ListTasksByProject's assignee_user_id filter matches a task assigned to
@@ -838,28 +838,6 @@ type Querier interface {
 	ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgtype.Timestamptz) (int64, error)
 	RemoveProjectMember(ctx context.Context, arg RemoveProjectMemberParams) (int64, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
-	// ReorderBacklogs resequences a project's backlogs to backlog_ids' given
-	// order (position 0 for the first id, 1 for the second, ...) in a single
-	// statement, the same all-or-nothing shape as internal/task's ReorderTasks
-	// (issue #79). internal/backlog.Service.Reorder checks backlog_ids is
-	// exactly the project's current backlog set before calling this.
-	ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams) error
-	// ReorderEpics resequences a project's epics to epic_ids' given order
-	// (position 0 for the first id, 1 for the second, ...) in a single
-	// statement, the same all-or-nothing shape as ReorderBacklogs.
-	// internal/epic.Service.Reorder checks epic_ids is exactly the project's
-	// current epic set before calling this.
-	ReorderEpics(ctx context.Context, arg ReorderEpicsParams) error
-	// ReorderTasks resequences one backlog bucket's tasks to task_ids' given
-	// order (position 0 for the first id, 1 for the second, ...) in a single
-	// statement, so a drag across many tasks either lands as one committed order
-	// or fails outright, never a partially-applied one (issue #79). backlog_id
-	// follows CreateTask's own "IS NOT DISTINCT FROM" convention: NULL scopes to
-	// the Unclassified bucket, a UUID to one specific backlog.
-	// internal/task.Service.Reorder checks task_ids is exactly that bucket's
-	// current task set before calling this, so the WHERE clause can never miss a
-	// row or touch one outside the intended bucket.
-	ReorderTasks(ctx context.Context, arg ReorderTasksParams) error
 	// RetryFailedSyncJobForTask powers POST /tasks/{taskID}/sync-retry: it
 	// forces the task's most recent pending-or-failed job to run again
 	// immediately with a fresh attempt budget. 'pending' is included alongside

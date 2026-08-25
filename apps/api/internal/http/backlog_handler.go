@@ -48,7 +48,6 @@ type createBacklogRequest struct {
 type updateBacklogRequest struct {
 	Name        string                        `json:"name"`
 	Description string                        `json:"description"`
-	Position    int32                         `json:"position"`
 	StartDate   optional.Optional[*time.Time] `json:"startDate"`
 	DueOn       optional.Optional[*time.Time] `json:"dueOn"`
 	Priority    optional.Optional[string]     `json:"priority"`
@@ -60,13 +59,6 @@ type updateBacklogRequest struct {
 	AllowedScope                 optional.Optional[string]     `json:"allowedScope"`
 	ForbiddenScope               optional.Optional[string]     `json:"forbiddenScope"`
 	AssigneeUserID               optional.Optional[*uuid.UUID] `json:"assigneeUserId"`
-}
-
-// reorderBacklogsRequest carries a project's full, newly-ordered backlog ID
-// list (issue #79). backlogIds must be exactly the project's current
-// backlogs — see backlog.Service.Reorder.
-type reorderBacklogsRequest struct {
-	BacklogIDs []uuid.UUID `json:"backlogIds"`
 }
 
 // backlogIDFromURL parses the {backlogID} path parameter. A malformed ID is
@@ -96,32 +88,6 @@ func (s *Server) handleListBacklogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	backlogs, err := s.backlogs.List(r.Context(), u.ID, projectID, filter)
-	if err != nil {
-		writeBacklogError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, backlogs)
-}
-
-// handleReorderBacklogs resequences a project's backlogs to the given order
-// in a single request, scoped to the authenticated user (issue #79).
-// backlogIds must be exactly the project's current backlogs; a mismatched
-// set is rejected as a whole rather than partially applied.
-func (s *Server) handleReorderBacklogs(w http.ResponseWriter, r *http.Request) {
-	u, _ := userFromContext(r.Context())
-	projectID, ok := projectIDFromURL(r)
-	if !ok {
-		writeError(w, http.StatusNotFound, "not_found", "project not found")
-		return
-	}
-
-	var req reorderBacklogsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
-		return
-	}
-
-	backlogs, err := s.backlogs.Reorder(r.Context(), u.ID, projectID, req.BacklogIDs)
 	if err != nil {
 		writeBacklogError(w, err)
 		return
@@ -269,7 +235,6 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 	b, err := s.backlogs.Update(r.Context(), u.ID, backlogID, backlog.UpdateParams{
 		Name:                         req.Name,
 		Description:                  req.Description,
-		Position:                     req.Position,
 		StartDate:                    req.StartDate,
 		DueOn:                        req.DueOn,
 		Priority:                     req.Priority,
@@ -324,8 +289,6 @@ func writeBacklogError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_assignee", "assignee must be a member of the project")
 	case errors.Is(err, backlog.ErrLinkNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_linked_gitlab_project", "defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
-	case errors.Is(err, backlog.ErrBacklogIDsMismatch):
-		writeError(w, http.StatusBadRequest, "backlog_ids_mismatch", "backlogIds must exactly match the project's current backlogs")
 	case errors.Is(err, backlog.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "backlog not found")
 	case errors.Is(err, backlog.ErrForbidden):

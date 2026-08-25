@@ -54,8 +54,8 @@ function parseLabels(raw: string): string[] {
  * rule 4).
  *
  * It PATCHes only the fields it shows. The API treats an absent key as "leave
- * this alone", so position — which this form has no control for — survives an
- * edit instead of being reset to 0.
+ * this alone", so a field this form has no control for survives an edit
+ * untouched.
  */
 export function TaskEditForm({
   task,

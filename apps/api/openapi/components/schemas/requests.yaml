@@ -184,7 +184,6 @@ UpdateEpicRequest:
     backlogId: { type: [string, "null"], format: uuid }
     name: { type: string }
     description: { type: string }
-    position: { type: integer }
     startDate: { type: [string, "null"], format: date-time }
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
@@ -210,14 +209,6 @@ SetEpicTasksRequest:
       items: { type: string, format: uuid }
   required: [taskIds]
 
-ReorderEpicsRequest:
-  type: object
-  description: All-or-nothing. epicIds must be exactly the project's current epics.
-  properties:
-    epicIds:
-      type: array
-      items: { type: string, format: uuid }
-  required: [epicIds]
 
 CreateBacklogRequest:
   type: object
@@ -240,7 +231,6 @@ UpdateBacklogRequest:
   properties:
     name: { type: string }
     description: { type: string }
-    position: { type: integer }
     startDate: { type: [string, "null"], format: date-time }
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
@@ -250,14 +240,6 @@ UpdateBacklogRequest:
       format: uuid
       description: A project member to assign this backlog to; null unassigns.
 
-ReorderBacklogsRequest:
-  type: object
-  properties:
-    backlogIds:
-      type: array
-      items: { type: string, format: uuid }
-      description: The project's full, newly-ordered backlog ID list.
-  required: [backlogIds]
 
 CreateTaskRequest:
   type: object
@@ -329,18 +311,6 @@ AssignTaskBacklogRequest:
       format: uuid
       description: null unassigns the task from any backlog.
 
-ReorderTasksRequest:
-  type: object
-  properties:
-    backlogId:
-      type: [string, "null"]
-      format: uuid
-      description: null targets the Unclassified group.
-    taskIds:
-      type: array
-      items: { type: string, format: uuid }
-      description: That bucket's full, newly-ordered task ID list.
-  required: [taskIds]
 
 UpsertTaskAIContextRequest:
   type: object

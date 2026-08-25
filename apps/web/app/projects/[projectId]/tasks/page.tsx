@@ -17,7 +17,7 @@ import type { TaskStatus } from "@/types";
 const STATUSES = ["all", "open", "closed"] as const;
 type StatusFilter = (typeof STATUSES)[number];
 
-// "manual" is the API's own position order, which it expresses by the absence
+// "manual" is the API's own default (creation) order, which it expresses by the absence
 // of ?sort= rather than a named value; the other five are the ones both Task
 // collections accept (see parseTaskListFilter, internal/http/task_handler.go).
 const SORTS = ["dueOn", "priority", "progress", "size", "updatedAt"] as const;

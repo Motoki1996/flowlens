@@ -84,50 +84,6 @@ list:
           application/json:
             schema: { $ref: '../components/schemas/error.yaml#/Error' }
 
-order:
-  patch:
-    summary: Bulk-reorder a project's epics
-    description: All-or-nothing; the ID list must be exactly the project's current epics. Requires write scope for a bearer token.
-    tags: [epics]
-    security:
-      - cookieAuth: []
-      - bearerAuth: []
-    parameters:
-      - $ref: '#/components/parameters/projectID'
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/requests.yaml#/ReorderEpicsRequest'
-    responses:
-      "200":
-        description: The reordered epics
-        content:
-          application/json:
-            schema:
-              type: array
-              items: { $ref: '../components/schemas/domain.yaml#/Epic' }
-      "400":
-        description: Invalid input (ID list mismatch)
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
-      "401":
-        description: Not authenticated
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
-      "403":
-        description: Token missing write scope
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
-      "404":
-        description: Not found
-        content:
-          application/json:
-            schema: { $ref: '../components/schemas/error.yaml#/Error' }
 
 epic:
   get:

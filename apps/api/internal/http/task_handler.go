@@ -47,20 +47,10 @@ type updateTaskRequest struct {
 	Priority               task.Optional[string]     `json:"priority"`
 	Progress               task.Optional[string]     `json:"progress"`
 	Size                   task.Optional[string]     `json:"size"`
-	Position               task.Optional[int32]      `json:"position"`
 }
 
 type assignTaskBacklogRequest struct {
 	BacklogID *uuid.UUID `json:"backlogId"`
-}
-
-// reorderTasksRequest carries one backlog bucket's full, newly-ordered task
-// ID list (issue #79): BacklogID nil targets the Unclassified group, a UUID
-// targets that specific backlog. TaskIDs must be exactly that bucket's
-// current tasks — see task.Service.Reorder.
-type reorderTasksRequest struct {
-	BacklogID *uuid.UUID  `json:"backlogId"`
-	TaskIDs   []uuid.UUID `json:"taskIds"`
 }
 
 // bulkCreateTasksRequest is POST .../tasks/bulk's body: a batch of tasks
@@ -276,33 +266,6 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tasks, err := s.tasks.List(r.Context(), u.ID, projectID, filter)
-	if err != nil {
-		writeTaskError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, tasks)
-}
-
-// handleReorderTasks resequences one backlog bucket's tasks to the given
-// order in a single request, scoped to the authenticated user (issue #79).
-// A backlogId of null targets the Unclassified group. taskIds must be
-// exactly that bucket's current tasks; a mismatched set is rejected as a
-// whole rather than partially applied.
-func (s *Server) handleReorderTasks(w http.ResponseWriter, r *http.Request) {
-	u, _ := userFromContext(r.Context())
-	projectID, ok := projectIDFromURL(r)
-	if !ok {
-		writeError(w, http.StatusNotFound, "not_found", "project not found")
-		return
-	}
-
-	var req reorderTasksRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
-		return
-	}
-
-	tasks, err := s.tasks.Reorder(r.Context(), u.ID, projectID, req.BacklogID, req.TaskIDs)
 	if err != nil {
 		writeTaskError(w, err)
 		return
@@ -633,7 +596,6 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		Priority:               req.Priority,
 		Progress:               req.Progress,
 		Size:                   req.Size,
-		Position:               req.Position,
 	}, actorKind)
 	if err != nil {
 		writeTaskError(w, err)
@@ -845,8 +807,6 @@ func taskErrorDetails(err error) (status int, code, message string) {
 		return http.StatusBadRequest, "ai_context_field_too_long", "AI context fields must be at most 20000 characters"
 	case errors.Is(err, task.ErrSyncNotFailed):
 		return http.StatusConflict, "sync_not_failed", "gitlab sync is not currently failed"
-	case errors.Is(err, task.ErrTaskIDsMismatch):
-		return http.StatusBadRequest, "task_ids_mismatch", "taskIds must exactly match the current tasks in that backlog"
 	case errors.Is(err, task.ErrBulkTasksEmpty):
 		return http.StatusBadRequest, "bulk_tasks_empty", "tasks must include at least one task"
 	case errors.Is(err, task.ErrBulkTooManyTasks):

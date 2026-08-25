@@ -101,7 +101,7 @@ projects, and an unknown ID. `loginSessionAs` was extracted from
    `GET /api/v1/tasks` does and rejects the rest with 400.
 
    **Deviation:** the two new orders are applied in `task.Service.List`
-   (a stable sort keeping the manual position order as tiebreak), not in
+   (a stable sort keeping the default creation order as tiebreak), not in
    `ListTasksByProject`'s `ORDER BY`. Adding them to the query means changing
    its parameters, and `make generate` with the currently installed sqlc
    (v1.31.1) rewrites *every* generated file — most importantly it emits

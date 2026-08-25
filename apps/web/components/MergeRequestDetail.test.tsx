@@ -58,7 +58,6 @@ function makeTask(overrides: Partial<Task>): Task {
     size: "m",
     designStartedAt: null,
     implementationStartedAt: null,
-    position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",

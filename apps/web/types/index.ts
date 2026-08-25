@@ -49,7 +49,6 @@ export interface Backlog {
   projectId: string;
   name: string;
   description: string;
-  position: number;
   // The backlog's planned period, drawn as one bar on the Backlog timeline.
   // App-only, like a task's startDate — neither ever syncs to GitLab.
   startDate: string | null;
@@ -99,7 +98,6 @@ export interface Epic {
   backlogId: string | null;
   name: string;
   description: string;
-  position: number;
   startDate: string | null;
   dueOn: string | null;
   priority: Priority;
@@ -181,7 +179,6 @@ export interface Task {
   // Implementation stages. App-only, never synced to GitLab.
   designStartedAt: string | null;
   implementationStartedAt: string | null;
-  position: number;
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;

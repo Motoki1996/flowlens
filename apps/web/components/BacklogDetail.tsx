@@ -23,6 +23,7 @@ import { BacklogEditForm } from "@/components/BacklogEditForm";
 import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
 import { EpicForm } from "@/components/EpicForm";
 import { NewTaskForm } from "@/components/NewTaskForm";
+import { CreateFormRegion } from "@/components/CreateFormRegion";
 import { MetricTabs } from "@/components/MetricTabs";
 
 function formatDateTime(iso: string) {
@@ -41,16 +42,6 @@ function formatDate(iso: string) {
     month: "short",
     day: "numeric",
   });
-}
-
-/**
- * CreateFormRegion separates an inline "New …" form from the list it sits
- * above. A form and a list of rows are both stacks of bordered boxes, so
- * without a rule between them it is genuinely unclear where the form ends —
- * the reader has to work it out from the buttons.
- */
-function CreateFormRegion({ children }: { children: React.ReactNode }) {
-  return <div className="border-border mb-6 border-b pb-6">{children}</div>;
 }
 
 function StatusBadge({ status }: { status: TaskStatus }) {

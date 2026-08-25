@@ -6,6 +6,7 @@ import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import type { ApiError, ApiToken, ApiTokenScope, ApiTokenWithSecret } from "@/types";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { CreateFormRegion } from "@/components/CreateFormRegion";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -308,14 +309,16 @@ export function ApiTokenSection({ projectId, tokens }: { projectId: string; toke
       </CardHeader>
       <CardContent className="space-y-3">
         {issuing ? (
-          <IssueTokenForm
-            projectId={projectId}
-            onIssued={(token) => {
-              setIssuing(false);
-              setIssuedToken(token);
-            }}
-            onCancel={() => setIssuing(false)}
-          />
+          <CreateFormRegion>
+            <IssueTokenForm
+              projectId={projectId}
+              onIssued={(token) => {
+                setIssuing(false);
+                setIssuedToken(token);
+              }}
+              onCancel={() => setIssuing(false)}
+            />
+          </CreateFormRegion>
         ) : null}
         {tokens.length === 0 ? (
           <p className="text-muted-foreground text-sm">

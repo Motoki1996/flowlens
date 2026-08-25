@@ -86,6 +86,48 @@ export interface Backlog {
   updatedAt: string;
 }
 
+// An Epic is the optional rung between a backlog and its tasks: the coarse
+// unit (one screen, one endpoint group) a refined backlog is cut into before
+// each of those is broken into tasks. Deliberately shaped as a Backlog that
+// lives inside a backlog — every field below means what a Backlog's does,
+// minus size (an epic's size is the sum of its tasks') and plus backlogId.
+export interface Epic {
+  id: string;
+  projectId: string;
+  // The backlog this epic belongs to; null means unfiled (the Unclassified
+  // group), the same meaning a task's own null backlogId has.
+  backlogId: string | null;
+  name: string;
+  description: string;
+  position: number;
+  startDate: string | null;
+  dueOn: string | null;
+  priority: Priority;
+  progress: Progress;
+  // Where a task filed in this epic gets its issue created, overriding the
+  // backlog's own override of the project default. null falls through to the
+  // backlog's. Read only when a task is created.
+  defaultLinkedGitlabProjectId: string | null;
+  // The branch tasks in this epic are meant to branch from. "" falls through
+  // to the backlog's — the resolution runs per field, so an epic that
+  // overrides only this still inherits the backlog's scope below. App-only,
+  // never synced to GitLab.
+  baseBranch: string;
+  allowedScope: string;
+  forbiddenScope: string;
+  // The project member who owns this epic. App-only end to end: like a
+  // backlog's, an epic's assignee has no GitLab counterpart to mirror onto.
+  assigneeUserId: string | null;
+  assigneeUsername: string;
+  assigneeDisplayName: string;
+  // Aggregated server-side, the same as a backlog's, so the collection never
+  // fetches a project's tasks just to draw a ratio.
+  taskCount: number;
+  closedTaskCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type TaskStatus = "open" | "closed";
 
 export interface TaskAIContext {
@@ -108,6 +150,9 @@ export interface Task {
   id: string;
   projectId: string;
   backlogId: string | null;
+  // The epic this task belongs to; null means it sits directly in its
+  // backlog. Always agrees with backlogId — setting one writes the other.
+  epicId: string | null;
   title: string;
   description: string;
   status: TaskStatus;

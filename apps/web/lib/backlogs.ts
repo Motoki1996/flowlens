@@ -1,14 +1,9 @@
 import type { Backlog } from "@/types";
-import { formatDate } from "@/lib/dates";
+import { groupScheduleLabel } from "@/lib/groups";
 
-/** backlogScheduleLabel renders a backlog's planned period as one line. Shared
- *  by the Backlog collection's List and Board view modes so the same backlog
- *  never reads differently between them. */
+/** backlogScheduleLabel renders a backlog's planned period as one line. It is
+ *  groupScheduleLabel narrowed to a Backlog — an epic renders its own period
+ *  the same way, so the rule lives once in lib/groups.ts. */
 export function backlogScheduleLabel(backlog: Backlog): string | null {
-  if (backlog.startDate && backlog.dueOn) {
-    return `${formatDate(backlog.startDate)} – ${formatDate(backlog.dueOn)}`;
-  }
-  if (backlog.startDate) return `From ${formatDate(backlog.startDate)}`;
-  if (backlog.dueOn) return `Due ${formatDate(backlog.dueOn)}`;
-  return null;
+  return groupScheduleLabel(backlog);
 }

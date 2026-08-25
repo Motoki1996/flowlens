@@ -13,6 +13,7 @@ import type {
   ApiToken,
   Backlog,
   DeliveryMetrics,
+  Epic,
   FlowMetrics,
   MetricsInterval,
   GitlabConnection,
@@ -144,6 +145,61 @@ export const getProject = cache(async (id: string): Promise<Project | null> => {
   return (await res.json()) as Project;
 });
 
+/** EpicListFilter is GET /api/v1/projects/{projectID}/epics's query
+ *  parameters. The same shape as BacklogListFilter below, plus `backlogId`,
+ *  which takes a backlog UUID or the literal "unassigned" for the epics in no
+ *  backlog at all — the API spells it `backlog_id`, matching the task
+ *  collection's own snake_case parameter. */
+export type EpicListFilter = {
+  backlogId?: string;
+  priority?: Priority;
+  progress?: Progress;
+  sort?: "priority" | "progress";
+};
+
+/**
+ * getEpics returns the project's epics matching filter, ordered by position
+ * unless filter.sort says otherwise. Callers must already know the request is
+ * authenticated.
+ */
+export const getEpics = cache(
+  async (projectId: string, filter: EpicListFilter = {}): Promise<Epic[]> => {
+    const cookieStore = await cookies();
+    const params = new URLSearchParams();
+    if (filter.backlogId) params.set("backlog_id", filter.backlogId);
+    if (filter.priority) params.set("priority", filter.priority);
+    if (filter.progress) params.set("progress", filter.progress);
+    if (filter.sort) params.set("sort", filter.sort);
+    const query = params.toString();
+
+    const res = await fetch(
+      `${API_INTERNAL_URL}/api/v1/projects/${projectId}/epics${query ? `?${query}` : ""}`,
+      { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
+    );
+    if (!res.ok) {
+      throw new Error(`Failed to load epics: ${res.status}`);
+    }
+    return (await res.json()) as Epic[];
+  },
+);
+
+/**
+ * getEpic returns one epic, or null when it doesn't exist or the current user
+ * can't see it (the API reports both cases as 404).
+ */
+export async function getEpic(id: string): Promise<Epic | null> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}/api/v1/epics/${id}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to load epic: ${res.status}`);
+  }
+  return (await res.json()) as Epic;
+}
+
 /** BacklogListFilter is GET /api/v1/projects/{projectID}/backlogs's query
  *  parameters (issue #151, mirroring ProjectTasksFilter above): every field is
  *  optional and means "no filter"/"manual order" when omitted. Unlike a
@@ -207,6 +263,9 @@ export async function getBacklog(id: string): Promise<Backlog | null> {
  *  order, which has no named value. */
 export type ProjectTasksFilter = {
   backlogId?: string;
+  /** An epic UUID, or "unassigned" for the tasks sitting directly in a
+   *  backlog. Spelled `epic_id` on the wire, like `backlog_id`. */
+  epicId?: string;
   status?: TaskStatus;
   priority?: Priority;
   progress?: Progress;
@@ -231,6 +290,7 @@ export const getTasks = cache(
     const cookieStore = await cookies();
     const params = new URLSearchParams();
     if (filter.backlogId) params.set("backlog_id", filter.backlogId);
+    if (filter.epicId) params.set("epic_id", filter.epicId);
     if (filter.status) params.set("status", filter.status);
     if (filter.priority) params.set("priority", filter.priority);
     if (filter.progress) params.set("progress", filter.progress);

@@ -6,6 +6,7 @@ import {
   FolderIcon,
   GitPullRequestIcon,
   LayoutDashboardIcon,
+  BoxesIcon,
   LayersIcon,
   ListTodoIcon,
   PlugIcon,
@@ -34,6 +35,7 @@ import { cn } from "@/lib/utils";
  *  the link still works, it just carries no summary. */
 export type ProjectSidebarCounts = {
   backlogs: number | null;
+  epics: number | null;
   openTasks: number | null;
   totalTasks: number | null;
   mergeRequests: number | null;
@@ -45,6 +47,7 @@ export type ProjectSidebarCounts = {
 const SECTIONS: { section: ProjectSection; label: string; icon: LucideIcon }[] = [
   { section: "overview", label: "Overview", icon: LayoutDashboardIcon },
   { section: "backlogs", label: "Backlogs", icon: LayersIcon },
+  { section: "epics", label: "Epics", icon: BoxesIcon },
   { section: "tasks", label: "Tasks", icon: ListTodoIcon },
   { section: "merge-requests", label: "Merge requests", icon: GitPullRequestIcon },
   { section: "gitlab-connection", label: "GitLab connection", icon: PlugIcon },
@@ -54,6 +57,8 @@ function summaryOf(section: ProjectSection, counts: ProjectSidebarCounts) {
   switch (section) {
     case "backlogs":
       return counts.backlogs === null ? null : String(counts.backlogs);
+    case "epics":
+      return counts.epics === null ? null : String(counts.epics);
     case "tasks":
       return counts.openTasks === null || counts.totalTasks === null
         ? null

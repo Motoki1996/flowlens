@@ -8,6 +8,7 @@ function makeTask(overrides: Partial<TaskWithProject>): TaskWithProject {
     projectId: "p1",
     projectName: "Payments",
     backlogId: null,
+    epicId: null,
     title: "Task",
     description: "",
     status: "open",

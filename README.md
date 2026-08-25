@@ -467,6 +467,80 @@ GitLab. Like `baseBranch`, they are surfaced on
 (set via `PUT /api/v1/tasks/{taskID}/ai-context`) remain the place for
 anything task-specific.
 
+### Epics: an optional layer between a backlog and its tasks
+
+A refined backlog is not always broken straight down into
+implementation-sized tasks. The work is usually first cut into coarse units —
+one screen, one endpoint group, one migration + API pair — and only then is
+each of those broken into tasks someone actually works. That coarse unit is
+an **epic**.
+
+It is optional in both directions: a task may sit directly in a backlog
+exactly as before, and an epic may sit outside any backlog. Nothing about an
+existing project changes until someone creates one.
+
+- `GET`/`POST /api/v1/projects/{projectID}/epics`
+  (`?backlog_id=`/`?priority=`/`?progress=`/`?assignee=`/`?sort=`),
+  `PATCH /api/v1/projects/{projectID}/epics/order`, and
+  `GET`/`PATCH`/`DELETE /api/v1/epics/{epicID}` — the same route shape,
+  bearer-token allowlisting and scopes a backlog's endpoints have.
+- The web app's screens are `/projects/[projectId]/epics` (Board / List /
+  Timeline view modes, Board by default) and
+  `/projects/[projectId]/epics/[epicId]`.
+- A task names its epic with `epicId` on create, update and bulk create, and
+  the task collections take `?epic_id=<uuid>|unassigned`.
+
+An epic carries the same fields a backlog does — name, description,
+position, start/due dates, priority, progress, assignee, base branch,
+allowed/forbidden scope and its own `defaultLinkedGitlabProjectId` — minus
+`size`, since an epic's size is just the sum of its tasks'. It is app-only:
+**no epic is ever created in, or read from, GitLab.** GitLab CE has no Epic
+at all (it is a Premium object), which is also why the name was free to take.
+
+Two rules the schema can't express are enforced by the API:
+
+- **An epic wins over a backlog.** Naming an `epicId` on a task also files it
+  in that epic's backlog, whatever `backlogId` the same request carried.
+  Moving a task to a different backlog without naming an epic clears its
+  epic, and moving an *epic* between backlogs moves its tasks with it.
+- **An epic belongs to one project.** An epic in another project's backlog is
+  rejected with 400 `invalid_backlog`.
+
+Deleting an epic never deletes its tasks: they drop back to sitting directly
+in their backlog, exactly where they were before the epic existed. Abandoning
+the rung costs nothing.
+
+See [ADR-0012](docs/decisions/0012-why-an-epic-layer.md) for why this is a
+separate object rather than a parent task, and why it stays out of GitLab.
+
+### An epic's base branch and change scope
+
+This is what the rung mainly exists for. A backlog is often too coarse to
+name one branch: two coarse units inside it routinely target different
+release branches, and the only way to say so used to be splitting the
+backlog — which loses the grouping the backlog was there to provide.
+
+An epic therefore carries its own `baseBranch`, `allowedScope` and
+`forbiddenScope`, with the same validation the backlog's have. They are
+resolved into `GET /api/v1/tasks/{taskID}/context` **epic first, then
+backlog, per field**:
+
+| Epic | Backlog | Task context reads |
+| --- | --- | --- |
+| `release/2.4` | `main` | `release/2.4` |
+| `""` | `main` | `main` |
+| `""` | `""` | `""` |
+
+Per field, not per object: an epic that overrides only `baseBranch` still
+inherits its backlog's scope. The Epic single view says which of the two each
+value came from, since only one of them follows the backlog when it changes.
+
+The issue destination for a *new* task gains the same rung: the task's epic's
+link, then its backlog's, then the project's default, then nowhere at all.
+Like the rungs below it, that is read **only when the task is created** —
+`task_gitlab_links` governs every later update, so moving a task between
+epics never moves or re-targets an issue that already exists.
+
 ### What FlowLens registers as a webhook
 
 For each linked GitLab project, FlowLens registers exactly one webhook on
@@ -687,8 +761,9 @@ task from a different project gets the same 404 a foreign session gets, not
 a 403, so a token can't distinguish "not yours" from "does not exist". All
 four fields are `""`, never `null`, until set: `acceptanceCriteria`/
 `aiContext` via `PUT /api/v1/tasks/{taskID}/ai-context`, `allowedScope`/
-`forbiddenScope` via the task's backlog (see "A backlog's allowed/forbidden
-change scope" above) — `""` either way if the task is unfiled.
+`forbiddenScope` (and `baseBranch`) via the task's epic and then its backlog,
+resolved per field (see "An epic's base branch and change scope" above) —
+`""` either way when neither sets one.
 
 To list several tasks at once (e.g. an agent polling its queue), use
 `GET /api/v1/projects/{projectID}/tasks/context?status=open&per_page=20`,

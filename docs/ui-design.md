@@ -38,6 +38,7 @@ The objects the UI is built from, and where they live today:
 | `User` | An account of this app | `users` |
 | `Project` | A workspace owned by one user: backlogs, tasks, one GitLab connection | `projects` |
 | `Backlog` | An app-only grouping of tasks inside a project | `backlogs` |
+| `Epic` | An optional, app-only grouping between a `Backlog` and its tasks — the coarse unit (one screen, one endpoint group) a backlog is cut into | `epics` |
 | `Task` | One unit of work, optionally mirrored by a GitLab issue | `tasks` (+ `task_ai_contexts`, `task_gitlab_links`) |
 | `GitLabConnection` | A GitLab CE base URL and access token for one project | `gitlab_connections` |
 | `LinkedGitLabProject` | A GitLab project a `Project` syncs issues with | `linked_gitlab_projects` |
@@ -81,6 +82,8 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]` | `Project` | Single |
 | `/projects/[projectId]/backlogs` | `Backlog` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress) |
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single (editing is inline here — no `/edit` route, per rule 4; the collection view's List rows share the same form) |
+| `/projects/[projectId]/epics` | `Epic` | Collection (Board / List / Timeline view modes, exactly as `Backlog`; `?backlog=`/`?priority=`/`?progress=`/`?sort=` filters) |
+| `/projects/[projectId]/epics/[epicId]` | `Epic` | Single (editing is inline here — no `/edit` route, per rule 4; the collection view's List rows share the same form) |
 | `/projects/[projectId]/tasks` | `Task` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress; `?backlog=`/`?progress=` filters) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |
 | `/tasks` | `Task` | Collection, cross-project (`?status=`/`?priority=`/`?progress=`/`?sort=`/`?projectId=` filters) |
@@ -110,7 +113,7 @@ what happened to this one.
 Every screen under `/projects/[projectId]` shares one layout
 (`app/projects/[projectId]/layout.tsx`), which holds the app header and a
 **persistent project sidebar**: a switcher for the project itself, then one
-entry per section (Overview, Backlogs, Tasks, Merge requests, GitLab connection) with the same
+entry per section (Overview, Backlogs, Epics, Tasks, Merge requests, GitLab connection) with the same
 count the hub shows. The hub being the only way between sibling collections was
 the original mistake — going from Backlogs to Tasks meant a detour up and back
 down. The sidebar makes that lateral move one click, and the sections are the
@@ -206,12 +209,20 @@ own attributes (state, author, project, merged-at), so the user filters in the
 same vocabulary the object is described in.
 
 A filter that another screen wants to hand off through belongs in the URL. The
-Task collection reads `?backlog=`, and the Backlog screens link to
-`/projects/[id]/tasks?backlog=[backlogId]` instead of growing task browsing of
-their own — one place to browse tasks, reachable pre-filtered. The Backlog
-single view keeps a read-only preview of its tasks and an "Open in Tasks" link;
+Task collection reads `?backlog=` and `?epic=`, and the Backlog and Epic
+screens link to `/projects/[id]/tasks?backlog=[backlogId]` (or `?epic=`)
+instead of growing task browsing of their own — one place to browse tasks, reachable pre-filtered. The Backlog
+single view keeps a read-only preview of its tasks and an "Open in Tasks" link
+(and, when it has any, an Epics card with the same "Open in Epics" handoff);
 filtering, the timeline mode, and task creation stay with the collection that
 owns them.
+
+`Backlog` and `Epic` share their Board and Timeline view modes
+(`GroupBoardSection` / `GroupTimelineSection`, `lib/groups.ts`): an epic is
+deliberately shaped as a backlog that lives inside a backlog, and a board that
+only needs a name, a progress and a task ratio has nothing to tell the two
+apart. Each object still names its own component, so a screen reads as being
+about the object it is about.
 
 ### 6. Single views present attributes in a fixed order
 

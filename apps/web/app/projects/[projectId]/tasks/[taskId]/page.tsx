@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import {
   getBacklogs,
+  getEpics,
   getCurrentUser,
   getLinkedGitlabProjectLabels,
   getLinkedGitlabProjectMembers,
@@ -40,13 +41,15 @@ export default async function TaskPage({
 
   // The dependency pickers choose from the project's other tasks, so the
   // single view loads the collection alongside the task itself.
-  const [backlogs, tasks, dependencies, linkedGitlabProjects, comments] = await Promise.all([
-    getBacklogs(projectId),
-    getTasks(projectId),
-    getTaskDependencies(projectId),
-    getLinkedGitlabProjects(projectId),
-    getTaskComments(taskId),
-  ]);
+  const [backlogs, epics, tasks, dependencies, linkedGitlabProjects, comments] =
+    await Promise.all([
+      getBacklogs(projectId),
+      getEpics(projectId),
+      getTasks(projectId),
+      getTaskDependencies(projectId),
+      getLinkedGitlabProjects(projectId),
+      getTaskComments(taskId),
+    ]);
 
   // Assignee/labels are edited against a specific linked GitLab project's
   // candidates (issue #80). A project with no GitLab connection, or none
@@ -93,6 +96,7 @@ export default async function TaskPage({
       <TaskDetail
         task={task}
         backlogs={backlogs}
+        epics={epics}
         tasks={tasks}
         dependencies={dependencies}
         assigneeOptions={assigneeOptions}

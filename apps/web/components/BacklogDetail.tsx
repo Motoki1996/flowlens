@@ -3,9 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { Backlog, LinkedGitlabProject, Task, TaskStatus } from "@/types";
-import { backlogsPath, taskPath, tasksPath } from "@/lib/routes";
-import { backlogCompletion } from "@/lib/timeline";
+import type { Backlog, Epic, LinkedGitlabProject, Task, TaskStatus } from "@/types";
+import { backlogsPath, epicPath, epicsPath, taskPath, tasksPath } from "@/lib/routes";
+import { backlogCompletion, groupTaskCompletion } from "@/lib/timeline";
 import {
   Card,
   CardHeader,
@@ -60,12 +60,17 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 export function BacklogDetail({
   backlog: initialBacklog,
   project,
+  epics = [],
   tasks = [],
   links = [],
   tasksError = false,
 }: {
   backlog: Backlog;
   project: { id: string; name: string };
+  /** This backlog's epics (issue: the epic rung, ADR-0012). Empty — a
+   *  backlog broken straight down into tasks — hides the card entirely
+   *  rather than advertising a layer this backlog doesn't use. */
+  epics?: Epic[];
   tasks?: Task[];
   /** The project's linked GitLab projects (issue #180), used to name this
    *  backlog's issue destination. Empty hides that row. */
@@ -262,6 +267,51 @@ export function BacklogDetail({
           </>
         )}
       </Card>
+
+      {epics.length > 0 ? (
+        <Card className="mt-8">
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="text-base font-medium">Epics</CardTitle>
+              {/* Filtering, the board and epic creation all belong to the Epic
+                  collection, so this hands off rather than duplicating them —
+                  the same rule the Tasks card below follows. */}
+              <Link
+                href={`${epicsPath(project.id)}?backlog=${backlog.id}`}
+                className="text-muted-foreground hover:text-foreground text-sm hover:underline"
+              >
+                Open in Epics
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {epics.map((epic) => {
+                const completion = groupTaskCompletion(epic);
+                return (
+                  <li key={epic.id}>
+                    <Link
+                      href={epicPath(project.id, epic.id)}
+                      className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
+                    >
+                      <span className="text-foreground">{epic.name}</span>
+                      <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">
+                        {epic.baseBranch ? <code>{epic.baseBranch}</code> : null}
+                        <span className="tabular-nums">
+                          {completion.total === 0
+                            ? "No tasks"
+                            : `${completion.closed}/${completion.total} closed`}
+                        </span>
+                        <ProgressBadge progress={epic.progress} />
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card className="mt-8">
         <CardHeader>

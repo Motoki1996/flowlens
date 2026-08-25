@@ -450,4 +450,61 @@ describe("TaskDetail", () => {
       "/projects/p1/merge-requests/mr1",
     );
   });
+
+  // Choosing an epic moves the task to that epic's backlog too — the two
+  // always agree — and epic_id is app-only, so this must never touch GitLab.
+  it("files the task under an epic, sending epicId alone", async () => {
+    const epic = {
+      id: "e1",
+      projectId: "p1",
+      backlogId: "b1",
+      name: "Screens",
+      description: "",
+      position: 0,
+      startDate: null,
+      dueOn: null,
+      priority: "medium" as const,
+      progress: "not_started" as const,
+      defaultLinkedGitlabProjectId: null,
+      baseBranch: "",
+      allowedScope: "",
+      forbiddenScope: "",
+      assigneeUserId: null,
+      assigneeUsername: "",
+      assigneeDisplayName: "",
+      taskCount: 0,
+      closedTaskCount: 0,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => makeTask({ epicId: "e1" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <TaskDetail
+        task={makeTask({})}
+        backlogs={[backlog]}
+        epics={[epic]}
+        tasks={[]}
+        dependencies={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByLabelText("Epic"));
+    fireEvent.click(screen.getByRole("option", { name: "Screens" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/v1/tasks/t1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body as string)).toEqual({ epicId: "e1" });
+  });
+
+  it("hides the Epic control for a project that doesn't use epics", () => {
+    render(<TaskDetail task={makeTask({})} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
+    expect(screen.queryByLabelText("Epic")).not.toBeInTheDocument();
+  });
 });

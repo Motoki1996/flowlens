@@ -1226,4 +1226,58 @@ describe("TaskListSection", () => {
       expect(screen.getByText("Sprint 1 (1)")).toBeInTheDocument();
     });
   });
+
+  // The epic rung is optional: a project with no epics gets no filter, since
+  // it would only raise a question the screen can't answer.
+  it("filters by epic, and names each task's epic on its row", () => {
+    const epic = {
+      id: "e1",
+      projectId: "p1",
+      backlogId: "b1",
+      name: "Screens",
+      description: "",
+      position: 0,
+      startDate: null,
+      dueOn: null,
+      priority: "medium" as const,
+      progress: "not_started" as const,
+      defaultLinkedGitlabProjectId: null,
+      baseBranch: "",
+      allowedScope: "",
+      forbiddenScope: "",
+      assigneeUserId: null,
+      assigneeUsername: "",
+      assigneeDisplayName: "",
+      taskCount: 0,
+      closedTaskCount: 0,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+
+    const { unmount } = render(
+      <TaskListSection
+        projectId="p1"
+        tasks={[makeTask({ epicId: "e1" })]}
+        backlogs={[backlog]}
+        epics={[epic]}
+        initialView="list"
+      />,
+    );
+    expect(screen.getAllByText("Screens").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByLabelText("Epic"));
+    fireEvent.click(screen.getByRole("option", { name: "Screens" }));
+    expect(push).toHaveBeenCalledWith("/projects/p1/tasks?epic=e1");
+    unmount();
+
+    render(
+      <TaskListSection
+        projectId="p1"
+        tasks={[makeTask({})]}
+        backlogs={[backlog]}
+        initialView="list"
+      />,
+    );
+    expect(screen.queryByLabelText("Epic")).not.toBeInTheDocument();
+  });
 });

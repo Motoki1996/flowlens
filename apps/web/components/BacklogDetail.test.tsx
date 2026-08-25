@@ -339,4 +339,49 @@ describe("BacklogDetail", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
   });
+
+  // The epic rung is optional, so the card is present only when this backlog
+  // actually uses it — and hands off to the Epic collection rather than
+  // growing a second place to manage epics.
+  it("lists this backlog's epics, or hides the card when it has none", () => {
+    const epic = {
+      id: "e1",
+      projectId: "p1",
+      backlogId: "b1",
+      name: "Screens",
+      description: "",
+      position: 0,
+      startDate: null,
+      dueOn: null,
+      priority: "medium" as const,
+      progress: "in_progress" as const,
+      defaultLinkedGitlabProjectId: null,
+      baseBranch: "release/2.4",
+      allowedScope: "",
+      forbiddenScope: "",
+      assigneeUserId: null,
+      assigneeUsername: "",
+      assigneeDisplayName: "",
+      taskCount: 2,
+      closedTaskCount: 1,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+
+    const { unmount } = render(
+      <BacklogDetail backlog={backlog} project={project} epics={[epic]} />,
+    );
+    expect(screen.getByRole("link", { name: /Screens/ })).toHaveAttribute(
+      "href",
+      "/projects/p1/epics/e1",
+    );
+    expect(screen.getByRole("link", { name: "Open in Epics" })).toHaveAttribute(
+      "href",
+      "/projects/p1/epics?backlog=b1",
+    );
+    unmount();
+
+    render(<BacklogDetail backlog={backlog} project={project} />);
+    expect(screen.queryByText("Epics")).not.toBeInTheDocument();
+  });
 });

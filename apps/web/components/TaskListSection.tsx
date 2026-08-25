@@ -14,6 +14,7 @@ import { useViewMode } from "@/lib/useViewMode";
 import type {
   ApiError,
   Backlog,
+  Epic,
   Priority,
   Size,
   Progress,
@@ -103,6 +104,12 @@ export type AssigneeAvailability = "available" | "no-connection" | "no-identity"
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
 
+/** The `?epic=` value standing for "tasks in no epic at all" — the tasks
+ *  sitting directly in a backlog, which is every task in a project that
+ *  hasn't adopted the epic rung. The API spells the same thing "unassigned"
+ *  on epic_id. */
+export const NO_EPIC = "none";
+
 /** A row shows at most this many labels before rolling the rest into a "+n"
  *  badge (issue #154) — a task with a handful of GitLab labels was crowding
  *  the row's fixed-width meta section on top of assignee/due/the four
@@ -116,6 +123,7 @@ const MAX_VISIBLE_ROW_LABELS = 3;
  *  control read from here, rather than each repeating the same literal. */
 const FILTER_DEFAULTS = {
   backlog: "all",
+  epic: "all",
   status: "open",
   progress: "all",
   priority: "all",
@@ -450,8 +458,10 @@ export function TaskListSection({
   projectId,
   tasks,
   backlogs,
+  epics = [],
   dependencies = [],
   backlogFilter = "all",
+  epicFilter = "all",
   search = "",
   statusFilter = "open",
   sort = "manual",
@@ -467,10 +477,17 @@ export function TaskListSection({
    *  so this is what every view mode renders as-is. */
   tasks: Task[];
   backlogs: Backlog[];
+  /** The project's epics, for the `?epic=` filter's options and for naming
+   *  each task's epic on its row. Empty — the case for a project that
+   *  doesn't use the epic rung at all — drops the filter entirely. */
+  epics?: Epic[];
   dependencies?: TaskDependency[];
   /** The applied `?backlog=`: a backlog id, UNCLASSIFIED_BACKLOG, or "all" —
    *  how the backlog screens hand off to this collection. */
   backlogFilter?: string;
+  /** The applied `?epic=`: an epic id, NO_EPIC, or "all" — how the epic
+   *  screens hand off to this collection, the same way the backlog ones do. */
+  epicFilter?: string;
   /** The applied `?q=`, if any. Matched server-side against a task's title
    *  and description (`websearch_to_tsquery`), so it matches whole words
    *  rather than any substring. */
@@ -591,6 +608,22 @@ export function TaskListSection({
     [backlogs],
   );
 
+  // The epic filter's own options, the same shape: every epic, plus "all" and
+  // the tasks sitting directly in a backlog — which is every task in a
+  // project that hasn't adopted the epic rung, hence its own option rather
+  // than being folded into "all".
+  const epicFilterOptions = useMemo(
+    () => [
+      { value: "all", label: "All epics" },
+      ...epics.map((e) => ({ value: e.id, label: e.name })),
+      { value: NO_EPIC, label: "No epic" },
+    ],
+    [epics],
+  );
+
+  // Each task's epic name, for the row/card labels below.
+  const epicNames = useMemo(() => new Map(epics.map((e) => [e.id, e.name])), [epics]);
+
   // Bulk assign can move a task into any backlog, or back to Unclassified —
   // both are valid destinations, unlike the backlog filter's "all" option.
   const assignOptions = useMemo(
@@ -653,6 +686,10 @@ export function TaskListSection({
     updateQuery({ backlog: value === FILTER_DEFAULTS.backlog ? undefined : value });
   }
 
+  function changeEpicFilter(value: string) {
+    updateQuery({ epic: value === FILTER_DEFAULTS.epic ? undefined : value });
+  }
+
   function changeStatusFilter(value: "all" | TaskStatus) {
     updateQuery({ status: value === FILTER_DEFAULTS.status ? undefined : value });
   }
@@ -684,6 +721,7 @@ export function TaskListSection({
   // other filter is.
   const hasActiveFilters =
     backlogFilter !== FILTER_DEFAULTS.backlog ||
+    epicFilter !== FILTER_DEFAULTS.epic ||
     search.trim() !== "" ||
     statusFilter !== FILTER_DEFAULTS.status ||
     assigneeMe ||
@@ -709,6 +747,14 @@ export function TaskListSection({
     const query = search.trim();
     if (query) {
       return `No tasks match "${query}".`;
+    }
+    if (epicFilter !== "all") {
+      const label =
+        epicFilter === NO_EPIC
+          ? "no epic"
+          : (epics.find((e) => e.id === epicFilter)?.name ?? "this epic");
+      const statusPart = statusFilter === "all" ? "" : `${statusFilter} `;
+      return `No ${statusPart}tasks in ${label}.`;
     }
     if (backlogFilter !== "all") {
       const label = filterOptions.find((o) => o.value === backlogFilter)?.label ?? "this backlog";
@@ -1035,6 +1081,21 @@ export function TaskListSection({
                   <SelectItem value="undated">No due date</SelectItem>
                 </SelectContent>
               </Select>
+              {/* Only offered once the project actually uses the epic rung:
+                  it is optional, and a filter with nothing behind it is just
+                  a question the screen can't answer. */}
+              {epics.length > 0 ? (
+                <Combobox
+                  aria-label="Epic"
+                  options={epicFilterOptions}
+                  value={epicFilter}
+                  onChange={changeEpicFilter}
+                  size="sm"
+                  className="w-44"
+                  searchPlaceholder="Search epics…"
+                  emptyText="No epic found."
+                />
+              ) : null}
               <Combobox
                 aria-label="Backlog"
                 options={filterOptions}
@@ -1432,6 +1493,14 @@ export function TaskListSection({
                                   ) : null}
                                 </span>
                                 <span className="text-muted-foreground flex w-full flex-wrap items-center gap-3 text-xs sm:w-auto sm:flex-nowrap">
+                                  {/* The rows are grouped by backlog, so the
+                                      backlog is already stated by the group
+                                      header above — the epic is the rung it
+                                      doesn't say, and one backlog group
+                                      routinely holds several. */}
+                                  {task.epicId && epicNames.has(task.epicId) ? (
+                                    <span className="truncate">{epicNames.get(task.epicId)}</span>
+                                  ) : null}
                                   {task.assigneeGitlabUsername ? (
                                     <span>{task.assigneeGitlabUsername}</span>
                                   ) : null}

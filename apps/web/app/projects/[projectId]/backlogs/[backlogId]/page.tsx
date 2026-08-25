@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import {
   getBacklog,
+  getEpics,
   getLinkedGitlabProjects,
   getProject,
   getTasks,
@@ -23,6 +24,16 @@ export default async function BacklogPage({
   // A backlog reached through the wrong project's URL is not that project's
   // backlog, so the nested route treats it as missing.
   if (backlog.projectId !== projectId) notFound();
+
+  // The epics filed in this backlog, for the single view's Epics card. An
+  // empty list — a backlog broken straight down into tasks — hides the card,
+  // and a failed fetch reads the same way rather than taking the screen down.
+  let epics: Awaited<ReturnType<typeof getEpics>> = [];
+  try {
+    epics = await getEpics(projectId, { backlogId: backlog.id });
+  } catch {
+    epics = [];
+  }
 
   let tasks: Task[] = [];
   let tasksError = false;
@@ -53,6 +64,7 @@ export default async function BacklogPage({
       />
       <BacklogDetail
         backlog={backlog}
+        epics={epics}
         project={project}
         tasks={tasks}
         links={links}

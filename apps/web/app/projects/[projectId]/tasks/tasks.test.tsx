@@ -22,6 +22,7 @@ const getCurrentUser = vi.fn();
 const getProject = vi.fn();
 const getTasks = vi.fn();
 const getBacklogs = vi.fn();
+const getEpics = vi.fn();
 const getTaskDependencies = vi.fn();
 const getGitlabConnection = vi.fn();
 const getMyGitlabIdentities = vi.fn();
@@ -31,6 +32,7 @@ vi.mock("@/lib/api", () => ({
   getProject: (id: string) => getProject(id),
   getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
   getBacklogs: (id: string) => getBacklogs(id),
+  getEpics: (id: string) => getEpics(id),
   getTaskDependencies: (id: string) => getTaskDependencies(id),
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getMyGitlabIdentities: () => getMyGitlabIdentities(),
@@ -55,6 +57,7 @@ describe("TasksPage", () => {
     getProject.mockResolvedValue(project);
     getTasks.mockResolvedValue([]);
     getBacklogs.mockResolvedValue([]);
+    getEpics.mockResolvedValue([]);
     getTaskDependencies.mockResolvedValue([]);
     getGitlabConnection.mockResolvedValue(null);
     getMyGitlabIdentities.mockResolvedValue([]);

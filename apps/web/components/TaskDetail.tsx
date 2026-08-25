@@ -9,6 +9,7 @@ import type {
   ApiError,
   ApiToken,
   Backlog,
+  Epic,
   GitlabLabelOption,
   GitlabMemberOption,
   MergeRequest,
@@ -203,6 +204,83 @@ function BacklogSelect({
   );
 }
 
+const NO_EPIC = "no-epic";
+
+/**
+ * EpicSelect files the task under an epic, or back into its backlog directly.
+ *
+ * Choosing an epic also moves the task to that epic's backlog — the two
+ * always agree, and internal/task writes backlog_id from the epic in the same
+ * statement — so the Backlog control above it reads back the epic's backlog
+ * once this returns. The options are narrowed to the task's own backlog when
+ * it has one, since an epic from another backlog would silently move the task
+ * out of it.
+ */
+function EpicSelect({
+  task,
+  epics,
+  onChanged,
+}: {
+  task: Task;
+  epics: Epic[];
+  onChanged: (task: Task) => void;
+}) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const options = useMemo(() => {
+    const candidates = task.backlogId
+      ? epics.filter((e) => e.backlogId === task.backlogId || e.id === task.epicId)
+      : epics;
+    return [
+      { value: NO_EPIC, label: "No epic" },
+      ...candidates.map((e) => ({ value: e.id, label: e.name })),
+    ];
+  }, [epics, task.backlogId, task.epicId]);
+
+  async function handleChange(value: string) {
+    const epicId = value === NO_EPIC ? null : value;
+
+    setPending(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/tasks/${task.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        // epicId alone: a PATCH is a partial update, and epic_id is app-only,
+        // so this never enqueues a GitLab issue.update.
+        body: JSON.stringify({ epicId }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setError(body?.error.message ?? "Failed to assign epic.");
+        return;
+      }
+      onChanged((await res.json()) as Task);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-start gap-1">
+      {error ? <span className="text-destructive text-xs">{error}</span> : null}
+      <Combobox
+        aria-label="Epic"
+        options={options}
+        value={task.epicId ?? NO_EPIC}
+        onChange={handleChange}
+        disabled={pending}
+        size="sm"
+        className="w-52"
+        searchPlaceholder="Search epics…"
+        emptyText="No epic found."
+      />
+    </div>
+  );
+}
+
 /**
  * GitlabSyncSection shows a task's sync badge, a link to its GitLab issue
  * once one exists, and — only while failed — the error text plus a retry
@@ -281,6 +359,7 @@ function GitlabSyncSection({
 export function TaskDetail({
   task: initial,
   backlogs,
+  epics = [],
   tasks,
   dependencies,
   assigneeOptions = null,
@@ -292,6 +371,9 @@ export function TaskDetail({
 }: {
   task: Task;
   backlogs: Backlog[];
+  /** The project's epics, for the Epic control. Empty — a project that
+   *  doesn't use the epic rung — hides it. */
+  epics?: Epic[];
   // The project's tasks and every dependency in it: what the
   // predecessor/successor pickers choose from.
   tasks: Task[];
@@ -426,6 +508,17 @@ export function TaskDetail({
                     <BacklogSelect task={task} backlogs={backlogs} onChanged={setTask} />
                   </dd>
                 </div>
+                {/* The epic rung is optional: a project that doesn't use it
+                    has no epics, and offering the control would only raise a
+                    question this screen can't answer. */}
+                {epics.length > 0 ? (
+                  <div>
+                    <dt className="text-muted-foreground">Epic</dt>
+                    <dd className="text-foreground">
+                      <EpicSelect task={task} epics={epics} onChanged={setTask} />
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
             </CardContent>
           </>

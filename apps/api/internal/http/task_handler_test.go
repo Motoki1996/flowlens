@@ -436,6 +436,58 @@ func TestHandleCreateTask(t *testing.T) {
 	assert.Equal(t, http.StatusOK, doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+id, nil, token).Code)
 }
 
+// A single task read carries its parent epic inline, so an agent that has
+// just been handed a task id learns what to branch from without a second
+// call. Exercised over a bearer token, which is the caller this is for.
+func TestHandleGetTask_EmbedsParentEpic(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "Agent", []string{apitoken.ScopeWrite}, nil)
+	require.NoError(t, err)
+
+	rec := doBearerRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/epics",
+		map[string]any{"name": "Screens", "baseBranch": "release/2.4", "estimatedPoints": 13}, raw)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var createdEpic map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &createdEpic))
+
+	rec = doBearerRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
+		map[string]any{"title": "Build it", "epicId": createdEpic["id"]}, raw)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var createdTask map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &createdTask))
+
+	rec = doBearerRequest(t, s, http.MethodGet, "/api/v1/tasks/"+createdTask["id"].(string), nil, raw)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+
+	embedded, ok := got["epic"].(map[string]any)
+	require.True(t, ok, "a task in an epic carries it inline: %s", rec.Body.String())
+	assert.Equal(t, createdEpic["id"], embedded["id"])
+	assert.Equal(t, "Screens", embedded["name"])
+	assert.Equal(t, "release/2.4", embedded["baseBranch"])
+	assert.Equal(t, float64(13), embedded["estimatedPoints"])
+	assert.NotContains(t, embedded, "taskCount", "the embedded copy is a summary, not the whole epic")
+}
+
+// A task that sits directly in its backlog still answers the same shape:
+// the key is present and null, so a client never has to branch on absence.
+func TestHandleGetTask_EpicIsNullWhenTaskHasNone(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	tsk := q.SeedTask(p.ID, ownerID, "Fix bug")
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String(), nil, token)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Contains(t, got, "epic")
+	assert.Nil(t, got["epic"])
+}
+
 // startDate is app-only (issue #33's Gantt chart): unlike dueOn, it has no
 // GitLab counterpart, but it round-trips through the same wire contract.
 func TestHandleCreateTask_PersistsStartDate(t *testing.T) {

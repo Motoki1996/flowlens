@@ -600,6 +600,41 @@ Like the rungs below it, that is read **only when the task is created** —
 `task_gitlab_links` governs every later update, so moving a task between
 epics never moves or re-targets an issue that already exists.
 
+### A task carries its epic with it
+
+`GET /api/v1/tasks/{taskID}` embeds its task's epic as an `epic` object, so a
+caller holding nothing but a task id sees the rung above it — its base branch
+above all — without a second round trip:
+
+```json
+{
+  "id": "…", "title": "Build it", "epicId": "…",
+  "epic": {
+    "id": "…", "name": "Screens", "description": "…",
+    "startDate": null, "dueOn": null,
+    "priority": "high", "progress": "in_progress",
+    "baseBranch": "release/2.4", "allowedScope": "", "forbiddenScope": "",
+    "estimatedPoints": 13
+  }
+}
+```
+
+Three things it deliberately is not:
+
+- **Not resolved.** These are the epic's *own* values, empty where the epic
+  sets nothing — `"allowedScope": ""` above does not mean the task may touch
+  nothing, it means the backlog's applies.
+  `GET /api/v1/tasks/{taskID}/context` remains the one place that answers
+  "what applies to this task", already resolved epic-then-backlog per field,
+  and stays what an agent should follow.
+- **Not the whole epic.** No `projectId`/`backlogId` (both already on the
+  task), no assignee names, no task counts. `GET /api/v1/epics/{epicID}` is
+  still there for those.
+- **Not on the list endpoints.** A collection carries `epicId` alone and
+  sends `"epic": null`; only the single-task read pays for the lookup. The
+  key is always present, so a client never has to distinguish absent from
+  null. It is also null when the task simply has no epic.
+
 ### What FlowLens registers as a webhook
 
 For each linked GitLab project, FlowLens registers exactly one webhook on

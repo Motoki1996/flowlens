@@ -134,6 +134,54 @@ type Epic struct {
 	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
+// Summary is the slice of an Epic that travels inside its tasks' own
+// responses (GET /api/v1/tasks/{taskID}): what an agent — or a human — about
+// to work the task needs to know about the rung above it, above all
+// BaseBranch and the scope pair, without a second round trip to
+// GET /epics/{epicID}.
+//
+// It is deliberately not the whole Epic. ProjectID/BacklogID are already on
+// the task, TaskCount/ClosedTaskCount are a collection-screen concern, and
+// the assignee names would cost a second lookup for a field nobody reading a
+// task asks about. The names that are here are byte-for-byte the Epic's, so
+// the two can be read as the same object.
+//
+// Unlike GET /api/v1/tasks/{taskID}/context's BaseBranch/AllowedScope/
+// ForbiddenScope, nothing here is resolved against the backlog below it:
+// these are the epic's own values, empty where the epic sets nothing. The
+// context endpoint stays the place to ask "what applies to this task"; this
+// is "what does its epic say".
+type Summary struct {
+	ID              uuid.UUID  `json:"id"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description"`
+	StartDate       *time.Time `json:"startDate"`
+	DueOn           *time.Time `json:"dueOn"`
+	Priority        string     `json:"priority"`
+	Progress        string     `json:"progress"`
+	BaseBranch      string     `json:"baseBranch"`
+	AllowedScope    string     `json:"allowedScope"`
+	ForbiddenScope  string     `json:"forbiddenScope"`
+	EstimatedPoints *int       `json:"estimatedPoints"`
+}
+
+// Summary narrows e to the fields a task carries about its epic.
+func (e Epic) Summary() Summary {
+	return Summary{
+		ID:              e.ID,
+		Name:            e.Name,
+		Description:     e.Description,
+		StartDate:       e.StartDate,
+		DueOn:           e.DueOn,
+		Priority:        e.Priority,
+		Progress:        e.Progress,
+		BaseBranch:      e.BaseBranch,
+		AllowedScope:    e.AllowedScope,
+		ForbiddenScope:  e.ForbiddenScope,
+		EstimatedPoints: e.EstimatedPoints,
+	}
+}
+
 func fromRow(row db.Epic) Epic {
 	return Epic{
 		ID:                           row.ID,

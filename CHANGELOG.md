@@ -54,6 +54,16 @@ procedure itself.
   count-denominated `forecastPeriods`/`openTaskCount` stay task-only. The
   Velocity card now says when the points forecast is a lower bound rather
   than presenting it as the whole picture.
+- **A task carries its epic with it.** `GET /api/v1/tasks/{taskID}` now
+  embeds the task's epic as an `epic` object — name, description, dates,
+  priority, progress, `baseBranch`, `allowedScope`, `forbiddenScope`,
+  `estimatedPoints` — so a caller holding nothing but a task id sees the
+  rung above it without a second call. The values are the epic's **own**:
+  nothing is resolved against the backlog below it, which remains
+  `GET /api/v1/tasks/{taskID}/context`'s job and stays what an agent should
+  follow. Only the single-task read populates it; every list carries
+  `epicId` alone and sends `"epic": null`, as does a task with no epic.
+  Additive — the key is new, nothing existing changed shape.
 - **An index on `tasks(epic_id)`** (migration `000035`, partial on non-null).
   The epic collection's task counts and velocity's "has this epic been
   broken down yet" anti-join both filter on `epic_id` alone, which the

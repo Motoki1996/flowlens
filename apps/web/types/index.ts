@@ -152,6 +152,25 @@ export interface TaskGitlabInfo {
   webUrl: string;
 }
 
+/** EpicSummary is the slice of an Epic embedded in a single task's response
+ *  (GET /api/v1/tasks/{taskID}): enough to know what the rung above the task
+ *  says — its base branch above all — without a second fetch. The values are
+ *  the epic's own; nothing here is resolved against the backlog below it,
+ *  which is GET /api/v1/tasks/{taskID}/context's job. */
+export interface EpicSummary {
+  id: string;
+  name: string;
+  description: string;
+  startDate: string | null;
+  dueOn: string | null;
+  priority: Priority;
+  progress: Progress;
+  baseBranch: string;
+  allowedScope: string;
+  forbiddenScope: string;
+  estimatedPoints: number | null;
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -194,6 +213,12 @@ export interface Task {
   // purely local (see apps/api/internal/task.GitlabInfo).
   gitlab: TaskGitlabInfo | null;
   aiContext: TaskAIContext;
+  // The task's parent epic, embedded by the single-task read only (GET
+  // /api/v1/tasks/{taskID}); a list carries epicId alone and sends this as
+  // null. Optional rather than required because no screen reads it yet and
+  // every Task fixture in the suite would otherwise have to spell out a null
+  // it never looks at — read it as `task.epic?.baseBranch`.
+  epic?: EpicSummary | null;
 }
 
 /** TaskWithProject is Task plus the name of the project it belongs to — what

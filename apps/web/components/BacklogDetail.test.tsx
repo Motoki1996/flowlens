@@ -359,6 +359,7 @@ describe("BacklogDetail", () => {
       baseBranch: "release/2.4",
       allowedScope: "",
       forbiddenScope: "",
+      estimatedPoints: null,
       assigneeUserId: null,
       assigneeUsername: "",
       assigneeDisplayName: "",

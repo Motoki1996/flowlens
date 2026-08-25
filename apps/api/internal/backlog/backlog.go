@@ -44,7 +44,7 @@ var (
 // Priority values, app-only and never synced to GitLab, mirroring
 // internal/task's (a backlog's priority is independent of its tasks', per
 // the 000010 migration). SortPriority is the ListFilter.Sort value that
-// switches List's ORDER BY from position to priority rank.
+// switches List's ORDER BY from creation order to priority rank.
 const (
 	PriorityLow    = fieldnorm.PriorityLow
 	PriorityMedium = fieldnorm.PriorityMedium
@@ -58,8 +58,8 @@ const (
 // never synced to GitLab, mirroring internal/task's — and, like a task's,
 // independent of anything GitLab reports (see the 000011 migration). A
 // backlog's progress is its own, not derived from its tasks'. SortProgress is
-// the ListFilter.Sort value that switches List's ORDER BY from position to
-// progress rank, running not_started first through done.
+// the ListFilter.Sort value that switches List's ORDER BY from creation order
+// to progress rank, running not_started first through done.
 const (
 	ProgressNotStarted = fieldnorm.ProgressNotStarted
 	ProgressInProgress = fieldnorm.ProgressInProgress
@@ -418,7 +418,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 }
 
 // ListFilter narrows List to a subset of a project's backlogs. The zero
-// value means "no filter, default (position) order".
+// value means "no filter, creation order".
 type ListFilter struct {
 	Priority string // one of the Priority* constants, or "" (no filter)
 	Progress string // one of the Progress* constants, or "" (no filter)
@@ -428,13 +428,13 @@ type ListFilter struct {
 	// backlog has no GitLab counterpart. Mutually exclusive.
 	AssigneeUserID     *uuid.UUID
 	AssigneeUnassigned bool
-	// Sort is "" (position ASC, created_at ASC, the manual order),
+	// Sort is "" (created_at ASC, the backlogs' creation order),
 	// SortPriority (priority rank DESC, then the same tiebreak) or
 	// SortProgress (progress rank ASC, then the same tiebreak).
 	Sort string
 }
 
-// List returns projectID's backlogs matching filter, ordered by position (or
+// List returns projectID's backlogs matching filter, in creation order (or
 // by priority when filter.Sort is SortPriority). It returns ErrNotFound if
 // projectID does not exist or belongs to another user.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Backlog, error) {
@@ -536,7 +536,7 @@ type UpdateParams struct {
 	AssigneeUserID optional.Optional[*uuid.UUID]
 }
 
-// Update overwrites name, description and position, and applies whichever of
+// Update overwrites name and description, and applies whichever of
 // the dates the caller set. Ownership is enforced by the query, so a non-owner
 // gets ErrNotFound and nothing is written.
 //

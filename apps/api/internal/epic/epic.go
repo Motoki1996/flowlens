@@ -398,7 +398,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 }
 
 // ListFilter narrows List to a subset of a project's epics. The zero value
-// means "no filter, default (position) order".
+// means "no filter, creation order".
 type ListFilter struct {
 	// BacklogID, when non-nil, only returns epics filed in that backlog;
 	// BacklogUnfiled only those in no backlog at all. Mutually exclusive.
@@ -411,7 +411,7 @@ type ListFilter struct {
 	// counterpart. Mutually exclusive.
 	AssigneeUserID     *uuid.UUID
 	AssigneeUnassigned bool
-	// Sort is "" (position ASC, created_at ASC, the manual order),
+	// Sort is "" (created_at ASC, the epics' creation order),
 	// SortPriority or SortProgress.
 	Sort string
 }
@@ -518,7 +518,7 @@ type UpdateParams struct {
 	AssigneeUserID optional.Optional[*uuid.UUID]
 }
 
-// Update overwrites name, description and position, and applies whichever of
+// Update overwrites name and description, and applies whichever of
 // the optional fields the caller set. Ownership is enforced by the query, so a
 // non-member gets ErrNotFound and nothing is written.
 //

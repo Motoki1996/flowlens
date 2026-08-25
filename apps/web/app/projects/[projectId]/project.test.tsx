@@ -13,6 +13,7 @@ const getCurrentUser = vi.fn();
 const getProject = vi.fn();
 const getTasks = vi.fn();
 const getBacklogs = vi.fn();
+const getEpics = vi.fn();
 const getGitlabConnection = vi.fn();
 const getLinkedGitlabProjects = vi.fn();
 const getFailedSyncJobs = vi.fn();
@@ -23,6 +24,7 @@ vi.mock("@/lib/api", () => ({
   getProject: (id: string) => getProject(id),
   getTasks: (id: string) => getTasks(id),
   getBacklogs: (id: string) => getBacklogs(id),
+  getEpics: (id: string) => getEpics(id),
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
   getFailedSyncJobs: (id: string) => getFailedSyncJobs(id),
@@ -55,6 +57,7 @@ describe("ProjectPage", () => {
   beforeEach(() => {
     getTasks.mockResolvedValue([]);
     getBacklogs.mockResolvedValue([]);
+    getEpics.mockResolvedValue([]);
     getGitlabConnection.mockResolvedValue(null);
     getLinkedGitlabProjects.mockResolvedValue([]);
     getFailedSyncJobs.mockResolvedValue([]);
@@ -102,8 +105,10 @@ describe("ProjectPage", () => {
       { id: "t1", title: "Fix the bug", status: "open" },
       { id: "t2", title: "Write docs", status: "closed" },
     ]);
+    getEpics.mockResolvedValue([{ id: "e1" }]);
     render(await ProjectPage({ params: Promise.resolve({ projectId: "1" }) }));
     expect(screen.getByText("2 backlogs")).toBeInTheDocument();
+    expect(screen.getByText("1 epics")).toBeInTheDocument();
     expect(screen.getByText("1 open / 2 total")).toBeInTheDocument();
     expect(screen.queryByText("Fix the bug")).not.toBeInTheDocument();
   });
@@ -121,7 +126,10 @@ describe("ProjectPage", () => {
     getProject.mockResolvedValue(project);
     getTasks.mockRejectedValue(new Error("boom"));
     render(await ProjectPage({ params: Promise.resolve({ projectId: "1" }) }));
-    expect(screen.getAllByText("Count unavailable")).toHaveLength(2);
+    // All three counts come from the one Promise.all, so one failure takes
+    // every count with it — and every link still has to work.
+    expect(screen.getAllByText("Count unavailable")).toHaveLength(3);
     expect(screen.getByRole("link", { name: /Tasks/ })).toHaveAttribute("href", "/projects/1/tasks");
+    expect(screen.getByRole("link", { name: /Epics/ })).toHaveAttribute("href", "/projects/1/epics");
   });
 });

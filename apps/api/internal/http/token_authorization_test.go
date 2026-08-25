@@ -25,6 +25,7 @@ func TestTokenAuthorization_CrossProjectResourceGets404(t *testing.T) {
 	otherProject := q.SeedProject(owner.ID, "Beta")
 	otherTask := q.SeedTask(otherProject.ID, owner.ID, "Other task")
 	otherBacklog := q.SeedBacklog(otherProject.ID, "Other backlog")
+	otherEpic := q.SeedEpic(otherProject.ID, otherBacklog.ID, "Other epic")
 	predecessor := q.SeedTask(otherProject.ID, owner.ID, "Predecessor")
 	dep := q.SeedTaskDependency(predecessor.ID, otherTask.ID)
 
@@ -42,6 +43,12 @@ func TestTokenAuthorization_CrossProjectResourceGets404(t *testing.T) {
 		{"POST foreign task close", http.MethodPost, "/api/v1/tasks/" + otherTask.ID.String() + "/close"},
 		{"GET foreign backlog", http.MethodGet, "/api/v1/backlogs/" + otherBacklog.ID.String()},
 		{"PATCH foreign backlog", http.MethodPatch, "/api/v1/backlogs/" + otherBacklog.ID.String()},
+		{"GET foreign epic", http.MethodGet, "/api/v1/epics/" + otherEpic.ID.String()},
+		{"PATCH foreign epic", http.MethodPatch, "/api/v1/epics/" + otherEpic.ID.String()},
+		{"DELETE foreign epic", http.MethodDelete, "/api/v1/epics/" + otherEpic.ID.String()},
+		{"PATCH foreign epic's tasks", http.MethodPatch, "/api/v1/epics/" + otherEpic.ID.String() + "/tasks"},
+		{"GET foreign project's epics", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String() + "/epics"},
+		{"POST foreign project epic", http.MethodPost, "/api/v1/projects/" + otherProject.ID.String() + "/epics"},
 		{"DELETE foreign dependency", http.MethodDelete, "/api/v1/task-dependencies/" + dep.ID.String()},
 		{"GET foreign project", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String()},
 		{"GET foreign project's tasks", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String() + "/tasks"},
@@ -64,6 +71,7 @@ func TestTokenAuthorization_ReadOnlyTokenGets403OnWrite(t *testing.T) {
 	p := q.SeedProject(owner.ID, "Alpha")
 	tsk := q.SeedTask(p.ID, owner.ID, "Fix bug")
 	backlogRow := q.SeedBacklog(p.ID, "Sprint 1")
+	epicRow := q.SeedEpic(p.ID, backlogRow.ID, "Screens")
 	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeRead}, nil)
 	require.NoError(t, err)
 
@@ -79,6 +87,10 @@ func TestTokenAuthorization_ReadOnlyTokenGets403OnWrite(t *testing.T) {
 		{"POST bulk create tasks", http.MethodPost, "/api/v1/projects/" + p.ID.String() + "/tasks/bulk"},
 		{"PATCH backlog", http.MethodPatch, "/api/v1/backlogs/" + backlogRow.ID.String()},
 		{"DELETE backlog", http.MethodDelete, "/api/v1/backlogs/" + backlogRow.ID.String()},
+		{"POST create epic", http.MethodPost, "/api/v1/projects/" + p.ID.String() + "/epics"},
+		{"PATCH epic", http.MethodPatch, "/api/v1/epics/" + epicRow.ID.String()},
+		{"DELETE epic", http.MethodDelete, "/api/v1/epics/" + epicRow.ID.String()},
+		{"PATCH epic tasks", http.MethodPatch, "/api/v1/epics/" + epicRow.ID.String() + "/tasks"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -36,6 +36,9 @@ function makeVelocity(overrides: Partial<Velocity>): Velocity {
     averageVelocityPoints: null,
     forecastPeriodsByPoints: null,
     sizedTaskRatio: 0,
+    unbrokenDownEpicPoints: 0,
+    unestimatedEpicCount: 0,
+    openPointsTotal: 0,
     ...overrides,
   };
 }
@@ -143,6 +146,9 @@ describe("VelocitySection", () => {
       averageVelocityPoints: 11,
       forecastPeriodsByPoints: 4,
       openTaskPoints: 44,
+      // No epics in play, so the forecast's numerator is just the task
+      // points — the case every test before epics existed assumed.
+      openPointsTotal: 44,
       sizedTaskRatio: 0.8,
       periods: [
         makePeriod({
@@ -210,6 +216,7 @@ describe("VelocitySection", () => {
       forecastPeriodsByPoints: null,
       openTaskCount: 4,
       openTaskPoints: 15,
+      openPointsTotal: 15,
       periods: [makePeriod({ completed: 1, completedByUser: 1, completedPoints: 3, complete: false })],
     });
     render(<VelocitySection velocity={velocity} />);
@@ -217,6 +224,69 @@ describe("VelocitySection", () => {
     fireEvent.click(screen.getAllByRole("tab")[1]);
     expect(screen.getByText("Not enough completed tasks yet")).toBeInTheDocument();
     expect(screen.getByText("15 points open — no forecast yet")).toBeInTheDocument();
+  });
+
+  // An epic with an estimate but no tasks is work the task count cannot see.
+  // It is in the points forecast, so the points forecast has to admit it.
+  it("says how much of the points forecast comes from epics with no tasks", () => {
+    const velocity = makeVelocity({
+      averageVelocityPoints: 10,
+      forecastPeriodsByPoints: 5,
+      openTaskPoints: 29,
+      unbrokenDownEpicPoints: 21,
+      openPointsTotal: 50,
+      sizedTaskRatio: 0.5,
+      periods: [makePeriod({ completed: 2, completedByUser: 2, completedPoints: 10 })],
+    });
+    render(<VelocitySection velocity={velocity} />);
+
+    fireEvent.click(screen.getAllByRole("tab")[1]);
+    // The open total is openPointsTotal, not openTaskPoints: it has to be the
+    // number the forecast beside it was actually divided from.
+    expect(screen.getByText("50 points open ≈ 5.0 weeks left")).toBeInTheDocument();
+    expect(screen.getByText(/21 points estimated on epics that have no tasks yet/)).toBeInTheDocument();
+  });
+
+  it("calls the forecast a lower bound when an epic has neither tasks nor an estimate", () => {
+    const velocity = makeVelocity({
+      averageVelocityPoints: 10,
+      forecastPeriodsByPoints: 3,
+      openTaskPoints: 29,
+      openPointsTotal: 29,
+      unestimatedEpicCount: 2,
+      sizedTaskRatio: 0.5,
+      periods: [makePeriod({ completed: 2, completedByUser: 2, completedPoints: 10 })],
+    });
+    render(<VelocitySection velocity={velocity} />);
+
+    fireEvent.click(screen.getAllByRole("tab")[1]);
+    expect(
+      screen.getByText(/2 open epics have neither tasks nor an estimate/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/lower bound/)).toBeInTheDocument();
+  });
+
+  // The count series is deliberately task-only, so neither caveat belongs on
+  // the Tasks tab — saying it there would imply the task count includes epics.
+  it("keeps both epic caveats off the Tasks tab", () => {
+    const velocity = makeVelocity({
+      averageVelocity: 2,
+      forecastPeriods: 5,
+      openTaskCount: 10,
+      averageVelocityPoints: 10,
+      forecastPeriodsByPoints: 5,
+      openTaskPoints: 29,
+      unbrokenDownEpicPoints: 21,
+      unestimatedEpicCount: 2,
+      openPointsTotal: 50,
+      sizedTaskRatio: 0.5,
+      periods: [makePeriod({ completed: 2, completedByUser: 2, completedPoints: 10 })],
+    });
+    render(<VelocitySection velocity={velocity} />);
+
+    expect(screen.getByText("10 tasks open ≈ 5.0 weeks left")).toBeInTheDocument();
+    expect(screen.queryByText(/epics that have no tasks yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/lower bound/)).not.toBeInTheDocument();
   });
 
   it("offers no unit tab at all when there is nothing to chart", () => {

@@ -381,6 +381,64 @@ func TestService_SetTasks(t *testing.T) {
 	assert.False(t, q.TaskByID(first.ID).EpicID.Valid)
 }
 
+// The sharp edge of "an epic wins over a backlog": an epic that is itself
+// unfiled writes *its* backlog — none — onto every task filed into it, so
+// filing a sprint's tasks into a backlog-less epic takes them out of that
+// sprint. The web app refuses to offer the picker in this state; the API
+// does not, so pin the behaviour down here rather than let it be discovered
+// by whoever loses a sprint to it. Also README's "An epic wins over a
+// backlog" corollary.
+func TestService_SetTasks_UnfiledEpicUnfilesItsTasks(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+
+	// No BacklogID: the epic is filed nowhere.
+	created, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens"})
+	require.NoError(t, err)
+	require.Nil(t, created.BacklogID)
+
+	inSprint := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Build the list screen")
+
+	require.NoError(t, svc.SetTasks(ctx, owner, created.ID, []uuid.UUID{inSprint.ID}))
+
+	stored := q.TaskByID(inSprint.ID)
+	require.True(t, stored.EpicID.Valid)
+	assert.Equal(t, created.ID, uuid.UUID(stored.EpicID.Bytes))
+	assert.False(t, stored.BacklogID.Valid, "the epic's own (absent) backlog wins, so the task leaves Sprint 1")
+}
+
+// SetTasks is declarative over one epic, not over the project: naming a task
+// that already belongs to a *different* epic moves it, and the epic it came
+// from is never mentioned in the request. That is intended — "these are my
+// tasks" has to be able to claim one — but it is a silent write to an object
+// the caller didn't name, so it gets a test of its own.
+func TestService_SetTasks_TakesATaskFromAnotherEpic(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+
+	from, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens", BacklogID: &b.ID})
+	require.NoError(t, err)
+	to, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Endpoints", BacklogID: &b.ID})
+	require.NoError(t, err)
+
+	task := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Build the list screen")
+	require.NoError(t, svc.SetTasks(ctx, owner, from.ID, []uuid.UUID{task.ID}))
+
+	require.NoError(t, svc.SetTasks(ctx, owner, to.ID, []uuid.UUID{task.ID}))
+
+	stored := q.TaskByID(task.ID)
+	require.True(t, stored.EpicID.Valid)
+	assert.Equal(t, to.ID, uuid.UUID(stored.EpicID.Bytes))
+}
+
 func TestService_SetTasks_RejectsForeignTask(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

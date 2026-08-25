@@ -113,6 +113,14 @@ export interface Epic {
   baseBranch: string;
   allowedScope: string;
   forbiddenScope: string;
+  // The epic's pre-breakdown estimate, on the same raw points scale velocity
+  // weights a task's size onto (xs=1 … xl=8). Deliberately not a size: it
+  // stands in only until the epic has tasks, after which the sum of those
+  // tasks' sizes is the truth and this is never consulted again — and never
+  // cleared, so the guess stays beside the real breakdown. null means nobody
+  // has estimated it, which the API keeps distinct from any number; 0 is
+  // rejected for exactly that reason.
+  estimatedPoints: number | null;
   // The project member who owns this epic. App-only end to end: like a
   // backlog's, an epic's assignee has no GitLab counterpart to mirror onto.
   assigneeUserId: string | null;
@@ -673,6 +681,18 @@ export interface Velocity {
   openTaskPoints: number;
   averageVelocityPoints: number | null;
   forecastPeriodsByPoints: number | null;
+  /** Summed estimatedPoints of the open epics that have no tasks yet — work
+   *  that is known about but has no task to count. Excluded in SQL once an
+   *  epic has tasks, so it never double-counts against openTaskPoints. */
+  unbrokenDownEpicPoints: number;
+  /** How many of those epics carry no estimate at all. Nonzero means the
+   *  points forecast is a lower bound by an unknown amount, and the UI has to
+   *  say so rather than present it as the whole picture. */
+  unestimatedEpicCount: number;
+  /** openTaskPoints + unbrokenDownEpicPoints — the numerator
+   *  forecastPeriodsByPoints actually divides. The count-denominated
+   *  forecastPeriods/openTaskCount stay task-only and do not include epics. */
+  openPointsTotal: number;
   /** Fraction (0..1) of the completed tasks counted here whose size is
    *  something other than the default "m". Every task predating the size
    *  column reads as "m", so while this is 0 the point series is just a 3x

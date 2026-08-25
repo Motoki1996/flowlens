@@ -80,8 +80,14 @@ be reachable from your GitLab instance for inbound sync to work.
 ## Upgrading
 
 Upgrades are "read the notes, back up, pull, restart". Schema migrations are
-kept backward compatible, so the running containers are replaced in place
-and the data volume is untouched.
+kept backward compatible wherever they can be, so the running containers are
+replaced in place and the data volume is untouched.
+
+A release that has to drop something says so with a ⚠️ Breaking marker in
+the notes, and such a release is **one-way**: the new schema no longer has a
+column the older binary reads, so going back needs the database restored
+alongside the image (see [Rolling back](#rolling-back)). That is what step 2
+below is for.
 
 ```bash
 # 1. Read the release notes for a ⚠️ Breaking marker.

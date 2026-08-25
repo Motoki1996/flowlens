@@ -1078,6 +1078,7 @@ describe("TaskListSection", () => {
       baseBranch: "",
       allowedScope: "",
       forbiddenScope: "",
+      estimatedPoints: null,
       assigneeUserId: null,
       assigneeUsername: "",
       assigneeDisplayName: "",

@@ -32,4 +32,12 @@ Backlog ID: $1
 ## Output
 
 Report the requirement list (`R1`…`Rn`) and the `baseBranch` you set, so
-the user can review before running `/flowlens:breakdown`.
+the user can review before breaking the backlog down.
+
+Then say which of the two next steps you'd take and why: a backlog large
+enough to want a coarse middle rung goes through `/flowlens:breakdown-epics
+<backlogId>` first, and one small enough to cut straight into tasks goes to
+`/flowlens:breakdown <backlogId>`. The epic rung is optional — recommend it
+when the requirements clearly divide along boundaries the codebase has
+(separate screens, separate endpoint groups), or when parts of the backlog
+target different base branches.

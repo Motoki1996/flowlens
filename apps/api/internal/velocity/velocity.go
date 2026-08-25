@@ -183,6 +183,18 @@ type Metrics struct {
 	// each epic down, the work was structurally invisible: three refined
 	// backlogs could be sitting in the project and the forecast would still
 	// say one period.
+	//
+	// Known limitation: "has been broken down" is all-or-nothing, because it
+	// is the only signal the schema carries. An epic estimated at 21 points
+	// with a single xs task cut off it drops out of this figure entirely and
+	// contributes 1 point through that task, so the ~20 points still to be
+	// cut are invisible for as long as the breakdown is half-done. Deciding
+	// otherwise would need the estimate and the tasks to be reconciled — a
+	// max(), a remainder, something — and every version of that reintroduces
+	// exactly the two-disagreeing-truths problem the epic layer was shaped to
+	// avoid (ADR-0012). It is left understated on purpose, and the window is
+	// short by construction: /flowlens:breakdown creates an epic's tasks in
+	// one bulk, all-or-nothing call.
 	UnbrokenDownEpicPoints int `json:"unbrokenDownEpicPoints"`
 	// UnestimatedEpicCount is how many of those unbroken-down epics nobody has
 	// estimated. They contribute 0 to OpenPointsTotal because there is nothing

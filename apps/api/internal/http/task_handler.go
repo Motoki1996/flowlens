@@ -135,7 +135,7 @@ func isValidSize(v string) bool {
 // "high" or "urgent"; progress accepts "not_started", "in_progress",
 // "on_hold" or "done" (FlowLens's own work state, independent of status);
 // sort accepts "priority" or "progress" to rank by either instead of the
-// default manual/position order; assignee accepts "me", a user UUID or
+// default creation order; assignee accepts "me", a user UUID or
 // "unassigned" (issue #102, widened to any member by 000031); q free-text
 // matches a task's title or description (issue #106). Any may be omitted to
 // mean "no filter"/"default order".
@@ -197,8 +197,8 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 	if v := r.URL.Query().Get("sort"); v != "" {
 		// The same five values the cross-project collection accepts (see
 		// parseCrossProjectFilter), so a screen's sort menu means the same
-		// thing whichever list backs it. Omitting sort is this list's manual
-		// position order, which the cross-project one has no equivalent for.
+		// thing whichever list backs it. Omitting sort leaves both lists in
+		// their objects' creation order.
 		if v != task.SortPriority && v != task.SortProgress && v != task.SortSize && v != task.SortDueOn && v != task.SortUpdatedAt {
 			return task.ListFilter{}, errors.New("sort must be one of priority, progress, size, dueOn, updatedAt")
 		}

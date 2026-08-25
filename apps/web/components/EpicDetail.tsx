@@ -283,6 +283,33 @@ export function EpicDetail({
                         )}%)`}
                   </dd>
                 </div>
+                {/* The estimate stays on screen after the breakdown rather
+                    than disappearing: it is only superseded, never cleared,
+                    and its whole later value is being readable next to the
+                    tasks it guessed at. Say which of the two the forecast is
+                    actually using, or the two numbers just look contradictory. */}
+                <div>
+                  <dt className="text-muted-foreground">Estimated points</dt>
+                  <dd className="text-foreground">
+                    {epic.estimatedPoints == null ? (
+                      <span className="text-muted-foreground">
+                        Unestimated
+                        {completion.total === 0
+                          ? " — the forecast cannot see this epic"
+                          : null}
+                      </span>
+                    ) : (
+                      <>
+                        {epic.estimatedPoints}
+                        <span className="text-muted-foreground">
+                          {completion.total === 0
+                            ? " (used by the forecast until this epic has tasks)"
+                            : " (superseded — the forecast now counts this epic's tasks)"}
+                        </span>
+                      </>
+                    )}
+                  </dd>
+                </div>
                 {links.length > 0 ? (
                   <div>
                     <dt className="text-muted-foreground">GitLab project for new issues</dt>

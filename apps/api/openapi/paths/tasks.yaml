@@ -8,8 +8,13 @@ list:
     parameters:
       - $ref: '#/components/parameters/projectID'
       - in: query
-        name: backlogId
-        schema: { type: string, format: uuid }
+        name: backlog_id
+        description: 'A backlog UUID, or "unassigned" for the tasks in no backlog at all.'
+        schema: { type: string }
+      - in: query
+        name: epic_id
+        description: 'An epic UUID, or "unassigned" for the tasks in no epic at all.'
+        schema: { type: string }
       - in: query
         name: status
         schema: { type: string, enum: [open, closed] }
@@ -20,11 +25,19 @@ list:
         name: progress
         schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
       - in: query
+        name: size
+        schema: { type: string, enum: [xs, s, m, l, xl] }
+      - in: query
         name: assignee
         description: '"me", a user UUID, or "unassigned". Matches the FlowLens assignee or, for a task, that user''s GitLab identity.'
         schema: { type: string }
       - in: query
+        name: q
+        description: Free-text match on the task's title.
+        schema: { type: string }
+      - in: query
         name: sort
+        description: Omit for the tasks' creation order.
         schema: { type: string }
     responses:
       "200":
@@ -48,8 +61,10 @@ list:
     summary: Create a task
     description: >
       Requires write scope for a bearer token. Resolves its GitLab issue
-      destination (backlog's own link -> project's default link -> nowhere)
-      only at creation time; task_gitlab_links is authoritative afterward.
+      destination (epic's own link -> backlog's own link -> project's default
+      link -> nowhere) only at creation time; task_gitlab_links is
+      authoritative afterward. Naming an epicId also files the task in that
+      epic's backlog, whatever backlog_id came with it.
     tags: [tasks]
     security:
       - cookieAuth: []
@@ -702,8 +717,11 @@ context:
     summary: Get a task's AI-facing context
     description: >
       The primary read for an AI agent working a task: description,
-      acceptance criteria, allowed/forbidden scope, backlog base branch,
-      GitLab issue state, and recent comments. Already project-scoped
+      acceptance criteria, allowed/forbidden scope, base branch, GitLab
+      issue state, and recent comments. The base branch and the
+      allowed/forbidden scope are resolved from the task's epic first and
+      its backlog second, per field, so an epic that overrides only the
+      branch still inherits its backlog's scope. Already project-scoped
       through the bearer token itself, so no separate ownership check
       against {taskID} is needed on top.
     tags: [tasks]

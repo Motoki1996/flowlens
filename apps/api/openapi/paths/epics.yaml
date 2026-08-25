@@ -23,7 +23,8 @@ list:
         schema: { type: string }
       - in: query
         name: sort
-        schema: { type: string }
+        description: Omit for the epics' creation order.
+        schema: { type: string, enum: [priority, progress] }
     responses:
       "200":
         description: The project's epics
@@ -190,6 +191,12 @@ tasks:
       moves nothing. A task filed here also moves to the epic's own backlog,
       since a task's epic and backlog must always agree. Requires write scope
       for a bearer token.
+
+
+      Note the corollary when the epic is itself unfiled (`backlogId` is
+      null): every task named here is unfiled too, leaving whatever backlog
+      it was in. File the epic in a backlog first if that is not what you
+      want.
     tags: [epics]
     security:
       - cookieAuth: []

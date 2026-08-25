@@ -19,12 +19,41 @@ allTasks:
         name: progress
         schema: { type: string, enum: [not_started, in_progress, on_hold, done] }
       - in: query
+        name: size
+        schema: { type: string, enum: [xs, s, m, l, xl] }
+      - in: query
+        name: epic_id
+        description: 'An epic UUID, or "unassigned" for the tasks in no epic at all.'
+        schema: { type: string }
+      - in: query
         name: assignee
         description: '"me", a user UUID, or "unassigned".'
         schema: { type: string }
       - in: query
-        name: sort
+        name: projectId
+        description: >-
+          Repeatable. Narrows to these projects — still only ones the caller
+          owns or is a member of, never a way to reach someone else's.
+        schema: { type: array, items: { type: string, format: uuid } }
+      - in: query
+        name: dueBefore
+        schema: { type: string, format: date }
+      - in: query
+        name: dueAfter
+        schema: { type: string, format: date }
+      - in: query
+        name: startedBefore
+        schema: { type: string, format: date }
+      - in: query
+        name: q
+        description: Free-text match on the task's title or description.
         schema: { type: string }
+      - in: query
+        name: limit
+        schema: { type: integer }
+      - in: query
+        name: sort
+        schema: { type: string, enum: [dueOn, priority, progress, size, updatedAt] }
     responses:
       "200":
         description: Matching tasks, each carrying its project's name

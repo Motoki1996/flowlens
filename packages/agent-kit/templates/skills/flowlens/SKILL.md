@@ -6,7 +6,7 @@ description: Shared knowledge for working FlowLens tasks from this repository �
 # FlowLens
 
 FlowLens is the task tracker this repository's tasks live in, kept 1:1 with
-GitLab CE issues. This skill covers what the three `/flowlens:` commands
+GitLab CE issues. This skill covers what the four `/flowlens:` commands
 share: how to authenticate, and — the part an OpenAPI spec can't express —
 **what order to call things in**.
 

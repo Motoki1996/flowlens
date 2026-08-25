@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import {
   getBacklogs,
   getCurrentUser,
+  getEpics,
   getFailedSyncJobs,
   getGitlabConnection,
   getLinkedGitlabProjects,
@@ -43,13 +44,18 @@ export default async function ProjectPage({
   // tells the members section which row is the viewer's own.
   const currentUser = await getCurrentUser();
 
-  // Tasks and backlogs have screens of their own; this view only needs enough
-  // of them to show a count next to each link.
+  // Tasks, backlogs and epics have screens of their own; this view only needs
+  // enough of them to show a count next to each link.
   let tasks: Awaited<ReturnType<typeof getTasks>> = [];
   let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
+  let epics: Awaited<ReturnType<typeof getEpics>> = [];
   let countsError = false;
   try {
-    [tasks, backlogs] = await Promise.all([getTasks(projectId), getBacklogs(projectId)]);
+    [tasks, backlogs, epics] = await Promise.all([
+      getTasks(projectId),
+      getBacklogs(projectId),
+      getEpics(projectId),
+    ]);
   } catch {
     countsError = true;
   }
@@ -134,6 +140,7 @@ export default async function ProjectPage({
     <ProjectDetail
       project={project}
       backlogCount={backlogs.length}
+      epicCount={epics.length}
       taskCount={tasks.length}
       openTaskCount={tasks.filter((t) => t.status === "open").length}
       countsError={countsError}

@@ -1,0 +1,18 @@
+-- idx_tasks_project_id_epic_id (000032) covers every query that names a
+-- project *and* an epic, but three of the hottest epic queries name only the
+-- epic, and a project_id-leading index cannot serve those without a skip
+-- scan:
+--
+--   * the Epic collection's LEFT JOIN tasks t ON t.epic_id = e.id, which
+--     computes taskCount/closedTaskCount on every load of the epics screen;
+--   * velocity's NOT EXISTS (SELECT 1 FROM tasks WHERE epic_id = e.id)
+--     anti-join, which decides whether an epic's estimatedPoints still
+--     counts toward the forecast — and runs on every project dashboard;
+--   * MoveEpicTasksToBacklog / ClearEpicTasksExcept, which rewrite an
+--     epic's tasks by epic_id alone.
+--
+-- Partial, because epic_id is NULL for every task filed directly in a
+-- backlog: epics are optional, so on most projects the overwhelming
+-- majority of rows are NULL and indexing them buys nothing. Every query
+-- above compares epic_id to a concrete id, so the partial index applies.
+CREATE INDEX idx_tasks_epic_id ON tasks(epic_id) WHERE epic_id IS NOT NULL;

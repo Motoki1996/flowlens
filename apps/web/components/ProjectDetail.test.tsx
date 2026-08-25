@@ -100,7 +100,8 @@ describe("ProjectDetail", () => {
   it("still links to the collections when their counts fail to load", () => {
     render(<ProjectDetail currentUserId="me" project={project} countsError />);
     expect(screen.getByRole("link", { name: /Tasks/ })).toHaveAttribute("href", "/projects/1/tasks");
-    expect(screen.getAllByText("Count unavailable")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: /Epics/ })).toHaveAttribute("href", "/projects/1/epics");
+    expect(screen.getAllByText("Count unavailable")).toHaveLength(3);
   });
 
   it("shows no sync warning when no tasks have failed to sync", () => {

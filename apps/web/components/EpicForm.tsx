@@ -94,6 +94,13 @@ export function EpicForm({
     epic?.defaultLinkedGitlabProjectId ?? null,
   );
   const [baseBranch, setBaseBranch] = useState(epic?.baseBranch ?? "");
+  // Held as the raw string the input carries, not a number: "" is the only
+  // way to spell "unestimated" in a text field, and it has to survive a round
+  // trip distinctly from 0 — which the API rejects precisely so the two stay
+  // told apart.
+  const [estimatedPoints, setEstimatedPoints] = useState(
+    epic?.estimatedPoints != null ? String(epic.estimatedPoints) : "",
+  );
   const [allowedScope, setAllowedScope] = useState(epic?.allowedScope ?? "");
   const [forbiddenScope, setForbiddenScope] = useState(epic?.forbiddenScope ?? "");
   // The task set is edited alongside the epic's own fields but written by its
@@ -110,10 +117,28 @@ export function EpicForm({
   // empty.
   const showTaskPicker = tasks.length > 0;
 
+  // Whether the estimate has already been superseded. taskCount is only
+  // populated by the collection endpoint, so fall back to what the picker
+  // currently holds — either one being non-zero means tasks exist.
+  const hasTasks = taskIds.length > 0 || (epic?.taskCount ?? 0) > 0;
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) {
       setError("Epic name is required.");
+      return;
+    }
+
+    // Validated here as well as by the API so the message names the field
+    // rather than arriving as a generic 400 against the whole form.
+    const trimmedPoints = estimatedPoints.trim();
+    if (trimmedPoints !== "" && !/^\d+$/.test(trimmedPoints)) {
+      setError("Estimated points must be a whole number.");
+      return;
+    }
+    const points = trimmedPoints === "" ? null : Number(trimmedPoints);
+    if (points !== null && points < 1) {
+      setError("Estimated points must be at least 1 — leave it empty for unestimated.");
       return;
     }
 
@@ -140,6 +165,7 @@ export function EpicForm({
             baseBranch,
             allowedScope,
             forbiddenScope,
+            estimatedPoints: points,
           }),
         },
       );
@@ -318,6 +344,51 @@ export function EpicForm({
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div>
+        <label
+          htmlFor={`${idPrefix}-estimated-points`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Estimated points
+        </label>
+        <Input
+          id={`${idPrefix}-estimated-points`}
+          name="estimatedPoints"
+          type="number"
+          // Deliberately no min: a min the browser enforces blocks the submit
+          // with its own bubble, and the interesting part of refusing 0 is
+          // *why* — that "unestimated" is a real state 0 would collide with,
+          // so the field should be left empty instead. handleSubmit says that;
+          // a native validation bubble can't.
+          step={1}
+          inputMode="numeric"
+          aria-describedby={`${idPrefix}-estimated-points-hint`}
+          value={estimatedPoints}
+          onChange={(e) => setEstimatedPoints(e.target.value)}
+          placeholder="Unestimated"
+          className="mt-1 sm:w-40"
+        />
+        <p
+          id={`${idPrefix}-estimated-points-hint`}
+          className="text-muted-foreground mt-1 text-xs"
+        >
+          {hasTasks ? (
+            <>
+              Optional. This epic already has tasks, so the velocity forecast
+              now counts their sizes instead — the estimate is kept only to
+              compare the guess against what the work turned out to be.
+            </>
+          ) : (
+            <>
+              Optional. A guess at this epic&apos;s size before it is broken
+              down, on the same scale as a task&apos;s: xs=1, s=2, m=3, l=5,
+              xl=8. Without it the forecast cannot see this epic at all. Left
+              empty it counts as unestimated, which is not the same as zero.
+            </>
+          )}
+        </p>
       </div>
 
       {showTaskPicker ? (

@@ -466,6 +466,7 @@ describe("TaskDetail", () => {
       baseBranch: "",
       allowedScope: "",
       forbiddenScope: "",
+      estimatedPoints: null,
       assigneeUserId: null,
       assigneeUsername: "",
       assigneeDisplayName: "",

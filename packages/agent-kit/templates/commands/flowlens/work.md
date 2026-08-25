@@ -20,8 +20,10 @@ Task ID: $1
    edges where this task is the successor, and confirm every predecessor
    task is closed. If not, stop and report which predecessor is blocking.
 3. `GET {baseUrl}/api/v1/tasks/$1/context` for acceptance criteria, scope
-   (`allowedScope`/`forbiddenScope`), the GitLab `issueIid`, and the
-   backlog's `baseBranch` (resolved into this response).
+   (`allowedScope`/`forbiddenScope`), the GitLab `issueIid`, and
+   `baseBranch`. All three of those are already resolved into this
+   response — epic first, then backlog, per field — so use what it returns
+   and do not go read the backlog to second-guess it.
 4. **Design phase:**
    - `POST {baseUrl}/api/v1/tasks/$1/design-started`
    - Design the change within `allowedScope`, respecting `forbiddenScope`.
@@ -35,9 +37,9 @@ Task ID: $1
 5. **Implementation phase:**
    - `POST {baseUrl}/api/v1/tasks/$1/implementation-started`
    - `PATCH {baseUrl}/api/v1/tasks/$1` with `{"progress": "in_progress"}`.
-   - Branch from the backlog's `baseBranch` (or the repo default if unset),
-     named so it embeds the GitLab issue iid per the skill's branch-naming
-     rule — e.g. `issue-<issueIid>-<slug>`.
+   - Branch from the `baseBranch` step 3 returned (or the repo default if
+     it came back empty), named so it embeds the GitLab issue iid per the
+     skill's branch-naming rule — e.g. `issue-<issueIid>-<slug>`.
    - Implement, respecting `allowedScope`/`forbiddenScope`.
    - Open an MR with `Closes #<issueIid>` in its description.
    - If blocked on something outside this task (review, flaky CI,

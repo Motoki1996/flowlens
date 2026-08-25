@@ -497,6 +497,18 @@ allowed/forbidden scope and its own `defaultLinkedGitlabProjectId` — minus
 **no epic is ever created in, or read from, GitLab.** GitLab CE has no Epic
 at all (it is a Premium object), which is also why the name was free to take.
 
+A task is linked to an epic from either side, and both write the same
+`tasks.epic_id`:
+
+- **From the task** — `epicId` on task create/update, and the Epic control on
+  the Task single view.
+- **From the epic** — `PATCH /api/v1/epics/{epicID}/tasks` with the epic's
+  complete `taskIds` set: what it names is filed under the epic, what it no
+  longer names drops out (keeping its backlog). All-or-nothing, so a task from
+  another project moves nothing. The web app offers it as a checkbox list of
+  the backlog's free tasks, on the epic's create/edit form and on its single
+  view.
+
 Two rules the schema can't express are enforced by the API:
 
 - **An epic wins over a backlog.** Naming an `epicId` on a task also files it

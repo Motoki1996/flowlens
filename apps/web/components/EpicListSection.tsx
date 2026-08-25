@@ -11,7 +11,7 @@ import { epicPath, tasksPath } from "@/lib/routes";
 import { groupScheduleLabel } from "@/lib/groups";
 import { groupTaskCompletion } from "@/lib/timeline";
 import { useViewMode } from "@/lib/useViewMode";
-import type { ApiError, Backlog, Epic, LinkedGitlabProject, Priority, Progress } from "@/types";
+import type { ApiError, Backlog, Epic, LinkedGitlabProject, Priority, Progress, Task } from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -104,6 +104,7 @@ export function EpicListSection({
   projectId,
   epics,
   backlogs = [],
+  tasks = [],
   links = [],
   backlogFilter,
   priorityFilter,
@@ -117,6 +118,9 @@ export function EpicListSection({
   /** The project's backlogs, offered by the create/edit forms as the epic's
    *  parent and by the filter row as `?backlog=`. */
   backlogs?: Backlog[];
+  /** The project's tasks, for the create/edit form's "tasks in this epic"
+   *  picker. Empty drops that field. */
+  tasks?: Task[];
   /** The project's linked GitLab projects; empty hides that form field. */
   links?: LinkedGitlabProject[];
   /** The applied `?backlog=` — a backlog UUID, NO_BACKLOG_FILTER, or
@@ -371,6 +375,7 @@ export function EpicListSection({
             <EpicForm
               projectId={projectId}
               backlogs={backlogs}
+              tasks={tasks}
               links={links}
               defaultBacklogId={
                 backlogFilter && backlogFilter !== NO_BACKLOG_FILTER ? backlogFilter : null
@@ -424,6 +429,7 @@ export function EpicListSection({
                         projectId={projectId}
                         epic={epic}
                         backlogs={backlogs}
+                        tasks={tasks}
                         links={links}
                         onSaved={() => {
                           // The row is rendered from the server-fetched list,

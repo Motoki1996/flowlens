@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getBacklogs, getEpics, getLinkedGitlabProjects, getProject } from "@/lib/api";
+import { getBacklogs, getEpics, getLinkedGitlabProjects, getProject, getTasks } from "@/lib/api";
 import { EpicListSection, NO_BACKLOG_FILTER } from "@/components/EpicListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
 import type { Priority, Progress } from "@/types";
@@ -96,6 +96,16 @@ export default async function EpicsPage({
     backlogs = [];
   }
 
+  // The create/edit form's task picker draws from the project's tasks. A
+  // failed fetch drops the field rather than the screen, the same as links
+  // below.
+  let tasks: Awaited<ReturnType<typeof getTasks>> = [];
+  try {
+    tasks = await getTasks(projectId);
+  } catch {
+    tasks = [];
+  }
+
   let links: Awaited<ReturnType<typeof getLinkedGitlabProjects>> = [];
   try {
     links = await getLinkedGitlabProjects(projectId);
@@ -108,6 +118,7 @@ export default async function EpicsPage({
       projectId={project.id}
       epics={epics}
       backlogs={backlogs}
+      tasks={tasks}
       links={links}
       backlogFilter={backlogFilter}
       priorityFilter={priority}

@@ -140,3 +140,46 @@ WHERE e.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = e.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   );
+
+-- SetEpicTasks is the declarative half of "which tasks are in this epic": the
+-- caller sends the whole set, and these two statements make the table match
+-- it inside one transaction (internal/epic.Service.SetTasks). A per-task
+-- PATCH loop could leave a half-applied epic behind if one call failed;
+-- moving several tasks at once is exactly the operation that must not.
+
+-- ClearEpicTasksExcept unfiles every task currently in the epic that the new
+-- set no longer names. The tasks keep their backlog — dropping out of an epic
+-- returns a task to sitting directly in it, the same as deleting the epic.
+-- name: ClearEpicTasksExcept :exec
+UPDATE tasks
+SET epic_id = NULL, updated_at = now()
+WHERE epic_id = sqlc.arg(epic_id)
+  AND NOT (id = ANY(sqlc.arg(task_ids)::uuid[]));
+
+-- AssignTasksToEpic files the named tasks under the epic, writing the epic's
+-- own backlog onto each in the same statement — a task's epic and backlog
+-- must agree (000032), and this is the one write that can move a task into an
+-- epic without going through internal/task.
+--
+-- The project_id check is what stops an epic from adopting another project's
+-- task; the row count tells the caller whether every id actually matched, so
+-- a foreign or missing id rolls the whole set back rather than silently
+-- moving the rest.
+-- name: AssignTasksToEpic :execrows
+UPDATE tasks t
+SET epic_id = e.id, backlog_id = e.backlog_id, updated_at = now()
+FROM epics e
+WHERE e.id = sqlc.arg(epic_id)
+  AND t.id = ANY(sqlc.arg(task_ids)::uuid[])
+  AND t.project_id = e.project_id;
+
+-- CountTasksInProjectByIDs is SetEpicTasks' pre-check: how many of the given
+-- ids are really tasks in the epic's project. internal/epic rejects the whole
+-- request before writing anything when the count falls short, so a foreign or
+-- missing id is refused rather than rolled back — the guarantee then holds
+-- independently of transaction semantics, which is also what lets the
+-- in-memory fake (dbtest) reproduce it.
+-- name: CountTasksInProjectByIDs :one
+SELECT COUNT(*) FROM tasks
+WHERE project_id = sqlc.arg(project_id)
+  AND id = ANY(sqlc.arg(task_ids)::uuid[]);

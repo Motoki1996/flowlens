@@ -9,7 +9,7 @@ import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { PRIORITY_COLUMNS } from "@/lib/priority";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { SIZE_OPTIONS, SIZE_POINTS } from "@/lib/size";
-import type { ApiError, Backlog, Priority, Progress, Size } from "@/types";
+import type { ApiError, Backlog, Epic, Priority, Progress, Size } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -27,6 +27,10 @@ import { DateField } from "@/components/DateField";
 const UNCLASSIFIED = UNCLASSIFIED_BACKLOG;
 const UNCLASSIFIED_LABEL = "Unclassified";
 
+/** The Combobox value standing for "not in an epic" — the state every task
+ *  in a project that doesn't use the rung is in. */
+const NO_EPIC = "no-epic";
+
 /**
  * NewTaskForm is the inline task-creation form. Assignee and labels are
  * deliberately absent: on a project with a linked GitLab project the API
@@ -41,7 +45,9 @@ const UNCLASSIFIED_LABEL = "Unclassified";
 export function NewTaskForm({
   projectId,
   backlogs,
+  epics = [],
   defaultBacklogId = null,
+  defaultEpicId = null,
   onCreated,
   onCancel,
 }: {
@@ -49,10 +55,16 @@ export function NewTaskForm({
   /** The backlogs offered as the new task's home. On the Backlog single view
    *  this is that one backlog, since the task is being created *into* it. */
   backlogs: Backlog[];
+  /** The project's epics, offered as the new task's epic. Empty — a project
+   *  that doesn't use the rung — drops the field entirely, the same rule the
+   *  Task single view's own Epic control follows. */
+  epics?: Epic[];
   /** Pre-selects the backlog, so creating a task from a backlog's own screen
    *  files it there without a second choice. null leaves it Unclassified,
    *  which is what the Task collection wants. */
   defaultBacklogId?: string | null;
+  /** Pre-selects the epic, for a screen that already knows it. */
+  defaultEpicId?: string | null;
   /** Called after a successful create, before onCancel closes the form. The
    *  Task collection refreshes the route it is already on; a caller
    *  elsewhere may need to do more. */
@@ -63,6 +75,7 @@ export function NewTaskForm({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [backlogId, setBacklogId] = useState(defaultBacklogId ?? UNCLASSIFIED);
+  const [epicId, setEpicId] = useState(defaultEpicId ?? NO_EPIC);
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [priority, setPriority] = useState<Priority>("medium");
@@ -84,6 +97,21 @@ export function NewTaskForm({
     [backlogs],
   );
 
+  // Narrowed to the chosen backlog's epics: naming an epic from another
+  // backlog would move the task out of the backlog just picked, which is not
+  // what a form with both fields on screen reads as. (The API resolves it the
+  // same way — the epic wins — so this is the UI refusing to state a
+  // contradiction, not a second rule.)
+  const epicOptions = useMemo(
+    () => [
+      { value: NO_EPIC, label: "No epic" },
+      ...epics
+        .filter((e) => e.backlogId === (backlogId === UNCLASSIFIED ? null : backlogId))
+        .map((e) => ({ value: e.id, label: e.name })),
+    ],
+    [epics, backlogId],
+  );
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!title.trim()) {
@@ -102,6 +130,7 @@ export function NewTaskForm({
           title,
           description,
           backlogId: backlogId === UNCLASSIFIED ? null : backlogId,
+          epicId: epicId === NO_EPIC ? null : epicId,
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
           priority,
@@ -157,7 +186,7 @@ export function NewTaskForm({
           Markdown supported — pasted URLs become links.
         </p>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <label htmlFor="new-task-backlog" className="text-foreground block text-sm font-medium">
             Backlog
@@ -172,6 +201,22 @@ export function NewTaskForm({
             className="mt-1"
           />
         </div>
+        {epics.length > 0 ? (
+          <div>
+            <label htmlFor="new-task-epic" className="text-foreground block text-sm font-medium">
+              Epic
+            </label>
+            <Combobox
+              id="new-task-epic"
+              options={epicOptions}
+              value={epicOptions.some((o) => o.value === epicId) ? epicId : NO_EPIC}
+              onChange={setEpicId}
+              searchPlaceholder="Search epics…"
+              emptyText="No epic found."
+              className="mt-1"
+            />
+          </div>
+        ) : null}
         <DateField
           id="new-task-start-date"
           label="Start date"

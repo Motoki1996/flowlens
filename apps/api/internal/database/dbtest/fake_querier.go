@@ -1102,6 +1102,63 @@ func (f *FakeQuerier) MoveEpicTasksToBacklog(_ context.Context, arg db.MoveEpicT
 	return nil
 }
 
+// CountTasksInProjectByIDs mirrors the SQL: how many of the given ids are
+// tasks in that project, which is SetTasks' pre-check.
+func (f *FakeQuerier) CountTasksInProjectByIDs(_ context.Context, arg db.CountTasksInProjectByIDsParams) (int64, error) {
+	var count int64
+	for _, id := range arg.TaskIds {
+		if t, ok := f.tasksByID[id]; ok && t.ProjectID == arg.ProjectID {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// ClearEpicTasksExcept mirrors the SQL: every task in the epic that the new
+// set no longer names drops out of it, keeping its backlog.
+func (f *FakeQuerier) ClearEpicTasksExcept(_ context.Context, arg db.ClearEpicTasksExceptParams) error {
+	keep := make(map[uuid.UUID]struct{}, len(arg.TaskIds))
+	for _, id := range arg.TaskIds {
+		keep[id] = struct{}{}
+	}
+	for i, t := range f.tasks {
+		if t.EpicID != arg.EpicID {
+			continue
+		}
+		if _, ok := keep[t.ID]; ok {
+			continue
+		}
+		t.EpicID = pgtype.UUID{}
+		t.UpdatedAt = now()
+		f.tasks[i] = t
+		f.tasksByID[t.ID] = t
+	}
+	return nil
+}
+
+// AssignTasksToEpic mirrors the SQL, including its project check and its row
+// count — a task outside the epic's project simply doesn't match, which is
+// how internal/epic detects a foreign id.
+func (f *FakeQuerier) AssignTasksToEpic(_ context.Context, arg db.AssignTasksToEpicParams) (int64, error) {
+	e, ok := f.epicsByID[arg.EpicID]
+	if !ok {
+		return 0, nil
+	}
+	var affected int64
+	for _, id := range arg.TaskIds {
+		t, ok := f.tasksByID[id]
+		if !ok || t.ProjectID != e.ProjectID {
+			continue
+		}
+		t.EpicID = pgtype.UUID{Bytes: e.ID, Valid: true}
+		t.BacklogID = e.BacklogID
+		t.UpdatedAt = now()
+		f.storeTask(t)
+		affected++
+	}
+	return affected, nil
+}
+
 // ReorderEpics mirrors the SQL: resequences position 0..n-1 for every epic in
 // arg.EpicIds belonging to arg.ProjectID, in the order given.
 func (f *FakeQuerier) ReorderEpics(_ context.Context, arg db.ReorderEpicsParams) error {

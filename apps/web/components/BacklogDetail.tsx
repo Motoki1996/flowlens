@@ -360,6 +360,7 @@ export function BacklogDetail({
                   <EpicForm
                     projectId={project.id}
                     backlogs={[backlog]}
+                    tasks={tasks}
                     links={links}
                     defaultBacklogId={backlog.id}
                     onSaved={() => {
@@ -410,6 +411,7 @@ export function BacklogDetail({
                   <NewTaskForm
                     projectId={project.id}
                     backlogs={[backlog]}
+                    epics={epics}
                     defaultBacklogId={backlog.id}
                     onCancel={() => setCreating(false)}
                   />

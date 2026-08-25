@@ -188,6 +188,17 @@ UpdateEpicRequest:
     forbiddenScope: { type: string }
     assigneeUserId: { type: [string, "null"], format: uuid }
 
+SetEpicTasksRequest:
+  type: object
+  description: >-
+    The epic's complete task set. Tasks currently in the epic but absent here
+    are unfiled from it (they keep their backlog). All-or-nothing.
+  properties:
+    taskIds:
+      type: array
+      items: { type: string, format: uuid }
+  required: [taskIds]
+
 ReorderEpicsRequest:
   type: object
   description: All-or-nothing. epicIds must be exactly the project's current epics.

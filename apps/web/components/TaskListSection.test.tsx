@@ -890,6 +890,7 @@ describe("TaskListSection", () => {
           title: "Fix bug",
           description: "",
           backlogId: null,
+          epicId: null,
           startDate: "2026-08-15T00:00:00Z",
           dueOn: null,
           priority: "medium",

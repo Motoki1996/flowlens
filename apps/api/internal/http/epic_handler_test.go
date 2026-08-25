@@ -221,6 +221,79 @@ func TestHandleReorderEpics(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, mismatch.Code)
 }
 
+// The epic's own half of the task<->epic relationship: PATCH .../tasks writes
+// the whole set, and PATCH /tasks/{id}'s epicId writes one task's side of it.
+func TestHandleSetEpicTasks(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	e := q.SeedEpic(p.ID, b.ID, "Screens")
+	first := q.SeedTask(p.ID, ownerID, "Build the list screen")
+	second := q.SeedTask(p.ID, ownerID, "Build the detail screen")
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String()+"/tasks",
+		setEpicTasksRequest{TaskIDs: []uuid.UUID{first.ID, second.ID}}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, e.ID.String(), body["id"])
+
+	// Both are in the epic, and in its backlog with it.
+	for _, id := range []uuid.UUID{first.ID, second.ID} {
+		stored := q.TaskByID(id)
+		require.True(t, stored.EpicID.Valid)
+		assert.Equal(t, b.ID.String(), uuid.UUID(stored.BacklogID.Bytes).String())
+	}
+
+	// The set is declarative: what it no longer names drops out.
+	rec = doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String()+"/tasks",
+		setEpicTasksRequest{TaskIDs: []uuid.UUID{first.ID}}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.False(t, q.TaskByID(second.ID).EpicID.Valid)
+}
+
+func TestHandleSetEpicTasks_RejectsForeignTask(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	other := q.SeedProject(ownerID, "Beta")
+	e := q.SeedEpic(p.ID, uuid.Nil, "Screens")
+	foreign := q.SeedTask(other.ID, ownerID, "Theirs")
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String()+"/tasks",
+		setEpicTasksRequest{TaskIDs: []uuid.UUID{foreign.ID}}, token)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "invalid_tasks", body.Error.Code)
+	assert.False(t, q.TaskByID(foreign.ID).EpicID.Valid)
+}
+
+func TestHandleSetEpicTasks_RequiresWriteScope(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	e := q.SeedEpic(p.ID, uuid.Nil, "Screens")
+	tsk := q.SeedTask(p.ID, owner.ID, "Ours")
+
+	_, readToken, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{"read"}, nil)
+	require.NoError(t, err)
+	_, writeToken, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "Agent", []string{"write"}, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, http.StatusForbidden,
+		doBearerRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String()+"/tasks",
+			setEpicTasksRequest{TaskIDs: []uuid.UUID{tsk.ID}}, readToken).Code)
+	assert.Equal(t, http.StatusOK,
+		doBearerRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String()+"/tasks",
+			setEpicTasksRequest{TaskIDs: []uuid.UUID{tsk.ID}}, writeToken).Code)
+}
+
 // An agent breaking a backlog down into epics reaches these routes with a
 // bearer token, so the scope and project-boundary checks matter as much here
 // as on the task routes.

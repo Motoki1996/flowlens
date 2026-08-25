@@ -986,6 +986,9 @@ export function TaskListSection({
             <NewTaskForm
               projectId={projectId}
               backlogs={backlogs}
+              epics={epics}
+              defaultBacklogId={backlogFilter !== "all" && backlogFilter !== UNCLASSIFIED ? backlogFilter : null}
+              defaultEpicId={epicFilter !== "all" && epicFilter !== NO_EPIC ? epicFilter : null}
               onCancel={() => setCreating(false)}
             />
           </div>

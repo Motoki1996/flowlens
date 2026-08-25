@@ -258,4 +258,64 @@ describe("EpicListSection", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/epics/e1");
     expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
   });
+
+  // The epic side of the task<->epic relationship, offered on create as well
+  // as edit: a coarse unit is usually cut out of tasks that already exist.
+  it("files existing tasks into a new epic in the same save", async () => {
+    const task = {
+      id: "t1",
+      projectId: "p1",
+      backlogId: "b1",
+      epicId: null,
+      title: "Build the list screen",
+      description: "",
+      status: "open" as const,
+      closedAt: null,
+      assigneeGitlabUserId: null,
+      assigneeGitlabUsername: "",
+      assigneeUserId: null,
+      assigneeUsername: "",
+      assigneeDisplayName: "",
+      labels: [],
+      dueOn: null,
+      startDate: null,
+      priority: "medium" as const,
+      progress: "not_started" as const,
+      size: "m" as const,
+      designStartedAt: null,
+      implementationStartedAt: null,
+      position: 0,
+      createdByUserId: "u1",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      gitlab: null,
+      aiContext: { acceptanceCriteria: "", aiContext: "", updatedAt: null },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => makeEpic({ id: "e9" }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderList({ epics: [], tasks: [task], backlogFilter: "b1" });
+
+    fireEvent.click(screen.getByRole("button", { name: /New epic/ }));
+    const form = within(screen.getByRole("form", { name: "New epic" }));
+    fireEvent.change(form.getByLabelText("Name"), { target: { value: "Screens" } });
+    fireEvent.click(form.getByLabelText("Build the list screen"));
+    fireEvent.click(form.getByRole("button", { name: "Create epic" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    // The epic first, then its task set — a relationship between two objects,
+    // not a column on either.
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/projects/p1/epics");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/v1/epics/e9/tasks");
+    expect(fetchMock.mock.calls[1][1].method).toBe("PATCH");
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ taskIds: ["t1"] });
+  });
+
+  it("drops the task picker when the caller has no task list to offer", () => {
+    renderList({ epics: [] });
+    fireEvent.click(screen.getByRole("button", { name: /New epic/ }));
+    expect(screen.queryByLabelText("Tasks in this epic")).not.toBeInTheDocument();
+  });
 });

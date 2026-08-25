@@ -199,4 +199,113 @@ describe("EpicDetail", () => {
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/projects/p1/epics"));
   });
+
+  // The epic's own half of the relationship. The task side is the Epic
+  // control on the task's single view; both write the same link.
+  describe("editing which tasks are in the epic", () => {
+    const inEpic = {
+      id: "t1",
+      projectId: "p1",
+      backlogId: "b1",
+      epicId: "e1",
+      title: "Build the list screen",
+      description: "",
+      status: "open" as const,
+      closedAt: null,
+      assigneeGitlabUserId: null,
+      assigneeGitlabUsername: "",
+      assigneeUserId: null,
+      assigneeUsername: "",
+      assigneeDisplayName: "",
+      labels: [],
+      dueOn: null,
+      startDate: null,
+      priority: "medium" as const,
+      progress: "not_started" as const,
+      size: "m" as const,
+      designStartedAt: null,
+      implementationStartedAt: null,
+      position: 0,
+      createdByUserId: "u1",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      gitlab: null,
+      aiContext: { acceptanceCriteria: "", aiContext: "", updatedAt: null },
+    };
+    const free = { ...inEpic, id: "t2", title: "Build the detail screen", epicId: null };
+
+    it("adds a free task from the epic's backlog, as a whole set", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => makeEpic() });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <EpicDetail
+          epic={makeEpic()}
+          project={project}
+          backlog={backlog}
+          tasks={[inEpic]}
+          projectTasks={[inEpic, free]}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
+      fireEvent.click(screen.getByLabelText("Build the detail screen"));
+      fireEvent.click(screen.getByRole("button", { name: "Save tasks" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("/api/v1/epics/e1/tasks");
+      expect(init.method).toBe("PATCH");
+      expect(JSON.parse(init.body as string)).toEqual({ taskIds: ["t1", "t2"] });
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+    });
+
+    it("removes one by unticking it", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => makeEpic() });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <EpicDetail
+          epic={makeEpic()}
+          project={project}
+          backlog={backlog}
+          tasks={[inEpic]}
+          projectTasks={[inEpic, free]}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
+      fireEvent.click(screen.getByLabelText("Build the list screen"));
+      fireEvent.click(screen.getByRole("button", { name: "Save tasks" }));
+
+      await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      const [, init] = fetchMock.mock.calls[0];
+      expect(JSON.parse(init.body as string)).toEqual({ taskIds: [] });
+    });
+
+    it("reports a failure without claiming the change stuck", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        json: async () => ({ error: { code: "invalid_tasks", message: "nope" } }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(
+        <EpicDetail
+          epic={makeEpic()}
+          project={project}
+          backlog={backlog}
+          tasks={[inEpic]}
+          projectTasks={[inEpic, free]}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
+      fireEvent.click(screen.getByLabelText("Build the detail screen"));
+      fireEvent.click(screen.getByRole("button", { name: "Save tasks" }));
+
+      await waitFor(() => expect(screen.getByText("nope")).toBeInTheDocument());
+      expect(refresh).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -44,6 +44,7 @@ var (
 	ErrInvalidScope        = errors.New("epic: allowedScope/forbiddenScope must be at most 20000 characters")
 	ErrLinkNotInProject    = errors.New("epic: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	ErrBacklogNotInProject = errors.New("epic: backlogId must be a backlog in this project")
+	ErrTaskNotInProject    = errors.New("epic: taskIds must all be tasks in this project")
 	ErrNotFound            = errors.New("epic: not found")
 	ErrForbidden           = errors.New("epic: forbidden")
 	ErrEpicIDsMismatch     = errors.New("epic: epicIds must exactly match the project's current epics")
@@ -582,6 +583,82 @@ func (s *Service) Update(ctx context.Context, ownerID, epicID uuid.UUID, p Updat
 		return Epic{}, err
 	}
 	return result, nil
+}
+
+// SetTasks makes the epic's task set exactly taskIDs: every named task is
+// filed under the epic (and moved to the epic's own backlog, since the two
+// must agree), and every task currently in the epic that taskIDs no longer
+// names is unfiled from it — keeping its backlog, exactly as deleting the
+// epic would.
+//
+// It is declarative rather than an add/remove pair because that is what the
+// screens actually hold: a picker showing which of a backlog's tasks belong
+// to this epic. Both writes run in one transaction, so a set that names a
+// task the caller can't have moves nothing at all.
+//
+// A duplicate id is harmless (the set is de-duplicated first); an id from
+// another project, or one that doesn't exist, returns ErrTaskNotInProject.
+func (s *Service) SetTasks(ctx context.Context, ownerID, epicID uuid.UUID, taskIDs []uuid.UUID) error {
+	current, err := s.Get(ctx, ownerID, epicID)
+	if err != nil {
+		return err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return err
+	}
+
+	unique := make([]uuid.UUID, 0, len(taskIDs))
+	seen := make(map[uuid.UUID]struct{}, len(taskIDs))
+	for _, id := range taskIDs {
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	// Checked before anything is written, so a foreign or missing id is
+	// refused rather than rolled back. The row-count check inside the
+	// transaction below stays as the guard against a task deleted or moved
+	// out of the project between this check and the write.
+	if len(unique) > 0 {
+		count, err := s.q.CountTasksInProjectByIDs(ctx, db.CountTasksInProjectByIDsParams{
+			ProjectID: current.ProjectID,
+			TaskIds:   unique,
+		})
+		if err != nil {
+			return fmt.Errorf("epic: set tasks: count: %w", err)
+		}
+		if count != int64(len(unique)) {
+			return ErrTaskNotInProject
+		}
+	}
+
+	return s.txRunner.RunInTx(ctx, func(q db.Querier) error {
+		if err := q.ClearEpicTasksExcept(ctx, db.ClearEpicTasksExceptParams{
+			EpicID:  toUUID(&epicID),
+			TaskIds: unique,
+		}); err != nil {
+			return fmt.Errorf("epic: set tasks: clear: %w", err)
+		}
+		if len(unique) == 0 {
+			return nil
+		}
+		affected, err := q.AssignTasksToEpic(ctx, db.AssignTasksToEpicParams{
+			EpicID:  epicID,
+			TaskIds: unique,
+		})
+		if err != nil {
+			return fmt.Errorf("epic: set tasks: assign: %w", err)
+		}
+		// The pre-check above already rejected foreign ids; a shortfall here
+		// means one was deleted or moved out from under us in between, and
+		// the transaction unwinds rather than applying the rest.
+		if affected != int64(len(unique)) {
+			return ErrTaskNotInProject
+		}
+		return nil
+	})
 }
 
 // Reorder resequences the position of every epic in projectID to match

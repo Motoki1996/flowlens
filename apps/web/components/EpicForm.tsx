@@ -11,6 +11,7 @@ import type {
   LinkedGitlabProject,
   Priority,
   Progress,
+  Task,
 } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { PRIORITY_COLUMNS } from "@/lib/priority";
@@ -27,6 +28,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { DateField } from "@/components/DateField";
 import { LinkedGitlabProjectField } from "@/components/BacklogEditForm";
+import { EpicTaskPicker, epicTasksBody } from "@/components/EpicTaskPicker";
 
 /** The Select value standing for "no backlog" — Radix Select has no
  *  empty-string item, and the API's own spelling for it is `null`, which a
@@ -53,6 +55,7 @@ export function EpicForm({
   epic,
   backlogs,
   links,
+  tasks = [],
   defaultBacklogId = null,
   onSaved,
   onCancel,
@@ -62,6 +65,10 @@ export function EpicForm({
   epic?: Epic;
   /** The project's backlogs, offered as the epic's parent. */
   backlogs: Backlog[];
+  /** The project's tasks, for the "tasks in this epic" picker. Empty drops
+   *  the field — a caller with no task list to offer (a screen that hasn't
+   *  fetched one) shouldn't imply the epic has no tasks. */
+  tasks?: Task[];
   /** The project's linked GitLab projects, offered as this epic's own
    *  destination for new issues. Empty — the case for a project with no
    *  GitLab connection — hides that field entirely. */
@@ -90,8 +97,19 @@ export function EpicForm({
   const [baseBranch, setBaseBranch] = useState(epic?.baseBranch ?? "");
   const [allowedScope, setAllowedScope] = useState(epic?.allowedScope ?? "");
   const [forbiddenScope, setForbiddenScope] = useState(epic?.forbiddenScope ?? "");
+  // The task set is edited alongside the epic's own fields but written by its
+  // own endpoint, so it starts from whichever tasks already point at this
+  // epic rather than from a field on the epic itself.
+  const [taskIds, setTaskIds] = useState<string[]>(() =>
+    epic ? tasks.filter((t) => t.epicId === epic.id).map((t) => t.id) : [],
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  // Offered only when the caller actually handed over a task list; a screen
+  // that didn't fetch one has nothing to show and must not imply the epic is
+  // empty.
+  const showTaskPicker = tasks.length > 0;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -135,7 +153,32 @@ export function EpicForm({
         );
         return;
       }
-      onSaved((await res.json()) as Epic);
+      const saved = (await res.json()) as Epic;
+
+      // The task set is a second request: it is a relationship between two
+      // objects, not a column on this one. It runs only when the picker is
+      // actually on screen and has something to say — otherwise a form that
+      // never showed it would empty the epic on every save.
+      if (showTaskPicker && (taskIds.length > 0 || editing)) {
+        const tasksRes = await fetch(`${API_PUBLIC_URL}/api/v1/epics/${saved.id}/tasks`, {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...csrfHeaders() },
+          body: epicTasksBody(taskIds),
+        });
+        if (!tasksRes.ok) {
+          const body = (await tasksRes.json().catch(() => null)) as ApiError | null;
+          // The epic itself saved; only its tasks didn't. Saying so is the
+          // difference between "try again" and "you now have a duplicate".
+          setError(
+            body?.error.message ??
+              "The epic was saved, but its tasks could not be updated. Try again from the epic.",
+          );
+          return;
+        }
+      }
+
+      onSaved(saved);
     } finally {
       setPending(false);
     }
@@ -278,6 +321,32 @@ export function EpicForm({
           </SelectContent>
         </Select>
       </div>
+
+      {showTaskPicker ? (
+        <div>
+          <label
+            htmlFor={`${idPrefix}-tasks`}
+            className="text-foreground block text-sm font-medium"
+          >
+            Tasks in this epic
+          </label>
+          <div className="mt-1">
+            <EpicTaskPicker
+              id={`${idPrefix}-tasks`}
+              tasks={tasks}
+              backlogId={backlogId}
+              epicId={epic?.id}
+              value={taskIds}
+              onChange={setTaskIds}
+              disabled={pending}
+            />
+          </div>
+          <p className="text-muted-foreground mt-1 text-xs">
+            Optional. A task filed here moves to this epic&apos;s backlog with it;
+            unticking one leaves it in the backlog, outside any epic.
+          </p>
+        </div>
+      ) : null}
 
       <LinkedGitlabProjectField
         id={`${idPrefix}-linked-gitlab-project`}

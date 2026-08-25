@@ -26,13 +26,17 @@ export default async function EpicPage({
   // Backlog single view follows.
   if (epic.projectId !== projectId) notFound();
 
-  let tasks: Task[] = [];
+  // The whole project's tasks, not just this epic's: the Tasks card lists the
+  // epic's own, but its "Edit tasks" picker has to offer the backlog's free
+  // ones too, which is how a task gets *into* an epic from this side.
+  let projectTasks: Task[] = [];
   let tasksError = false;
   try {
-    tasks = await getTasks(projectId, { epicId: epic.id });
+    projectTasks = await getTasks(projectId);
   } catch {
     tasksError = true;
   }
+  const tasks = projectTasks.filter((t) => t.epicId === epic.id);
 
   // The epic's own backlog is what its base branch and scope fall through to
   // when it sets none, so the single view needs the whole backlog, not just
@@ -76,6 +80,7 @@ export default async function EpicPage({
         backlog={backlog}
         backlogs={backlogs}
         tasks={tasks}
+        projectTasks={projectTasks}
         links={links}
         tasksError={tasksError}
       />

@@ -12,6 +12,87 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const assignTasksToEpic = `-- name: AssignTasksToEpic :execrows
+UPDATE tasks t
+SET epic_id = e.id, backlog_id = e.backlog_id, updated_at = now()
+FROM epics e
+WHERE e.id = $1
+  AND t.id = ANY($2::uuid[])
+  AND t.project_id = e.project_id
+`
+
+type AssignTasksToEpicParams struct {
+	EpicID  uuid.UUID   `json:"epic_id"`
+	TaskIds []uuid.UUID `json:"task_ids"`
+}
+
+// AssignTasksToEpic files the named tasks under the epic, writing the epic's
+// own backlog onto each in the same statement — a task's epic and backlog
+// must agree (000032), and this is the one write that can move a task into an
+// epic without going through internal/task.
+//
+// The project_id check is what stops an epic from adopting another project's
+// task; the row count tells the caller whether every id actually matched, so
+// a foreign or missing id rolls the whole set back rather than silently
+// moving the rest.
+func (q *Queries) AssignTasksToEpic(ctx context.Context, arg AssignTasksToEpicParams) (int64, error) {
+	result, err := q.db.Exec(ctx, assignTasksToEpic, arg.EpicID, arg.TaskIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const clearEpicTasksExcept = `-- name: ClearEpicTasksExcept :exec
+
+UPDATE tasks
+SET epic_id = NULL, updated_at = now()
+WHERE epic_id = $1
+  AND NOT (id = ANY($2::uuid[]))
+`
+
+type ClearEpicTasksExceptParams struct {
+	EpicID  pgtype.UUID `json:"epic_id"`
+	TaskIds []uuid.UUID `json:"task_ids"`
+}
+
+// SetEpicTasks is the declarative half of "which tasks are in this epic": the
+// caller sends the whole set, and these two statements make the table match
+// it inside one transaction (internal/epic.Service.SetTasks). A per-task
+// PATCH loop could leave a half-applied epic behind if one call failed;
+// moving several tasks at once is exactly the operation that must not.
+// ClearEpicTasksExcept unfiles every task currently in the epic that the new
+// set no longer names. The tasks keep their backlog — dropping out of an epic
+// returns a task to sitting directly in it, the same as deleting the epic.
+func (q *Queries) ClearEpicTasksExcept(ctx context.Context, arg ClearEpicTasksExceptParams) error {
+	_, err := q.db.Exec(ctx, clearEpicTasksExcept, arg.EpicID, arg.TaskIds)
+	return err
+}
+
+const countTasksInProjectByIDs = `-- name: CountTasksInProjectByIDs :one
+SELECT COUNT(*) FROM tasks
+WHERE project_id = $1
+  AND id = ANY($2::uuid[])
+`
+
+type CountTasksInProjectByIDsParams struct {
+	ProjectID uuid.UUID   `json:"project_id"`
+	TaskIds   []uuid.UUID `json:"task_ids"`
+}
+
+// CountTasksInProjectByIDs is SetEpicTasks' pre-check: how many of the given
+// ids are really tasks in the epic's project. internal/epic rejects the whole
+// request before writing anything when the count falls short, so a foreign or
+// missing id is refused rather than rolled back — the guarantee then holds
+// independently of transaction semantics, which is also what lets the
+// in-memory fake (dbtest) reproduce it.
+func (q *Queries) CountTasksInProjectByIDs(ctx context.Context, arg CountTasksInProjectByIDsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTasksInProjectByIDs, arg.ProjectID, arg.TaskIds)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createEpic = `-- name: CreateEpic :one
 
 INSERT INTO epics (project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)

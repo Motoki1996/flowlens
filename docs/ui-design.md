@@ -233,6 +233,14 @@ An inline "New …" form is separated from the list below it by a rule and
 generous spacing. A form and a list of rows are both stacks of bordered
 boxes; without the separation it is genuinely unclear where the form ends.
 
+A relationship between two objects is editable from both ends, in the
+vocabulary of whichever object you are looking at. A task names its epic
+(the Epic control on the Task single view, and the Epic field when creating
+one); an epic names its tasks (a checkbox list of its backlog's free tasks, on
+the epic's own form and single view). Neither is "the" place — which one you
+reach for depends on whether you are thinking about one task or about the
+shape of a coarse unit.
+
 `Backlog` and `Epic` share their Board and Timeline view modes
 (`GroupBoardSection` / `GroupTimelineSection`, `lib/groups.ts`): an epic is
 deliberately shaped as a backlog that lives inside a backlog, and a board that

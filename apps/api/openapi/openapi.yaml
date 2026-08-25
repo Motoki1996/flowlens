@@ -133,6 +133,8 @@ paths:
     $ref: './paths/epics.yaml#/order'
   /api/v1/epics/{epicID}:
     $ref: './paths/epics.yaml#/epic'
+  /api/v1/epics/{epicID}/tasks:
+    $ref: './paths/epics.yaml#/tasks'
   /api/v1/projects/{projectID}/backlogs:
     $ref: './paths/backlogs.yaml#/list'
   /api/v1/projects/{projectID}/backlogs/order:

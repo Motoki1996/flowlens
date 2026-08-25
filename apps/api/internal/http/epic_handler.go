@@ -70,6 +70,14 @@ type reorderEpicsRequest struct {
 	EpicIDs []uuid.UUID `json:"epicIds"`
 }
 
+// setEpicTasksRequest carries the epic's complete task set: every task named
+// is filed under it, and every task currently in it that isn't named drops
+// out. Declarative rather than add/remove because that is what the screens
+// hold — a picker over a backlog's tasks, ticked or not.
+type setEpicTasksRequest struct {
+	TaskIDs []uuid.UUID `json:"taskIds"`
+}
+
 // epicIDFromURL parses the {epicID} path parameter. A malformed ID is
 // reported as "not found" so it is indistinguishable from an unknown one.
 func epicIDFromURL(r *http.Request) (uuid.UUID, bool) {
@@ -292,6 +300,36 @@ func (s *Server) handleDeleteEpic(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSetEpicTasks replaces the epic's task set, all-or-nothing. A task
+// filed here also moves to the epic's own backlog: a task's epic and backlog
+// must always agree.
+func (s *Server) handleSetEpicTasks(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	epicID, ok := epicIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "epic not found")
+		return
+	}
+
+	var req setEpicTasksRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
+		return
+	}
+
+	if err := s.epics.SetTasks(r.Context(), u.ID, epicID, req.TaskIDs); err != nil {
+		writeEpicError(w, err)
+		return
+	}
+
+	e, err := s.epics.Get(r.Context(), u.ID, epicID)
+	if err != nil {
+		writeEpicError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, e)
+}
+
 // writeEpicError maps an epic domain error to its HTTP response.
 func writeEpicError(w http.ResponseWriter, err error) {
 	switch {
@@ -313,6 +351,8 @@ func writeEpicError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_linked_gitlab_project", "defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	case errors.Is(err, epic.ErrBacklogNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_backlog", "backlogId must be a backlog in this project")
+	case errors.Is(err, epic.ErrTaskNotInProject):
+		writeError(w, http.StatusBadRequest, "invalid_tasks", "taskIds must all be tasks in this project")
 	case errors.Is(err, epic.ErrEpicIDsMismatch):
 		writeError(w, http.StatusBadRequest, "epic_ids_mismatch", "epicIds must exactly match the project's current epics")
 	case errors.Is(err, epic.ErrNotFound):

@@ -363,3 +363,82 @@ func TestService_Delete_UnfilesTasks(t *testing.T) {
 	_, err = svc.Get(ctx, owner, created.ID)
 	assert.ErrorIs(t, err, epic.ErrNotFound)
 }
+
+// SetTasks is the epic's own half of the task↔epic relationship — the half a
+// picker over a backlog's tasks writes. Declarative: the caller sends the
+// whole set.
+func TestService_SetTasks(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	created, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens", BacklogID: &b.ID})
+	require.NoError(t, err)
+
+	first := q.SeedTask(p.ID, owner, "Build the list screen")
+	second := q.SeedTask(p.ID, owner, "Build the detail screen")
+
+	require.NoError(t, svc.SetTasks(ctx, owner, created.ID, []uuid.UUID{first.ID, second.ID}))
+
+	// Filed under the epic — and moved to its backlog, since the two must
+	// agree even though these tasks were unfiled a moment ago.
+	for _, id := range []uuid.UUID{first.ID, second.ID} {
+		stored := q.TaskByID(id)
+		require.True(t, stored.EpicID.Valid)
+		assert.Equal(t, created.ID, uuid.UUID(stored.EpicID.Bytes))
+		require.True(t, stored.BacklogID.Valid)
+		assert.Equal(t, b.ID, uuid.UUID(stored.BacklogID.Bytes))
+	}
+
+	// Dropping one from the set unfiles it from the epic but leaves it in the
+	// backlog — the same thing deleting the epic would do.
+	require.NoError(t, svc.SetTasks(ctx, owner, created.ID, []uuid.UUID{first.ID}))
+	dropped := q.TaskByID(second.ID)
+	assert.False(t, dropped.EpicID.Valid)
+	require.True(t, dropped.BacklogID.Valid)
+	assert.Equal(t, b.ID, uuid.UUID(dropped.BacklogID.Bytes))
+
+	// An empty set empties the epic.
+	require.NoError(t, svc.SetTasks(ctx, owner, created.ID, nil))
+	assert.False(t, q.TaskByID(first.ID).EpicID.Valid)
+}
+
+func TestService_SetTasks_RejectsForeignTask(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	other := q.SeedProject(owner, "Beta")
+	created, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens"})
+	require.NoError(t, err)
+
+	own := q.SeedTask(p.ID, owner, "Ours")
+	foreign := q.SeedTask(other.ID, owner, "Theirs")
+
+	// All-or-nothing: the valid id in the same request must not move either.
+	err = svc.SetTasks(ctx, owner, created.ID, []uuid.UUID{own.ID, foreign.ID})
+	assert.ErrorIs(t, err, epic.ErrTaskNotInProject)
+	assert.False(t, q.TaskByID(own.ID).EpicID.Valid)
+	assert.False(t, q.TaskByID(foreign.ID).EpicID.Valid)
+
+	missing := uuid.New()
+	assert.ErrorIs(t, svc.SetTasks(ctx, owner, created.ID, []uuid.UUID{missing}), epic.ErrTaskNotInProject)
+}
+
+func TestService_SetTasks_ForeignEpicIsNotFound(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	stranger := q.SeedUser("hubot", "hubot@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	created, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens"})
+	require.NoError(t, err)
+	tsk := q.SeedTask(p.ID, owner, "Ours")
+
+	assert.ErrorIs(t, svc.SetTasks(ctx, stranger, created.ID, []uuid.UUID{tsk.ID}), epic.ErrNotFound)
+	assert.False(t, q.TaskByID(tsk.ID).EpicID.Valid)
+}

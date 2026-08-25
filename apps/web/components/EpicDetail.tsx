@@ -20,6 +20,11 @@ import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { EpicForm } from "@/components/EpicForm";
 import { EpicDeleteButton } from "@/components/EpicDeleteButton";
+import { EpicTaskPicker, epicTasksBody } from "@/components/EpicTaskPicker";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
+import type { ApiError } from "@/types";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -88,6 +93,7 @@ export function EpicDetail({
   backlog = null,
   backlogs = [],
   tasks = [],
+  projectTasks,
   links = [],
   tasksError = false,
 }: {
@@ -99,6 +105,11 @@ export function EpicDetail({
   /** Every backlog in the project, for the edit form's parent picker. */
   backlogs?: Backlog[];
   tasks?: Task[];
+  /** Every task in the project, for the "which tasks are in this epic" picker
+   *  — the epic's own half of the task↔epic relationship. Defaults to the
+   *  epic's own tasks, which is enough to remove one but not to add one, so a
+   *  caller that can fetch more should. */
+  projectTasks?: Task[];
   /** The project's linked GitLab projects, used to name this epic's issue
    *  destination. Empty hides that row. */
   links?: LinkedGitlabProject[];
@@ -115,6 +126,38 @@ export function EpicDetail({
   if (renderedFrom !== initialEpic) {
     setRenderedFrom(initialEpic);
     setEpic(initialEpic);
+  }
+
+  // The picker draws from every task in the project; `tasks` is only this
+  // epic's, which the page already filtered for the list below.
+  const candidates = projectTasks ?? tasks;
+  const [editingTasks, setEditingTasks] = useState(false);
+  const [taskIds, setTaskIds] = useState<string[]>(() => tasks.map((t) => t.id));
+  const [taskError, setTaskError] = useState<string | null>(null);
+  const [savingTasks, setSavingTasks] = useState(false);
+
+  async function saveTasks() {
+    setSavingTasks(true);
+    setTaskError(null);
+    try {
+      const res = await fetch(`${API_PUBLIC_URL}/api/v1/epics/${epic.id}/tasks`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: epicTasksBody(taskIds),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as ApiError | null;
+        setTaskError(body?.error.message ?? "Failed to update this epic's tasks.");
+        return;
+      }
+      // The rows are rendered from the server-fetched list, so the change
+      // only shows once the route refreshes.
+      router.refresh();
+      setEditingTasks(false);
+    } finally {
+      setSavingTasks(false);
+    }
   }
 
   const completion = groupTaskCompletion(epic);
@@ -144,6 +187,7 @@ export function EpicDetail({
               projectId={project.id}
               epic={epic}
               backlogs={backlogs}
+              tasks={candidates}
               links={links}
               onSaved={(updated) => {
                 setEpic(updated);
@@ -305,19 +349,60 @@ export function EpicDetail({
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base font-medium">Tasks</CardTitle>
-            {/* The list below is a read-only preview; filtering, the timeline
-                view and task creation all belong to the Task collection, so
-                this link hands off rather than duplicating them. */}
-            <Link
-              href={tasksPath(project.id, { epicId: epic.id })}
-              className="text-muted-foreground hover:text-foreground text-sm hover:underline"
-            >
-              Open in Tasks
-            </Link>
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Which tasks are in this epic is the epic's own business, so
+                  it is edited here — the same relationship the task side
+                  edits through its own Epic control. Creating, filtering and
+                  the timeline view still belong to the Task collection. */}
+              {!editingTasks ? (
+                <Button variant="outline" size="sm" onClick={() => setEditingTasks(true)}>
+                  Edit tasks
+                </Button>
+              ) : null}
+              <Link
+                href={tasksPath(project.id, { epicId: epic.id })}
+                className="text-muted-foreground hover:text-foreground text-sm hover:underline"
+              >
+                Open in Tasks
+              </Link>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          {tasksError ? (
+          {editingTasks ? (
+            <div className="space-y-3">
+              {taskError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{taskError}</AlertDescription>
+                </Alert>
+              ) : null}
+              <EpicTaskPicker
+                id={`epic-${epic.id}-tasks`}
+                tasks={candidates}
+                backlogId={epic.backlogId}
+                epicId={epic.id}
+                value={taskIds}
+                onChange={setTaskIds}
+                disabled={savingTasks}
+              />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={saveTasks} disabled={savingTasks}>
+                  {savingTasks ? "Saving…" : "Save tasks"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={savingTasks}
+                  onClick={() => {
+                    setTaskIds(tasks.map((t) => t.id));
+                    setEditingTasks(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : tasksError ? (
             <p className="text-destructive text-sm">
               Failed to load tasks. Try refreshing the page.
             </p>

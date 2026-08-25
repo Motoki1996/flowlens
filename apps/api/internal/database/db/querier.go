@@ -47,6 +47,16 @@ type Querier interface {
 	// the timestamp, mirroring internal/task.Service.Close's own no-op rule.
 	ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTaskFieldsParams) (Task, error)
 	AssignTaskBacklogForOwner(ctx context.Context, arg AssignTaskBacklogForOwnerParams) (Task, error)
+	// AssignTasksToEpic files the named tasks under the epic, writing the epic's
+	// own backlog onto each in the same statement — a task's epic and backlog
+	// must agree (000032), and this is the one write that can move a task into an
+	// epic without going through internal/task.
+	//
+	// The project_id check is what stops an epic from adopting another project's
+	// task; the row count tells the caller whether every id actually matched, so
+	// a foreign or missing id rolls the whole set back rather than silently
+	// moving the rest.
+	AssignTasksToEpic(ctx context.Context, arg AssignTasksToEpicParams) (int64, error)
 	// The inbound apply pipeline (internal/webhookapply, docs/plans/issue-sync.md
 	// "Inbound"). ClaimNextPendingWebhookEvent must be called through a
 	// transaction-scoped Querier (database.TxRunner): FOR UPDATE SKIP LOCKED only
@@ -62,6 +72,15 @@ type Querier interface {
 	// Unsets is_default on every other link in the same connection as linkID,
 	// so SetDefaultLinkedGitlabProjectForOwner can set exactly one.
 	ClearDefaultLinkedGitlabProjectsForOwner(ctx context.Context, arg ClearDefaultLinkedGitlabProjectsForOwnerParams) error
+	// SetEpicTasks is the declarative half of "which tasks are in this epic": the
+	// caller sends the whole set, and these two statements make the table match
+	// it inside one transaction (internal/epic.Service.SetTasks). A per-task
+	// PATCH loop could leave a half-applied epic behind if one call failed;
+	// moving several tasks at once is exactly the operation that must not.
+	// ClearEpicTasksExcept unfiles every task currently in the epic that the new
+	// set no longer names. The tasks keep their backlog — dropping out of an epic
+	// returns a task to sitting directly in it, the same as deleting the epic.
+	ClearEpicTasksExcept(ctx context.Context, arg ClearEpicTasksExceptParams) error
 	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
 	CompleteRepositorySyncRun(ctx context.Context, arg CompleteRepositorySyncRunParams) (RepositorySyncRun, error)
@@ -86,6 +105,13 @@ type Querier interface {
 	// open count is just the sum of these rows' counts.
 	//
 	CountOpenTasksBySizeForVelocity(ctx context.Context, arg CountOpenTasksBySizeForVelocityParams) ([]CountOpenTasksBySizeForVelocityRow, error)
+	// CountTasksInProjectByIDs is SetEpicTasks' pre-check: how many of the given
+	// ids are really tasks in the epic's project. internal/epic rejects the whole
+	// request before writing anything when the count falls short, so a foreign or
+	// missing id is refused rather than rolled back — the guarantee then holds
+	// independently of transaction semantics, which is also what lets the
+	// in-memory fake (dbtest) reproduce it.
+	CountTasksInProjectByIDs(ctx context.Context, arg CountTasksInProjectByIDsParams) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	// Backlogs have no owner column of their own; ownership is always checked
 	// through the parent project. CreateBacklog/ListBacklogsByProject trust the

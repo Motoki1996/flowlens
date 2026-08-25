@@ -406,6 +406,10 @@ func (s *Server) Router() chi.Router {
 			shared.With(epicResource).Get("/epics/{epicID}", s.handleGetEpic)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Patch("/epics/{epicID}", s.handleUpdateEpic)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Delete("/epics/{epicID}", s.handleDeleteEpic)
+			// The epic's own view of "which tasks are mine", written as a
+			// whole set. The task-shaped half of the same relationship is
+			// PATCH /tasks/{taskID}'s own epicId.
+			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Patch("/epics/{epicID}/tasks", s.handleSetEpicTasks)
 
 			depResource := requireTokenResourceProject("dependencyID", taskdependency.ErrNotFound, s.taskDependencies.ProjectID)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), depResource).Delete("/task-dependencies/{dependencyID}", s.handleDeleteTaskDependency)

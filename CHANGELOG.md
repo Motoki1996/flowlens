@@ -31,8 +31,8 @@ procedure itself.
   declarative and all-or-nothing). Tasks gain a writable `epicId` on
   create, update and bulk create, and `?epic_id=` on both task
   collections. New screens at `/projects/{projectId}/epics` and
-  `/epics/{epicId}`, with Board, List and Timeline view modes like the
-  Backlog collection.
+  `/projects/{projectId}/epics/{epicId}`, with Board, List and Timeline
+  view modes like the Backlog collection.
 - **An epic's own base branch and change scope.** An epic can carry its own
   `baseBranch`, `allowedScope`, `forbiddenScope` and
   `defaultLinkedGitlabProjectId`. `GET /api/v1/tasks/{taskID}/context`

@@ -301,7 +301,7 @@ describe("EpicListSection", () => {
     fireEvent.click(screen.getByRole("button", { name: /New epic/ }));
     const form = within(screen.getByRole("form", { name: "New epic" }));
     fireEvent.change(form.getByLabelText("Name"), { target: { value: "Screens" } });
-    fireEvent.click(form.getByLabelText("Build the list screen"));
+    fireEvent.click(form.getByRole("option", { name: /Build the list screen/ }));
     fireEvent.click(form.getByRole("button", { name: "Create epic" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));

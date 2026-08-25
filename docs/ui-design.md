@@ -236,10 +236,22 @@ boxes; without the separation it is genuinely unclear where the form ends.
 A relationship between two objects is editable from both ends, in the
 vocabulary of whichever object you are looking at. A task names its epic
 (the Epic control on the Task single view, and the Epic field when creating
-one); an epic names its tasks (a checkbox list of its backlog's free tasks, on
+one); an epic names its tasks (a tickable list of its backlog's free tasks, on
 the epic's own form and single view). Neither is "the" place — which one you
 reach for depends on whether you are thinking about one task or about the
 shape of a coarse unit.
+
+A list you pick several things out of has to survive a backlog with hundreds
+of tasks, so the epic's task picker is built on the `Command` primitive
+(cmdk): arrow keys move, Enter ticks, and a search box narrows as you type.
+It also hides closed tasks by default and offers a "selected only" view.
+
+Two rules hold there, and hold anywhere a filter meets a multi-selection:
+**a filter changes what is shown, never what is selected** — the set is saved
+whole, so a row hidden by a search is still in it — and **a bulk action reaches
+only the rows currently visible**, stating its own count ("Select all (12)").
+A "clear" that also dropped hidden selections would unfile work the reader
+never saw.
 
 `Backlog` and `Epic` share their Board and Timeline view modes
 (`GroupBoardSection` / `GroupTimelineSection`, `lib/groups.ts`): an epic is

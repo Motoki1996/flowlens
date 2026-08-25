@@ -249,7 +249,7 @@ describe("EpicDetail", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
-      fireEvent.click(screen.getByLabelText("Build the detail screen"));
+      fireEvent.click(screen.getByRole("option", { name: /Build the detail screen/ }));
       fireEvent.click(screen.getByRole("button", { name: "Save tasks" }));
 
       await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -275,7 +275,7 @@ describe("EpicDetail", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
-      fireEvent.click(screen.getByLabelText("Build the list screen"));
+      fireEvent.click(screen.getByRole("option", { name: /Build the list screen/ }));
       fireEvent.click(screen.getByRole("button", { name: "Save tasks" }));
 
       await waitFor(() => expect(fetchMock).toHaveBeenCalled());
@@ -301,7 +301,7 @@ describe("EpicDetail", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Edit tasks" }));
-      fireEvent.click(screen.getByLabelText("Build the detail screen"));
+      fireEvent.click(screen.getByRole("option", { name: /Build the detail screen/ }));
       fireEvent.click(screen.getByRole("button", { name: "Save tasks" }));
 
       await waitFor(() => expect(screen.getByText("nope")).toBeInTheDocument());

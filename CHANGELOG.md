@@ -8,6 +8,62 @@ procedure itself.
 
 ## Unreleased
 
+### Added
+
+- **Epics: an optional rung between a backlog and its tasks**
+  ([ADR-0012](docs/decisions/0012-why-an-epic-layer.md)). An epic is the
+  coarse unit — one screen, one endpoint group — that a refined backlog is
+  cut into before each of those is broken down into tasks. It is shaped as
+  "a backlog that lives inside a backlog": the same fields, minus `size`
+  (an epic's size is the sum of its tasks'), plus `backlogId`. Using them
+  is entirely optional — a backlog can still hold tasks directly, and every
+  existing backlog keeps working untouched.
+
+  Epics are **app-only end to end**: no epic is ever created in, or read
+  from, GitLab, and moving a task between epics never enqueues a sync job.
+  Deleting an epic drops its tasks back into their backlog rather than
+  deleting them.
+
+  New endpoints, all on the API-token allowlist so an agent can drive the
+  whole breakdown: `GET`/`POST /api/v1/projects/{projectID}/epics`,
+  `GET`/`PATCH`/`DELETE /api/v1/epics/{epicID}`, and
+  `PATCH /api/v1/epics/{epicID}/tasks` (the epic's complete `taskIds` set,
+  declarative and all-or-nothing). Tasks gain a writable `epicId` on
+  create, update and bulk create, and `?epic_id=` on both task
+  collections. New screens at `/projects/{projectId}/epics` and
+  `/epics/{epicId}`, with Board, List and Timeline view modes like the
+  Backlog collection.
+- **An epic's own base branch and change scope.** An epic can carry its own
+  `baseBranch`, `allowedScope`, `forbiddenScope` and
+  `defaultLinkedGitlabProjectId`. `GET /api/v1/tasks/{taskID}/context`
+  resolves them **epic first, then backlog, per field**, so an epic that
+  overrides only the branch still inherits its backlog's scope.
+- **An epic's provisional estimate.** `estimatedPoints` is an epic's
+  pre-breakdown guess, on the same raw scale velocity weights a task's
+  `size` onto. It is deliberately not a `size` and not one of `xs`..`xl`:
+  it stands in only until the epic has tasks, after which the sum of those
+  tasks' sizes is authoritative and the estimate is never consulted again —
+  and never cleared, so a later estimate-vs-actual calibration still has
+  both numbers. `null` means unestimated; `0` is rejected so that stays
+  distinguishable.
+
+  `GET /api/v1/projects/{projectID}/velocity` gains
+  `unbrokenDownEpicPoints`, `unestimatedEpicCount` and `openPointsTotal`,
+  the new numerator of `forecastPeriodsByPoints`. Epics that already have
+  tasks are excluded in SQL so nothing is counted twice, and the
+  count-denominated `forecastPeriods`/`openTaskCount` stay task-only. The
+  Velocity card now says when the points forecast is a lower bound rather
+  than presenting it as the whole picture.
+- **An index on `tasks(epic_id)`** (migration `000035`, partial on non-null).
+  The epic collection's task counts and velocity's "has this epic been
+  broken down yet" anti-join both filter on `epic_id` alone, which the
+  `project_id`-leading index from `000032` could not serve. Additive, no
+  action needed.
+- **`@motokis-lab/agent-kit` 0.2.0** teaches the epic rung: a new
+  `/flowlens:breakdown-epics` command splits a refined backlog into
+  estimated epics, and `/flowlens:breakdown` now takes either a backlog or
+  an epic. `init` installs four slash commands rather than three.
+
 ### Removed
 
 - **⚠️ Breaking — manual (drag-and-drop) ordering.** Tasks, backlogs and
@@ -24,6 +80,15 @@ procedure itself.
   column from `tasks`, `backlogs` and `epics`; the manual order every row
   carried is discarded and cannot be recovered by rolling the migration
   back. Take a database dump first if that order matters to you.
+
+  **This upgrade is one-way: you cannot downgrade to v0.1.2 afterwards.**
+  Unlike every migration before it, `000034` removes a column the previous
+  release's code still reads, and the API only ever applies *up* migrations
+  at startup. Once it has run, pointing `FLOWLENS_VERSION` back at v0.1.2
+  leaves that binary querying a `position` column that no longer exists,
+  and every task and backlog list fails. If you want a way back, take the
+  database dump *before* upgrading and restore it alongside the older
+  image — rolling the image back on its own is not enough.
 
   **What an API client must do:** stop sending `position` in a create or
   update body (it is now ignored — the field no longer exists on any

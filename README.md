@@ -515,6 +515,15 @@ Two rules the schema can't express are enforced by the API:
   in that epic's backlog, whatever `backlogId` the same request carried.
   Moving a task to a different backlog without naming an epic clears its
   epic, and moving an *epic* between backlogs moves its tasks with it.
+
+  The corollary is worth stating outright, because it is the one case where
+  "the epic wins" costs something: an epic that is itself **unfiled**
+  (`backlogId` null) unfiles every task filed into it, since the epic's
+  backlog — nothing — is written onto the task either way. Filing five of a
+  sprint's tasks into a backlog-less epic takes all five out of that sprint.
+  The web app refuses to offer the task picker for an unfiled epic for
+  exactly this reason; the API does not, so an integration should file the
+  epic in a backlog before filing tasks into it.
 - **An epic belongs to one project.** An epic in another project's backlog is
   rejected with 400 `invalid_backlog`.
 
@@ -969,7 +978,7 @@ calls, never from browser script.
 An OpenAPI spec (served at `GET /openapi.yaml`, see above) resolves *what
 schema* an endpoint takes, but not *what order* to call things in — that's
 what `@motokis-lab/agent-kit` installs into the repository an AI agent
-actually works in, as a Claude Code skill and three slash commands.
+actually works in, as a Claude Code skill and four slash commands.
 
 ```bash
 export FLOWLENS_API_TOKEN=flt_...   # optional, see below
@@ -994,7 +1003,8 @@ bearer-authenticated request — never every project its owner has.
 | --- | --- | --- |
 | `.claude/skills/flowlens/SKILL.md` | Auth, the task lifecycle's call order, branch-naming rule | yes |
 | `.claude/commands/flowlens/refine-backlog.md` | `/flowlens:refine-backlog` — turn a backlog into numbered requirements | yes |
-| `.claude/commands/flowlens/breakdown.md` | `/flowlens:breakdown` — split a backlog into sized, scoped, dependency-ordered tasks via [bulk task creation](#bulk-task-creation) | yes |
+| `.claude/commands/flowlens/breakdown-epics.md` | `/flowlens:breakdown-epics` — split a refined backlog into estimated [epics](#epics-an-optional-layer-between-a-backlog-and-its-tasks); optional | yes |
+| `.claude/commands/flowlens/breakdown.md` | `/flowlens:breakdown` — split a backlog **or one epic** into sized, scoped, dependency-ordered tasks via [bulk task creation](#bulk-task-creation) | yes |
 | `.claude/commands/flowlens/work.md` | `/flowlens:work` — run one task's design → implementation lifecycle | yes |
 | `.flowlens/openapi.yaml` | The connected instance's OpenAPI spec | yes |
 | `.flowlens/config.json` | `baseUrl` / `projectId` | yes |
@@ -2213,6 +2223,18 @@ types per task; `size` is a five-value T-shirt scale and the weights
     `openTaskCount`) deliberately stays task-only: an epic has no idea how
     many tasks it will become, so there is no honest number to add to a
     count — which is why the estimate is denominated in points at all.
+
+    One known understatement remains, deliberately: "has been broken down" is
+    all-or-nothing, so an epic estimated at 21 points with a single `xs` task
+    cut off it leaves this figure entirely and contributes 1 point through
+    that task — the ~20 points still to be cut are invisible until the
+    breakdown finishes. Reconciling the estimate against the tasks (a `max()`,
+    a remainder) would fix the number and reintroduce the two-disagreeing-
+    truths problem the epic layer exists to avoid ([ADR-0012](docs/decisions/0012-why-an-epic-layer.md)),
+    so it is left understated; the window is short by construction, since
+    `/flowlens:breakdown` creates an epic's tasks in one bulk call. The
+    Velocity card says when the points forecast is a lower bound rather than
+    presenting it as a point estimate.
   - `sizedTaskRatio` (0..1) is the fraction of the completed tasks counted
     whose size is something other than the default `m`. Every task predating
     the `size` column reads as `m`, so while this is `0` the point series is

@@ -21,13 +21,18 @@ Backlog ID: $1
 1. Load `.flowlens/config.json` and the token, and `GET
    {baseUrl}/api/v1/backlogs/$1` for the refined requirements, base branch
    and allowed/forbidden scope.
-2. Read the relevant parts of this repository to ground the split in
+2. `GET {baseUrl}/api/v1/projects/{projectId}/epics?backlog_id=$1` for the
+   epics this backlog already has. Do not skip this: step 6 has no bulk
+   endpoint and no idempotency key, so on a re-run this list is the only
+   thing standing between you and a duplicate set of epics. Create only
+   what is missing from it, and say in the output which ones you skipped.
+3. Read the relevant parts of this repository to ground the split in
    actual code structure, not just the requirement text.
-3. Split the backlog into **epics** — coarse units of a few tasks each,
+4. Split the backlog into **epics** — coarse units of a few tasks each,
    cut along a boundary the codebase actually has: one screen, one
    endpoint group, one migration + API pair. An epic that maps to a single
    task is too small; one that spans the whole backlog is too large.
-4. For each epic, decide:
+5. For each epic, decide:
    - `name`, `description` (record which `R#` it covers, e.g. "Covers R2,
      R3.")
    - `priority`, and `startDate`/`dueOn` if the backlog's own period
@@ -53,12 +58,13 @@ Backlog ID: $1
      cannot ground it — the API reports unestimated epics as such, which is
      more useful than a fabricated number, and 0 is rejected precisely so
      it cannot be used as a shrug.
-5. Create each one with `POST
+6. Create each missing one with `POST
    {baseUrl}/api/v1/projects/{projectId}/epics`, passing `backlogId: "$1"`.
-   There is deliberately no bulk endpoint here: epics have no dependency
-   graph between them, so a partial failure is re-runnable rather than a
-   corrupt result — just create the ones that are missing and carry on.
-6. Do **not** create tasks. Each epic is broken down separately, by
+   Requires a token with `write` scope; a read-only token gets 403 here.
+   There is deliberately no bulk endpoint: epics have no dependency graph
+   between them, so a partial failure is re-runnable rather than a corrupt
+   result — re-run this command and step 2 will tell you what is left.
+7. Do **not** create tasks. Each epic is broken down separately, by
    `/flowlens:breakdown <epicId>`, so the task-level detail is decided
    with that one epic's scope in view rather than the whole backlog's.
    `estimatedPoints` is what stands in for those tasks until then: it is
@@ -69,4 +75,6 @@ Backlog ID: $1
 
 List the created epics (name, requirement references, `estimatedPoints`
 and what it assumes, base branch if it differs from the backlog's) and the
-`/flowlens:breakdown <epicId>` command to run for each.
+`/flowlens:breakdown <epicId>` command to run for each. Name separately any
+epic that already existed and was left alone, so a re-run reads as a re-run
+rather than as having done nothing.

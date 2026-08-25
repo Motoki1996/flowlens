@@ -5,8 +5,9 @@ allowed-tools: Bash(cat .flowlens/config.json), Bash(curl:*), Read, Grep, Glob
 ---
 
 Read the `flowlens` skill first for auth and shared conventions. This
-command expects the backlog to already have numbered requirements
-(`R1`, `R2`, …) — run `/flowlens:refine-backlog` first if it doesn't.
+command expects numbered requirements (`R1`, `R2`, …) to exist already —
+on the backlog itself, or on the backlog behind the epic you named. Run
+`/flowlens:refine-backlog` on that backlog first if they don't.
 
 ## Target
 

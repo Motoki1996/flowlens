@@ -46,6 +46,7 @@ function makeEpic(overrides: Partial<Epic> = {}): Epic {
     baseBranch: "",
     allowedScope: "",
     forbiddenScope: "",
+    estimatedPoints: null,
     assigneeUserId: null,
     assigneeUsername: "",
     assigneeDisplayName: "",
@@ -127,6 +128,57 @@ describe("EpicDetail", () => {
 
     expect(screen.getByText(/group\/demo/)).toBeInTheDocument();
     expect(screen.getByText(/\(project default\)/)).toBeInTheDocument();
+  });
+
+  // The estimate is only ever superseded, never cleared, so once tasks exist
+  // there are two numbers on screen. Which of them the forecast is using is
+  // the whole point of showing it at all.
+  describe("the pre-breakdown estimate", () => {
+    it("says the forecast is using the estimate while the epic has no tasks", () => {
+      render(
+        <EpicDetail
+          epic={makeEpic({ estimatedPoints: 11 })}
+          project={project}
+          backlog={backlog}
+        />,
+      );
+
+      expect(screen.getByText("11")).toBeInTheDocument();
+      expect(
+        screen.getByText(/used by the forecast until this epic has tasks/),
+      ).toBeInTheDocument();
+    });
+
+    it("marks the estimate superseded once the epic has tasks", () => {
+      render(
+        <EpicDetail
+          epic={makeEpic({ estimatedPoints: 11, taskCount: 3, closedTaskCount: 1 })}
+          project={project}
+          backlog={backlog}
+        />,
+      );
+
+      // Still on screen — a later estimate-vs-actual comparison is the only
+      // reason it is kept — but no longer presented as the live number.
+      expect(screen.getByText("11")).toBeInTheDocument();
+      expect(
+        screen.getByText(/superseded — the forecast now counts this epic's tasks/),
+      ).toBeInTheDocument();
+    });
+
+    it("distinguishes unestimated from zero, and says what it costs", () => {
+      render(
+        <EpicDetail
+          epic={makeEpic({ estimatedPoints: null })}
+          project={project}
+          backlog={backlog}
+        />,
+      );
+
+      expect(
+        screen.getByText(/Unestimated — the forecast cannot see this epic/),
+      ).toBeInTheDocument();
+    });
   });
 
   it("links its tasks to the Task collection rather than listing them twice", () => {

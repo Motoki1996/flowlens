@@ -153,7 +153,14 @@ export function VelocitySection({
 
   const averageVelocity = points ? velocity?.averageVelocityPoints ?? null : velocity?.averageVelocity ?? null;
   const forecastPeriods = points ? velocity?.forecastPeriodsByPoints ?? null : velocity?.forecastPeriods ?? null;
-  const openTotal = (points ? velocity?.openTaskPoints : velocity?.openTaskCount) ?? 0;
+  // openPointsTotal, not openTaskPoints: it is what forecastPeriodsByPoints
+  // actually divides, so showing the task-only figure beside that forecast
+  // would put two numbers on screen that don't reconcile. The count series has
+  // no epic counterpart — forecastPeriods is deliberately task-only — so it
+  // keeps using openTaskCount.
+  const openTotal = (points ? velocity?.openPointsTotal : velocity?.openTaskCount) ?? 0;
+  const epicPoints = velocity?.unbrokenDownEpicPoints ?? 0;
+  const unestimatedEpics = velocity?.unestimatedEpicCount ?? 0;
 
   // Every task starts at size M, so before anyone sizes anything the points
   // series carries no information the task count doesn't. Saying so is the
@@ -197,6 +204,29 @@ export function VelocitySection({
               <p className="text-muted-foreground text-xs">
                 No completed task in this range has been given a size yet, so points are just the task count
                 &times; 3 (every task starts at size M). Set sizes on tasks to make this differ from Tasks.
+              </p>
+            ) : null}
+
+            {/* Work that exists but has no task to count is the one way this
+                forecast can be wrong in a direction the reader can't see. An
+                estimated epic is at least in the number; an unestimated one is
+                missing from it entirely, so the forecast is a lower bound by
+                an amount nobody knows. Say which of the two is happening. */}
+            {points && epicPoints > 0 ? (
+              <p className="text-muted-foreground text-xs">
+                Includes {epicPoints} {epicPoints === 1 ? "point" : "points"} estimated on epics that
+                have no tasks yet. Once an epic is broken down its tasks replace the estimate, so
+                nothing is counted twice.
+              </p>
+            ) : null}
+            {points && unestimatedEpics > 0 ? (
+              <p className="text-muted-foreground text-xs">
+                {unestimatedEpics === 1
+                  ? "One open epic has neither tasks nor an estimate"
+                  : `${unestimatedEpics} open epics have neither tasks nor an estimate`}
+                , so this forecast is a lower bound — the real figure is larger by an unknown amount.
+                Give {unestimatedEpics === 1 ? "it" : "them"} estimated points, or break{" "}
+                {unestimatedEpics === 1 ? "it" : "them"} down into tasks.
               </p>
             ) : null}
 

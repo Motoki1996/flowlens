@@ -35,6 +35,9 @@ function makeVelocity(overrides: Partial<Velocity>): Velocity {
     averageVelocityPoints: null,
     forecastPeriodsByPoints: null,
     sizedTaskRatio: 0,
+    unbrokenDownEpicPoints: 0,
+    unestimatedEpicCount: 0,
+    openPointsTotal: 0,
     ...overrides,
   };
 }

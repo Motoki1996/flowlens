@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
-import { backlogsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
+import { backlogsPath, epicsPath, gitlabConnectionPath, tasksPath } from "@/lib/routes";
 import type {
   ApiError,
   ApiToken,
@@ -225,6 +225,7 @@ function CollectionLink({
 export function ProjectDetail({
   project: initial,
   backlogCount = 0,
+  epicCount = 0,
   taskCount = 0,
   openTaskCount = 0,
   countsError = false,
@@ -246,6 +247,7 @@ export function ProjectDetail({
 }: {
   project: Project;
   backlogCount?: number;
+  epicCount?: number;
   taskCount?: number;
   openTaskCount?: number;
   /** True when the counts could not be loaded; the links still work. */
@@ -342,6 +344,16 @@ export function ProjectDetail({
           href={backlogsPath(project.id)}
           name="Backlogs"
           summary={countsError ? "Count unavailable" : `${backlogCount} backlogs`}
+        />
+        {/* Between Backlogs and Tasks because that is where the rung sits:
+            a backlog is cut into epics, an epic into tasks. Listed even at
+            zero — the hub is how someone finds out the layer exists, and it
+            is optional enough that hiding it when unused would keep it a
+            secret. */}
+        <CollectionLink
+          href={epicsPath(project.id)}
+          name="Epics"
+          summary={countsError ? "Count unavailable" : `${epicCount} epics`}
         />
         <CollectionLink
           href={tasksPath(project.id)}

@@ -7,7 +7,7 @@
 // horizontal bar chart (a transparent `offset` segment followed by a visible
 // `duration` segment), and a stack has to accumulate from zero.
 
-import type { Backlog, Priority, Progress, Task } from "@/types";
+import type { Priority, Progress, Task } from "@/types";
 import type { Grouping } from "@/lib/groups";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;

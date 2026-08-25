@@ -171,7 +171,6 @@ func TestBacklogQueriesEnforceOwnership(t *testing.T) {
 
 	b, err := q.CreateBacklog(ctx, db.CreateBacklogParams{ProjectID: p.ID, Name: "Sprint 1", Priority: "medium", Progress: "not_started"})
 	require.NoError(t, err)
-	assert.Equal(t, int32(0), b.Position)
 
 	t.Run("owner reads its own backlog", func(t *testing.T) {
 		got, err := q.GetBacklogForOwner(ctx, db.GetBacklogForOwnerParams{ID: b.ID, OwnerUserID: owner.ID})

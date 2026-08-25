@@ -600,15 +600,14 @@ func TestHandleUpdateTask(t *testing.T) {
 		assert.Equal(t, "Fix bug", body["title"])
 	})
 
-	t.Run("owner can update, including position", func(t *testing.T) {
+	t.Run("owner can update title and description", func(t *testing.T) {
 		rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
-			map[string]any{"title": "Renamed", "description": "new", "position": 3}, ownerToken)
+			map[string]any{"title": "Renamed", "description": "new"}, ownerToken)
 		require.Equal(t, http.StatusOK, rec.Code)
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		assert.Equal(t, "Renamed", body["title"])
 		assert.Equal(t, "new", body["description"])
-		assert.Equal(t, float64(3), body["position"])
 	})
 
 	t.Run("owner can change progress; invalid progress is rejected", func(t *testing.T) {
@@ -692,7 +691,7 @@ func TestHandleUpdateTask_AppliesOnlyKeysPresentInBody(t *testing.T) {
 	id := q.SeedTask(p.ID, ownerID, "Fix bug").ID.String()
 
 	rec := doRequest(t, s, http.MethodPatch, "/api/v1/tasks/"+id,
-		map[string]any{"title": "Renamed", "description": "original", "position": 3, "dueOn": "2026-09-01T00:00:00Z"}, token)
+		map[string]any{"title": "Renamed", "description": "original", "dueOn": "2026-09-01T00:00:00Z"}, token)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	tests := []struct {
@@ -701,14 +700,14 @@ func TestHandleUpdateTask_AppliesOnlyKeysPresentInBody(t *testing.T) {
 		want map[string]any
 	}{
 		{
-			name: "title only keeps description, position and due date",
+			name: "title only keeps description and due date",
 			body: map[string]any{"title": "Renamed again"},
-			want: map[string]any{"title": "Renamed again", "description": "original", "position": float64(3), "dueOn": "2026-09-01T00:00:00Z"},
+			want: map[string]any{"title": "Renamed again", "description": "original", "dueOn": "2026-09-01T00:00:00Z"},
 		},
 		{
 			name: "explicit null clears the due date",
 			body: map[string]any{"dueOn": nil},
-			want: map[string]any{"title": "Renamed again", "description": "original", "position": float64(3), "dueOn": nil},
+			want: map[string]any{"title": "Renamed again", "description": "original", "dueOn": nil},
 		},
 	}
 	for _, tt := range tests {
@@ -1040,47 +1039,6 @@ func TestHandleRetryTaskSync_ResetsFailedTaskToPending(t *testing.T) {
 	gitlab, ok := body["gitlab"].(map[string]any)
 	require.True(t, ok, "gitlab must be an object once the task has a sync job")
 	assert.Equal(t, "pending", gitlab["syncStatus"])
-}
-
-func TestHandleReorderTasks(t *testing.T) {
-	s, q := newTestServer(t)
-	ownerID, token := loginSession(t, s, q)
-	p := q.SeedProject(ownerID, "Alpha")
-	b := q.SeedBacklog(p.ID, "Sprint 1")
-	first := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "First")
-	second := q.SeedTaskInBacklog(p.ID, b.ID, ownerID, "Second")
-
-	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/tasks/order",
-		reorderTasksRequest{BacklogID: &b.ID, TaskIDs: []uuid.UUID{second.ID, first.ID}}, token)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body, 2)
-	assert.Equal(t, second.ID.String(), body[0]["id"])
-	assert.Equal(t, first.ID.String(), body[1]["id"])
-}
-
-func TestHandleReorderTasks_RejectsMismatchedTaskIDs(t *testing.T) {
-	s, q := newTestServer(t)
-	ownerID, token := loginSession(t, s, q)
-	p := q.SeedProject(ownerID, "Alpha")
-	q.SeedTask(p.ID, ownerID, "Only task")
-
-	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/tasks/order",
-		reorderTasksRequest{TaskIDs: []uuid.UUID{uuid.New()}}, token)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleReorderTasks_ForeignProjectGets404(t *testing.T) {
-	s, q := newTestServer(t)
-	owner := q.SeedUser("octocat", "octocat@example.com")
-	p := q.SeedProject(owner.ID, "Alpha")
-
-	_, intruderToken := loginSession(t, s, q)
-	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/tasks/order",
-		reorderTasksRequest{}, intruderToken)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestHandleBulkCreateTasks(t *testing.T) {

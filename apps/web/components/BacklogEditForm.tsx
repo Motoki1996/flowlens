@@ -91,9 +91,8 @@ export function LinkedGitlabProjectField({
  * action on the object and lives on the object's own screens
  * (docs/ui-design.md rule 4).
  *
- * `name`, `description` and `position` are not optional on the API's side, so
- * they are always sent — position from the backlog as-is, since this form has
- * no control for it and an omitted key would reset it to 0.
+ * `name` and `description` are not optional on the API's side, so they are
+ * always sent.
  */
 export function BacklogEditForm({
   backlog,
@@ -140,7 +139,6 @@ export function BacklogEditForm({
           body: JSON.stringify({
             name,
             description,
-            position: backlog.position,
             startDate: toApiDate(startDate),
             dueOn: toApiDate(dueOn),
             priority,

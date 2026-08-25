@@ -199,7 +199,7 @@ func (q *Queries) ListFailedWebhookEventsByProject(ctx context.Context, projectI
 
 const listOverdueOpenTasksByProject = `-- name: ListOverdueOpenTasksByProject :many
 
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id, epic_id FROM tasks
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id, epic_id FROM tasks
 WHERE project_id = $1 AND status = 'open' AND due_on IS NOT NULL AND due_on < $2::date
 ORDER BY due_on ASC
 `
@@ -234,7 +234,6 @@ func (q *Queries) ListOverdueOpenTasksByProject(ctx context.Context, arg ListOve
 			&i.AssigneeGitlabUsername,
 			&i.Labels,
 			&i.DueOn,
-			&i.Position,
 			&i.CreatedByUserID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -259,7 +258,7 @@ func (q *Queries) ListOverdueOpenTasksByProject(ctx context.Context, arg ListOve
 }
 
 const listTasksDueSoonByProject = `-- name: ListTasksDueSoonByProject :many
-SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, position, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id, epic_id FROM tasks
+SELECT id, project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id, epic_id FROM tasks
 WHERE project_id = $1 AND status = 'open' AND due_on = $2::date
 ORDER BY due_on ASC
 `
@@ -290,7 +289,6 @@ func (q *Queries) ListTasksDueSoonByProject(ctx context.Context, arg ListTasksDu
 			&i.AssigneeGitlabUsername,
 			&i.Labels,
 			&i.DueOn,
-			&i.Position,
 			&i.CreatedByUserID,
 			&i.CreatedAt,
 			&i.UpdatedAt,

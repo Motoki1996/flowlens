@@ -95,13 +95,12 @@ func (q *Queries) CountTasksInProjectByIDs(ctx context.Context, arg CountTasksIn
 
 const createEpic = `-- name: CreateEpic :one
 
-INSERT INTO epics (project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id, estimated_points)
+INSERT INTO epics (project_id, backlog_id, name, description, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id, estimated_points)
 VALUES (
     $1,
     $2,
     $3,
     $4,
-    COALESCE((SELECT MAX(position) + 1 FROM epics WHERE project_id = $1), 0),
     $5,
     $6,
     $7,
@@ -113,7 +112,7 @@ VALUES (
     $13,
     $14
 )
-RETURNING id, project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, assignee_user_id, base_branch, allowed_scope, forbidden_scope, default_linked_gitlab_project_id, created_at, updated_at, estimated_points
+RETURNING id, project_id, backlog_id, name, description, start_date, due_on, priority, progress, assignee_user_id, base_branch, allowed_scope, forbidden_scope, default_linked_gitlab_project_id, created_at, updated_at, estimated_points
 `
 
 type CreateEpicParams struct {
@@ -170,7 +169,6 @@ func (q *Queries) CreateEpic(ctx context.Context, arg CreateEpicParams) (Epic, e
 		&i.BacklogID,
 		&i.Name,
 		&i.Description,
-		&i.Position,
 		&i.StartDate,
 		&i.DueOn,
 		&i.Priority,
@@ -210,7 +208,7 @@ func (q *Queries) DeleteEpicForOwner(ctx context.Context, arg DeleteEpicForOwner
 }
 
 const getEpicForOwner = `-- name: GetEpicForOwner :one
-SELECT e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
+SELECT e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
 FROM epics e
 WHERE e.id = $1
   AND EXISTS (
@@ -233,7 +231,6 @@ func (q *Queries) GetEpicForOwner(ctx context.Context, arg GetEpicForOwnerParams
 		&i.BacklogID,
 		&i.Name,
 		&i.Description,
-		&i.Position,
 		&i.StartDate,
 		&i.DueOn,
 		&i.Priority,
@@ -315,7 +312,7 @@ func (q *Queries) GetEpicTaskDefaults(ctx context.Context, id uuid.UUID) (GetEpi
 
 const listEpicsByProject = `-- name: ListEpicsByProject :many
 SELECT
-  e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.created_at, e.updated_at,
+  e.id, e.project_id, e.backlog_id, e.name, e.description, e.created_at, e.updated_at,
   e.start_date, e.due_on, e.priority, e.progress, e.default_linked_gitlab_project_id, e.base_branch,
   e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points,
   COUNT(t.id) AS task_count,
@@ -337,7 +334,7 @@ ORDER BY
   (CASE WHEN $9::boolean THEN
      CASE e.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  e.position ASC, e.created_at ASC
+  e.created_at ASC
 `
 
 type ListEpicsByProjectParams struct {
@@ -358,7 +355,6 @@ type ListEpicsByProjectRow struct {
 	BacklogID                    pgtype.UUID        `json:"backlog_id"`
 	Name                         string             `json:"name"`
 	Description                  string             `json:"description"`
-	Position                     int32              `json:"position"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	StartDate                    pgtype.Date        `json:"start_date"`
@@ -406,7 +402,6 @@ func (q *Queries) ListEpicsByProject(ctx context.Context, arg ListEpicsByProject
 			&i.BacklogID,
 			&i.Name,
 			&i.Description,
-			&i.Position,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.StartDate,
@@ -453,43 +448,16 @@ func (q *Queries) MoveEpicTasksToBacklog(ctx context.Context, arg MoveEpicTasksT
 	return err
 }
 
-const reorderEpics = `-- name: ReorderEpics :exec
-WITH ordered AS (
-    SELECT id, (ord - 1)::int AS position
-    FROM unnest($2::uuid[]) WITH ORDINALITY AS t(id, ord)
-)
-UPDATE epics
-SET position = ordered.position, updated_at = now()
-FROM ordered
-WHERE epics.id = ordered.id
-  AND epics.project_id = $1
-`
-
-type ReorderEpicsParams struct {
-	ProjectID uuid.UUID   `json:"project_id"`
-	EpicIds   []uuid.UUID `json:"epic_ids"`
-}
-
-// ReorderEpics resequences a project's epics to epic_ids' given order
-// (position 0 for the first id, 1 for the second, ...) in a single
-// statement, the same all-or-nothing shape as ReorderBacklogs.
-// internal/epic.Service.Reorder checks epic_ids is exactly the project's
-// current epic set before calling this.
-func (q *Queries) ReorderEpics(ctx context.Context, arg ReorderEpicsParams) error {
-	_, err := q.db.Exec(ctx, reorderEpics, arg.ProjectID, arg.EpicIds)
-	return err
-}
-
 const updateEpicForOwner = `-- name: UpdateEpicForOwner :one
 UPDATE epics e
-SET backlog_id = $2, name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, progress = $9, default_linked_gitlab_project_id = $10, base_branch = $11, allowed_scope = $12, forbidden_scope = $13,
-    assignee_user_id = $14, estimated_points = $15, updated_at = now()
+SET backlog_id = $2, name = $3, description = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12,
+    assignee_user_id = $13, estimated_points = $14, updated_at = now()
 WHERE e.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = e.project_id AND pm.user_id = $16 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = e.project_id AND pm.user_id = $15 AND pm.role IN ('member', 'owner')
   )
-RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
+RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
 `
 
 type UpdateEpicForOwnerParams struct {
@@ -497,7 +465,6 @@ type UpdateEpicForOwnerParams struct {
 	BacklogID                    pgtype.UUID `json:"backlog_id"`
 	Name                         string      `json:"name"`
 	Description                  string      `json:"description"`
-	Position                     int32       `json:"position"`
 	StartDate                    pgtype.Date `json:"start_date"`
 	DueOn                        pgtype.Date `json:"due_on"`
 	Priority                     string      `json:"priority"`
@@ -520,7 +487,6 @@ func (q *Queries) UpdateEpicForOwner(ctx context.Context, arg UpdateEpicForOwner
 		arg.BacklogID,
 		arg.Name,
 		arg.Description,
-		arg.Position,
 		arg.StartDate,
 		arg.DueOn,
 		arg.Priority,
@@ -540,7 +506,6 @@ func (q *Queries) UpdateEpicForOwner(ctx context.Context, arg UpdateEpicForOwner
 		&i.BacklogID,
 		&i.Name,
 		&i.Description,
-		&i.Position,
 		&i.StartDate,
 		&i.DueOn,
 		&i.Priority,

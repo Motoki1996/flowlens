@@ -55,7 +55,6 @@ type updateEpicRequest struct {
 	BacklogID                    optional.Optional[*uuid.UUID] `json:"backlogId"`
 	Name                         string                        `json:"name"`
 	Description                  string                        `json:"description"`
-	Position                     int32                         `json:"position"`
 	StartDate                    optional.Optional[*time.Time] `json:"startDate"`
 	DueOn                        optional.Optional[*time.Time] `json:"dueOn"`
 	Priority                     optional.Optional[string]     `json:"priority"`
@@ -66,13 +65,6 @@ type updateEpicRequest struct {
 	ForbiddenScope               optional.Optional[string]     `json:"forbiddenScope"`
 	EstimatedPoints              optional.Optional[*int]       `json:"estimatedPoints"`
 	AssigneeUserID               optional.Optional[*uuid.UUID] `json:"assigneeUserId"`
-}
-
-// reorderEpicsRequest carries a project's full, newly-ordered epic ID list.
-// epicIds must be exactly the project's current epics — see
-// epic.Service.Reorder.
-type reorderEpicsRequest struct {
-	EpicIDs []uuid.UUID `json:"epicIds"`
 }
 
 // setEpicTasksRequest carries the epic's complete task set: every task named
@@ -168,7 +160,7 @@ func parseEpicListFilter(r *http.Request) (epic.ListFilter, error) {
 	return filter, nil
 }
 
-// handleCreateEpic creates an epic at the end of the project's epic order,
+// handleCreateEpic creates an epic in the project,
 // scoped to the authenticated user.
 func (s *Server) handleCreateEpic(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
@@ -204,31 +196,6 @@ func (s *Server) handleCreateEpic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, e)
-}
-
-// handleReorderEpics resequences a project's epics to the given order in a
-// single request. epicIds must be exactly the project's current epics; a
-// mismatched set is rejected as a whole rather than partially applied.
-func (s *Server) handleReorderEpics(w http.ResponseWriter, r *http.Request) {
-	u, _ := userFromContext(r.Context())
-	projectID, ok := projectIDFromURL(r)
-	if !ok {
-		writeError(w, http.StatusNotFound, "not_found", "project not found")
-		return
-	}
-
-	var req reorderEpicsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "request body must be valid JSON")
-		return
-	}
-
-	epics, err := s.epics.Reorder(r.Context(), u.ID, projectID, req.EpicIDs)
-	if err != nil {
-		writeEpicError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, epics)
 }
 
 // handleGetEpic returns one epic, scoped to the authenticated user via its
@@ -270,7 +237,6 @@ func (s *Server) handleUpdateEpic(w http.ResponseWriter, r *http.Request) {
 		BacklogID:                    req.BacklogID,
 		Name:                         req.Name,
 		Description:                  req.Description,
-		Position:                     req.Position,
 		StartDate:                    req.StartDate,
 		DueOn:                        req.DueOn,
 		Priority:                     req.Priority,
@@ -362,8 +328,6 @@ func writeEpicError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_backlog", "backlogId must be a backlog in this project")
 	case errors.Is(err, epic.ErrTaskNotInProject):
 		writeError(w, http.StatusBadRequest, "invalid_tasks", "taskIds must all be tasks in this project")
-	case errors.Is(err, epic.ErrEpicIDsMismatch):
-		writeError(w, http.StatusBadRequest, "epic_ids_mismatch", "epicIds must exactly match the project's current epics")
 	case errors.Is(err, epic.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "epic not found")
 	case errors.Is(err, epic.ErrForbidden):

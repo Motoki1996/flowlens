@@ -178,7 +178,6 @@ func TestHandleCreateBacklog(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "Sprint 1", body["name"])
 	assert.Equal(t, "desc", body["description"])
-	assert.Equal(t, float64(0), body["position"])
 
 	id, ok := body["id"].(string)
 	require.True(t, ok)
@@ -324,15 +323,14 @@ func TestHandleUpdateBacklog(t *testing.T) {
 		assert.Equal(t, "Sprint 1", body["name"])
 	})
 
-	t.Run("owner can update, including position", func(t *testing.T) {
+	t.Run("owner can update name and description", func(t *testing.T) {
 		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
-			map[string]any{"name": "Renamed", "description": "new", "position": 3}, ownerToken)
+			map[string]any{"name": "Renamed", "description": "new"}, ownerToken)
 		require.Equal(t, http.StatusOK, rec.Code)
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		assert.Equal(t, "Renamed", body["name"])
 		assert.Equal(t, "new", body["description"])
-		assert.Equal(t, float64(3), body["position"])
 	})
 
 	t.Run("owner can change progress; invalid progress is rejected", func(t *testing.T) {
@@ -494,44 +492,4 @@ func TestHandleDeleteBacklog(t *testing.T) {
 
 	// Deleting twice is reported as "not found", not as success.
 	assert.Equal(t, http.StatusNotFound, doRequest(t, s, http.MethodDelete, "/api/v1/backlogs/"+id, nil, ownerToken).Code)
-}
-
-func TestHandleReorderBacklogs(t *testing.T) {
-	s, q := newTestServer(t)
-	ownerID, token := loginSession(t, s, q)
-	p := q.SeedProject(ownerID, "Alpha")
-	first := q.SeedBacklog(p.ID, "First")
-	second := q.SeedBacklog(p.ID, "Second")
-
-	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/backlogs/order",
-		reorderBacklogsRequest{BacklogIDs: []uuid.UUID{second.ID, first.ID}}, token)
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Len(t, body, 2)
-	assert.Equal(t, second.ID.String(), body[0]["id"])
-	assert.Equal(t, first.ID.String(), body[1]["id"])
-}
-
-func TestHandleReorderBacklogs_RejectsMismatchedBacklogIDs(t *testing.T) {
-	s, q := newTestServer(t)
-	ownerID, token := loginSession(t, s, q)
-	p := q.SeedProject(ownerID, "Alpha")
-	q.SeedBacklog(p.ID, "Only backlog")
-
-	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/backlogs/order",
-		reorderBacklogsRequest{BacklogIDs: []uuid.UUID{uuid.New()}}, token)
-	assert.Equal(t, http.StatusBadRequest, rec.Code)
-}
-
-func TestHandleReorderBacklogs_ForeignProjectGets404(t *testing.T) {
-	s, q := newTestServer(t)
-	owner := q.SeedUser("octocat", "octocat@example.com")
-	p := q.SeedProject(owner.ID, "Alpha")
-
-	_, intruderToken := loginSession(t, s, q)
-	rec := doRequest(t, s, http.MethodPatch, "/api/v1/projects/"+p.ID.String()+"/backlogs/order",
-		reorderBacklogsRequest{}, intruderToken)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
 }

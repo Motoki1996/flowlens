@@ -20,7 +20,6 @@ const backlog: Backlog = {
   projectId: "p1",
   name: "Sprint 1",
   description: "",
-  position: 0,
   startDate: null,
   dueOn: null,
   priority: "medium",
@@ -45,7 +44,6 @@ function makeEpic(overrides: Partial<Epic> = {}): Epic {
     backlogId: "b1",
     name: "Screens",
     description: "",
-    position: 0,
     startDate: null,
     dueOn: null,
     priority: "medium",
@@ -65,7 +63,7 @@ function makeEpic(overrides: Partial<Epic> = {}): Epic {
   };
 }
 
-/** The List mode is where the rows, their controls and reordering live; Board
+/** The List mode is where the rows and their controls live; Board
  *  is the default, so every list assertion below opens List first. */
 function renderList(props: Partial<Parameters<typeof EpicListSection>[0]> = {}) {
   return render(
@@ -161,35 +159,6 @@ describe("EpicListSection", () => {
     expect(screen.queryByRole("link", { name: "Screens" })).not.toBeInTheDocument();
   });
 
-  it("reorders by the move buttons, optimistically", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
-    vi.stubGlobal("fetch", fetchMock);
-    renderList({
-      epics: [makeEpic(), makeEpic({ id: "e2", name: "API endpoints", position: 1 })],
-    });
-
-    fireEvent.click(screen.getByLabelText("Move API endpoints up"));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/api/v1/projects/p1/epics/order");
-    expect(init.method).toBe("PATCH");
-    expect(JSON.parse(init.body as string)).toEqual({ epicIds: ["e2", "e1"] });
-
-    // The optimistic order is on screen before any refresh.
-    const names = screen
-      .getAllByRole("link", { name: /Screens|API endpoints/ })
-      .map((el) => el.textContent);
-    expect(names).toEqual(["API endpoints", "Screens"]);
-  });
-
-  it("hides reordering whenever the list isn't the project's full manual order", () => {
-    // A reorder request has to carry every epic in the project, so a narrowed
-    // list would be certain to fail with an ID mismatch.
-    renderList({ priorityFilter: "high" });
-    expect(screen.queryByLabelText("Move Screens up")).not.toBeInTheDocument();
-  });
-
   it("creates an epic through the collection's own form", async () => {
     const fetchMock = vi
       .fn()
@@ -225,10 +194,10 @@ describe("EpicListSection", () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ backlogId: "b1" });
   });
 
-  it("edits an epic in place, sending its position so the order survives", async () => {
+  it("edits an epic in place", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => makeEpic() });
     vi.stubGlobal("fetch", fetchMock);
-    renderList({ epics: [makeEpic({ position: 3 })] });
+    renderList({ epics: [makeEpic()] });
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     const form = within(screen.getByRole("form", { name: "Edit Screens" }));
@@ -241,7 +210,6 @@ describe("EpicListSection", () => {
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body as string)).toMatchObject({
       name: "Screens v2",
-      position: 3,
     });
   });
 
@@ -284,7 +252,6 @@ describe("EpicListSection", () => {
       size: "m" as const,
       designStartedAt: null,
       implementationStartedAt: null,
-      position: 0,
       createdByUserId: "u1",
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",

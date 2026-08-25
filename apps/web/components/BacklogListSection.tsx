@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { backlogPath, tasksPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
@@ -47,7 +47,7 @@ import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
 
 /** The sort values the Backlog collection's `?sort=` accepts (issue #151):
- *  "manual" keeps the API's own drag-reorderable `position` order;
+ *  "manual" keeps the API's own default (creation) order;
  *  "priority"/"progress" are applied server-side, the same as the Task
  *  collection's own sort (parseBacklogListFilter,
  *  internal/http/backlog_handler.go); "dueOn" is a Backlog-only value the API
@@ -81,16 +81,6 @@ const BacklogTimelineSection = dynamic(
     ),
   },
 );
-
-/** moveItem returns a copy of list with the item at fromIndex relocated to
- *  toIndex, used by both drag-and-drop and the up/down move buttons so the
- *  two interactions produce identical orderings. */
-function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
-  const next = [...list];
-  const [moved] = next.splice(fromIndex, 1);
-  next.splice(toIndex, 0, moved);
-  return next;
-}
 
 /** The Select value standing in for "no link of this backlog's own" — Radix
  *  Select has no empty-string item, and the API's own spelling for it is
@@ -379,20 +369,13 @@ const FILTER_DEFAULTS = {
  * is read straight from `useSearchParams` and matched client-side, since
  * backlogs run orders of magnitude fewer per project than tasks.
  *
- * Unlike a task's per-backlog bucket order, a backlog's own order is
- * project-wide and `PATCH .../backlogs/order` requires *every* current
- * backlog in one request (backlog.Service.Reorder) — so while any filter,
- * search or non-manual sort narrows `backlogs` to less than the full set,
- * drag-and-drop and the move buttons are hidden rather than sending a
- * request that's certain to fail with a backlog ID mismatch.
- *
  * List mode also shows each row's own closed/total completion — the same
  * `backlogTaskCompletion` reading of `taskCount`/`closedTaskCount` the Board
  * mode's cards already use (issue #144) — and a trailing "Unclassified (n)"
  * row for tasks with no backlog at all (issue #152), matching the Task
  * collection's own Unclassified group. That row isn't a backlog: it has no
  * priority/progress of its own, so it drops out under either filter, and it
- * carries no grip/Edit/Delete/move controls, just a link to the Task
+ * carries no Edit/Delete controls, just a link to the Task
  * collection filtered to `UNCLASSIFIED_BACKLOG`. It's List-only — Board's
  * axis is progress, which Unclassified tasks don't share one value of, and
  * Timeline is a dated bar per backlog, which Unclassified isn't one of — and
@@ -420,7 +403,7 @@ export function BacklogListSection({
   priorityFilter?: Priority;
   /** The applied `?progress=`; undefined means all of them. */
   progressFilter?: Progress;
-  /** The applied `?sort=`, or "manual" for the API's own position order. */
+  /** The applied `?sort=`, or "manual" for the API's own default order. */
   sort?: BacklogSort;
   /** The project's task count with no backlog at all (issue #152), shown as
    *  a trailing "Unclassified" row in List mode — see the class doc comment.
@@ -447,34 +430,16 @@ export function BacklogListSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useViewMode(initialView);
 
-  // `order` mirrors `backlogs` but is reordered optimistically on drag/move,
-  // ahead of the PATCH .../backlogs/order round trip — router.refresh()
-  // (used everywhere else in this file) would otherwise force a full
-  // server-component re-render per drag, which doesn't read as drag-and-drop
-  // at all (issue #79). It resyncs whenever the server data changes under it
-  // (e.g. after a create/delete elsewhere on the page).
-  const [order, setOrder] = useState(backlogs);
-  useEffect(() => setOrder(backlogs), [backlogs]);
-  const [reorderError, setReorderError] = useState<string | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-
-  // See the class doc comment: `?q=` narrows `order` client-side rather than
+  // See the class doc comment: `?q=` narrows `backlogs` client-side rather than
   // going through the API, the same way TaskListSection's `?label=`/`?due=`
   // do.
   const search = (searchParams.get("q") ?? "").trim();
-
-  // Manual reordering only makes sense against the API's own position order,
-  // and only over the project's full, unfiltered backlog set — see the class
-  // doc comment for why a filter/search/non-manual sort disables it outright
-  // rather than just hiding it during a non-manual sort the way Task's does.
-  const canReorder =
-    sort === "manual" && !priorityFilter && !progressFilter && search === "";
 
   // priority/progress are already applied server-side (the caller fetched
   // with them); dueOn is the one sort the API doesn't know, so it's applied
   // here, and the name search always is.
   const visibleBacklogs = useMemo(() => {
-    let result = order;
+    let result = backlogs;
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((b) => b.name.toLowerCase().includes(q));
@@ -483,7 +448,7 @@ export function BacklogListSection({
       result = [...result].sort(compareByDueOn);
     }
     return result;
-  }, [order, search, sort]);
+  }, [backlogs, search, sort]);
 
   const hasActiveFilters =
     priorityFilter !== undefined ||
@@ -554,46 +519,6 @@ export function BacklogListSection({
       return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} backlogs.`;
     }
     return "No backlogs match the current filters.";
-  }
-
-  async function commitOrder(next: Backlog[]) {
-    const previous = order;
-    setOrder(next);
-    setReorderError(null);
-    try {
-      const res = await fetch(
-        `${API_PUBLIC_URL}/api/v1/projects/${projectId}/backlogs/order`,
-        {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json", ...csrfHeaders() },
-          body: JSON.stringify({ backlogIds: next.map((b) => b.id) }),
-        },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setOrder(previous);
-        setReorderError(body?.error.message ?? "Failed to reorder backlogs.");
-      }
-    } catch {
-      setOrder(previous);
-      setReorderError("Failed to reorder backlogs.");
-    }
-  }
-
-  function moveBacklog(index: number, direction: -1 | 1) {
-    if (!canReorder) return;
-    const target = index + direction;
-    if (target < 0 || target >= order.length) return;
-    void commitOrder(moveItem(order, index, target));
-  }
-
-  function handleDrop(index: number) {
-    if (!canReorder) return;
-    const fromIndex = order.findIndex((b) => b.id === draggingId);
-    setDraggingId(null);
-    if (fromIndex === -1 || fromIndex === index) return;
-    void commitOrder(moveItem(order, fromIndex, index));
   }
 
   return (
@@ -686,7 +611,7 @@ export function BacklogListSection({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="manual">Manual order</SelectItem>
+                  <SelectItem value="manual">Default order</SelectItem>
                   <SelectItem value="dueOn">Due date</SelectItem>
                   <SelectItem value="priority">Priority</SelectItem>
                   <SelectItem value="progress">Progress</SelectItem>
@@ -746,11 +671,6 @@ export function BacklogListSection({
           )
         ) : (
           <div className="space-y-2">
-            {reorderError ? (
-              <Alert variant="destructive">
-                <AlertDescription>{reorderError}</AlertDescription>
-              </Alert>
-            ) : null}
             {/* Unlike Board/Timeline above, this branch's "empty" state also
                 depends on the Unclassified row (see the class doc comment) —
                 a project with no backlogs but some unclassified tasks still
@@ -761,7 +681,7 @@ export function BacklogListSection({
               </p>
             ) : (
               <ul className="space-y-2">
-                {visibleBacklogs.map((backlog, index) => {
+                {visibleBacklogs.map((backlog) => {
                   // Same closed/total reading the Board mode's cards use (issue
                   // #144) — see the class doc comment.
                   const completion = backlogTaskCompletion(backlog);
@@ -769,12 +689,6 @@ export function BacklogListSection({
                     <li
                       key={backlog.id}
                       className="border-border rounded-md border px-3 py-2"
-                      onDragOver={(e) => canReorder && e.preventDefault()}
-                      onDrop={(e) => {
-                        if (!canReorder) return;
-                        e.preventDefault();
-                        handleDrop(index);
-                      }}
                     >
                       {editingId === backlog.id ? (
                         <BacklogEditForm
@@ -791,43 +705,6 @@ export function BacklogListSection({
                         />
                       ) : (
                         <div className="flex items-center justify-between gap-4">
-                          {/* Manual reordering only makes sense against the API's
-                        own position order, and only over the project's full,
-                        unfiltered backlog set (see the class doc comment) —
-                        so the move buttons and drag handle disappear
-                        whenever a filter, search or non-manual sort is
-                        active. */}
-                          {canReorder ? (
-                            <div className="flex shrink-0 flex-col items-center self-stretch">
-                              <button
-                                type="button"
-                                aria-label={`Move ${backlog.name} up`}
-                                disabled={index === 0}
-                                onClick={() => moveBacklog(index, -1)}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                              >
-                                <ChevronUp className="size-4" />
-                              </button>
-                              <span
-                                draggable
-                                aria-hidden="true"
-                                onDragStart={() => setDraggingId(backlog.id)}
-                                onDragEnd={() => setDraggingId(null)}
-                                className="text-muted-foreground cursor-grab active:cursor-grabbing"
-                              >
-                                <GripVertical className="size-4" />
-                              </span>
-                              <button
-                                type="button"
-                                aria-label={`Move ${backlog.name} down`}
-                                disabled={index === visibleBacklogs.length - 1}
-                                onClick={() => moveBacklog(index, 1)}
-                                className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                              >
-                                <ChevronDown className="size-4" />
-                              </button>
-                            </div>
-                          ) : null}
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <Link

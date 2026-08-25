@@ -14,12 +14,11 @@ import (
 
 const createBacklog = `-- name: CreateBacklog :one
 
-INSERT INTO backlogs (project_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)
+INSERT INTO backlogs (project_id, name, description, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)
 VALUES (
     $1,
     $2,
     $3,
-    COALESCE((SELECT MAX(position) + 1 FROM backlogs WHERE project_id = $1), 0),
     $4,
     $5,
     $6,
@@ -30,7 +29,7 @@ VALUES (
     $11,
     $12
 )
-RETURNING id, project_id, name, description, position, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id
+RETURNING id, project_id, name, description, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id
 `
 
 type CreateBacklogParams struct {
@@ -83,7 +82,6 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		&i.ProjectID,
 		&i.Name,
 		&i.Description,
-		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartDate,
@@ -122,7 +120,7 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 }
 
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
+SELECT b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -144,7 +142,6 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 		&i.ProjectID,
 		&i.Name,
 		&i.Description,
-		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartDate,
@@ -199,7 +196,7 @@ func (q *Queries) GetBacklogTaskDefaults(ctx context.Context, id uuid.UUID) (Get
 
 const listBacklogsByProject = `-- name: ListBacklogsByProject :many
 SELECT
-  b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at,
+  b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at,
   b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch,
   b.allowed_scope, b.forbidden_scope, b.assignee_user_id,
   COUNT(t.id) AS task_count,
@@ -219,7 +216,7 @@ ORDER BY
   (CASE WHEN $7::boolean THEN
      CASE b.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
-  b.position ASC, b.created_at ASC
+  b.created_at ASC
 `
 
 type ListBacklogsByProjectParams struct {
@@ -237,7 +234,6 @@ type ListBacklogsByProjectRow struct {
 	ProjectID                    uuid.UUID          `json:"project_id"`
 	Name                         string             `json:"name"`
 	Description                  string             `json:"description"`
-	Position                     int32              `json:"position"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	StartDate                    pgtype.Date        `json:"start_date"`
@@ -258,7 +254,7 @@ type ListBacklogsByProjectRow struct {
 // ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
 // sorting by progress runs the other way, not_started first through done, so
 // the order reads as the work advancing (and matches the Board view's
-// left-to-right axis). Both fall back to the usual position/created_at order
+// left-to-right axis). Both fall back to the usual created_at order
 // as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 // in practice — internal/backlog sets at most one from a single ?sort=.
 //
@@ -288,7 +284,6 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 			&i.ProjectID,
 			&i.Name,
 			&i.Description,
-			&i.Position,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.StartDate,
@@ -313,51 +308,22 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 	return items, nil
 }
 
-const reorderBacklogs = `-- name: ReorderBacklogs :exec
-
-WITH ordered AS (
-    SELECT id, (ord - 1)::int AS position
-    FROM unnest($2::uuid[]) WITH ORDINALITY AS t(id, ord)
-)
-UPDATE backlogs
-SET position = ordered.position, updated_at = now()
-FROM ordered
-WHERE backlogs.id = ordered.id
-  AND backlogs.project_id = $1
-`
-
-type ReorderBacklogsParams struct {
-	ProjectID  uuid.UUID   `json:"project_id"`
-	BacklogIds []uuid.UUID `json:"backlog_ids"`
-}
-
-// ReorderBacklogs resequences a project's backlogs to backlog_ids' given
-// order (position 0 for the first id, 1 for the second, ...) in a single
-// statement, the same all-or-nothing shape as internal/task's ReorderTasks
-// (issue #79). internal/backlog.Service.Reorder checks backlog_ids is
-// exactly the project's current backlog set before calling this.
-func (q *Queries) ReorderBacklogs(ctx context.Context, arg ReorderBacklogsParams) error {
-	_, err := q.db.Exec(ctx, reorderBacklogs, arg.ProjectID, arg.BacklogIds)
-	return err
-}
-
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
-SET name = $2, description = $3, position = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12,
-    assignee_user_id = $13, updated_at = now()
+SET name = $2, description = $3, start_date = $4, due_on = $5, priority = $6, progress = $7, default_linked_gitlab_project_id = $8, base_branch = $9, allowed_scope = $10, forbidden_scope = $11,
+    assignee_user_id = $12, updated_at = now()
 WHERE b.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = b.project_id AND pm.user_id = $14 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = b.project_id AND pm.user_id = $13 AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.position, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
+RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
 `
 
 type UpdateBacklogForOwnerParams struct {
 	ID                           uuid.UUID   `json:"id"`
 	Name                         string      `json:"name"`
 	Description                  string      `json:"description"`
-	Position                     int32       `json:"position"`
 	StartDate                    pgtype.Date `json:"start_date"`
 	DueOn                        pgtype.Date `json:"due_on"`
 	Priority                     string      `json:"priority"`
@@ -380,7 +346,6 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		arg.ID,
 		arg.Name,
 		arg.Description,
-		arg.Position,
 		arg.StartDate,
 		arg.DueOn,
 		arg.Priority,
@@ -398,7 +363,6 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		&i.ProjectID,
 		&i.Name,
 		&i.Description,
-		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartDate,

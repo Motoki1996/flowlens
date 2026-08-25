@@ -14,7 +14,6 @@ type Backlog struct {
 	ProjectID                    uuid.UUID          `json:"project_id"`
 	Name                         string             `json:"name"`
 	Description                  string             `json:"description"`
-	Position                     int32              `json:"position"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	StartDate                    pgtype.Date        `json:"start_date"`
@@ -44,7 +43,6 @@ type Epic struct {
 	BacklogID                    pgtype.UUID        `json:"backlog_id"`
 	Name                         string             `json:"name"`
 	Description                  string             `json:"description"`
-	Position                     int32              `json:"position"`
 	StartDate                    pgtype.Date        `json:"start_date"`
 	DueOn                        pgtype.Date        `json:"due_on"`
 	Priority                     string             `json:"priority"`
@@ -271,7 +269,6 @@ type Task struct {
 	AssigneeGitlabUsername  string             `json:"assignee_gitlab_username"`
 	Labels                  []string           `json:"labels"`
 	DueOn                   pgtype.Date        `json:"due_on"`
-	Position                int32              `json:"position"`
 	CreatedByUserID         uuid.UUID          `json:"created_by_user_id"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`

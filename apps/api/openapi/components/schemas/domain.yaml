@@ -280,7 +280,6 @@ Backlog:
     projectId: { type: string, format: uuid }
     name: { type: string }
     description: { type: string }
-    position: { type: integer }
     startDate: { type: [string, "null"], format: date-time }
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
@@ -314,7 +313,6 @@ Epic:
       description: The backlog this epic belongs to; null means unfiled.
     name: { type: string }
     description: { type: string }
-    position: { type: integer }
     startDate: { type: [string, "null"], format: date-time }
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
@@ -407,7 +405,6 @@ Task:
     size: { type: string, enum: [xs, s, m, l, xl] }
     designStartedAt: { type: [string, "null"], format: date-time }
     implementationStartedAt: { type: [string, "null"], format: date-time }
-    position: { type: integer }
     createdByUserId: { type: string, format: uuid }
     createdAt: { type: string, format: date-time }
     updatedAt: { type: string, format: date-time }

@@ -8,6 +8,28 @@ procedure itself.
 
 ## Unreleased
 
+### Removed
+
+- **⚠️ Breaking — manual (drag-and-drop) ordering.** Tasks, backlogs and
+  epics no longer carry a `position`, and the three bulk-reorder endpoints
+  (`PATCH /api/v1/projects/{projectID}/tasks/order`, `.../backlogs/order`,
+  `.../epics/order`) are gone. A list's default order is now its objects'
+  creation order, and `?sort=` (priority, progress, due date, size, recently
+  updated) is the way to order one deliberately; the web app's List views
+  have lost their drag handles and move-up/move-down buttons, and the sort
+  menu's "Manual order" is now "Default order".
+
+  **What a self-hoster must do:** nothing beyond the usual `docker compose
+  pull && docker compose up -d`. Migration `000034` drops the `position`
+  column from `tasks`, `backlogs` and `epics`; the manual order every row
+  carried is discarded and cannot be recovered by rolling the migration
+  back. Take a database dump first if that order matters to you.
+
+  **What an API client must do:** stop sending `position` in a create or
+  update body (it is now ignored — the field no longer exists on any
+  request or response schema) and stop calling the three `.../order`
+  endpoints, which now return 404.
+
 ## v0.1.2 — 2026-08-23
 
 ### Added

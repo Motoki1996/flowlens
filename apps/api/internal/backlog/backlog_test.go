@@ -312,23 +312,7 @@ func TestService_Create_ReturnsNotFoundForMissingProject(t *testing.T) {
 	assert.ErrorIs(t, err, backlog.ErrNotFound)
 }
 
-func TestService_Create_AppendsToEndOfPosition(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	ctx := context.Background()
-
-	first, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1"})
-	require.NoError(t, err)
-	second, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 2"})
-	require.NoError(t, err)
-
-	assert.Equal(t, int32(0), first.Position)
-	assert.Equal(t, int32(1), second.Position)
-}
-
-func TestService_List_ScopesToProjectAndOrdersByPosition(t *testing.T) {
+func TestService_List_ScopesToProject(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
 	owner := q.SeedUser("octocat", "octocat@example.com").ID
@@ -451,7 +435,7 @@ func TestService_Get_ReturnsNotFoundForMissingBacklog(t *testing.T) {
 	assert.ErrorIs(t, err, backlog.ErrNotFound)
 }
 
-func TestService_Update_ChangesNameDescriptionAndPosition(t *testing.T) {
+func TestService_Update_ChangesNameAndDescription(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
 	owner := q.SeedUser("octocat", "octocat@example.com").ID
@@ -461,12 +445,10 @@ func TestService_Update_ChangesNameDescriptionAndPosition(t *testing.T) {
 	updated, err := svc.Update(context.Background(), owner, b.ID, backlog.UpdateParams{
 		Name:        "Renamed",
 		Description: "new description",
-		Position:    5,
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed", updated.Name)
 	assert.Equal(t, "new description", updated.Description)
-	assert.Equal(t, int32(5), updated.Position)
 }
 
 // date builds a UTC midnight time, the granularity a DATE column stores.
@@ -724,66 +706,6 @@ func TestService_Delete_ReturnsNotFoundForMissingBacklog(t *testing.T) {
 	assert.ErrorIs(t, svc.Delete(context.Background(), owner, uuid.New()), backlog.ErrNotFound)
 }
 
-func TestService_Reorder_AppliesGivenOrder(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	ctx := context.Background()
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	first := q.SeedBacklog(p.ID, "First")
-	second := q.SeedBacklog(p.ID, "Second")
-	third := q.SeedBacklog(p.ID, "Third")
-
-	got, err := svc.Reorder(ctx, owner, p.ID, []uuid.UUID{third.ID, first.ID, second.ID})
-	require.NoError(t, err)
-	require.Len(t, got, 3)
-	assert.Equal(t, []uuid.UUID{third.ID, first.ID, second.ID}, []uuid.UUID{got[0].ID, got[1].ID, got[2].ID})
-	assert.Equal(t, int32(0), got[0].Position)
-	assert.Equal(t, int32(1), got[1].Position)
-	assert.Equal(t, int32(2), got[2].Position)
-}
-
-func TestService_Reorder_RejectsMismatchedBacklogIDs(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	ctx := context.Background()
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	first := q.SeedBacklog(p.ID, "First")
-	second := q.SeedBacklog(p.ID, "Second")
-
-	tests := []struct {
-		name       string
-		backlogIDs []uuid.UUID
-	}{
-		{"missing a backlog", []uuid.UUID{first.ID}},
-		{"duplicates a backlog instead of including every one", []uuid.UUID{first.ID, first.ID}},
-		{"includes a foreign backlog", []uuid.UUID{first.ID, second.ID, uuid.New()}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := svc.Reorder(ctx, owner, p.ID, tt.backlogIDs)
-			assert.ErrorIs(t, err, backlog.ErrBacklogIDsMismatch)
-		})
-	}
-
-	// Nothing was written by the rejected calls above.
-	unchanged, err := svc.Get(ctx, owner, first.ID)
-	require.NoError(t, err)
-	assert.Equal(t, int32(0), unchanged.Position)
-}
-
-func TestService_Reorder_ReturnsNotFoundForForeignProject(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	other := q.SeedUser("hubot", "hubot@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-
-	_, err := svc.Reorder(context.Background(), other, p.ID, nil)
-	assert.ErrorIs(t, err, backlog.ErrNotFound)
-}
-
 func TestService_Create_ValidatesBaseBranch(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -831,13 +753,13 @@ func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Absent leaves the stored value untouched.
-	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1", Position: created.Position}, backlog.ActorKindUser)
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, "main", updated.BaseBranch)
 
 	// Explicit value overwrites it.
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name: "Sprint 1", Position: created.Position,
+		Name:       "Sprint 1",
 		BaseBranch: optional.Present("develop"),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -845,7 +767,7 @@ func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
 
 	// Explicit empty string clears it back to "not set".
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name: "Sprint 1", Position: created.Position,
+		Name:       "Sprint 1",
 		BaseBranch: optional.Present(""),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -853,7 +775,7 @@ func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
 
 	// An invalid explicit value is rejected.
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name: "Sprint 1", Position: created.Position,
+		Name:       "Sprint 1",
 		BaseBranch: optional.Present("bad branch"),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidBaseBranch)
@@ -895,14 +817,14 @@ func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
 	require.NoError(t, err)
 
 	// Absent leaves the stored values untouched.
-	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1", Position: created.Position}, backlog.ActorKindUser)
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, "internal/payments/**", updated.AllowedScope)
 	assert.Equal(t, "internal/auth/**", updated.ForbiddenScope)
 
 	// Explicit value overwrites it.
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name: "Sprint 1", Position: created.Position,
+		Name:           "Sprint 1",
 		AllowedScope:   optional.Present("cmd/**"),
 		ForbiddenScope: optional.Present("vendor/**"),
 	}, backlog.ActorKindUser)
@@ -912,7 +834,7 @@ func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
 
 	// Explicit empty string clears it back to "not set".
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name: "Sprint 1", Position: created.Position,
+		Name:           "Sprint 1",
 		AllowedScope:   optional.Present(""),
 		ForbiddenScope: optional.Present(""),
 	}, backlog.ActorKindUser)
@@ -922,7 +844,7 @@ func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
 
 	// An invalid explicit value is rejected.
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name: "Sprint 1", Position: created.Position,
+		Name:           "Sprint 1",
 		ForbiddenScope: optional.Present(strings.Repeat("a", 20001)),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidScope)

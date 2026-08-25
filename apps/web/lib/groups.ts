@@ -24,7 +24,6 @@ export type Grouping = Pick<
   | "projectId"
   | "name"
   | "description"
-  | "position"
   | "startDate"
   | "dueOn"
   | "priority"
@@ -44,7 +43,7 @@ export interface GroupConfig {
   tasksPath: (projectId: string, id: string) => string;
   /** The API resource a PATCH/DELETE for one of these goes to. */
   apiPath: (id: string) => string;
-  /** The API collection a POST/reorder for these goes to. */
+  /** The API collection a POST for these goes to. */
   collectionApiPath: (projectId: string) => string;
 }
 

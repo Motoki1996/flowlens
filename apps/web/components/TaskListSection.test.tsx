@@ -38,7 +38,6 @@ function makeTask(overrides: Partial<Task>): Task {
     size: "m",
     designStartedAt: null,
     implementationStartedAt: null,
-    position: 0,
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
@@ -57,7 +56,6 @@ const backlog: Backlog = {
   projectId: "p1",
   name: "Sprint 1",
   description: "",
-  position: 0,
   startDate: null,
   dueOn: null,
   priority: "medium",
@@ -79,11 +77,10 @@ const otherBacklog: Backlog = {
   ...backlog,
   id: "b2",
   name: "Icebox",
-  position: 1,
 };
 
 /** The screen opens in Board view, so the List-view specifics — backlog
- *  grouping, selection checkboxes, manual reordering — need the List toggle
+ *  grouping, selection checkboxes — need the List toggle
  *  clicked first. */
 function showListView() {
   fireEvent.click(screen.getByRole("button", { name: "List" }));
@@ -176,13 +173,13 @@ describe("TaskListSection", () => {
     expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
     unmount();
 
-    // …and the manual order is the same kind of default: it is the absence of
-    // ?sort=, not a value of its own.
+    // …and the default order is the same kind of default: it is the absence
+    // of ?sort=, not a value of its own.
     currentSearchParams = new URLSearchParams("sort=priority");
     push.mockClear();
     render(<TaskListSection projectId="p1" tasks={[]} backlogs={[]} sort="priority" />);
     fireEvent.click(screen.getByRole("combobox", { name: "Sort" }));
-    fireEvent.click(await screen.findByRole("option", { name: "Manual order" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Default order" }));
     expect(push).toHaveBeenCalledWith("/projects/p1/tasks");
   });
 
@@ -994,170 +991,6 @@ describe("TaskListSection", () => {
     expect(screen.getByText("Sync failed")).toBeInTheDocument();
   });
 
-  it("moves a task within its backlog with the move-down button, updating the display order optimistically", async () => {
-    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
-    const tasks = [
-      makeTask({ id: "t1", title: "First", backlogId: "b1" }),
-      makeTask({ id: "t2", title: "Second", backlogId: "b1" }),
-    ];
-    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
-
-    showListView();
-    fireEvent.click(screen.getByRole("button", { name: "Move First down" }));
-
-    // The row order updates immediately, ahead of the API round trip.
-    const titles = screen.getAllByText(/^(First|Second)$/).map((el) => el.textContent);
-    expect(titles).toEqual(["Second", "First"]);
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/v1/projects/p1/tasks/order",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({ backlogId: "b1", taskIds: ["t2", "t1"] }),
-      }),
-    );
-  });
-
-  it("reverts the order and shows an error when the reorder request fails", async () => {
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ error: { code: "task_ids_mismatch", message: "taskIds must match" } }), {
-        status: 400,
-      }),
-    );
-    const tasks = [
-      makeTask({ id: "t1", title: "First", backlogId: "b1" }),
-      makeTask({ id: "t2", title: "Second", backlogId: "b1" }),
-    ];
-    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
-
-    showListView();
-    fireEvent.click(screen.getByRole("button", { name: "Move First down" }));
-
-    expect(await screen.findByText("taskIds must match")).toBeInTheDocument();
-    const titles = screen.getAllByText(/^(First|Second)$/).map((el) => el.textContent);
-    expect(titles).toEqual(["First", "Second"]);
-  });
-
-  it("hides the drag handle and move buttons while sorted by anything other than the manual order", () => {
-    const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
-    const { unmount } = render(
-      <TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />,
-    );
-    showListView();
-    expect(screen.getByRole("button", { name: "Move Only task down" })).toBeInTheDocument();
-    unmount();
-
-    render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} sort="priority" />);
-    showListView();
-    expect(screen.queryByRole("button", { name: "Move Only task down" })).not.toBeInTheDocument();
-  });
-
-  describe("Drag feedback and empty backlog drop targets (issue #154)", () => {
-    it("dims the row being dragged and highlights the row under the pointer as the drop target", () => {
-      const tasks = [
-        makeTask({ id: "t1", title: "First", backlogId: "b1" }),
-        makeTask({ id: "t2", title: "Second", backlogId: "b1" }),
-      ];
-      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
-      showListView();
-
-      const firstRow = screen.getByRole("link", { name: /First/ });
-      const secondRow = screen.getByRole("link", { name: /Second/ });
-
-      fireEvent.dragStart(screen.getByTestId("drag-handle-t1"));
-      expect(firstRow).toHaveClass("opacity-50");
-      expect(secondRow).not.toHaveClass("opacity-50");
-
-      fireEvent.dragOver(secondRow);
-      expect(secondRow).toHaveClass("ring-2");
-      expect(firstRow).not.toHaveClass("ring-2");
-
-      fireEvent.dragEnd(screen.getByTestId("drag-handle-t1"));
-      expect(firstRow).not.toHaveClass("opacity-50");
-      expect(secondRow).not.toHaveClass("ring-2");
-    });
-
-    it("renders an empty backlog as a labeled drop target while sorted manually with no backlog filter", () => {
-      // Unclassified is also empty here and gets the same placeholder, so
-      // this is scoped to the Icebox group specifically.
-      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
-      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
-      showListView();
-
-      const iceboxGroup = within(screen.getByText("Icebox (0)").closest("div")!);
-      expect(iceboxGroup.getByText("Drag a task here to move it into this backlog.")).toBeInTheDocument();
-    });
-
-    it("moves a task into an empty backlog by dropping it on the placeholder", async () => {
-      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
-      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
-      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog, otherBacklog]} />);
-      showListView();
-
-      const iceboxGroup = within(screen.getByText("Icebox (0)").closest("div")!);
-      fireEvent.dragStart(screen.getByTestId("drag-handle-t1"));
-      const dropZone = iceboxGroup.getByText("Drag a task here to move it into this backlog.");
-      fireEvent.dragOver(dropZone);
-      fireEvent.drop(dropZone);
-
-      // A cross-backlog move is a reorder, not a create/bulk action — it
-      // updates optimistically rather than triggering a router.refresh().
-      await waitFor(() =>
-        expect(fetch).toHaveBeenCalledWith(
-          "/api/v1/tasks/t1/assign-backlog",
-          expect.objectContaining({ method: "POST", body: JSON.stringify({ backlogId: "b2" }) }),
-        ),
-      );
-    });
-
-    it("does not add an empty backlog group once a backlog filter narrows the view", () => {
-      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
-      render(
-        <TaskListSection
-          projectId="p1"
-          tasks={tasks}
-          backlogs={[backlog, otherBacklog]}
-          backlogFilter="b1"
-        />,
-      );
-      showListView();
-      expect(screen.queryByText("Icebox (0)")).not.toBeInTheDocument();
-    });
-
-    it("hides the empty-backlog drop target while sorted by anything other than manual", () => {
-      const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
-      render(
-        <TaskListSection
-          projectId="p1"
-          tasks={tasks}
-          backlogs={[backlog, otherBacklog]}
-          sort="priority"
-        />,
-      );
-      showListView();
-      expect(screen.queryByText("Icebox (0)")).not.toBeInTheDocument();
-    });
-  });
-
-  describe("Reorder hint while sort isn't manual (issue #154)", () => {
-    it("explains why the drag handle and move buttons are gone once sorted by something else", () => {
-      const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
-      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} sort="priority" />);
-      showListView();
-      expect(
-        screen.getByText("Switch sort to Manual order to drag or reorder tasks."),
-      ).toBeInTheDocument();
-    });
-
-    it("shows no such hint while already sorted manually", () => {
-      const tasks = [makeTask({ id: "t1", title: "Only task", backlogId: "b1" })];
-      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[backlog]} />);
-      showListView();
-      expect(
-        screen.queryByText("Switch sort to Manual order to drag or reorder tasks."),
-      ).not.toBeInTheDocument();
-    });
-  });
-
   describe("Row density (issue #154)", () => {
     it("shows the status badge only when the task is closed", () => {
       const tasks = [
@@ -1237,7 +1070,6 @@ describe("TaskListSection", () => {
       backlogId: "b1",
       name: "Screens",
       description: "",
-      position: 0,
       startDate: null,
       dueOn: null,
       priority: "medium" as const,

@@ -315,30 +315,6 @@ func TestService_List_CountsTasks(t *testing.T) {
 	assert.Equal(t, int64(1), list[0].ClosedTaskCount)
 }
 
-func TestService_Reorder(t *testing.T) {
-	q := dbtest.New()
-	svc := newService(q)
-	ctx := context.Background()
-	owner := q.SeedUser("octocat", "octocat@example.com").ID
-	p := q.SeedProject(owner, "Alpha")
-	first, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "First"})
-	require.NoError(t, err)
-	second, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Second"})
-	require.NoError(t, err)
-
-	reordered, err := svc.Reorder(ctx, owner, p.ID, []uuid.UUID{second.ID, first.ID})
-	require.NoError(t, err)
-	require.Len(t, reordered, 2)
-	assert.Equal(t, second.ID, reordered[0].ID)
-	assert.Equal(t, first.ID, reordered[1].ID)
-
-	// A partial or foreign set is all-or-nothing: nothing is written.
-	_, err = svc.Reorder(ctx, owner, p.ID, []uuid.UUID{second.ID})
-	assert.ErrorIs(t, err, epic.ErrEpicIDsMismatch)
-	_, err = svc.Reorder(ctx, owner, p.ID, []uuid.UUID{second.ID, second.ID})
-	assert.ErrorIs(t, err, epic.ErrEpicIDsMismatch)
-}
-
 // Deleting an epic drops its tasks back to sitting directly in their backlog —
 // exactly where they were before the epic existed — rather than deleting them.
 func TestService_Delete_UnfilesTasks(t *testing.T) {

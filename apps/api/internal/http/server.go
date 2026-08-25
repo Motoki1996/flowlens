@@ -366,21 +366,15 @@ func (s *Server) Router() chi.Router {
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/backlogs", s.handleListBacklogs)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/backlogs", s.handleCreateBacklog)
-			// /backlogs/order is a flat leaf next to the {backlogID} mount
-			// below, the same coexistence this file's own doc comment
-			// already relies on for /tasks and /tasks/{taskID}.
-			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Patch("/projects/{projectID}/backlogs/order", s.handleReorderBacklogs)
 
 			// Epics (000032) sit on the same allowlist as backlogs, and for
 			// the same reason: an agent breaking a backlog down into epics
 			// and then epics into tasks needs to read and write both rungs.
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/epics", s.handleListEpics)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/epics", s.handleCreateEpic)
-			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Patch("/projects/{projectID}/epics/order", s.handleReorderEpics)
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks", s.handleListTasks)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Post("/projects/{projectID}/tasks", s.handleCreateTask)
-			shared.With(requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch).Patch("/projects/{projectID}/tasks/order", s.handleReorderTasks)
 			// /tasks/bulk is a flat leaf next to the {taskID} mount below,
 			// the same coexistence this file's own doc comment already
 			// relies on for /tasks and /tasks/{taskID}.

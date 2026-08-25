@@ -1,21 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ChevronDown, ChevronUp, GripVertical, Plus } from "lucide-react";
-import { API_PUBLIC_URL } from "@/lib/config";
-import { csrfHeaders } from "@/lib/csrf";
+import { Plus } from "lucide-react";
 import { epicPath, tasksPath } from "@/lib/routes";
 import { groupScheduleLabel } from "@/lib/groups";
 import { groupTaskCompletion } from "@/lib/timeline";
 import { useViewMode } from "@/lib/useViewMode";
-import type { ApiError, Backlog, Epic, LinkedGitlabProject, Priority, Progress, Task } from "@/types";
+import type {
+  Backlog,
+  Epic,
+  LinkedGitlabProject,
+  Priority,
+  Progress,
+  Task,
+} from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { CreateFormRegion } from "@/components/CreateFormRegion";
 import {
@@ -34,8 +38,8 @@ import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
 
 /** The sort values the Epic collection's `?sort=` accepts, the same set the
- *  Backlog collection's does: "manual" is the API's own drag-reorderable
- *  `position` order, "priority"/"progress" are applied server-side, and
+ *  Backlog collection's does: "manual" is the API's own default (creation)
+ *  order, "priority"/"progress" are applied server-side, and
  *  "dueOn" is applied here because the API has no concept of it. */
 type EpicSort = "manual" | "dueOn" | "priority" | "progress";
 
@@ -56,18 +60,16 @@ function compareByDueOn(a: Epic, b: Epic): number {
  *  until someone actually switches views, the same arrangement the Backlog
  *  and Task collections use. */
 const EpicTimelineSection = dynamic(
-  () => import("@/components/EpicTimelineSection").then((m) => m.EpicTimelineSection),
+  () =>
+    import("@/components/EpicTimelineSection").then(
+      (m) => m.EpicTimelineSection,
+    ),
   {
-    loading: () => <p className="text-muted-foreground text-sm">Loading timeline…</p>,
+    loading: () => (
+      <p className="text-muted-foreground text-sm">Loading timeline…</p>
+    ),
   },
 );
-
-function moveItem<T>(list: T[], fromIndex: number, toIndex: number): T[] {
-  const next = [...list];
-  const [moved] = next.splice(fromIndex, 1);
-  next.splice(toIndex, 0, moved);
-  return next;
-}
 
 /** The one place that defines what "no filter" means for each URL-held
  *  filter, mirroring BacklogListSection's own FILTER_DEFAULTS. */
@@ -91,11 +93,6 @@ const FILTER_DEFAULTS = {
  * sorted here, and the name search (`?q=`), which has no API support at all
  * and is matched client-side, since epics run far fewer per project than
  * tasks.
- *
- * As with a backlog's own order, `PATCH .../epics/order` requires *every*
- * current epic in one request (epic.Service.Reorder), so any filter, search
- * or non-manual sort hides drag-and-drop and the move buttons rather than
- * sending a request certain to fail with an ID mismatch.
  *
  * Unlike the Backlog collection, there is no trailing "Unclassified" row: an
  * epic outside any backlog is still an epic and appears as its own row, with
@@ -131,7 +128,7 @@ export function EpicListSection({
   priorityFilter?: Priority;
   /** The applied `?progress=`; undefined means all of them. */
   progressFilter?: Progress;
-  /** The applied `?sort=`, or "manual" for the API's own position order. */
+  /** The applied `?sort=`, or "manual" for the API's own default order. */
   sort?: EpicSort;
   /** The applied `?view=`; Board is the default, for the same reason it is on
    *  the Backlog collection — how far along each epic is, is the first
@@ -149,15 +146,6 @@ export function EpicListSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [view, setView] = useViewMode(initialView);
 
-  // `order` mirrors `epics` but is reordered optimistically on drag/move,
-  // ahead of the PATCH .../epics/order round trip — a router.refresh() per
-  // drag doesn't read as drag-and-drop at all. It resyncs whenever the server
-  // data changes under it.
-  const [order, setOrder] = useState(epics);
-  useEffect(() => setOrder(epics), [epics]);
-  const [reorderError, setReorderError] = useState<string | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-
   const search = (searchParams.get("q") ?? "").trim();
 
   const backlogNames = useMemo(
@@ -165,15 +153,8 @@ export function EpicListSection({
     [backlogs],
   );
 
-  const canReorder =
-    sort === "manual" &&
-    !backlogFilter &&
-    !priorityFilter &&
-    !progressFilter &&
-    search === "";
-
   const visibleEpics = useMemo(() => {
-    let result = order;
+    let result = epics;
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((e) => e.name.toLowerCase().includes(q));
@@ -182,7 +163,7 @@ export function EpicListSection({
       result = [...result].sort(compareByDueOn);
     }
     return result;
-  }, [order, search, sort]);
+  }, [epics, search, sort]);
 
   const hasActiveFilters =
     backlogFilter !== undefined ||
@@ -209,7 +190,8 @@ export function EpicListSection({
    *  doesn't say whether it's the search term or one of the filters. */
   function emptyFilterMessage(): string {
     if (search) return `No epics match "${search}".`;
-    if (backlogFilter === NO_BACKLOG_FILTER) return "No epics outside a backlog.";
+    if (backlogFilter === NO_BACKLOG_FILTER)
+      return "No epics outside a backlog.";
     if (backlogFilter) {
       return `No epics in ${backlogNames.get(backlogFilter) ?? "that backlog"}.`;
     }
@@ -222,43 +204,6 @@ export function EpicListSection({
     return "No epics match the current filters.";
   }
 
-  async function commitOrder(next: Epic[]) {
-    const previous = order;
-    setOrder(next);
-    setReorderError(null);
-    try {
-      const res = await fetch(`${API_PUBLIC_URL}/api/v1/projects/${projectId}/epics/order`, {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", ...csrfHeaders() },
-        body: JSON.stringify({ epicIds: next.map((e) => e.id) }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as ApiError | null;
-        setOrder(previous);
-        setReorderError(body?.error.message ?? "Failed to reorder epics.");
-      }
-    } catch {
-      setOrder(previous);
-      setReorderError("Failed to reorder epics.");
-    }
-  }
-
-  function moveEpic(index: number, direction: -1 | 1) {
-    if (!canReorder) return;
-    const target = index + direction;
-    if (target < 0 || target >= order.length) return;
-    void commitOrder(moveItem(order, index, target));
-  }
-
-  function handleDrop(index: number) {
-    if (!canReorder) return;
-    const fromIndex = order.findIndex((e) => e.id === draggingId);
-    setDraggingId(null);
-    if (fromIndex === -1 || fromIndex === index) return;
-    void commitOrder(moveItem(order, fromIndex, index));
-  }
-
   const showControls = !error && (epics.length > 0 || hasActiveFilters);
 
   return (
@@ -268,9 +213,15 @@ export function EpicListSection({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="text-base font-medium">Epics</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              {showControls ? <ViewModeToggle value={view} onChange={setView} /> : null}
+              {showControls ? (
+                <ViewModeToggle value={view} onChange={setView} />
+              ) : null}
               {!creating ? (
-                <Button variant="outline" size="sm" onClick={() => setCreating(true)}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreating(true)}
+                >
                   <Plus className="size-4" aria-hidden />
                   New epic
                 </Button>
@@ -283,13 +234,18 @@ export function EpicListSection({
             <div className="flex flex-wrap items-center gap-2">
               <TaskSearchBox
                 value={search}
-                onChange={(value) => updateQuery({ q: value.trim() === "" ? undefined : value })}
+                onChange={(value) =>
+                  updateQuery({ q: value.trim() === "" ? undefined : value })
+                }
                 label="epics"
               />
               <Select
                 value={backlogFilter ?? "all"}
                 onValueChange={(value) =>
-                  updateQuery({ backlog: value === FILTER_DEFAULTS.backlog ? undefined : value })
+                  updateQuery({
+                    backlog:
+                      value === FILTER_DEFAULTS.backlog ? undefined : value,
+                  })
                 }
               >
                 <SelectTrigger size="sm" aria-label="Backlog" className="w-44">
@@ -308,7 +264,10 @@ export function EpicListSection({
               <Select
                 value={priorityFilter ?? "all"}
                 onValueChange={(value) =>
-                  updateQuery({ priority: value === FILTER_DEFAULTS.priority ? undefined : value })
+                  updateQuery({
+                    priority:
+                      value === FILTER_DEFAULTS.priority ? undefined : value,
+                  })
                 }
               >
                 <SelectTrigger size="sm" aria-label="Priority" className="w-36">
@@ -326,7 +285,10 @@ export function EpicListSection({
               <Select
                 value={progressFilter ?? "all"}
                 onValueChange={(value) =>
-                  updateQuery({ progress: value === FILTER_DEFAULTS.progress ? undefined : value })
+                  updateQuery({
+                    progress:
+                      value === FILTER_DEFAULTS.progress ? undefined : value,
+                  })
                 }
               >
                 <SelectTrigger size="sm" aria-label="Progress" className="w-36">
@@ -344,14 +306,16 @@ export function EpicListSection({
               <Select
                 value={sort}
                 onValueChange={(value) =>
-                  updateQuery({ sort: value === FILTER_DEFAULTS.sort ? undefined : value })
+                  updateQuery({
+                    sort: value === FILTER_DEFAULTS.sort ? undefined : value,
+                  })
                 }
               >
                 <SelectTrigger size="sm" aria-label="Sort" className="w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="manual">Manual order</SelectItem>
+                  <SelectItem value="manual">Default order</SelectItem>
                   <SelectItem value="dueOn">Due date</SelectItem>
                   <SelectItem value="priority">Priority</SelectItem>
                   <SelectItem value="progress">Progress</SelectItem>
@@ -379,7 +343,9 @@ export function EpicListSection({
               tasks={tasks}
               links={links}
               defaultBacklogId={
-                backlogFilter && backlogFilter !== NO_BACKLOG_FILTER ? backlogFilter : null
+                backlogFilter && backlogFilter !== NO_BACKLOG_FILTER
+                  ? backlogFilter
+                  : null
               }
               onSaved={() => {
                 router.refresh();
@@ -404,26 +370,17 @@ export function EpicListSection({
           <EpicTimelineSection projectId={projectId} epics={visibleEpics} />
         ) : (
           <div className="space-y-2">
-            {reorderError ? (
-              <Alert variant="destructive">
-                <AlertDescription>{reorderError}</AlertDescription>
-              </Alert>
-            ) : null}
             <ul className="space-y-2">
-              {visibleEpics.map((epic, index) => {
+              {visibleEpics.map((epic) => {
                 const completion = groupTaskCompletion(epic);
                 const schedule = groupScheduleLabel(epic);
-                const backlogName = epic.backlogId ? backlogNames.get(epic.backlogId) : undefined;
+                const backlogName = epic.backlogId
+                  ? backlogNames.get(epic.backlogId)
+                  : undefined;
                 return (
                   <li
                     key={epic.id}
                     className="border-border rounded-md border px-3 py-2"
-                    onDragOver={(e) => canReorder && e.preventDefault()}
-                    onDrop={(e) => {
-                      if (!canReorder) return;
-                      e.preventDefault();
-                      handleDrop(index);
-                    }}
                   >
                     {editingId === epic.id ? (
                       <EpicForm
@@ -442,37 +399,6 @@ export function EpicListSection({
                       />
                     ) : (
                       <div className="flex items-center justify-between gap-4">
-                        {canReorder ? (
-                          <div className="flex shrink-0 flex-col items-center self-stretch">
-                            <button
-                              type="button"
-                              aria-label={`Move ${epic.name} up`}
-                              disabled={index === 0}
-                              onClick={() => moveEpic(index, -1)}
-                              className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                            >
-                              <ChevronUp className="size-4" />
-                            </button>
-                            <span
-                              draggable
-                              aria-hidden="true"
-                              onDragStart={() => setDraggingId(epic.id)}
-                              onDragEnd={() => setDraggingId(null)}
-                              className="text-muted-foreground cursor-grab active:cursor-grabbing"
-                            >
-                              <GripVertical className="size-4" />
-                            </span>
-                            <button
-                              type="button"
-                              aria-label={`Move ${epic.name} down`}
-                              disabled={index === visibleEpics.length - 1}
-                              onClick={() => moveEpic(index, 1)}
-                              className="text-muted-foreground hover:text-foreground disabled:opacity-30"
-                            >
-                              <ChevronDown className="size-4" />
-                            </button>
-                          </div>
-                        ) : null}
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <Link
@@ -498,7 +424,9 @@ export function EpicListSection({
                               <div
                                 aria-hidden
                                 className="bg-primary h-full"
-                                style={{ width: `${Math.round(completion.ratio * 100)}%` }}
+                                style={{
+                                  width: `${Math.round(completion.ratio * 100)}%`,
+                                }}
                               />
                             </div>
                             <span className="text-muted-foreground text-xs tabular-nums">
@@ -525,7 +453,10 @@ export function EpicListSection({
                           >
                             Edit
                           </Button>
-                          <EpicDeleteButton epic={epic} onDeleted={() => router.refresh()} />
+                          <EpicDeleteButton
+                            epic={epic}
+                            onDeleted={() => router.refresh()}
+                          />
                         </div>
                       </div>
                     )}

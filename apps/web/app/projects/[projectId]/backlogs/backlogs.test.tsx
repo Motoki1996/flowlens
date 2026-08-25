@@ -23,7 +23,6 @@ const backlog: Backlog = {
   projectId: "p1",
   name: "Sprint 1",
   description: "",
-  position: 0,
   startDate: null,
   dueOn: null,
   priority: "medium",

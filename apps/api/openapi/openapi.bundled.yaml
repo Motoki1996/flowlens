@@ -1956,56 +1956,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/v1/projects/{projectID}/epics/order:
-    patch:
-      summary: Bulk-reorder a project's epics
-      description: All-or-nothing; the ID list must be exactly the project's current epics. Requires write scope for a bearer token.
-      tags:
-        - epics
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/projectID'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReorderEpicsRequest'
-      responses:
-        '200':
-          description: The reordered epics
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Epic'
-        '400':
-          description: Invalid input (ID list mismatch)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Token missing write scope
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
   /api/v1/epics/{epicID}:
     get:
       summary: Get an epic
@@ -2266,56 +2216,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /api/v1/projects/{projectID}/backlogs/order:
-    patch:
-      summary: Bulk-reorder a project's backlogs
-      description: All-or-nothing; the ID list must be exactly the project's current backlogs. Requires write scope for a bearer token.
-      tags:
-        - backlogs
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/projectID'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReorderBacklogsRequest'
-      responses:
-        '200':
-          description: The reordered backlogs
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Backlog'
-        '400':
-          description: Invalid input (ID list mismatch)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Token missing write scope
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
   /api/v1/backlogs/{backlogID}:
     get:
       summary: Get a backlog
@@ -2519,56 +2419,6 @@ paths:
                 $ref: '#/components/schemas/Task'
         '400':
           description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Token missing write scope
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '404':
-          description: Not found
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-  /api/v1/projects/{projectID}/tasks/order:
-    patch:
-      summary: Bulk-reorder one backlog bucket's tasks
-      description: All-or-nothing; taskIds must be exactly that bucket's current tasks. Requires write scope for a bearer token.
-      tags:
-        - tasks
-      security:
-        - cookieAuth: []
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/projectID'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ReorderTasksRequest'
-      responses:
-        '200':
-          description: The reordered tasks
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Task'
-        '400':
-          description: Invalid input (ID list mismatch)
           content:
             application/json:
               schema:
@@ -3665,8 +3515,6 @@ components:
             - string
             - 'null'
           format: date-time
-        position:
-          type: integer
         createdByUserId:
           type: string
           format: uuid
@@ -4538,8 +4386,6 @@ components:
           type: string
         description:
           type: string
-        position:
-          type: integer
         startDate:
           type:
             - string
@@ -4668,17 +4514,6 @@ components:
           description: A project member to assign this epic to. Rejected with invalid_assignee if the user is not a member.
       required:
         - name
-    ReorderEpicsRequest:
-      type: object
-      description: All-or-nothing. epicIds must be exactly the project's current epics.
-      properties:
-        epicIds:
-          type: array
-          items:
-            type: string
-            format: uuid
-      required:
-        - epicIds
     UpdateEpicRequest:
       type: object
       description: Every field is optional-if-omitted (the update leaves it unchanged); send null to clear a nullable field, or "" to clear baseBranch/allowedScope/ forbiddenScope. Moving an epic to another backlog moves its tasks with it.
@@ -4692,8 +4527,6 @@ components:
           type: string
         description:
           type: string
-        position:
-          type: integer
         startDate:
           type:
             - string
@@ -4764,8 +4597,6 @@ components:
           type: string
         description:
           type: string
-        position:
-          type: integer
         startDate:
           type:
             - string
@@ -4853,17 +4684,6 @@ components:
           description: A project member to assign this backlog to. Rejected with invalid_assignee if the user is not a member.
       required:
         - name
-    ReorderBacklogsRequest:
-      type: object
-      properties:
-        backlogIds:
-          type: array
-          items:
-            type: string
-            format: uuid
-          description: The project's full, newly-ordered backlog ID list.
-      required:
-        - backlogIds
     UpdateBacklogRequest:
       type: object
       description: Every field is optional-if-omitted (the update leaves it unchanged); send null to clear a nullable field.
@@ -4872,8 +4692,6 @@ components:
           type: string
         description:
           type: string
-        position:
-          type: integer
         startDate:
           type:
             - string
@@ -4965,23 +4783,6 @@ components:
             - done
       required:
         - title
-    ReorderTasksRequest:
-      type: object
-      properties:
-        backlogId:
-          type:
-            - string
-            - 'null'
-          format: uuid
-          description: null targets the Unclassified group.
-        taskIds:
-          type: array
-          items:
-            type: string
-            format: uuid
-          description: That bucket's full, newly-ordered task ID list.
-      required:
-        - taskIds
     UpsertTaskAIContextRequest:
       type: object
       properties:

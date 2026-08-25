@@ -14,7 +14,6 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     projectId: "p1",
     name: "Backlog",
     description: "",
-    position: 0,
     startDate: null,
     dueOn: null,
     priority: "medium",

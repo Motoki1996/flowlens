@@ -44,7 +44,6 @@ var (
 	ErrEpicNotInProject      = errors.New("task: epic belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
 	ErrSyncNotFailed         = errors.New("task: gitlab sync is not currently failed")
-	ErrTaskIDsMismatch       = errors.New("task: taskIds must exactly match the current tasks in that backlog")
 	ErrForbidden             = errors.New("task: forbidden")
 )
 
@@ -59,7 +58,7 @@ const (
 // Priority values, app-only and never synced to GitLab (GitLab CE issues
 // have no native priority field — priority label/weight is an EE feature),
 // per the 000010 migration. SortPriority is the ListFilter.Sort value that
-// switches List's ORDER BY from position to priority rank.
+// switches List's ORDER BY from created_at to priority rank.
 const (
 	PriorityLow    = "low"
 	PriorityMedium = "medium"
@@ -248,7 +247,6 @@ type Task struct {
 	// Design/Implementation stages.
 	DesignStartedAt         *time.Time  `json:"designStartedAt"`
 	ImplementationStartedAt *time.Time  `json:"implementationStartedAt"`
-	Position                int32       `json:"position"`
 	CreatedByUserID         uuid.UUID   `json:"createdByUserId"`
 	CreatedAt               time.Time   `json:"createdAt"`
 	UpdatedAt               time.Time   `json:"updatedAt"`
@@ -278,7 +276,6 @@ func fromRow(row db.Task) Task {
 		Size:                    row.Size,
 		DesignStartedAt:         timePtr(row.DesignStartedAt),
 		ImplementationStartedAt: timePtr(row.ImplementationStartedAt),
-		Position:                row.Position,
 		CreatedByUserID:         row.CreatedByUserID,
 		CreatedAt:               row.CreatedAt.Time,
 		UpdatedAt:               row.UpdatedAt.Time,
@@ -427,8 +424,7 @@ type UpdateParams struct {
 	Progress Optional[string]
 	// Size follows the same absent/explicit-empty rule as Priority,
 	// resetting to SizeM when explicitly empty.
-	Size     Optional[string]
-	Position Optional[int32]
+	Size Optional[string]
 }
 
 // resolvedUpdate is UpdateParams with every absent field filled in from the
@@ -449,7 +445,6 @@ type resolvedUpdate struct {
 	Priority               string
 	Progress               string
 	Size                   string
-	Position               int32
 }
 
 func (p UpdateParams) resolve(current Task) resolvedUpdate {
@@ -467,7 +462,6 @@ func (p UpdateParams) resolve(current Task) resolvedUpdate {
 		Priority:               p.Priority.Or(current.Priority),
 		Progress:               p.Progress.Or(current.Progress),
 		Size:                   p.Size.Or(current.Size),
-		Position:               p.Position.Or(current.Position),
 	}
 }
 
@@ -671,7 +665,7 @@ func normalizeLabels(labels []string) []string {
 }
 
 // Create validates title and backlog membership, then creates a task at the
-// end of its backlog's (or the unfiled group's) position order. It returns
+// end of its backlog's (or the unfiled group's) list. It returns
 // ErrNotFound if projectID does not exist or belongs to another user.
 //
 // If the task has anywhere to be pushed — its backlog's own linked GitLab
@@ -907,13 +901,13 @@ type ListFilter struct {
 	Priority    string // one of the Priority* constants, or "" (no filter)
 	Progress    string // one of the Progress* constants, or "" (no filter)
 	Size        string // one of the Size* constants, or "" (no filter)
-	// Sort is "" (position ASC, created_at ASC, the manual/DnD order),
+	// Sort is "" (created_at ASC, oldest first),
 	// SortPriority (priority rank DESC), SortProgress (progress rank ASC,
 	// not_started first), SortSize (size rank DESC, biggest first),
 	// SortDueOn (due date ASC, tasks with no due date last) or
 	// SortUpdatedAt (most recently updated first) — the same set the
 	// cross-project collection accepts, so the two lists don't disagree on
-	// what a sort value means. Each keeps the manual order as its tiebreak.
+	// what a sort value means. Each keeps the created_at order as its tiebreak.
 	Sort string
 	// AssigneeUserID, when non-nil, only returns tasks assigned to that user
 	// on either axis: the FlowLens assignee (000031) or that same user's
@@ -931,7 +925,7 @@ type ListFilter struct {
 	Query string
 }
 
-// List returns projectID's tasks matching filter, ordered by position. It
+// List returns projectID's tasks matching filter, ordered by creation time. It
 // returns ErrNotFound if projectID does not exist or belongs to another
 // user.
 //
@@ -989,7 +983,7 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 // project-scoped list is fetched whole — there is no LIMIT for a different
 // ORDER BY to change the *contents* of, only the sequence — and adding them
 // to the query would mean reshaping its parameters. A stable sort is what
-// keeps the manual position order as the tiebreak in both cases.
+// keeps the created_at order as the tiebreak in both cases.
 func sortTasks(tasks []Task, by string) {
 	switch by {
 	case SortDueOn:
@@ -1127,7 +1121,6 @@ func fromCrossProjectRow(row db.ListTasksForMemberRow) TaskWithProject {
 			Priority:               row.Priority,
 			Progress:               row.Progress,
 			Size:                   row.Size,
-			Position:               row.Position,
 			CreatedByUserID:        row.CreatedByUserID,
 			CreatedAt:              row.CreatedAt,
 			UpdatedAt:              row.UpdatedAt,
@@ -1305,15 +1298,15 @@ func (s *Service) RetrySync(ctx context.Context, ownerID, taskID uuid.UUID) (Tas
 	return s.Get(ctx, ownerID, taskID)
 }
 
-// Update overwrites title, description, assignee, labels, due date, backlog
-// and position. Ownership is enforced by the query, so a non-owner gets
+// Update overwrites title, description, assignee, labels, due date and
+// backlog. Ownership is enforced by the query, so a non-owner gets
 // ErrNotFound and nothing is written.
 //
 // If title, description, assignee, labels or due date actually change and
 // the task already has a GitLab link, an issue.update sync job is enqueued
 // in the same transaction, deduped per task so rapid repeated edits
 // collapse into one pending push (docs/plans/issue-sync.md, "Outbound"). A
-// backlog/position-only edit, or a task with no link, enqueues nothing.
+// backlog-only edit, or a task with no link, enqueues nothing.
 //
 // actorKind (ActorKindUser for a session caller, ActorKindAgent for a
 // bearer-token caller) attributes a task_progress_events row (issue #169),
@@ -1388,7 +1381,6 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 			Priority:               resolved.Priority,
 			Progress:               resolved.Progress,
 			Size:                   resolved.Size,
-			Position:               resolved.Position,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -1436,7 +1428,7 @@ func (s *Service) Update(ctx context.Context, ownerID, taskID uuid.UUID, params 
 // mirroredFieldsChanged reports whether any of the fields FlowLens mirrors
 // to GitLab (title, description, assignee, labels, due date) differ between
 // current and the resolved update — the trigger for enqueueing issue.update.
-// Backlog, position and start date are app-only and never compared here, so
+// Backlog and start date are app-only and never compared here, so
 // a PATCH touching only those enqueues nothing.
 func mirroredFieldsChanged(current Task, resolved resolvedUpdate) bool {
 	if current.Title != resolved.Title || current.Description != resolved.Description {
@@ -1525,75 +1517,6 @@ func (s *Service) AssignBacklog(ctx context.Context, ownerID, taskID uuid.UUID, 
 		return Task{}, err
 	}
 	return t, nil
-}
-
-// Reorder resequences the position of every task in one backlog bucket
-// (backlogID's tasks, or the Unclassified group when backlogID is nil) to
-// match taskIDs' order — position 0 for the first ID, 1 for the second, and
-// so on. taskIDs must be exactly that bucket's current task set (same
-// length, no duplicates, nothing missing or foreign), or it returns
-// ErrTaskIDsMismatch without writing anything: a partial reorder would leave
-// some tasks with a stale position relative to their new neighbors, and the
-// D&D UI always knows the bucket's full membership before it calls this
-// (issue #79). Moving a task to a *different* backlog is a separate step
-// (AssignBacklog or Update's BacklogID), done before calling Reorder for the
-// destination bucket — this method never changes backlog_id itself.
-func (s *Service) Reorder(ctx context.Context, ownerID, projectID uuid.UUID, backlogID *uuid.UUID, taskIDs []uuid.UUID) ([]Task, error) {
-	if err := s.authorize(ctx, ownerID, projectID, project.RoleMember); err != nil {
-		return nil, err
-	}
-	if err := s.validateBacklog(ctx, ownerID, projectID, backlogID); err != nil {
-		return nil, err
-	}
-
-	filter := ListFilter{}
-	if backlogID != nil {
-		filter.BacklogID = backlogID
-	} else {
-		filter.Unassigned = true
-	}
-	current, err := s.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
-		ProjectID:  projectID,
-		Unassigned: filter.Unassigned,
-		BacklogID:  toUUID(filter.BacklogID),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("task: reorder: %w", err)
-	}
-	if !sameTaskIDSet(current, taskIDs) {
-		return nil, ErrTaskIDsMismatch
-	}
-
-	if err := s.q.ReorderTasks(ctx, db.ReorderTasksParams{
-		TaskIds:   taskIDs,
-		ProjectID: projectID,
-		BacklogID: toUUID(backlogID),
-	}); err != nil {
-		return nil, fmt.Errorf("task: reorder: %w", err)
-	}
-
-	return s.List(ctx, ownerID, projectID, filter)
-}
-
-// sameTaskIDSet reports whether taskIDs is exactly current's task IDs, in
-// any order: same length, no duplicates, nothing missing or foreign.
-func sameTaskIDSet(current []db.Task, taskIDs []uuid.UUID) bool {
-	if len(current) != len(taskIDs) {
-		return false
-	}
-	seen := make(map[uuid.UUID]struct{}, len(taskIDs))
-	for _, id := range taskIDs {
-		if _, dup := seen[id]; dup {
-			return false
-		}
-		seen[id] = struct{}{}
-	}
-	for _, t := range current {
-		if _, ok := seen[t.ID]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // Close marks the task closed and stamps closed_at. Closing an
@@ -2034,7 +1957,7 @@ type ContextListFilter struct {
 }
 
 // ContextPage is one page of ListContext/ListContextForProject's results,
-// ordered the same way List is (position ASC, created_at ASC).
+// ordered the same way List is (created_at ASC).
 type ContextPage struct {
 	Tasks    []Context
 	NextPage int // 0 when there is no next page

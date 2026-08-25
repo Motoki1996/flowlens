@@ -129,23 +129,17 @@ paths:
 
   /api/v1/projects/{projectID}/epics:
     $ref: './paths/epics.yaml#/list'
-  /api/v1/projects/{projectID}/epics/order:
-    $ref: './paths/epics.yaml#/order'
   /api/v1/epics/{epicID}:
     $ref: './paths/epics.yaml#/epic'
   /api/v1/epics/{epicID}/tasks:
     $ref: './paths/epics.yaml#/tasks'
   /api/v1/projects/{projectID}/backlogs:
     $ref: './paths/backlogs.yaml#/list'
-  /api/v1/projects/{projectID}/backlogs/order:
-    $ref: './paths/backlogs.yaml#/order'
   /api/v1/backlogs/{backlogID}:
     $ref: './paths/backlogs.yaml#/backlog'
 
   /api/v1/projects/{projectID}/tasks:
     $ref: './paths/tasks.yaml#/list'
-  /api/v1/projects/{projectID}/tasks/order:
-    $ref: './paths/tasks.yaml#/order'
   /api/v1/projects/{projectID}/tasks/bulk:
     $ref: './paths/tasks.yaml#/bulk'
   /api/v1/projects/{projectID}/task-dependencies:

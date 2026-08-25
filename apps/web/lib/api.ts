@@ -158,8 +158,8 @@ export type EpicListFilter = {
 };
 
 /**
- * getEpics returns the project's epics matching filter, ordered by position
- * unless filter.sort says otherwise. Callers must already know the request is
+ * getEpics returns the project's epics matching filter, in the API's default
+ * (creation) order unless filter.sort says otherwise. Callers must already know the request is
  * authenticated.
  */
 export const getEpics = cache(
@@ -213,8 +213,8 @@ export type BacklogListFilter = {
 };
 
 /**
- * getBacklogs returns the project's backlogs matching filter, ordered by
- * position unless filter.sort says otherwise. Callers must already know the
+ * getBacklogs returns the project's backlogs matching filter, in the API's
+ * default (creation) order unless filter.sort says otherwise. Callers must already know the
  * request is authenticated.
  */
 export const getBacklogs = cache(
@@ -259,7 +259,7 @@ export async function getBacklog(id: string): Promise<Backlog | null> {
  *  optional and means "no filter" when omitted. `backlogId` takes a backlog
  *  UUID or the literal "unassigned" for the Unclassified group — note the
  *  API spells that parameter `backlog_id`, the one snake_case query
- *  parameter in the API. Omitting `sort` is this list's manual `position`
+ *  parameter in the API. Omitting `sort` is this list's default (creation)
  *  order, which has no named value. */
 export type ProjectTasksFilter = {
   backlogId?: string;
@@ -279,10 +279,10 @@ export type ProjectTasksFilter = {
 };
 
 /**
- * getTasks returns the project's tasks matching filter, ordered by position
- * unless filter.sort says otherwise. There is no pagination: the project's
- * matching tasks are returned whole, which is what lets the collection group
- * by backlog and reorder a bucket by drag-and-drop (issue #143). Callers must
+ * getTasks returns the project's tasks matching filter, in the API's default
+ * (creation) order unless filter.sort says otherwise. There is no pagination:
+ * the project's matching tasks are returned whole, which is what lets the
+ * collection group by backlog (issue #143). Callers must
  * already know the request is authenticated.
  */
 export const getTasks = cache(

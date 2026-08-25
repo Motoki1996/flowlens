@@ -61,8 +61,7 @@ export function TaskBoardSection({
   const router = useRouter();
 
   // `items` mirrors `tasks` but is updated optimistically on a drop, ahead of
-  // the PATCH round trip — the same arrangement the List mode's reordering
-  // uses, for the same reason: a router.refresh() per drag doesn't read as
+  // the PATCH round trip: a router.refresh() per drag doesn't read as
   // drag-and-drop. It resyncs whenever the server data changes under it.
   const [items, setItems] = useState(tasks);
   useEffect(() => setItems(tasks), [tasks]);

@@ -332,10 +332,17 @@ Epic:
     forbiddenScope:
       type: string
       description: Paths tasks in this epic must not touch; "" falls through to the backlog's.
-    assigneeUserId:
-      type: [string, "null"]
-      format: uuid
-      description: The FlowLens project member who owns this epic. App-only; an epic has no GitLab counterpart.
+    estimatedPoints:
+      type: [integer, "null"]
+      minimum: 1
+      description: >-
+        The epic's pre-breakdown estimate, in the same raw points velocity
+        weights a task's size onto. Deliberately not a size (xs..xl): it is a
+        provisional value that stands in only until the epic has tasks, at
+        which point the sum of their sizes is authoritative and this is no
+        longer consulted. It is never cleared or overwritten when tasks
+        appear. null means nobody has estimated it, which is distinct from
+        any number including 0 — 0 is rejected for exactly that reason.
     assigneeUsername: { type: string, description: Resolved from users on read; "" when unassigned. }
     assigneeDisplayName: { type: string, description: Resolved from users on read; "" when unassigned. }
     taskCount: { type: integer, format: int64, description: Populated by the list endpoint only; 0 elsewhere. }
@@ -697,8 +704,30 @@ VelocityMetrics:
       items: { $ref: '#/VelocityPeriod' }
     openTaskCount: { type: integer }
     averageVelocity: { type: [number, "null"] }
-    forecastPeriods: { type: [number, "null"] }
-    openTaskPoints: { type: integer }
+    forecastPeriods:
+      type: [number, "null"]
+      description: >-
+        Count-denominated forecast, over open tasks only. Epics are
+        deliberately absent: an epic does not know how many tasks it will
+        become, so there is no honest number to add to a count.
+    openTaskPoints:
+      type: integer
+      description: Remaining open tasks weighted by size. Tasks only.
     averageVelocityPoints: { type: [number, "null"] }
+    unbrokenDownEpicPoints:
+      type: integer
+      description: >-
+        Summed estimatedPoints of the project's not-done epics that have no
+        tasks at all. Epics that do have tasks contribute nothing here — their
+        work is already in openTaskPoints, and counting both would double it.
+    unestimatedEpicCount:
+      type: integer
+      description: >-
+        How many of those unbroken-down epics have no estimate. They add 0 to
+        openPointsTotal because there is nothing to add, not because they are
+        no work: a nonzero value here means the forecast is a lower bound.
+    openPointsTotal:
+      type: integer
+      description: openTaskPoints + unbrokenDownEpicPoints; the numerator of forecastPeriodsByPoints.
     forecastPeriodsByPoints: { type: [number, "null"] }
     sizedTaskRatio: { type: number }

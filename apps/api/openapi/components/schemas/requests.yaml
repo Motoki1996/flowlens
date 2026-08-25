@@ -161,6 +161,13 @@ CreateEpicRequest:
     baseBranch: { type: string }
     allowedScope: { type: string }
     forbiddenScope: { type: string }
+    estimatedPoints:
+      type: [integer, "null"]
+      minimum: 1
+      description: >-
+        Pre-breakdown estimate in raw points; omitted or null leaves the epic
+        unestimated. Rejected with invalid_estimated_points if not positive —
+        0 would be indistinguishable from "not estimated".
     assigneeUserId:
       type: [string, "null"]
       format: uuid
@@ -186,6 +193,10 @@ UpdateEpicRequest:
     baseBranch: { type: string }
     allowedScope: { type: string }
     forbiddenScope: { type: string }
+    estimatedPoints:
+      type: [integer, "null"]
+      minimum: 1
+      description: Omitted keeps the current estimate; null clears it back to unestimated. Never cleared automatically when the epic gains tasks.
     assigneeUserId: { type: [string, "null"], format: uuid }
 
 SetEpicTasksRequest:

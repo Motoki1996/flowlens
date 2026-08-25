@@ -493,7 +493,8 @@ existing project changes until someone creates one.
 An epic carries the same fields a backlog does — name, description,
 position, start/due dates, priority, progress, assignee, base branch,
 allowed/forbidden scope and its own `defaultLinkedGitlabProjectId` — minus
-`size`, since an epic's size is just the sum of its tasks'. It is app-only:
+`size`, since an epic's size is just the sum of its tasks', plus
+`estimatedPoints` (below). It is app-only:
 **no epic is ever created in, or read from, GitLab.** GitLab CE has no Epic
 at all (it is a Premium object), which is also why the name was free to take.
 
@@ -517,6 +518,44 @@ Two rules the schema can't express are enforced by the API:
   epic, and moving an *epic* between backlogs moves its tasks with it.
 - **An epic belongs to one project.** An epic in another project's backlog is
   rejected with 400 `invalid_backlog`.
+
+#### An epic's provisional estimate (issue #234)
+
+An epic has no `size`, on purpose — an epic's size is the sum of its tasks'.
+That is true once the tasks exist, and the point of this rung is that it is
+created *before* them: `/flowlens:breakdown-epics` deliberately creates no
+tasks at all. In between, an epic weighed **structurally zero**, so
+[Velocity](#velocity-issue-195)'s forecast — which counted only tasks —
+quietly ignored every refined-but-not-yet-broken-down backlog in the project
+and reported the remaining work as far smaller than it was.
+
+`estimatedPoints` is the answer, and is deliberately *not* called a size and
+not one of the `xs`..`xl` values:
+
+- It is a raw integer on the same scale `internal/velocity` weights sizes
+  onto (`xs`=1 … `xl`=8), optional and nullable — `null` means "nobody has
+  estimated this epic", which is a different statement from any number. `0`
+  is rejected (400 `invalid_estimated_points`, and a CHECK constraint) for
+  exactly that reason: allowing it would make "no work" and "no estimate"
+  indistinguishable.
+- **It loses authority the moment the epic has tasks.** The rule lives in
+  one place, `internal/epic.EffectivePoints`: tasks' summed sizes if there
+  are any, the estimate if not, *unknown* if neither — never silently 0.
+  A separate name and unit is what keeps this from becoming the "two
+  disagreeing truths" an epic-level `size` would be.
+- **It is never cleared or overwritten when the tasks appear.** The original
+  guess sitting beside the eventual real breakdown is the only data an
+  estimate-vs-actual calibration could ever be built from.
+
+It is set with `estimatedPoints` on `POST /api/v1/projects/{projectID}/epics`
+and `PATCH /api/v1/epics/{epicID}` (absent keeps the stored value, explicit
+`null` clears it), and `/flowlens:breakdown-epics` fills it in by projecting
+how many tasks of which sizes the epic will become from the project's own
+existing task sizes — never from a bare guess, which could not be calibrated
+against anything later.
+
+Backlogs deliberately get no estimate of their own: a backlog's is the sum of
+its epics'.
 
 Deleting an epic never deletes its tasks: they drop back to sitting directly
 in their backlog, exactly where they were before the epic existed. Abandoning
@@ -2214,6 +2253,22 @@ types per task; `size` is a five-value T-shirt scale and the weights
     Once sizes are actually set, the point forecast is the more trustworthy
     of the two, since it accounts for the remaining work being unusually
     large or small instead of assuming an average-sized task.
+  - `unbrokenDownEpicPoints`, `unestimatedEpicCount` and `openPointsTotal`
+    (issue #234) carry the remaining work that has no tasks yet:
+    [epics that have not been broken down](#an-epics-provisional-estimate-issue-234),
+    through their `estimatedPoints`. An epic that *does* have tasks
+    contributes nothing here — its work is already in `openTaskPoints`, task
+    by task, and adding its estimate on top would count it twice.
+    `openPointsTotal` is `openTaskPoints + unbrokenDownEpicPoints` and is the
+    numerator of `forecastPeriodsByPoints`.
+    `unestimatedEpicCount` is how many of those epics nobody has estimated:
+    they add `0` because there is nothing to add, *not* because they are no
+    work, so a nonzero value means the forecast is a lower bound — reporting
+    it is the point, since silently treating an unestimated epic as zero is
+    the bug this replaced. The count series (`forecastPeriods`,
+    `openTaskCount`) deliberately stays task-only: an epic has no idea how
+    many tasks it will become, so there is no honest number to add to a
+    count — which is why the estimate is denominated in points at all.
   - `sizedTaskRatio` (0..1) is the fraction of the completed tasks counted
     whose size is something other than the default `m`. Every task predating
     the `size` column reads as `m`, so while this is `0` the point series is

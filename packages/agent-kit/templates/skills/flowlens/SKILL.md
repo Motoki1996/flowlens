@@ -101,6 +101,14 @@ Call order: `refine-backlog` → `breakdown-epics` (optional) →
   **epics**: coarse units of a few tasks each (one screen, one endpoint
   group), each able to carry its own base branch and change scope.
   Optional — a backlog small enough to break straight into tasks skips it.
+  Each epic also gets an `estimatedPoints`: a **provisional** estimate that
+  exists only because the epic has no tasks yet. It is what keeps
+  unbroken-down work visible in the project's velocity forecast, and it
+  stops being consulted the moment `/flowlens:breakdown` creates the epic's
+  tasks — from then on the sum of those tasks' `size` is the truth. It is
+  never deleted, so do not "correct" it after a breakdown: the original
+  guess next to the real breakdown is what an estimate-vs-actual
+  calibration is built from.
 - `/flowlens:breakdown <backlogId|epicId>` — splits a refined backlog *or*
   one epic into sized, scoped, dependency-ordered tasks, created in one
   bulk call.

@@ -139,7 +139,9 @@ type Querier interface {
 	// Every column here mirrors backlogs.sql's, deliberately — see the 000032
 	// migration. backlog_id is the one addition, and it is nullable: an epic
 	// outside any backlog is the Unclassified group, exactly as an unfiled task
-	// is.
+	// is. estimated_points (000033) is the second, and is nullable for a reason
+	// of its own: NULL means "nobody has estimated this epic", which is not the
+	// same statement as any number, least of all 0.
 	CreateEpic(ctx context.Context, arg CreateEpicParams) (Epic, error)
 	// gitlab_sync_runs records one project.import / project.resync execution
 	// against a linked GitLab project (docs/plans/issue-sync.md's SyncRun
@@ -746,6 +748,32 @@ type Querier interface {
 	// ListTasksForMember's q filter is the same search_vector match
 	// ListTasksByProject's is (issue #106).
 	ListTasksForMember(ctx context.Context, arg ListTasksForMemberParams) ([]ListTasksForMemberRow, error)
+	// ListUnbrokenDownEpicEstimatesForVelocity returns one row per epic in
+	// projectID that has no tasks at all, carrying its estimated_points (000033),
+	// NULL when nobody has estimated it. It is the other half of the remaining
+	// work: CountOpenTasksBySizeForVelocity above sees only tasks, so before
+	// issue #234 an epic created by /flowlens:breakdown-epics but not yet broken
+	// down weighed exactly nothing and the forecast quietly understated itself.
+	//
+	// The NOT EXISTS is the whole correctness argument and the easiest thing here
+	// to get wrong: an epic that *does* have tasks is already counted, task by
+	// task, by CountOpenTasksBySizeForVelocity. Dropping the clause would add its
+	// pre-breakdown estimate on top of its real tasks and count it twice. The
+	// estimate is deliberately never deleted when the tasks appear (it is the
+	// only record of what was guessed), so "has tasks" is the only signal that it
+	// has stopped being the truth.
+	//
+	// A done epic is excluded for the same reason CountOpenTasksBySizeForVelocity
+	// excludes progress='done': the forecast is about work still outstanding. Its
+	// status is not checked, because an epic has none — epics are app-only and
+	// have no GitLab issue state to close.
+	//
+	// Rows with a NULL estimate are returned rather than filtered out: how many
+	// epics nobody has estimated is itself part of the answer (internal/velocity
+	// reports it as unestimatedEpicCount), and silently dropping them is how the
+	// number gets understated a second time.
+	//
+	ListUnbrokenDownEpicEstimatesForVelocity(ctx context.Context, arg ListUnbrokenDownEpicEstimatesForVelocityParams) ([]ListUnbrokenDownEpicEstimatesForVelocityRow, error)
 	ListUserGitlabIdentitiesByUser(ctx context.Context, userID uuid.UUID) ([]UserGitlabIdentity, error)
 	// ListUsersByIDs resolves a batch of user IDs to the username/display name a
 	// response needs to render an assignee (000031). Batched rather than joined

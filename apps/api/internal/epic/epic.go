@@ -42,6 +42,7 @@ var (
 	ErrInvalidProgress     = errors.New("epic: progress must be one of not_started, in_progress, on_hold, done")
 	ErrInvalidBaseBranch   = errors.New("epic: baseBranch must be a valid git branch name, at most 255 characters")
 	ErrInvalidScope        = errors.New("epic: allowedScope/forbiddenScope must be at most 20000 characters")
+	ErrInvalidEstimate     = errors.New("epic: estimatedPoints must be a positive integer")
 	ErrLinkNotInProject    = errors.New("epic: defaultLinkedGitlabProjectId must be a GitLab project linked to this project")
 	ErrBacklogNotInProject = errors.New("epic: backlogId must be a backlog in this project")
 	ErrTaskNotInProject    = errors.New("epic: taskIds must all be tasks in this project")
@@ -104,6 +105,20 @@ type Epic struct {
 	// touch, resolved the same way BaseBranch is.
 	AllowedScope   string `json:"allowedScope"`
 	ForbiddenScope string `json:"forbiddenScope"`
+	// EstimatedPoints is the epic's *pre-breakdown* estimate: how much work it
+	// is expected to be, in the same raw points internal/velocity weights a
+	// task's size onto, guessed at the moment the epic is cut out of its
+	// backlog and before any task exists. nil means nobody has estimated it,
+	// which is deliberately distinct from any number including zero — hence
+	// the > 0 CHECK on the column (000033).
+	//
+	// It is *not* a size. An epic has no size field on purpose: an epic's size
+	// is the sum of its tasks'. This is the value that stands in until those
+	// tasks exist and loses authority the moment they do — see EffectivePoints
+	// — and it is never cleared or overwritten when they appear, since the
+	// estimate beside the eventual real breakdown is the only thing an
+	// estimate-vs-actual calibration could ever be built from.
+	EstimatedPoints *int `json:"estimatedPoints"`
 	// AssigneeUserID is the project member who owns this epic. App-only end to
 	// end, with no GitLab bridge — a backlog's rule, not a task's, since an
 	// epic has no GitLab counterpart to mirror onto. AssigneeUsername/
@@ -138,6 +153,7 @@ func fromRow(row db.Epic) Epic {
 		BaseBranch:                   row.BaseBranch,
 		AllowedScope:                 row.AllowedScope,
 		ForbiddenScope:               row.ForbiddenScope,
+		EstimatedPoints:              intPtr(row.EstimatedPoints),
 		AssigneeUserID:               uuidPtr(row.AssigneeUserID),
 		CreatedAt:                    row.CreatedAt.Time,
 		UpdatedAt:                    row.UpdatedAt.Time,
@@ -162,6 +178,7 @@ func fromListRow(row db.ListEpicsByProjectRow) Epic {
 		BaseBranch:                   row.BaseBranch,
 		AllowedScope:                 row.AllowedScope,
 		ForbiddenScope:               row.ForbiddenScope,
+		EstimatedPoints:              intPtr(row.EstimatedPoints),
 		AssigneeUserID:               uuidPtr(row.AssigneeUserID),
 		TaskCount:                    row.TaskCount,
 		ClosedTaskCount:              row.ClosedTaskCount,
@@ -183,6 +200,21 @@ func toDate(v *time.Time) pgtype.Date {
 		return pgtype.Date{}
 	}
 	return pgtype.Date{Time: *v, Valid: true}
+}
+
+func intPtr(v pgtype.Int4) *int {
+	if !v.Valid {
+		return nil
+	}
+	n := int(v.Int32)
+	return &n
+}
+
+func toInt4(v *int) pgtype.Int4 {
+	if v == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: int32(*v), Valid: true}
 }
 
 func uuidPtr(v pgtype.UUID) *uuid.UUID {
@@ -299,6 +331,10 @@ type CreateParams struct {
 	// AllowedScope/ForbiddenScope are optional and fall through the same way.
 	AllowedScope   string
 	ForbiddenScope string
+	// EstimatedPoints is optional: nil leaves the epic unestimated. Zero or
+	// negative is rejected with ErrInvalidEstimate — an epic estimated at no
+	// work and an epic nobody has estimated must stay distinguishable.
+	EstimatedPoints *int
 	// AssigneeUserID is optional: nil leaves the epic unassigned. A non-member
 	// is rejected with ErrAssigneeNotMember.
 	AssigneeUserID *uuid.UUID
@@ -323,6 +359,9 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 		ForbiddenScope: p.ForbiddenScope,
 	})
 	if err != nil {
+		return Epic{}, err
+	}
+	if err := validateEstimatedPoints(p.EstimatedPoints); err != nil {
 		return Epic{}, err
 	}
 	if err := s.validateBacklog(ctx, ownerID, projectID, p.BacklogID); err != nil {
@@ -350,6 +389,7 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 		BaseBranch:                   fields.BaseBranch,
 		AllowedScope:                 fields.AllowedScope,
 		ForbiddenScope:               fields.ForbiddenScope,
+		EstimatedPoints:              toInt4(p.EstimatedPoints),
 		AssigneeUserID:               toUUID(p.AssigneeUserID),
 	})
 	if err != nil {
@@ -474,6 +514,11 @@ type UpdateParams struct {
 	BaseBranch     optional.Optional[string]
 	AllowedScope   optional.Optional[string]
 	ForbiddenScope optional.Optional[string]
+	// EstimatedPoints absent keeps the current estimate; an explicit null
+	// clears it back to "unestimated". Nothing clears it automatically: an
+	// epic that has since been broken down keeps the number it was guessed at,
+	// EffectivePoints simply stops consulting it.
+	EstimatedPoints optional.Optional[*int]
 	// AssigneeUserID absent keeps the current assignee; an explicit null
 	// unassigns.
 	AssigneeUserID optional.Optional[*uuid.UUID]
@@ -514,6 +559,12 @@ func (s *Service) Update(ctx context.Context, ownerID, epicID uuid.UUID, p Updat
 	}
 	startDate := p.StartDate.Or(current.StartDate)
 	dueOn := p.DueOn.Or(current.DueOn)
+	estimatedPoints := p.EstimatedPoints.Or(current.EstimatedPoints)
+	if _, changed := p.EstimatedPoints.Get(); changed {
+		if err := validateEstimatedPoints(estimatedPoints); err != nil {
+			return Epic{}, err
+		}
+	}
 
 	// Only a value the caller actually sent is re-validated: the stored one
 	// was checked when it was written, and a backlog/link since deleted is
@@ -556,6 +607,7 @@ func (s *Service) Update(ctx context.Context, ownerID, epicID uuid.UUID, p Updat
 			BaseBranch:                   fields.BaseBranch,
 			AllowedScope:                 fields.AllowedScope,
 			ForbiddenScope:               fields.ForbiddenScope,
+			EstimatedPoints:              toInt4(estimatedPoints),
 			AssigneeUserID:               toUUID(newAssignee),
 		})
 		if err != nil {
@@ -741,4 +793,34 @@ func sameUUIDPtr(a, b *uuid.UUID) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// EffectivePoints resolves how much work an epic represents, which is the one
+// rule the two point sources have to be read through:
+//
+//   - once the epic has tasks, the sum of their sizes (taskPoints), because
+//     that is the real breakdown and the estimate was only ever standing in
+//     for it;
+//   - while it has none, its pre-breakdown EstimatedPoints;
+//   - with neither, unknown — ok=false, which callers must not flatten to 0.
+//
+// That last case is the bug issue #234 was filed for: internal/velocity's
+// forecast counted only tasks, so an epic with no tasks weighed zero and a
+// project with three refined-but-unbroken-down backlogs was told its remaining
+// work was one period away. Zero and unknown are different answers, and only
+// one of them is honest.
+//
+// taskPoints is nil when the epic has no tasks. The estimate is not consulted
+// when it is non-nil, which is what keeps the same work from being counted
+// twice — and why the estimate can be kept forever without ever contradicting
+// the tasks.
+func EffectivePoints(taskPoints, estimatedPoints *int) (int, bool) {
+	switch {
+	case taskPoints != nil:
+		return *taskPoints, true
+	case estimatedPoints != nil:
+		return *estimatedPoints, true
+	default:
+		return 0, false
+	}
 }

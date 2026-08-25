@@ -74,3 +74,19 @@ func normalize(in normalizeInput) (normalizedFields, error) {
 		ForbiddenScope: forbiddenScope,
 	}, nil
 }
+
+// validateEstimatedPoints rejects a non-positive estimate, mirroring the
+// column's own CHECK (000033). Deliberately not in internal/fieldnorm: that
+// package holds the rules an epic *shares* with a backlog, and a backlog has
+// no estimate — giving one a home there would be the first step toward
+// growing one.
+//
+// nil is valid and means "unestimated". Zero is not: it would be
+// indistinguishable from nil everywhere downstream, and "this epic is no
+// work" is not a thing anyone means to say.
+func validateEstimatedPoints(points *int) error {
+	if points != nil && *points <= 0 {
+		return ErrInvalidEstimate
+	}
+	return nil
+}

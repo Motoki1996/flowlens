@@ -37,6 +37,10 @@ type createEpicRequest struct {
 	// touch; omitted leaves them unset and the backlog's stand.
 	AllowedScope   string `json:"allowedScope"`
 	ForbiddenScope string `json:"forbiddenScope"`
+	// EstimatedPoints is the epic's pre-breakdown estimate; omitted or null
+	// leaves it unestimated. Not a size: it is superseded by the epic's tasks
+	// as soon as it has any.
+	EstimatedPoints *int `json:"estimatedPoints"`
 	// AssigneeUserID is the project member who owns this epic; omitted or null
 	// leaves it unassigned.
 	AssigneeUserID *uuid.UUID `json:"assigneeUserId"`
@@ -60,6 +64,7 @@ type updateEpicRequest struct {
 	BaseBranch                   optional.Optional[string]     `json:"baseBranch"`
 	AllowedScope                 optional.Optional[string]     `json:"allowedScope"`
 	ForbiddenScope               optional.Optional[string]     `json:"forbiddenScope"`
+	EstimatedPoints              optional.Optional[*int]       `json:"estimatedPoints"`
 	AssigneeUserID               optional.Optional[*uuid.UUID] `json:"assigneeUserId"`
 }
 
@@ -191,6 +196,7 @@ func (s *Server) handleCreateEpic(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:                   req.BaseBranch,
 		AllowedScope:                 req.AllowedScope,
 		ForbiddenScope:               req.ForbiddenScope,
+		EstimatedPoints:              req.EstimatedPoints,
 		AssigneeUserID:               req.AssigneeUserID,
 	})
 	if err != nil {
@@ -273,6 +279,7 @@ func (s *Server) handleUpdateEpic(w http.ResponseWriter, r *http.Request) {
 		BaseBranch:                   req.BaseBranch,
 		AllowedScope:                 req.AllowedScope,
 		ForbiddenScope:               req.ForbiddenScope,
+		EstimatedPoints:              req.EstimatedPoints,
 		AssigneeUserID:               req.AssigneeUserID,
 	})
 	if err != nil {
@@ -345,6 +352,8 @@ func writeEpicError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_base_branch", "baseBranch must be a valid git branch name, at most 255 characters")
 	case errors.Is(err, epic.ErrInvalidScope):
 		writeError(w, http.StatusBadRequest, "invalid_scope", "allowedScope/forbiddenScope must be at most 20000 characters")
+	case errors.Is(err, epic.ErrInvalidEstimate):
+		writeError(w, http.StatusBadRequest, "invalid_estimated_points", "estimatedPoints must be a positive integer")
 	case errors.Is(err, epic.ErrAssigneeNotMember):
 		writeError(w, http.StatusBadRequest, "invalid_assignee", "assignee must be a member of the project")
 	case errors.Is(err, epic.ErrLinkNotInProject):

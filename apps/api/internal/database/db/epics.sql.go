@@ -95,7 +95,7 @@ func (q *Queries) CountTasksInProjectByIDs(ctx context.Context, arg CountTasksIn
 
 const createEpic = `-- name: CreateEpic :one
 
-INSERT INTO epics (project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)
+INSERT INTO epics (project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id, estimated_points)
 VALUES (
     $1,
     $2,
@@ -110,9 +110,10 @@ VALUES (
     $10,
     $11,
     $12,
-    $13
+    $13,
+    $14
 )
-RETURNING id, project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, assignee_user_id, base_branch, allowed_scope, forbidden_scope, default_linked_gitlab_project_id, created_at, updated_at
+RETURNING id, project_id, backlog_id, name, description, position, start_date, due_on, priority, progress, assignee_user_id, base_branch, allowed_scope, forbidden_scope, default_linked_gitlab_project_id, created_at, updated_at, estimated_points
 `
 
 type CreateEpicParams struct {
@@ -129,6 +130,7 @@ type CreateEpicParams struct {
 	AllowedScope                 string      `json:"allowed_scope"`
 	ForbiddenScope               string      `json:"forbidden_scope"`
 	AssigneeUserID               pgtype.UUID `json:"assignee_user_id"`
+	EstimatedPoints              pgtype.Int4 `json:"estimated_points"`
 }
 
 // Epics (000032) are the optional rung between a backlog and its tasks.
@@ -141,7 +143,9 @@ type CreateEpicParams struct {
 // Every column here mirrors backlogs.sql's, deliberately — see the 000032
 // migration. backlog_id is the one addition, and it is nullable: an epic
 // outside any backlog is the Unclassified group, exactly as an unfiled task
-// is.
+// is. estimated_points (000033) is the second, and is nullable for a reason
+// of its own: NULL means "nobody has estimated this epic", which is not the
+// same statement as any number, least of all 0.
 func (q *Queries) CreateEpic(ctx context.Context, arg CreateEpicParams) (Epic, error) {
 	row := q.db.QueryRow(ctx, createEpic,
 		arg.ProjectID,
@@ -157,6 +161,7 @@ func (q *Queries) CreateEpic(ctx context.Context, arg CreateEpicParams) (Epic, e
 		arg.AllowedScope,
 		arg.ForbiddenScope,
 		arg.AssigneeUserID,
+		arg.EstimatedPoints,
 	)
 	var i Epic
 	err := row.Scan(
@@ -177,6 +182,7 @@ func (q *Queries) CreateEpic(ctx context.Context, arg CreateEpicParams) (Epic, e
 		&i.DefaultLinkedGitlabProjectID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EstimatedPoints,
 	)
 	return i, err
 }
@@ -204,7 +210,7 @@ func (q *Queries) DeleteEpicForOwner(ctx context.Context, arg DeleteEpicForOwner
 }
 
 const getEpicForOwner = `-- name: GetEpicForOwner :one
-SELECT e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at
+SELECT e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
 FROM epics e
 WHERE e.id = $1
   AND EXISTS (
@@ -239,6 +245,7 @@ func (q *Queries) GetEpicForOwner(ctx context.Context, arg GetEpicForOwnerParams
 		&i.DefaultLinkedGitlabProjectID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EstimatedPoints,
 	)
 	return i, err
 }
@@ -310,7 +317,7 @@ const listEpicsByProject = `-- name: ListEpicsByProject :many
 SELECT
   e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.created_at, e.updated_at,
   e.start_date, e.due_on, e.priority, e.progress, e.default_linked_gitlab_project_id, e.base_branch,
-  e.allowed_scope, e.forbidden_scope, e.assignee_user_id,
+  e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM epics e
@@ -363,6 +370,7 @@ type ListEpicsByProjectRow struct {
 	AllowedScope                 string             `json:"allowed_scope"`
 	ForbiddenScope               string             `json:"forbidden_scope"`
 	AssigneeUserID               pgtype.UUID        `json:"assignee_user_id"`
+	EstimatedPoints              pgtype.Int4        `json:"estimated_points"`
 	TaskCount                    int64              `json:"task_count"`
 	ClosedTaskCount              int64              `json:"closed_task_count"`
 }
@@ -410,6 +418,7 @@ func (q *Queries) ListEpicsByProject(ctx context.Context, arg ListEpicsByProject
 			&i.AllowedScope,
 			&i.ForbiddenScope,
 			&i.AssigneeUserID,
+			&i.EstimatedPoints,
 			&i.TaskCount,
 			&i.ClosedTaskCount,
 		); err != nil {
@@ -474,13 +483,13 @@ func (q *Queries) ReorderEpics(ctx context.Context, arg ReorderEpicsParams) erro
 const updateEpicForOwner = `-- name: UpdateEpicForOwner :one
 UPDATE epics e
 SET backlog_id = $2, name = $3, description = $4, position = $5, start_date = $6, due_on = $7, priority = $8, progress = $9, default_linked_gitlab_project_id = $10, base_branch = $11, allowed_scope = $12, forbidden_scope = $13,
-    assignee_user_id = $14, updated_at = now()
+    assignee_user_id = $14, estimated_points = $15, updated_at = now()
 WHERE e.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm
-    WHERE pm.project_id = e.project_id AND pm.user_id = $15 AND pm.role IN ('member', 'owner')
+    WHERE pm.project_id = e.project_id AND pm.user_id = $16 AND pm.role IN ('member', 'owner')
   )
-RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at
+RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.position, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
 `
 
 type UpdateEpicForOwnerParams struct {
@@ -498,6 +507,7 @@ type UpdateEpicForOwnerParams struct {
 	AllowedScope                 string      `json:"allowed_scope"`
 	ForbiddenScope               string      `json:"forbidden_scope"`
 	AssigneeUserID               pgtype.UUID `json:"assignee_user_id"`
+	EstimatedPoints              pgtype.Int4 `json:"estimated_points"`
 	OwnerUserID                  uuid.UUID   `json:"owner_user_id"`
 }
 
@@ -520,6 +530,7 @@ func (q *Queries) UpdateEpicForOwner(ctx context.Context, arg UpdateEpicForOwner
 		arg.AllowedScope,
 		arg.ForbiddenScope,
 		arg.AssigneeUserID,
+		arg.EstimatedPoints,
 		arg.OwnerUserID,
 	)
 	var i Epic
@@ -541,6 +552,7 @@ func (q *Queries) UpdateEpicForOwner(ctx context.Context, arg UpdateEpicForOwner
 		&i.DefaultLinkedGitlabProjectID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EstimatedPoints,
 	)
 	return i, err
 }

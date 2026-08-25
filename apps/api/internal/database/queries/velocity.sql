@@ -57,3 +57,38 @@ WHERE t.project_id = sqlc.arg(project_id)
     WHERE pm.project_id = t.project_id AND pm.user_id = sqlc.arg(owner_user_id)
   )
 GROUP BY t.size;
+
+-- ListUnbrokenDownEpicEstimatesForVelocity returns one row per epic in
+-- projectID that has no tasks at all, carrying its estimated_points (000033),
+-- NULL when nobody has estimated it. It is the other half of the remaining
+-- work: CountOpenTasksBySizeForVelocity above sees only tasks, so before
+-- issue #234 an epic created by /flowlens:breakdown-epics but not yet broken
+-- down weighed exactly nothing and the forecast quietly understated itself.
+--
+-- The NOT EXISTS is the whole correctness argument and the easiest thing here
+-- to get wrong: an epic that *does* have tasks is already counted, task by
+-- task, by CountOpenTasksBySizeForVelocity. Dropping the clause would add its
+-- pre-breakdown estimate on top of its real tasks and count it twice. The
+-- estimate is deliberately never deleted when the tasks appear (it is the
+-- only record of what was guessed), so "has tasks" is the only signal that it
+-- has stopped being the truth.
+--
+-- A done epic is excluded for the same reason CountOpenTasksBySizeForVelocity
+-- excludes progress='done': the forecast is about work still outstanding. Its
+-- status is not checked, because an epic has none — epics are app-only and
+-- have no GitLab issue state to close.
+--
+-- Rows with a NULL estimate are returned rather than filtered out: how many
+-- epics nobody has estimated is itself part of the answer (internal/velocity
+-- reports it as unestimatedEpicCount), and silently dropping them is how the
+-- number gets understated a second time.
+--
+-- name: ListUnbrokenDownEpicEstimatesForVelocity :many
+SELECT e.id, e.estimated_points FROM epics e
+WHERE e.project_id = sqlc.arg(project_id)
+  AND e.progress <> 'done'
+  AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.epic_id = e.id)
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = sqlc.arg(owner_user_id)
+  );

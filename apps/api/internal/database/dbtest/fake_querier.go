@@ -892,6 +892,38 @@ func (f *FakeQuerier) SeedEpic(projectID, backlogID uuid.UUID, name string) db.E
 	return e
 }
 
+// SeedEpicEstimatedPoints sets an existing epic's pre-breakdown estimate
+// (000033) directly. points <= 0 stores NULL, i.e. "unestimated" — the fake
+// does not re-check the column's CHECK, which internal/epic enforces.
+func (f *FakeQuerier) SeedEpicEstimatedPoints(epicID uuid.UUID, points int) db.Epic {
+	e := f.epicsByID[epicID]
+	if points > 0 {
+		e.EstimatedPoints = pgtype.Int4{Int32: int32(points), Valid: true}
+	} else {
+		e.EstimatedPoints = pgtype.Int4{}
+	}
+	f.storeEpic(e)
+	return e
+}
+
+// SeedEpicProgress sets an existing epic's progress directly.
+func (f *FakeQuerier) SeedEpicProgress(epicID uuid.UUID, progress string) db.Epic {
+	e := f.epicsByID[epicID]
+	e.Progress = progress
+	f.storeEpic(e)
+	return e
+}
+
+func (f *FakeQuerier) storeEpic(e db.Epic) {
+	f.epicsByID[e.ID] = e
+	for i, x := range f.epics {
+		if x.ID == e.ID {
+			f.epics[i] = e
+			return
+		}
+	}
+}
+
 func (f *FakeQuerier) nextEpicPosition(projectID uuid.UUID) int32 {
 	var max int32 = -1
 	for _, e := range f.epics {
@@ -918,6 +950,7 @@ func (f *FakeQuerier) CreateEpic(_ context.Context, arg db.CreateEpicParams) (db
 		BaseBranch:                   arg.BaseBranch,
 		AllowedScope:                 arg.AllowedScope,
 		ForbiddenScope:               arg.ForbiddenScope,
+		EstimatedPoints:              arg.EstimatedPoints,
 		AssigneeUserID:               arg.AssigneeUserID,
 		CreatedAt:                    now(),
 		UpdatedAt:                    now(),
@@ -972,6 +1005,7 @@ func (f *FakeQuerier) ListEpicsByProject(_ context.Context, arg db.ListEpicsByPr
 			BaseBranch:                   e.BaseBranch,
 			AllowedScope:                 e.AllowedScope,
 			ForbiddenScope:               e.ForbiddenScope,
+			EstimatedPoints:              e.EstimatedPoints,
 			AssigneeUserID:               e.AssigneeUserID,
 			TaskCount:                    taskCount,
 			ClosedTaskCount:              closedTaskCount,
@@ -1074,6 +1108,7 @@ func (f *FakeQuerier) UpdateEpicForOwner(_ context.Context, arg db.UpdateEpicFor
 	existing.BaseBranch = arg.BaseBranch
 	existing.AllowedScope = arg.AllowedScope
 	existing.ForbiddenScope = arg.ForbiddenScope
+	existing.EstimatedPoints = arg.EstimatedPoints
 	existing.AssigneeUserID = arg.AssigneeUserID
 	existing.UpdatedAt = now()
 
@@ -1719,6 +1754,36 @@ func (f *FakeQuerier) CountOpenTasksBySizeForVelocity(_ context.Context, arg db.
 		items = append(items, db.CountOpenTasksBySizeForVelocityRow{Size: size, Count: bySize[size]})
 	}
 	return items, nil
+}
+
+// ListUnbrokenDownEpicEstimatesForVelocity mirrors the SQL: projectID's
+// not-done epics that have no tasks at all, gated by ownerUserID's
+// membership, each with its estimated_points (invalid when unestimated).
+// The "no tasks at all" filter is the one that matters — an epic with tasks
+// is already counted task by task by CountOpenTasksBySizeForVelocity, and
+// returning it here too would double-count the same work.
+func (f *FakeQuerier) ListUnbrokenDownEpicEstimatesForVelocity(_ context.Context, arg db.ListUnbrokenDownEpicEstimatesForVelocityParams) ([]db.ListUnbrokenDownEpicEstimatesForVelocityRow, error) {
+	if !f.hasMembership(arg.ProjectID, arg.OwnerUserID) {
+		return []db.ListUnbrokenDownEpicEstimatesForVelocityRow{}, nil
+	}
+	items := []db.ListUnbrokenDownEpicEstimatesForVelocityRow{}
+	for _, e := range f.epics {
+		if e.ProjectID != arg.ProjectID || e.Progress == "done" || f.epicHasTasks(e.ID) {
+			continue
+		}
+		items = append(items, db.ListUnbrokenDownEpicEstimatesForVelocityRow{ID: e.ID, EstimatedPoints: e.EstimatedPoints})
+	}
+	return items, nil
+}
+
+// epicHasTasks mirrors the NOT EXISTS subquery above.
+func (f *FakeQuerier) epicHasTasks(epicID uuid.UUID) bool {
+	for _, t := range f.tasks {
+		if t.EpicID.Valid && t.EpicID.Bytes == epicID {
+			return true
+		}
+	}
+	return false
 }
 
 // backlogsInFlowMetricsRange returns the IDs of projectID's backlogs that

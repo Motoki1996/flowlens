@@ -3496,6 +3496,56 @@ components:
             - string
             - 'null'
           format: date-time
+    EpicSummary:
+      type: object
+      description: 'The slice of an Epic embedded in its tasks'' own responses, so a caller about to work a task sees what the rung above it says — its base branch above all — without a second call to GET /epics/{epicID}. Every field means exactly what the Epic''s of the same name does, and carries the epic''s own value: nothing here is resolved against the backlog below it, which is GET /tasks/{taskID}/context''s job.'
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        startDate:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        dueOn:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        priority:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+            - urgent
+        progress:
+          type: string
+          enum:
+            - not_started
+            - in_progress
+            - on_hold
+            - done
+        baseBranch:
+          type: string
+          description: The branch tasks in this epic should branch from; "" when the epic sets none, in which case the backlog's applies.
+        allowedScope:
+          type: string
+          description: Paths tasks in this epic may touch; "" when the epic sets none.
+        forbiddenScope:
+          type: string
+          description: Paths tasks in this epic must not touch; "" when the epic sets none.
+        estimatedPoints:
+          type:
+            - integer
+            - 'null'
+          minimum: 1
+          description: The epic's pre-breakdown estimate; null when nobody has estimated it. See Epic.estimatedPoints.
     Task:
       type: object
       properties:
@@ -3611,6 +3661,11 @@ components:
             - type: 'null'
         aiContext:
           $ref: '#/components/schemas/TaskAIContext'
+        epic:
+          anyOf:
+            - $ref: '#/components/schemas/EpicSummary'
+            - type: 'null'
+          description: The task's parent epic, embedded so a caller reading one task also gets the epic's base branch and change scope. null when the task has no epic, and also on every list endpoint — only GET /tasks/{taskID} populates it.
     TaskWithProject:
       allOf:
         - $ref: '#/components/schemas/Task'

@@ -1947,6 +1947,79 @@ func TestService_Context_ResolvesDefaultsEpicFirstPerField(t *testing.T) {
 	assert.Equal(t, e.ID, *got.EpicID)
 }
 
+// A single-task read carries its epic with it, so a caller about to work the
+// task never has to fetch the rung above it separately. The embedded copy is
+// the epic's *own* values — unlike Context, nothing here falls through to the
+// backlog.
+func TestService_Get_EmbedsItsEpicsOwnValues(t *testing.T) {
+	q := dbtest.New()
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	projects := project.NewService(q)
+	b, err := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, projects).Create(ctx, owner, p.ID, backlog.CreateParams{
+		Name:           "Sprint 1",
+		BaseBranch:     "main",
+		AllowedScope:   "apps/**",
+		ForbiddenScope: "migrations/**",
+	})
+	require.NoError(t, err)
+	points := 13
+	e, err := epic.NewService(q, dbtest.FakeTxRunner{Q: q}, projects).Create(ctx, owner, p.ID, epic.CreateParams{
+		Name:            "Screens",
+		Description:     "Every screen the refined backlog was cut into",
+		BacklogID:       &b.ID,
+		BaseBranch:      "release/2.4",
+		Priority:        epic.PriorityHigh,
+		EstimatedPoints: &points,
+	})
+	require.NoError(t, err)
+
+	svc := newService(q)
+	tsk, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Build it", EpicID: &e.ID})
+	require.NoError(t, err)
+
+	got, err := svc.Get(ctx, owner, tsk.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got.Epic)
+	assert.Equal(t, e.ID, got.Epic.ID)
+	assert.Equal(t, "Screens", got.Epic.Name)
+	assert.Equal(t, "Every screen the refined backlog was cut into", got.Epic.Description)
+	assert.Equal(t, "release/2.4", got.Epic.BaseBranch)
+	assert.Equal(t, epic.PriorityHigh, got.Epic.Priority)
+	assert.Equal(t, epic.ProgressNotStarted, got.Epic.Progress)
+	require.NotNil(t, got.Epic.EstimatedPoints)
+	assert.Equal(t, 13, *got.Epic.EstimatedPoints)
+	assert.Empty(t, got.Epic.AllowedScope, "the epic sets no scope; the backlog's is Context's job, not this one's")
+	assert.Empty(t, got.Epic.ForbiddenScope)
+}
+
+// A task sitting directly in its backlog has no epic to embed, and a list
+// never pays for one — the embedded copy is a single-read convenience.
+func TestService_Get_OmitsEpicWhenTaskHasNone_AndListNeverEmbedsOne(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	e := q.SeedEpic(p.ID, b.ID, "Screens")
+	loose := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Directly in the backlog")
+	filed := q.SeedTaskInBacklog(p.ID, b.ID, owner, "In the epic")
+	q.SeedTaskEpic(filed.ID, e.ID)
+
+	got, err := svc.Get(ctx, owner, loose.ID)
+	require.NoError(t, err)
+	assert.Nil(t, got.Epic)
+
+	listed, err := svc.List(ctx, owner, p.ID, task.ListFilter{})
+	require.NoError(t, err)
+	require.Len(t, listed, 2)
+	for _, l := range listed {
+		assert.Nil(t, l.Epic, "list rows carry epicId only")
+	}
+}
+
 func TestService_List_FiltersByEpic(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)

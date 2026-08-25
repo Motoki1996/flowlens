@@ -252,6 +252,18 @@ type Task struct {
 	UpdatedAt               time.Time   `json:"updatedAt"`
 	Gitlab                  *GitlabInfo `json:"gitlab"`
 	AIContext               AIContext   `json:"aiContext"`
+	// Epic is the task's parent epic, embedded so a caller about to work the
+	// task learns what the rung above it says — its base branch above all, and
+	// the scope pair beside it — without a second call to
+	// GET /api/v1/epics/{epicID}. nil when EpicID is nil.
+	//
+	// Populated only by Get, the single-task read: a list would need one
+	// lookup per row for a field a collection has no room to show, the same
+	// line internal/epic draws around TaskCount. The values are the epic's own
+	// and are *not* resolved against its backlog — that resolution is
+	// GET /api/v1/tasks/{taskID}/context's job, and stays the one answer to
+	// "what applies to this task".
+	Epic *epic.Summary `json:"epic"`
 }
 
 // fromRow maps a database row to the domain model.
@@ -1149,7 +1161,32 @@ func (s *Service) Get(ctx context.Context, ownerID, taskID uuid.UUID) (Task, err
 	if err := s.attachAssigneeName(ctx, &t); err != nil {
 		return Task{}, err
 	}
+	if err := s.attachEpicSummary(ctx, ownerID, &t); err != nil {
+		return Task{}, err
+	}
 	return t, nil
+}
+
+// attachEpicSummary fills t.Epic from t.EpicID, scoped through the same owner
+// the task itself was read for — a member of the task's project is by
+// definition a member of its epic's, since an epic's backlog must belong to
+// its own project. An epic that has disappeared between the two reads leaves
+// t.Epic nil rather than failing the whole task read: the embedded copy is a
+// convenience, and the task's own epicId still reports the link.
+func (s *Service) attachEpicSummary(ctx context.Context, ownerID uuid.UUID, t *Task) error {
+	if t.EpicID == nil {
+		return nil
+	}
+	e, err := s.epics.Get(ctx, ownerID, *t.EpicID)
+	if err != nil {
+		if errors.Is(err, epic.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("task: epic summary: %w", err)
+	}
+	summary := e.Summary()
+	t.Epic = &summary
+	return nil
 }
 
 // ProjectID returns the project taskID belongs to, with no owner check —

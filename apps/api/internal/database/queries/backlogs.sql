@@ -45,26 +45,45 @@ RETURNING *;
 -- as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 -- in practice — internal/backlog sets at most one from a single ?sort=.
 --
--- The LEFT JOIN to tasks (issue #144) computes each backlog's task_count and
+-- The join to tasks (issue #144) computes each backlog's task_count and
 -- closed_task_count in the same query, so the Backlog collection screen (its
 -- List row count, Board card ratio and Timeline bar fill) doesn't need to
 -- fetch every task in the project just to derive them.
+--
+-- The counts come from a *pre-aggregated derived table* rather than a plain
+-- LEFT JOIN to tasks plus an outer GROUP BY. Both return the same rows, but
+-- the outer form materializes one row per (backlog, task) pair — carrying
+-- every backlog column, description included — and only then collapses them,
+-- so what it sorts and groups grows with the project's task count. Grouping
+-- inside the subquery collapses tasks to one row per backlog first, leaving
+-- the outer query one row per backlog throughout, and
+-- idx_tasks_project_id_backlog_id covers exactly that scan. The subquery is
+-- filtered by project_id too (not just joined on backlog_id) so it never
+-- aggregates another project's tasks before throwing them away, and its
+-- counts are COALESCEd because a backlog with no tasks joins to NULL rather
+-- than to 0.
 -- name: ListBacklogsByProject :many
 SELECT
   b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at,
   b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch,
   b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at,
-  COUNT(t.id) AS task_count,
-  COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
+  COALESCE(tc.task_count, 0)::bigint AS task_count,
+  COALESCE(tc.closed_task_count, 0)::bigint AS closed_task_count
 FROM backlogs b
-LEFT JOIN tasks t ON t.backlog_id = b.id
-WHERE b.project_id = $1
+LEFT JOIN (
+  SELECT t.backlog_id,
+         COUNT(*) AS task_count,
+         COUNT(*) FILTER (WHERE t.status = 'closed') AS closed_task_count
+  FROM tasks t
+  WHERE t.project_id = sqlc.arg(project_id) AND t.backlog_id IS NOT NULL
+  GROUP BY t.backlog_id
+) tc ON tc.backlog_id = b.id
+WHERE b.project_id = sqlc.arg(project_id)
   AND (sqlc.arg(status)::text = '' OR b.status = sqlc.arg(status))
   AND (sqlc.arg(priority)::text = '' OR b.priority = sqlc.arg(priority))
   AND (sqlc.arg(progress)::text = '' OR b.progress = sqlc.arg(progress))
   AND (sqlc.narg(assignee_user_id)::uuid IS NULL OR b.assignee_user_id = sqlc.narg(assignee_user_id))
   AND (NOT sqlc.arg(assignee_unassigned)::boolean OR b.assignee_user_id IS NULL)
-GROUP BY b.id
 ORDER BY
   (CASE WHEN sqlc.arg(sort_by_priority)::boolean THEN
      CASE b.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END

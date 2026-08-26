@@ -142,4 +142,71 @@ describe("AllTasksSection", () => {
 
     expect(push).toHaveBeenCalledWith("/tasks?projectId=p2");
   });
+
+  // The pager is the only place a page number is set; every filter clears it
+  // (changeFilter), since narrowing while standing on page 4 would land on a
+  // page the new filter may not have.
+  describe("paging", () => {
+    const paged = [makeTask({ dueOn: "2026-02-01T00:00:00Z" })];
+
+    it("has no pager when everything fits in one page", () => {
+      render(
+        <AllTasksSection tasks={paged} projects={projects} status="open" sort="dueOn" />,
+      );
+      expect(screen.queryByRole("navigation", { name: "Pagination" })).not.toBeInTheDocument();
+    });
+
+    it("walks to the next page and reports the server's range and total", () => {
+      render(
+        <AllTasksSection
+          tasks={paged}
+          projects={projects}
+          status="open"
+          sort="dueOn"
+          page={2}
+          perPage={50}
+          nextPage={3}
+          totalCount={128}
+        />,
+      );
+      expect(screen.getByText("51–51 of 128")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      expect(push).toHaveBeenCalledWith("/tasks?page=3");
+    });
+
+    it("drops ?page= entirely when stepping back to the first page", () => {
+      render(
+        <AllTasksSection
+          tasks={paged}
+          projects={projects}
+          status="open"
+          sort="dueOn"
+          page={2}
+          perPage={50}
+          nextPage={0}
+          totalCount={51}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+      fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+      expect(push).toHaveBeenCalledWith("/tasks");
+    });
+
+    it("resets the page when a filter changes", () => {
+      render(
+        <AllTasksSection
+          tasks={paged}
+          projects={projects}
+          status="open"
+          sort="dueOn"
+          page={4}
+          perPage={50}
+          nextPage={5}
+          totalCount={400}
+        />,
+      );
+      fireEvent.click(screen.getByRole("checkbox", { name: "Assigned to me" }));
+      expect(push).toHaveBeenCalledWith("/tasks?assignee=me");
+    });
+  });
 });

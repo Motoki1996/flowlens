@@ -271,6 +271,148 @@ func (q *Queries) CountFailedSyncTasksByProjectForOwner(ctx context.Context, arg
 	return count, err
 }
 
+const countTasksByProject = `-- name: CountTasksByProject :one
+SELECT
+  count(*) AS total_count,
+  count(*) FILTER (WHERE tasks.status = 'open') AS open_count
+FROM tasks
+LEFT JOIN gitlab_connections gc ON gc.project_id = tasks.project_id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = $1
+WHERE tasks.project_id = $2
+  AND (NOT $3::boolean OR tasks.backlog_id IS NULL)
+  AND ($4::uuid IS NULL OR tasks.backlog_id = $4)
+  AND ($5::uuid IS NULL OR tasks.epic_id = $5)
+  AND (NOT $6::boolean OR tasks.epic_id IS NULL)
+  AND ($7::text = '' OR tasks.status = $7)
+  AND ($8::text = '' OR tasks.priority = $8)
+  AND ($9::text = '' OR tasks.progress = $9)
+  AND ($10::text = '' OR tasks.size = $10)
+  AND ($1::uuid IS NULL
+       OR tasks.assignee_user_id = $1
+       OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (NOT $11::boolean
+       OR (tasks.assignee_user_id IS NULL AND tasks.assignee_gitlab_user_id IS NULL))
+  AND ($12::text = '' OR tasks.search_vector @@ websearch_to_tsquery('simple', $12::text))
+`
+
+type CountTasksByProjectParams struct {
+	AssigneeUserID     pgtype.UUID `json:"assignee_user_id"`
+	ProjectID          uuid.UUID   `json:"project_id"`
+	Unassigned         bool        `json:"unassigned"`
+	BacklogID          pgtype.UUID `json:"backlog_id"`
+	EpicID             pgtype.UUID `json:"epic_id"`
+	EpicUnfiled        bool        `json:"epic_unfiled"`
+	Status             string      `json:"status"`
+	Priority           string      `json:"priority"`
+	Progress           string      `json:"progress"`
+	Size               string      `json:"size"`
+	AssigneeUnassigned bool        `json:"assignee_unassigned"`
+	Q                  string      `json:"q"`
+}
+
+type CountTasksByProjectRow struct {
+	TotalCount int64 `json:"total_count"`
+	OpenCount  int64 `json:"open_count"`
+}
+
+// CountTasksByProject is ListTasksByProject's total: the same scoping and
+// the same filters, minus the ordering and paging. The collection view needs
+// it for the same reason CountMergeRequestsByProject exists — a paged list
+// can no longer be counted client-side by its length, and the project
+// sidebar's task badges are counts rather than lists.
+func (q *Queries) CountTasksByProject(ctx context.Context, arg CountTasksByProjectParams) (CountTasksByProjectRow, error) {
+	row := q.db.QueryRow(ctx, countTasksByProject,
+		arg.AssigneeUserID,
+		arg.ProjectID,
+		arg.Unassigned,
+		arg.BacklogID,
+		arg.EpicID,
+		arg.EpicUnfiled,
+		arg.Status,
+		arg.Priority,
+		arg.Progress,
+		arg.Size,
+		arg.AssigneeUnassigned,
+		arg.Q,
+	)
+	var i CountTasksByProjectRow
+	err := row.Scan(&i.TotalCount, &i.OpenCount)
+	return i, err
+}
+
+const countTasksForMember = `-- name: CountTasksForMember :one
+SELECT count(*)
+FROM tasks t
+JOIN project_members pm ON pm.project_id = t.project_id
+LEFT JOIN gitlab_connections gc ON gc.project_id = t.project_id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = $1
+WHERE pm.user_id = $2
+  AND ($3::text = '' OR t.status = $3)
+  AND ($4::text = '' OR t.priority = $4)
+  AND ($5::text = '' OR t.progress = $5)
+  AND ($6::text = '' OR t.size = $6)
+  AND ($7::uuid IS NULL OR t.epic_id = $7)
+  AND (NOT $8::boolean OR t.epic_id IS NULL)
+  AND ($9::date IS NULL OR t.due_on <= $9)
+  AND ($10::date IS NULL OR t.due_on >= $10)
+  AND ($11::date IS NULL OR t.start_date <= $11)
+  AND (cardinality($12::uuid[]) = 0 OR t.project_id = ANY($12::uuid[]))
+  AND ($1::uuid IS NULL
+       OR t.assignee_user_id = $1
+       OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (NOT $13::boolean
+       OR (t.assignee_user_id IS NULL AND t.assignee_gitlab_user_id IS NULL))
+  AND ($14::text = '' OR t.search_vector @@ websearch_to_tsquery('simple', $14::text))
+`
+
+type CountTasksForMemberParams struct {
+	AssigneeUserID     pgtype.UUID `json:"assignee_user_id"`
+	OwnerUserID        uuid.UUID   `json:"owner_user_id"`
+	Status             string      `json:"status"`
+	Priority           string      `json:"priority"`
+	Progress           string      `json:"progress"`
+	Size               string      `json:"size"`
+	EpicID             pgtype.UUID `json:"epic_id"`
+	EpicUnfiled        bool        `json:"epic_unfiled"`
+	DueBefore          pgtype.Date `json:"due_before"`
+	DueAfter           pgtype.Date `json:"due_after"`
+	StartedBefore      pgtype.Date `json:"started_before"`
+	ProjectIds         []uuid.UUID `json:"project_ids"`
+	AssigneeUnassigned bool        `json:"assignee_unassigned"`
+	Q                  string      `json:"q"`
+}
+
+// CountTasksForMember is ListTasksForMember's total, with the same
+// membership scoping and the same filters, minus the ordering and paging.
+// Without it the cross-project collection could only ever report the length
+// of the page in hand: the list used to be capped by a bare LIMIT with no
+// OFFSET, so anything past the cap was not merely unpaged but unreachable,
+// and silently so.
+//
+// The user_gitlab_identities join is kept because the assignee filter reads
+// it; the projects join is not, since nothing here selects a project name.
+func (q *Queries) CountTasksForMember(ctx context.Context, arg CountTasksForMemberParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTasksForMember,
+		arg.AssigneeUserID,
+		arg.OwnerUserID,
+		arg.Status,
+		arg.Priority,
+		arg.Progress,
+		arg.Size,
+		arg.EpicID,
+		arg.EpicUnfiled,
+		arg.DueBefore,
+		arg.DueAfter,
+		arg.StartedBefore,
+		arg.ProjectIds,
+		arg.AssigneeUnassigned,
+		arg.Q,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createTask = `-- name: CreateTask :one
 
 INSERT INTO tasks (
@@ -521,7 +663,10 @@ ORDER BY
   (CASE WHEN $15::boolean THEN
      CASE tasks.size WHEN 'xl' THEN 5 WHEN 'l' THEN 4 WHEN 'm' THEN 3 WHEN 's' THEN 2 WHEN 'xs' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
+  (CASE WHEN $16::boolean THEN tasks.due_on END) ASC,
+  (CASE WHEN $17::boolean THEN tasks.updated_at END) DESC,
   tasks.created_at ASC
+LIMIT $19 OFFSET $18
 `
 
 type ListTasksByProjectParams struct {
@@ -540,6 +685,10 @@ type ListTasksByProjectParams struct {
 	SortByPriority     bool        `json:"sort_by_priority"`
 	SortByProgress     bool        `json:"sort_by_progress"`
 	SortBySize         bool        `json:"sort_by_size"`
+	SortByDueOn        bool        `json:"sort_by_due_on"`
+	SortByUpdatedAt    bool        `json:"sort_by_updated_at"`
+	OffsetCount        int32       `json:"offset_count"`
+	LimitCount         int32       `json:"limit_count"`
 }
 
 // ListTasksByProject's priority, progress and size filters and sorts follow the same
@@ -568,6 +717,19 @@ type ListTasksByProjectParams struct {
 // assignee_gitlab_user_id, so that half of the OR simply never matches
 // instead of erroring. assignee_unassigned is the complement: assigned to
 // nobody on either axis.
+// ListTasksByProject's dueOn and updatedAt sorts follow the same guarded-CASE
+// shape as the three rank sorts, and for the same reason they must live in
+// SQL rather than in Go: this list is paged, so the ORDER BY decides which
+// rows a page *contains*, not merely the sequence they arrive in. When a flag
+// is false its CASE is NULL for every row, which is a true tie that leaves the
+// created_at order untouched — and due_on ASC's default NULLS LAST is exactly
+// "a task with no due date sorts last", so it needs no guard of its own.
+//
+// LIMIT/OFFSET paging follows the same "fetch one extra row to detect a next
+// page" convention ListMergeRequestsByProject and
+// ListWebhookEventsByLinkedGitlabProjectID use. A project accumulates tasks
+// without bound, and this view used to return every one of them — with every
+// column, description included — in a single response.
 // ListTasksByProject's q filter (issue #106) matches tasks.search_vector
 // (the 'simple'-config tsvector generated column, see the 000016
 // migration) against websearch_to_tsquery, GIN-indexed; an empty q disables
@@ -589,6 +751,10 @@ func (q *Queries) ListTasksByProject(ctx context.Context, arg ListTasksByProject
 		arg.SortByPriority,
 		arg.SortByProgress,
 		arg.SortBySize,
+		arg.SortByDueOn,
+		arg.SortByUpdatedAt,
+		arg.OffsetCount,
+		arg.LimitCount,
 	)
 	if err != nil {
 		return nil, err
@@ -754,7 +920,7 @@ ORDER BY
   (CASE WHEN $15::text = 'updatedAt' THEN t.updated_at END) DESC,
   t.due_on ASC,
   t.created_at ASC
-LIMIT $16
+LIMIT $17 OFFSET $16
 `
 
 type ListTasksForMemberParams struct {
@@ -773,6 +939,7 @@ type ListTasksForMemberParams struct {
 	AssigneeUnassigned bool        `json:"assignee_unassigned"`
 	Q                  string      `json:"q"`
 	Sort               string      `json:"sort"`
+	OffsetCount        int32       `json:"offset_count"`
 	LimitCount         int32       `json:"limit_count"`
 }
 
@@ -843,6 +1010,7 @@ func (q *Queries) ListTasksForMember(ctx context.Context, arg ListTasksForMember
 		arg.AssigneeUnassigned,
 		arg.Q,
 		arg.Sort,
+		arg.OffsetCount,
 		arg.LimitCount,
 	)
 	if err != nil {

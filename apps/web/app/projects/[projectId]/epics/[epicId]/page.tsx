@@ -5,6 +5,7 @@ import {
   getLinkedGitlabProjects,
   getProject,
   getTasks,
+  MAX_TASKS_PER_PAGE,
 } from "@/lib/api";
 import { backlogPath, backlogsPath, epicsPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
@@ -32,7 +33,7 @@ export default async function EpicPage({
   let projectTasks: Task[] = [];
   let tasksError = false;
   try {
-    projectTasks = await getTasks(projectId);
+    projectTasks = (await getTasks(projectId, { perPage: MAX_TASKS_PER_PAGE })).tasks;
   } catch {
     tasksError = true;
   }

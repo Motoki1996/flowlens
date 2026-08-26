@@ -5,6 +5,7 @@ import {
   getLinkedGitlabProjects,
   getProject,
   getTasks,
+  MAX_TASKS_PER_PAGE,
 } from "@/lib/api";
 import { backlogsPath } from "@/lib/routes";
 import { Breadcrumbs } from "@/components/Breadcrumbs";
@@ -42,8 +43,9 @@ export default async function BacklogPage({
   let tasks: Task[] = [];
   let tasksError = false;
   try {
-    const projectTasks = await getTasks(projectId);
-    tasks = projectTasks.filter((t) => t.backlogId === backlog.id);
+    // Filtered server-side rather than by pulling the project's tasks and
+    // narrowing here: this card only ever shows this backlog's own.
+    tasks = (await getTasks(projectId, { backlogId: backlog.id, perPage: MAX_TASKS_PER_PAGE })).tasks;
   } catch {
     tasksError = true;
   }

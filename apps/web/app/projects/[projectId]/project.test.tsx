@@ -22,7 +22,7 @@ const getProjectMetrics = vi.fn();
 vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
   getProject: (id: string) => getProject(id),
-  getTasks: (id: string) => getTasks(id),
+  getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
   getBacklogs: (id: string) => getBacklogs(id),
   getEpics: (id: string) => getEpics(id),
   getGitlabConnection: (id: string) => getGitlabConnection(id),
@@ -43,6 +43,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import ProjectPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 const project: Project = {
   id: "1",
@@ -55,7 +56,7 @@ const project: Project = {
 
 describe("ProjectPage", () => {
   beforeEach(() => {
-    getTasks.mockResolvedValue([]);
+    getTasks.mockResolvedValue(taskPage([]));
     getBacklogs.mockResolvedValue([]);
     getEpics.mockResolvedValue([]);
     getGitlabConnection.mockResolvedValue(null);
@@ -70,7 +71,7 @@ describe("ProjectPage", () => {
     render(await ProjectPage({ params: Promise.resolve({ projectId: "1" }) }));
     expect(screen.getByRole("heading", { name: "Alpha" })).toBeInTheDocument();
     expect(getProject).toHaveBeenCalledWith("1");
-    expect(getTasks).toHaveBeenCalledWith("1");
+    expect(getTasks).toHaveBeenCalledWith("1", { perPage: 1 });
     expect(getBacklogs).toHaveBeenCalledWith("1");
     expect(getFailedSyncJobs).toHaveBeenCalledWith("1");
   });
@@ -101,10 +102,10 @@ describe("ProjectPage", () => {
     getCurrentUser.mockResolvedValue(user);
     getProject.mockResolvedValue(project);
     getBacklogs.mockResolvedValue([{ id: "b1" }, { id: "b2" }]);
-    getTasks.mockResolvedValue([
+    getTasks.mockResolvedValue(taskPage([
       { id: "t1", title: "Fix the bug", status: "open" },
       { id: "t2", title: "Write docs", status: "closed" },
-    ]);
+    ]));
     getEpics.mockResolvedValue([{ id: "e1" }]);
     render(await ProjectPage({ params: Promise.resolve({ projectId: "1" }) }));
     expect(screen.getByText("2 backlogs")).toBeInTheDocument();

@@ -105,7 +105,8 @@ func TestService_BulkCreate_RejectsInvalidTaskField(t *testing.T) {
 	assert.ErrorIs(t, err, task.ErrInvalidTitle)
 
 	// Nothing should have been written: no tasks in the project.
-	tasks, err := svc.List(context.Background(), owner, p.ID, task.ListFilter{})
+	tasksPage, err := svc.List(context.Background(), owner, p.ID, task.ListFilter{})
+	tasks := tasksPage.Tasks
 	require.NoError(t, err)
 	assert.Empty(t, tasks)
 }

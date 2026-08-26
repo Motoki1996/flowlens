@@ -81,15 +81,14 @@ func TestHandleListTasks_FiltersByAnotherUsersAssignee(t *testing.T) {
 	rec = doRequest(t, s, http.MethodGet,
 		"/api/v1/projects/"+p.ID.String()+"/tasks?assignee="+member.ID.String(), nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Theirs", body[0]["title"])
 
 	rec = doRequest(t, s, http.MethodGet,
 		"/api/v1/projects/"+p.ID.String()+"/tasks?assignee=unassigned", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body = decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Nobody's", body[0]["title"])
 }
@@ -108,8 +107,7 @@ func TestHandleListAllTasks_FiltersByAnotherUsersAssignee(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks?assignee="+member.ID.String(), nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Theirs", body[0]["title"])
 }
@@ -171,8 +169,7 @@ func TestHandleListTasks_AssigneeMeOverBearerTokenIsTheProjectOwner(t *testing.T
 	rec = doBearerRequest(t, s, http.MethodGet,
 		"/api/v1/projects/"+p.ID.String()+"/tasks?assignee=me", nil, raw)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Owner's", body[0]["title"])
 }

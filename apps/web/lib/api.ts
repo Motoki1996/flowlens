@@ -288,17 +288,38 @@ export type ProjectTasksFilter = {
   // screen by issue #146). Omitted means no filter.
   assignee?: "me";
   q?: string;
+  /** 1-based page number; omit for the first page. */
+  page?: number;
+  /** Page size. The API defaults it to 50 and clamps it to MAX_TASKS_PER_PAGE. */
+  perPage?: number;
+};
+
+/** MAX_TASKS_PER_PAGE mirrors task.MaxPerPage in the API: the largest page
+ *  either task collection will return, whatever ?per_page= asks for. Screens
+ *  that want "the project's tasks" as a lookup table rather than a browsable
+ *  list pass it explicitly, so the ceiling is visible where it applies
+ *  instead of hiding in a default. */
+export const MAX_TASKS_PER_PAGE = 200;
+
+/** TasksPage is GET /api/v1/projects/{projectID}/tasks's response envelope,
+ *  MergeRequestsPage's shape plus openCount: nextPage is 0 when no further
+ *  page follows, totalCount is how many tasks match the filter across every
+ *  page, and openCount how many of those are open. Both counts follow the
+ *  filter, so a filtered list reports its own total, not the project's. */
+export type TasksPage = {
+  tasks: Task[];
+  nextPage: number;
+  totalCount: number;
+  openCount: number;
 };
 
 /**
- * getTasks returns the project's tasks matching filter, in the API's default
- * (creation) order unless filter.sort says otherwise. There is no pagination:
- * the project's matching tasks are returned whole, which is what lets the
- * collection group by backlog (issue #143). Callers must
- * already know the request is authenticated.
+ * getTasks returns one page of the project's tasks matching filter, in the
+ * API's default (creation) order unless filter.sort says otherwise. Callers
+ * must already know the request is authenticated.
  */
 export const getTasks = cache(
-  async (projectId: string, filter: ProjectTasksFilter = {}): Promise<Task[]> => {
+  async (projectId: string, filter: ProjectTasksFilter = {}): Promise<TasksPage> => {
     const cookieStore = await cookies();
     const params = new URLSearchParams();
     if (filter.backlogId) params.set("backlog_id", filter.backlogId);
@@ -310,6 +331,8 @@ export const getTasks = cache(
     if (filter.sort) params.set("sort", filter.sort);
     if (filter.assignee) params.set("assignee", filter.assignee);
     if (filter.q) params.set("q", filter.q);
+    if (filter.page) params.set("page", String(filter.page));
+    if (filter.perPage) params.set("per_page", String(filter.perPage));
     const query = params.toString();
 
     const res = await fetch(
@@ -319,7 +342,7 @@ export const getTasks = cache(
     if (!res.ok) {
       throw new Error(`Failed to load tasks: ${res.status}`);
     }
-    return (await res.json()) as Task[];
+    return (await res.json()) as TasksPage;
   },
 );
 
@@ -339,7 +362,12 @@ export type AllTasksFilter = {
   startedBefore?: string;
   projectIds?: string[];
   sort?: "dueOn" | "priority" | "progress" | "size" | "updatedAt";
+  /** Page size under its original name, kept because the dashboard's teasers
+   *  read as "the top N", not as "page 1". perPage wins when both are set. */
   limit?: number;
+  /** 1-based page number; omit for the first page. */
+  page?: number;
+  perPage?: number;
   // "me": only tasks assigned to the caller's own registered GitLab identity
   // for that task's project (issue #102). Omitted means no filter.
   assignee?: "me";
@@ -348,12 +376,20 @@ export type AllTasksFilter = {
   q?: string;
 };
 
+/** TasksWithProjectPage is GET /api/v1/tasks's response envelope — TasksPage
+ *  minus openCount, which only the project-scoped collection reports. */
+export type TasksWithProjectPage = {
+  tasks: TaskWithProject[];
+  nextPage: number;
+  totalCount: number;
+};
+
 /**
- * getAllTasks returns every task across every project the current user
- * owns, matching filter — the cross-project Task collection at /tasks
+ * getAllTasks returns one page of every task across every project the current
+ * user owns, matching filter — the cross-project Task collection at /tasks
  * (issue #76). Callers must already know the request is authenticated.
  */
-export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TaskWithProject[]> {
+export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TasksWithProjectPage> {
   const cookieStore = await cookies();
   const params = new URLSearchParams();
   if (filter.status) params.set("status", filter.status);
@@ -365,6 +401,8 @@ export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TaskWith
   if (filter.startedBefore) params.set("startedBefore", filter.startedBefore);
   if (filter.sort) params.set("sort", filter.sort);
   if (filter.limit) params.set("limit", String(filter.limit));
+  if (filter.page) params.set("page", String(filter.page));
+  if (filter.perPage) params.set("per_page", String(filter.perPage));
   if (filter.assignee) params.set("assignee", filter.assignee);
   if (filter.q) params.set("q", filter.q);
   for (const id of filter.projectIds ?? []) params.append("projectId", id);
@@ -377,7 +415,7 @@ export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TaskWith
   if (!res.ok) {
     throw new Error(`Failed to load tasks: ${res.status}`);
   }
-  return (await res.json()) as TaskWithProject[];
+  return (await res.json()) as TasksWithProjectPage;
 }
 
 /**

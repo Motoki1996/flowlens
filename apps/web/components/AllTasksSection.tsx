@@ -9,6 +9,7 @@ import type { Priority, Project, TaskStatus, TaskWithProject } from "@/types";
 import { PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import {
   Select,
@@ -51,6 +52,10 @@ export function AllTasksSection({
   sort,
   assigneeMe = false,
   search,
+  totalCount,
+  page = 1,
+  perPage = 0,
+  nextPage = 0,
   error = false,
 }: {
   tasks: TaskWithProject[];
@@ -66,6 +71,13 @@ export function AllTasksSection({
   // server-side by `websearch_to_tsquery`, the same match the project-scoped
   // TaskListSection's own search box now makes (issue #143).
   search?: string;
+  /** How many tasks match the filters across every page, the 1-based page
+   *  this one is, its size, and the API's nextPage (0 on the last page).
+   *  Omitting them yields no pager, for callers with a single page. */
+  totalCount?: number;
+  page?: number;
+  perPage?: number;
+  nextPage?: number;
   error?: boolean;
 }) {
   const router = useRouter();
@@ -83,6 +95,12 @@ export function AllTasksSection({
     }
     const query = params.toString();
     router.push(query ? `${pathname}?${query}` : pathname);
+  }
+
+  /** changeFilter is updateQuery plus the page reset every filter needs, the
+   *  same wrapper the other two paged collections use. */
+  function changeFilter(next: Record<string, string | undefined>) {
+    updateQuery({ ...next, page: undefined });
   }
 
   const projectOptions = useMemo(
@@ -103,11 +121,11 @@ export function AllTasksSection({
           <div className="flex flex-wrap items-center gap-2">
             <TaskSearchBox
               value={search ?? ""}
-              onChange={(value) => updateQuery({ q: value.trim() === "" ? undefined : value })}
+              onChange={(value) => changeFilter({ q: value.trim() === "" ? undefined : value })}
             />
             <Select
               value={status}
-              onValueChange={(value) => updateQuery({ status: value === "all" ? undefined : value })}
+              onValueChange={(value) => changeFilter({ status: value === "all" ? undefined : value })}
             >
               <SelectTrigger size="sm" aria-label="Status" className="w-36">
                 <SelectValue />
@@ -120,7 +138,7 @@ export function AllTasksSection({
             </Select>
             <Select
               value={priority ?? "all"}
-              onValueChange={(value) => updateQuery({ priority: value === "all" ? undefined : value })}
+              onValueChange={(value) => changeFilter({ priority: value === "all" ? undefined : value })}
             >
               <SelectTrigger size="sm" aria-label="Priority" className="w-36">
                 <SelectValue />
@@ -135,7 +153,7 @@ export function AllTasksSection({
                 ))}
               </SelectContent>
             </Select>
-            <Select value={sort} onValueChange={(value) => updateQuery({ sort: value })}>
+            <Select value={sort} onValueChange={(value) => changeFilter({ sort: value })}>
               <SelectTrigger size="sm" aria-label="Sort" className="w-40">
                 <SelectValue />
               </SelectTrigger>
@@ -150,7 +168,7 @@ export function AllTasksSection({
               aria-label="Project"
               options={projectOptions}
               value={projectFilter[0] ?? ""}
-              onChange={(value) => updateQuery({ projectId: value || undefined })}
+              onChange={(value) => changeFilter({ projectId: value || undefined })}
               placeholder="All projects"
               searchPlaceholder="Search projects…"
               emptyText="No project found."
@@ -170,7 +188,7 @@ export function AllTasksSection({
               <input
                 type="checkbox"
                 checked={assigneeMe}
-                onChange={(e) => updateQuery({ assignee: e.target.checked ? "me" : undefined })}
+                onChange={(e) => changeFilter({ assignee: e.target.checked ? "me" : undefined })}
                 className="border-input h-4 w-4 rounded"
               />
               Assigned to me
@@ -214,6 +232,39 @@ export function AllTasksSection({
             ))}
           </ul>
         )}
+        {/* The pager, shaped like the other two collections'. "Only with a due
+            date" is applied in the browser, so on a paged result it narrows
+            the page rather than the whole match — the count below is the
+            server's, which is what the pager walks. */}
+        {!error && (page > 1 || nextPage > 0) ? (
+          <nav aria-label="Pagination" className="mt-4 flex items-center justify-between gap-3">
+            <p className="text-muted-foreground text-xs">
+              {tasks.length === 0 ? 0 : (page - 1) * perPage + 1}–
+              {(page - 1) * perPage + tasks.length}
+              {totalCount !== undefined ? ` of ${totalCount}` : ""}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => updateQuery({ page: page > 2 ? String(page - 1) : undefined })}
+              >
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={nextPage === 0}
+                onClick={() => updateQuery({ page: String(nextPage) })}
+              >
+                Next
+              </Button>
+            </div>
+          </nav>
+        ) : null}
       </CardContent>
     </Card>
   );

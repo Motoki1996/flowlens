@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -130,12 +131,54 @@ const (
 	SortUpdatedAt = "updatedAt"
 )
 
-// Pagination bounds for ListForOwner, mirroring
-// DefaultContextPerPage/MaxContextPerPage's role for ListContext.
+// Pagination bounds shared by both task collections — List (project-scoped)
+// and ListForOwner (cross-project) — mirroring
+// DefaultContextPerPage/MaxContextPerPage's role for ListContext. They are
+// deliberately larger than mergerequest.DefaultPerPage/MaxPerPage: a task
+// list is grouped by backlog on screen, so a page holding only a handful of
+// tasks would split most groups, while a merge-request list is flat.
 const (
-	DefaultCrossProjectLimit = 50
-	MaxCrossProjectLimit     = 200
+	DefaultPerPage = 50
+	MaxPerPage     = 200
 )
+
+// DefaultCrossProjectLimit/MaxCrossProjectLimit are the same bounds under the
+// name ListForOwner's ?limit= parameter has always carried. ?limit= predates
+// ?per_page= on GET /api/v1/tasks and still works as its alias, so the two
+// spellings must not be able to drift apart.
+const (
+	DefaultCrossProjectLimit = DefaultPerPage
+	MaxCrossProjectLimit     = MaxPerPage
+)
+
+// clampPage normalizes a 1-based page number and a page size against the
+// bounds above, so every list here defaults and clamps identically rather
+// than rejecting an out-of-range value. It is shared by List and
+// ListForOwner.
+func clampPage(page, perPage int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = DefaultPerPage
+	}
+	if perPage > MaxPerPage {
+		perPage = MaxPerPage
+	}
+	return page, perPage
+}
+
+// pageOffset is (page-1)*perPage as the int32 the query takes, saturated
+// rather than allowed to wrap: ?page= is a hand-editable query parameter, and
+// a wrapped negative OFFSET is a database error rather than an empty page.
+// Any offset this large returns nothing either way.
+func pageOffset(page, perPage int) int32 {
+	offset := int64(page-1) * int64(perPage)
+	if offset > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(offset)
+}
 
 // GitLab sync status values, mirroring task_gitlab_links.sync_status
 // (docs/plans/issue-sync.md). SyncStatusPending also covers a task whose
@@ -935,11 +978,35 @@ type ListFilter struct {
 	// Query, when non-empty, only returns tasks whose title or description
 	// matches (issue #106) — see List's doc comment for how.
 	Query string
+	// Page is the 1-based page number; anything below 1 means the first
+	// page. PerPage caps the page size: non-positive defaults to
+	// DefaultPerPage, and anything above MaxPerPage is clamped to it — the
+	// same shape mergerequest.ListFilter uses.
+	Page    int
+	PerPage int
 }
 
-// List returns projectID's tasks matching filter, ordered by creation time. It
-// returns ErrNotFound if projectID does not exist or belongs to another
-// user.
+// Page is one page of List's results, in the order ListFilter.Sort asked
+// for. NextPage is 0 when no further page follows, the same shape
+// mergerequest.Page and webhookevent.EventsPage use. TotalCount and OpenCount
+// are how many tasks match the filter across every page, and how many of
+// those are open — neither is derivable from a single page, and the
+// collection header and the project sidebar's two task badges need both.
+type Page struct {
+	Tasks      []Task
+	NextPage   int
+	TotalCount int64
+	OpenCount  int64
+}
+
+// List returns one page of projectID's tasks matching filter, ordered by
+// creation time unless filter.Sort says otherwise. It returns ErrNotFound if
+// projectID does not exist or belongs to another user.
+//
+// Every one of ListFilter.Sort's orders is applied in SQL. That is not a
+// tidiness point: the list is paged, so the ORDER BY decides which tasks a
+// page holds, and a sort applied in Go afterwards would only reorder the
+// arbitrary slice the database happened to return.
 //
 // filter.Query matches against title/description via search_vector, the
 // 'simple'-config tsvector generated column (the 000016 migration,
@@ -947,11 +1014,15 @@ type ListFilter struct {
 // internal/database/queries/tasks.sql): no stemming, so it works for
 // Japanese as long as the query matches a whole tokenized run, same as any
 // other text.
-func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Task, error) {
+func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) (Page, error) {
 	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
-		return nil, err
+		return Page{}, err
 	}
 
+	page, perPage := clampPage(filter.Page, filter.PerPage)
+
+	// Fetch one extra row to tell whether another page follows, the same
+	// "peek" pattern internal/mergerequest and internal/webhookevent use.
 	rows, err := s.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
 		ProjectID:          projectID,
 		Unassigned:         filter.Unassigned,
@@ -968,54 +1039,58 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 		SortByPriority:     filter.Sort == SortPriority,
 		SortByProgress:     filter.Sort == SortProgress,
 		SortBySize:         filter.Sort == SortSize,
+		SortByDueOn:        filter.Sort == SortDueOn,
+		SortByUpdatedAt:    filter.Sort == SortUpdatedAt,
+		LimitCount:         int32(perPage + 1),
+		OffsetCount:        pageOffset(page, perPage),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("task: list: %w", err)
+		return Page{}, fmt.Errorf("task: list: %w", err)
 	}
+
+	nextPage := 0
+	if len(rows) > perPage {
+		rows = rows[:perPage]
+		nextPage = page + 1
+	}
+
+	counts, err := s.q.CountTasksByProject(ctx, db.CountTasksByProjectParams{
+		ProjectID:          projectID,
+		Unassigned:         filter.Unassigned,
+		BacklogID:          toUUID(filter.BacklogID),
+		EpicID:             toUUID(filter.EpicID),
+		EpicUnfiled:        filter.EpicUnfiled,
+		Status:             filter.Status,
+		Priority:           filter.Priority,
+		Progress:           filter.Progress,
+		Size:               filter.Size,
+		AssigneeUserID:     toUUID(filter.AssigneeUserID),
+		AssigneeUnassigned: filter.AssigneeUnassigned,
+		Q:                  filter.Query,
+	})
+	if err != nil {
+		return Page{}, fmt.Errorf("task: count: %w", err)
+	}
+
 	out := make([]Task, len(rows))
 	for i, row := range rows {
 		t := fromRow(row)
 		info, err := s.gitlabInfoForTask(ctx, row.ID)
 		if err != nil {
-			return nil, err
+			return Page{}, err
 		}
 		t.Gitlab = info
 		out[i] = t
 	}
 	if err := s.attachAssigneeNamesToTasks(ctx, out); err != nil {
-		return nil, err
+		return Page{}, err
 	}
-	sortTasks(out, filter.Sort)
-	return out, nil
-}
-
-// sortTasks applies the date-based orders ListFilter.Sort allows on top of
-// the order the query already returned. Priority ranking stays in SQL (see
-// ListTasksByProject); these two are ordered here instead because the
-// project-scoped list is fetched whole — there is no LIMIT for a different
-// ORDER BY to change the *contents* of, only the sequence — and adding them
-// to the query would mean reshaping its parameters. A stable sort is what
-// keeps the created_at order as the tiebreak in both cases.
-func sortTasks(tasks []Task, by string) {
-	switch by {
-	case SortDueOn:
-		// A task with no due date sorts last, matching the cross-project
-		// list's due_on ASC NULLS LAST.
-		slices.SortStableFunc(tasks, func(a, b Task) int {
-			switch {
-			case a.DueOn == nil && b.DueOn == nil:
-				return 0
-			case a.DueOn == nil:
-				return 1
-			case b.DueOn == nil:
-				return -1
-			default:
-				return a.DueOn.Compare(*b.DueOn)
-			}
-		})
-	case SortUpdatedAt:
-		slices.SortStableFunc(tasks, func(a, b Task) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
-	}
+	return Page{
+		Tasks:      out,
+		NextPage:   nextPage,
+		TotalCount: counts.TotalCount,
+		OpenCount:  counts.OpenCount,
+	}, nil
 }
 
 // CrossProjectFilter narrows ListForOwner to a subset of every task the
@@ -1041,10 +1116,16 @@ type CrossProjectFilter struct {
 	// Sort is one of SortDueOn (default), SortPriority, SortProgress,
 	// SortSize or SortUpdatedAt.
 	Sort string
-	// Limit caps the number of tasks returned; non-positive defaults to
+	// Limit is PerPage under its original name: ?limit= predates ?per_page= on
+	// GET /api/v1/tasks and both still work, so PerPage wins when a caller
+	// sets both, and Limit applies when only it is set. Non-positive means
 	// DefaultCrossProjectLimit, and anything above MaxCrossProjectLimit is
 	// capped to it.
 	Limit int
+	// Page is the 1-based page number; anything below 1 means the first page.
+	// PerPage caps the page size, under the same bounds as Limit.
+	Page    int
+	PerPage int
 	// AssigneeUserID/AssigneeUnassigned are ListFilter's two assignee filters,
 	// matched per-project since the cross-project list spans however many
 	// GitLab connections the caller belongs to.
@@ -1061,18 +1142,20 @@ type CrossProjectFilter struct {
 // turn. Unlike every other method here, it takes no projectID: there is
 // nothing further to scope by ownerID with, since it already spans every
 // project that owner has.
-func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter CrossProjectFilter) ([]TaskWithProject, error) {
+//
+// Like List, it returns one page rather than a bare slice: the list was
+// capped by a LIMIT with no OFFSET and no total, so a caller could neither
+// reach the tasks past the cap nor tell that any had been left behind.
+func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter CrossProjectFilter) (CrossProjectPage, error) {
 	sortBy := filter.Sort
 	if sortBy == "" {
 		sortBy = SortDueOn
 	}
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = DefaultCrossProjectLimit
+	perPage := filter.PerPage
+	if perPage <= 0 {
+		perPage = filter.Limit
 	}
-	if limit > MaxCrossProjectLimit {
-		limit = MaxCrossProjectLimit
-	}
+	page, perPage := clampPage(filter.Page, perPage)
 	projectIDs := filter.ProjectIDs
 	if projectIDs == nil {
 		projectIDs = []uuid.UUID{}
@@ -1094,19 +1177,56 @@ func (s *Service) ListForOwner(ctx context.Context, ownerID uuid.UUID, filter Cr
 		AssigneeUnassigned: filter.AssigneeUnassigned,
 		Q:                  filter.Query,
 		Sort:               sortBy,
-		LimitCount:         int32(limit),
+		LimitCount:         int32(perPage + 1),
+		OffsetCount:        pageOffset(page, perPage),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("task: list for owner: %w", err)
+		return CrossProjectPage{}, fmt.Errorf("task: list for owner: %w", err)
 	}
+
+	nextPage := 0
+	if len(rows) > perPage {
+		rows = rows[:perPage]
+		nextPage = page + 1
+	}
+
+	total, err := s.q.CountTasksForMember(ctx, db.CountTasksForMemberParams{
+		OwnerUserID:        ownerID,
+		Status:             filter.Status,
+		Priority:           filter.Priority,
+		Size:               filter.Size,
+		Progress:           filter.Progress,
+		DueBefore:          toDate(filter.DueBefore),
+		DueAfter:           toDate(filter.DueAfter),
+		StartedBefore:      toDate(filter.StartedBefore),
+		EpicID:             toUUID(filter.EpicID),
+		EpicUnfiled:        filter.EpicUnfiled,
+		ProjectIds:         projectIDs,
+		AssigneeUserID:     toUUID(filter.AssigneeUserID),
+		AssigneeUnassigned: filter.AssigneeUnassigned,
+		Q:                  filter.Query,
+	})
+	if err != nil {
+		return CrossProjectPage{}, fmt.Errorf("task: count for owner: %w", err)
+	}
+
 	out := make([]TaskWithProject, len(rows))
 	for i, row := range rows {
 		out[i] = fromCrossProjectRow(row)
 	}
 	if err := s.attachAssigneeNamesToCrossProject(ctx, out); err != nil {
-		return nil, err
+		return CrossProjectPage{}, err
 	}
-	return out, nil
+	return CrossProjectPage{Tasks: out, NextPage: nextPage, TotalCount: total}, nil
+}
+
+// CrossProjectPage is one page of ListForOwner's results — Page's shape, with
+// TaskWithProject rows and no OpenCount (the cross-project collection has no
+// per-project badge to feed).
+type CrossProjectPage struct {
+	Tasks      []TaskWithProject
+	NextPage   int
+	TotalCount int64
 }
 
 // fromCrossProjectRow maps a ListTasksForMember row to TaskWithProject. It is

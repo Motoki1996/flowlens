@@ -100,7 +100,8 @@ vi.mock("@/lib/api", () => ({
   getProject: (id: string) => getProject(id),
   getEpic: (id: string) => getEpic(id),
   getBacklogs: (id: string) => getBacklogs(id),
-  getTasks: (id: string) => getTasks(id),
+  getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
+  MAX_TASKS_PER_PAGE: 200,
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
 }));
 vi.mock("next/navigation", () => ({
@@ -113,6 +114,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import EpicPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 const params = Promise.resolve({ projectId: "p1", epicId: "e1" });
 
@@ -122,7 +124,7 @@ describe("EpicPage", () => {
     getProject.mockResolvedValue(project);
     getEpic.mockResolvedValue(makeEpic());
     getBacklogs.mockResolvedValue([backlog]);
-    getTasks.mockResolvedValue([makeTask()]);
+    getTasks.mockResolvedValue(taskPage([makeTask()]));
     getLinkedGitlabProjects.mockResolvedValue([]);
   });
 
@@ -174,12 +176,12 @@ describe("EpicPage", () => {
   // The page fetches the whole project's tasks — the picker needs the
   // backlog's free ones — and narrows to the epic's own for the Tasks card.
   it("shows only the epic's own tasks while fetching the project's", async () => {
-    getTasks.mockResolvedValue([
+    getTasks.mockResolvedValue(taskPage([
       makeTask(),
       makeTask({ id: "t2", epicId: null, title: "Not in this epic" }),
-    ]);
+    ]));
     render(await EpicPage({ params }));
-    expect(getTasks).toHaveBeenCalledWith("p1");
+    expect(getTasks).toHaveBeenCalledWith("p1", { perPage: 200 });
     expect(screen.getByText("Build the list screen")).toBeInTheDocument();
     expect(screen.queryByText("Not in this epic")).not.toBeInTheDocument();
   });

@@ -46,13 +46,20 @@ export default async function ProjectPage({
 
   // Tasks, backlogs and epics have screens of their own; this view only needs
   // enough of them to show a count next to each link.
-  let tasks: Awaited<ReturnType<typeof getTasks>> = [];
+  // perPage: 1 — this view only shows the two task counts, and both are
+  // counted in SQL, so there is nothing to gain by fetching the rows.
+  let tasks: Awaited<ReturnType<typeof getTasks>> = {
+    tasks: [],
+    nextPage: 0,
+    totalCount: 0,
+    openCount: 0,
+  };
   let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
   let epics: Awaited<ReturnType<typeof getEpics>> = [];
   let countsError = false;
   try {
     [tasks, backlogs, epics] = await Promise.all([
-      getTasks(projectId),
+      getTasks(projectId, { perPage: 1 }),
       getBacklogs(projectId),
       getEpics(projectId),
     ]);
@@ -141,8 +148,8 @@ export default async function ProjectPage({
       project={project}
       backlogCount={backlogs.length}
       epicCount={epics.length}
-      taskCount={tasks.length}
-      openTaskCount={tasks.filter((t) => t.status === "open").length}
+      taskCount={tasks.totalCount}
+      openTaskCount={tasks.openCount}
       countsError={countsError}
       gitlabConnection={gitlabConnection}
       linkedProjectCount={linkedGitlabProjects.length}

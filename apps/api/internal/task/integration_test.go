@@ -94,7 +94,8 @@ func TestBulkCreate_AllOrNothing_RealPostgres(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, task.ErrBulkCyclicDependency)
 
-	tasks, err := svc.List(ctx, user.ID, p.ID, task.ListFilter{})
+	tasksPage, err := svc.List(ctx, user.ID, p.ID, task.ListFilter{})
+	tasks := tasksPage.Tasks
 	require.NoError(t, err)
 	assert.Empty(t, tasks, "the whole batch must roll back, not just the rejected dependency")
 
@@ -130,7 +131,8 @@ func TestBulkCreate_Commits_RealPostgres(t *testing.T) {
 	require.Len(t, result.Tasks, 2)
 	require.Len(t, result.Dependencies, 1)
 
-	tasks, err := svc.List(ctx, user.ID, p.ID, task.ListFilter{})
+	tasksPage, err := svc.List(ctx, user.ID, p.ID, task.ListFilter{})
+	tasks := tasksPage.Tasks
 	require.NoError(t, err)
 	assert.Len(t, tasks, 2)
 }

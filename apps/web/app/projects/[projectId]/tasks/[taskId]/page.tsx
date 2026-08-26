@@ -13,6 +13,7 @@ import {
   getTaskComments,
   getTaskDependencies,
   getTasks,
+  MAX_TASKS_PER_PAGE,
 } from "@/lib/api";
 import { tasksPath } from "@/lib/routes";
 import type { ApiToken, GitlabLabelOption, GitlabMemberOption, MergeRequest } from "@/types";
@@ -48,7 +49,9 @@ export default async function TaskPage({
       // picker have to be able to name it.
       getBacklogs(projectId, { status: "all" }),
       getEpics(projectId, { status: "all" }),
-      getTasks(projectId),
+      // A picker for the dependency fields, not a browsable list: the largest
+      // page the API gives rather than the project's tasks without bound.
+      getTasks(projectId, { perPage: MAX_TASKS_PER_PAGE }),
       getTaskDependencies(projectId),
       getLinkedGitlabProjects(projectId),
       getTaskComments(taskId),
@@ -100,7 +103,7 @@ export default async function TaskPage({
         task={task}
         backlogs={backlogs}
         epics={epics}
-        tasks={tasks}
+        tasks={tasks.tasks}
         dependencies={dependencies}
         assigneeOptions={assigneeOptions}
         labelOptions={labelOptions}

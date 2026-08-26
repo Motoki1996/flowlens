@@ -50,12 +50,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 import TasksPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 describe("TasksPage", () => {
   beforeEach(() => {
     getCurrentUser.mockResolvedValue(user);
     getProject.mockResolvedValue(project);
-    getTasks.mockResolvedValue([]);
+    getTasks.mockResolvedValue(taskPage([]));
     getBacklogs.mockResolvedValue([]);
     getEpics.mockResolvedValue([]);
     getTaskDependencies.mockResolvedValue([]);
@@ -70,10 +71,13 @@ describe("TasksPage", () => {
     // the API's own manual/position order.
     expect(getTasks).toHaveBeenCalledWith("p1", {
       backlogId: undefined,
+      epicId: undefined,
       status: "open",
       assignee: undefined,
       sort: undefined,
       q: undefined,
+      page: 1,
+      perPage: 100,
     });
     expect(getBacklogs).toHaveBeenCalledWith("p1");
   });
@@ -82,7 +86,7 @@ describe("TasksPage", () => {
     getBacklogs.mockResolvedValue([
       { id: "b1", projectId: "p1", name: "Sprint 1", description: "" },
     ]);
-    getTasks.mockResolvedValue([
+    getTasks.mockResolvedValue(taskPage([
       {
         id: "t1",
         projectId: "p1",
@@ -94,7 +98,7 @@ describe("TasksPage", () => {
         progress: "in_progress",
         size: "m",
       },
-    ]);
+    ]));
     render(
       await TasksPage({
         params: Promise.resolve({ projectId: "p1" }),
@@ -110,10 +114,13 @@ describe("TasksPage", () => {
 
     expect(getTasks).toHaveBeenCalledWith("p1", {
       backlogId: "8f0f2c1e-2c9c-4b1f-9f4a-0d5b1f6c7a21",
+      epicId: undefined,
       status: undefined,
       assignee: "me",
       sort: "priority",
       q: "sprint",
+      page: 1,
+      perPage: 100,
     });
     expect(screen.getByText("In sprint 1")).toBeInTheDocument();
   });
@@ -123,10 +130,10 @@ describe("TasksPage", () => {
     // least `status: "open"` by default) and once with `{}` for the
     // unfiltered total — distinguished here by whether any filter key is
     // actually set.
+    // perPage: 1 is the screen's 母数 fetch — the project's count with no
+    // filter applied; every other call is the filtered page it renders.
     getTasks.mockImplementation((_id: string, filter: Record<string, unknown> = {}) =>
-      Promise.resolve(
-        Object.values(filter).some((v) => v !== undefined) ? [] : [{ id: "t1" }, { id: "t2" }],
-      ),
+      Promise.resolve(filter.perPage === 1 ? taskPage([{ id: "t1" }, { id: "t2" }]) : taskPage([])),
     );
     render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
     expect(screen.getByText("0 / 2 tasks")).toBeInTheDocument();
@@ -155,11 +162,28 @@ describe("TasksPage", () => {
     );
     expect(getTasks).toHaveBeenCalledWith("p1", {
       backlogId: undefined,
+      epicId: undefined,
       status: "open",
       assignee: undefined,
       sort: undefined,
       q: undefined,
+      page: 1,
+      perPage: 100,
     });
+  });
+
+  // The page number rides in the URL like every other filter, so a paged
+  // result stays shareable and the back button walks it.
+  it("forwards ?page= to the API and hands the API's paging back to the list", async () => {
+    getTasks.mockResolvedValue(taskPage([{ id: "t1", title: "On page two" }], { nextPage: 3, totalCount: 250 }));
+    render(
+      await TasksPage({
+        params: Promise.resolve({ projectId: "p1" }),
+        searchParams: Promise.resolve({ page: "2" }),
+      }),
+    );
+    expect(getTasks).toHaveBeenCalledWith("p1", expect.objectContaining({ page: 2, perPage: 100 }));
+    expect(screen.getByRole("navigation", { name: "Pagination" })).toBeInTheDocument();
   });
 
   it("pre-selects the backlog filter from ?backlog=", async () => {
@@ -226,7 +250,7 @@ describe("TasksPage", () => {
     it("marks a task due before the page's own current date as Overdue", async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date(2026, 7, 5, 12, 0, 0));
-      getTasks.mockResolvedValue([
+      getTasks.mockResolvedValue(taskPage([
         {
           id: "t1",
           projectId: "p1",
@@ -239,7 +263,7 @@ describe("TasksPage", () => {
           size: "m",
           dueOn: "2026-08-04",
         },
-      ]);
+      ]));
       render(await TasksPage({ params: Promise.resolve({ projectId: "p1" }) }));
       expect(screen.getByText("Overdue Aug 4, 2026")).toBeInTheDocument();
     });

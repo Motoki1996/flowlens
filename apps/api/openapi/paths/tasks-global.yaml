@@ -50,18 +50,25 @@ allTasks:
         schema: { type: string }
       - in: query
         name: limit
+        description: Page size, under its original name. Alias of per_page, which wins when both are given.
+        schema: { type: integer }
+      - in: query
+        name: page
+        description: 1-based page number; omit for the first page.
+        schema: { type: integer }
+      - in: query
+        name: per_page
+        description: Page size. Defaults to 50, clamped to 200.
         schema: { type: integer }
       - in: query
         name: sort
         schema: { type: string, enum: [dueOn, priority, progress, size, updatedAt] }
     responses:
       "200":
-        description: Matching tasks, each carrying its project's name
+        description: One page of matching tasks, each carrying its project's name
         content:
           application/json:
-            schema:
-              type: array
-              items: { $ref: '../components/schemas/domain.yaml#/TaskWithProject' }
+            schema: { $ref: '../components/schemas/domain.yaml#/TasksWithProjectPage' }
       "401":
         description: Not authenticated
         content:

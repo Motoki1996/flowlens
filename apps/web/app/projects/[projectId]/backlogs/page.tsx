@@ -111,10 +111,12 @@ export default async function BacklogsPage({
         progress,
         sort: sort === "priority" || sort === "progress" ? sort : undefined,
       }),
-      getTasks(projectId, { backlogId: "unassigned" }),
+      // perPage: 1 — only the Unclassified group's count is shown here, and
+      // totalCount is counted in SQL.
+      getTasks(projectId, { backlogId: "unassigned", perPage: 1 }),
     ]);
     backlogs = fetchedBacklogs;
-    unclassifiedCount = unclassifiedTasks.length;
+    unclassifiedCount = unclassifiedTasks.totalCount;
   } catch {
     backlogsError = true;
   }

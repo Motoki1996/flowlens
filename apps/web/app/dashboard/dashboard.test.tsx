@@ -74,6 +74,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import DashboardPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 describe("DashboardPage", () => {
   it("redirects to /login when not authenticated", async () => {
@@ -100,10 +101,12 @@ describe("DashboardPage", () => {
     getCurrentUser.mockResolvedValue(user);
     getProjects.mockResolvedValue([project]);
     getAllTasks
-      .mockResolvedValueOnce([makeTask({ id: "t1", title: "Overdue task", dueOn: "2020-01-01" })])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([]);
+      .mockResolvedValueOnce(
+        taskPage([makeTask({ id: "t1", title: "Overdue task", dueOn: "2020-01-01" })]),
+      )
+      .mockResolvedValueOnce(taskPage([]))
+      .mockResolvedValueOnce(taskPage([]))
+      .mockResolvedValueOnce(taskPage([]));
     getFailedSyncProjects.mockResolvedValue([{ ...project, failedSyncTaskCount: 2 }]);
 
     render(await DashboardPage());

@@ -8,6 +8,105 @@ procedure itself.
 
 ## Unreleased
 
+### Added
+
+- **A backlog and an epic can be closed.** Both rungs now carry their own
+  `status` (`open`/`closed`) and `closedAt`, moved by
+  `POST /api/v1/{backlogs,epics}/{id}/close` and `.../reopen` (write scope,
+  and a no-op when the object is already in that state, so `closedAt` never
+  moves on a re-close). A shipped backlog previously had nowhere to go:
+  `progress = done` says the work finished, which is not the statement "this
+  is no longer something we are tracking", and a backlog that was abandoned
+  rather than delivered never reaches `done` at all.
+
+  Shaped as a task's `status`/`closedAt` because it is the same concept one
+  and two rungs up — but **app-only end to end**, unlike a task's, which
+  mirrors the GitLab issue state. Neither a backlog nor an epic has a GitLab
+  CE counterpart, so closing one enqueues nothing and syncs nowhere.
+
+  **Closing deliberately does not cascade.** An epic inside a closed backlog,
+  and a task inside either, keep the status and progress they had. Cascading
+  would either stamp `closedAt` on unfinished tasks — which
+  `internal/velocity` reads as a completion signal, turning a retired backlog
+  into a fake throughput spike — or close GitLab issues FlowLens was never
+  asked to close, asynchronously and with no correct reopen afterwards. Move
+  leftover work to another backlog instead.
+
+  Both list endpoints take `?status=open|closed|all`, where an **absent
+  `?status=` means `open`, not "no filter"** — that default is the point of
+  the column. A `GET` on the object itself always returns it, so a bookmark
+  or a task's `backlogId` never dead-ends. In the web app both single views
+  gain a Close/Reopen button and a Closed badge, and both collections gain a
+  Status filter; a collection whose list is empty carries a "Show closed"
+  control, so closing a project's last backlog can always be undone from the
+  screen.
+
+  Migration `000036` adds the two columns (defaulted, nothing to backfill)
+  plus an index per rung. Additive — nothing beyond the usual
+  `docker compose pull && docker compose up -d`.
+- **`@motokis-lab/agent-kit` 0.3.0** teaches an agent both of this release's
+  API changes: how to read the task collections' page envelope, and that a
+  backlog or an epic can be closed — including that a closed parent says
+  nothing about the tasks inside it, so a task's own state is the only thing
+  worth reading to decide whether the work is finished.
+
+### Changed
+
+- **⚠️ Breaking for API clients — both task collections are paged.**
+  `GET /api/v1/projects/{projectID}/tasks` and `GET /api/v1/tasks` now take
+  `?page=`/`?per_page=` (default 50, clamped to 200) and answer with a
+  `{tasks, nextPage, totalCount, openCount}` envelope rather than a bare
+  array. `nextPage` is `0` on the last page, and both counts are counted in
+  SQL over the filter's whole match, so a page's length never has to stand in
+  for how much is there.
+
+  Unpaged, these returned every matching row with every column, Markdown
+  description included, so their cost grew with the project without bound —
+  and the cross-project list was worse than unpaged: a bare `LIMIT` with no
+  `OFFSET` made everything past the cap unreachable, silently. `?limit=`
+  survives on the cross-project list as `?per_page=`'s original name, since
+  the dashboard's teasers want a top-N rather than page 1.
+
+  **What a self-hoster must do:** nothing beyond the usual `docker compose
+  pull && docker compose up -d`. The API and web images ship together and
+  agree on the new shape; no schema change is involved.
+
+  **What an API client must do:** read the rows from the response's `tasks`
+  key rather than treating the response as an array, and walk `?page=` if you
+  need more than the first 50. An AI agent driving FlowLens through a
+  project-scoped token should be re-installed with `npx
+  @motokis-lab/agent-kit@0.3.0 init` — 0.2.0's bundled skill still describes
+  the old bare-array shape. The backlog and epic collections are unchanged
+  and still return arrays.
+- **The backlog and epic collections cost what they should.** Their
+  `taskCount`/`closedTaskCount` now come from a subquery pre-aggregated by
+  `backlog_id`/`epic_id` rather than a `LEFT JOIN tasks` plus an outer
+  `GROUP BY`, so the cost follows the backlog or epic count rather than the
+  project's task count. The project sidebar and single view read their
+  open/total figures from `?per_page=1` instead of fetching every task to
+  count it client-side. No API shape change.
+- **The Timeline (Gantt) view is readable at a glance.** Quarter joins Day,
+  Week and Month as the coarsest zoom — the unit a roadmap is actually
+  planned in — bars have a 6px floor so a one-day task stays visible (and a
+  part-done backlog keeps its fill), the two coarse zooms rule the plot at
+  the interval below their labels while Day shades weekends, and gridlines
+  are mixed from `--muted-foreground` rather than the near-invisible
+  `--border`. The name column is now a draggable splitter, and the
+  unscheduled-items note caps at three names plus a count instead of listing
+  every undated item in one unbroken sentence.
+- **Long names are clipped rather than left to break the layout**, in list
+  rows, board cards, single-view headings and breadcrumbs alike, with the
+  full text on hover or keyboard focus — and only when the name really was
+  clipped, since a tooltip repeating a name already on screen is noise.
+- **Priority menus read Urgent→Low.** Every priority `Select` and filter
+  reused the board's low-to-high column axis, so a ranked menu now puts the
+  value you are most likely to want at the top, as every other tracker does.
+  Priority and progress selects also carry the same accent dot their list
+  badges and board cards use.
+- **A task list's rows are indented under their backlog heading**, with a
+  shared left rule, so which group a row belongs to no longer has to be
+  inferred from where the last heading was.
+
 ## v0.2.0 — 2026-08-25
 
 ### Added

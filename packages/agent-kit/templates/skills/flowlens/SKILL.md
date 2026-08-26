@@ -31,10 +31,10 @@ shape; this file stays short on purpose (progressive disclosure). If
   resource doesn't exist — some routes are session-only, permanently
   (project/GitLab-connection/API-token/membership management).
 
-## Collection endpoints are paged
+## The task collections are paged
 
-Every list — `GET /api/v1/projects/{projectId}/{tasks,backlogs,epics}` and
-`GET /api/v1/tasks` — answers with an object, not a bare array. Tasks:
+Both task lists — `GET /api/v1/projects/{projectId}/tasks` and
+`GET /api/v1/tasks` — answer with an object, not a bare array:
 
 ```json
 { "tasks": [...], "nextPage": 2, "totalCount": 137, "openCount": 96 }
@@ -43,7 +43,10 @@ Every list — `GET /api/v1/projects/{projectId}/{tasks,backlogs,epics}` and
 Read the rows from `tasks`, not from the response itself. `nextPage` is `0`
 on the last page; `?page=` and `?per_page=` (default 50, capped at 200) walk
 them. `totalCount` is the whole match, so a page's length never tells you how
-much is there. Backlogs and epics are not paged and still return arrays.
+much is there.
+
+The backlog and epic collections are **not** paged and still return a bare
+array — there are far fewer of them, and both are grouped rather than walked.
 
 ## Task lifecycle (the order matters)
 

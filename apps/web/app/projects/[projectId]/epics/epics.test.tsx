@@ -36,6 +36,8 @@ const backlog: Backlog = {
   assigneeDisplayName: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open",
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -60,6 +62,8 @@ const epic: Epic = {
   assigneeDisplayName: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open",
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -147,6 +151,7 @@ describe("EpicsPage", () => {
       searchParams: Promise.resolve({ priority: "urgent", progress: "on_hold", sort: "priority" }),
     });
     expect(getEpics).toHaveBeenCalledWith("p1", {
+      status: "open",
       backlogId: undefined,
       priority: "urgent",
       progress: "on_hold",
@@ -173,6 +178,7 @@ describe("EpicsPage", () => {
       searchParams: Promise.resolve({ priority: "critical", progress: "wat", sort: "nonsense" }),
     });
     expect(getEpics).toHaveBeenCalledWith("p1", {
+      status: "open",
       backlogId: undefined,
       priority: undefined,
       progress: undefined,

@@ -19,6 +19,8 @@ import { ProgressBadge } from "@/components/ProgressBadge";
 import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { EpicForm } from "@/components/EpicForm";
+import { ClosedBadge } from "@/components/ClosedBadge";
+import { CloseReopenButton } from "@/components/CloseReopenButton";
 import { EpicDeleteButton } from "@/components/EpicDeleteButton";
 import { TruncatedName } from "@/components/TruncatedName";
 import { EpicTaskPicker, epicTasksBody } from "@/components/EpicTaskPicker";
@@ -210,11 +212,14 @@ export function EpicDetail({
                   screen instead of being cut. */}
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <TruncatedName
-                    as="h1"
-                    text={epic.name}
-                    className="text-foreground text-xl leading-none font-semibold"
-                  />
+                  <div className="flex min-w-0 items-center gap-2">
+                    <TruncatedName
+                      as="h1"
+                      text={epic.name}
+                      className="text-foreground text-xl leading-none font-semibold"
+                    />
+                    <ClosedBadge status={epic.status} />
+                  </div>
                   <CardDescription className="mt-1.5">
                     {epic.description ? (
                       <Markdown>{epic.description}</Markdown>
@@ -227,6 +232,18 @@ export function EpicDetail({
                   <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
                     Edit epic
                   </Button>
+                  {/* An epic's close is independent of its backlog's: closing
+                      the backlog above leaves this open, and closing this says
+                      nothing about the backlog or about the tasks below. */}
+                  <CloseReopenButton
+                    object={epic}
+                    resource="epics"
+                    noun="epic"
+                    onChanged={(updated) => {
+                      setEpic(updated);
+                      router.refresh();
+                    }}
+                  />
                   {/* Deleting leaves this screen with no object to show, so it
                       hands back to the Epic collection — the tasks it kept are
                       still there, in their backlog. */}

@@ -109,14 +109,24 @@ func (s *Server) handleListEpics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, epics)
 }
 
-// parseEpicListFilter reads ?backlog_id=, ?priority=, ?progress=, ?assignee=
-// and ?sort=, sharing parseAssigneeFilter with the task and backlog
+// parseEpicListFilter reads ?status=, ?backlog_id=, ?priority=, ?progress=,
+// ?assignee= and ?sort=, sharing parseAssigneeFilter with the task and backlog
 // collections so the assignee vocabulary ("me"/a UUID/"unassigned") means the
 // same thing everywhere. ?backlog_id=unassigned narrows to the epics in no
 // backlog at all, the same word and spelling the task collection's own
 // ?backlog_id= uses.
 func parseEpicListFilter(r *http.Request) (epic.ListFilter, error) {
 	var filter epic.ListFilter
+
+	// Omitted means open-only, not "no filter" — the same exception the
+	// backlog collection makes, and the reason a closed epic leaves the
+	// screen without anyone filtering it out.
+	if v := r.URL.Query().Get("status"); v != "" {
+		if !isValidBacklogStatus(v) {
+			return epic.ListFilter{}, errors.New("status must be one of open, closed, all")
+		}
+		filter.Status = v
+	}
 
 	if v := r.URL.Query().Get("backlog_id"); v != "" {
 		if v == "unassigned" {
@@ -248,6 +258,43 @@ func (s *Server) handleUpdateEpic(w http.ResponseWriter, r *http.Request) {
 		EstimatedPoints:              req.EstimatedPoints,
 		AssigneeUserID:               req.AssigneeUserID,
 	})
+	if err != nil {
+		writeEpicError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, e)
+}
+
+// handleCloseEpic closes one epic, scoped to the authenticated user via its
+// project. Closing an already-closed epic is a no-op, and the close never
+// cascades to the epic's tasks.
+func (s *Server) handleCloseEpic(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	epicID, ok := epicIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "epic not found")
+		return
+	}
+
+	e, err := s.epics.Close(r.Context(), u.ID, epicID)
+	if err != nil {
+		writeEpicError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, e)
+}
+
+// handleReopenEpic reopens one epic, scoped to the authenticated user via its
+// project. Reopening an already-open epic is a no-op.
+func (s *Server) handleReopenEpic(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	epicID, ok := epicIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "epic not found")
+		return
+	}
+
+	e, err := s.epics.Reopen(r.Context(), u.ID, epicID)
 	if err != nil {
 		writeEpicError(w, err)
 		return

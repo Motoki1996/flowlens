@@ -577,6 +577,7 @@ func (f *FakeQuerier) SeedBacklog(projectID uuid.UUID, name string) db.Backlog {
 		Name:      name,
 		Priority:  "medium",
 		Progress:  "not_started",
+		Status:    "open",
 		CreatedAt: now(),
 		UpdatedAt: now(),
 	}
@@ -615,8 +616,11 @@ func (f *FakeQuerier) CreateBacklog(_ context.Context, arg db.CreateBacklogParam
 		AllowedScope:                 arg.AllowedScope,
 		ForbiddenScope:               arg.ForbiddenScope,
 		AssigneeUserID:               arg.AssigneeUserID,
-		CreatedAt:                    now(),
-		UpdatedAt:                    now(),
+		// The column defaults to 'open' in the schema (000036); CreateBacklog
+		// never names it, so the fake has to supply the same default.
+		Status:    "open",
+		CreatedAt: now(),
+		UpdatedAt: now(),
 	}
 	f.backlogs = append(f.backlogs, b)
 	f.backlogsByID[b.ID] = b
@@ -686,6 +690,9 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 		if b.ProjectID != arg.ProjectID {
 			continue
 		}
+		if arg.Status != "" && b.Status != arg.Status {
+			continue
+		}
 		if arg.Priority != "" && b.Priority != arg.Priority {
 			continue
 		}
@@ -715,6 +722,8 @@ func (f *FakeQuerier) ListBacklogsByProject(_ context.Context, arg db.ListBacklo
 			AllowedScope:                 b.AllowedScope,
 			ForbiddenScope:               b.ForbiddenScope,
 			AssigneeUserID:               b.AssigneeUserID,
+			Status:                       b.Status,
+			ClosedAt:                     b.ClosedAt,
 			TaskCount:                    taskCount,
 			ClosedTaskCount:              closedTaskCount,
 		})
@@ -816,6 +825,40 @@ func (f *FakeQuerier) UpdateBacklogForOwner(_ context.Context, arg db.UpdateBack
 	return existing, nil
 }
 
+// CloseBacklogForOwner / ReopenBacklogForOwner mirror the SQL: member-minimum,
+// and they write nothing but the two status columns — no cascade to the
+// backlog's epics or tasks (000036).
+func (f *FakeQuerier) CloseBacklogForOwner(_ context.Context, arg db.CloseBacklogForOwnerParams) (db.Backlog, error) {
+	return f.setBacklogStatus(arg.ID, arg.OwnerUserID, "closed")
+}
+
+func (f *FakeQuerier) ReopenBacklogForOwner(_ context.Context, arg db.ReopenBacklogForOwnerParams) (db.Backlog, error) {
+	return f.setBacklogStatus(arg.ID, arg.OwnerUserID, "open")
+}
+
+func (f *FakeQuerier) setBacklogStatus(id, ownerUserID uuid.UUID, status string) (db.Backlog, error) {
+	existing, ok := f.backlogsByID[id]
+	if !ok || !f.hasRoleAtLeast(existing.ProjectID, ownerUserID, "member") {
+		return db.Backlog{}, pgx.ErrNoRows
+	}
+	existing.Status = status
+	if status == "closed" {
+		existing.ClosedAt = now()
+	} else {
+		existing.ClosedAt = pgtype.Timestamptz{}
+	}
+	existing.UpdatedAt = now()
+
+	f.backlogsByID[id] = existing
+	for i, b := range f.backlogs {
+		if b.ID == existing.ID {
+			f.backlogs[i] = existing
+			break
+		}
+	}
+	return existing, nil
+}
+
 // DeleteBacklogForOwner returns the number of rows affected, so callers can
 // tell "deleted" from "not yours / not there" exactly as Postgres does.
 func (f *FakeQuerier) DeleteBacklogForOwner(_ context.Context, arg db.DeleteBacklogForOwnerParams) (int64, error) {
@@ -842,6 +885,7 @@ func (f *FakeQuerier) SeedEpic(projectID, backlogID uuid.UUID, name string) db.E
 		Name:      name,
 		Priority:  "medium",
 		Progress:  "not_started",
+		Status:    "open",
 		CreatedAt: now(),
 		UpdatedAt: now(),
 	}
@@ -902,8 +946,11 @@ func (f *FakeQuerier) CreateEpic(_ context.Context, arg db.CreateEpicParams) (db
 		ForbiddenScope:               arg.ForbiddenScope,
 		EstimatedPoints:              arg.EstimatedPoints,
 		AssigneeUserID:               arg.AssigneeUserID,
-		CreatedAt:                    now(),
-		UpdatedAt:                    now(),
+		// Defaulted in the schema (000036) and never named by CreateEpic, so
+		// the fake supplies the same default.
+		Status:    "open",
+		CreatedAt: now(),
+		UpdatedAt: now(),
 	}
 	f.epics = append(f.epics, e)
 	f.epicsByID[e.ID] = e
@@ -917,6 +964,9 @@ func (f *FakeQuerier) ListEpicsByProject(_ context.Context, arg db.ListEpicsByPr
 	items := []db.ListEpicsByProjectRow{}
 	for _, e := range f.epics {
 		if e.ProjectID != arg.ProjectID {
+			continue
+		}
+		if arg.Status != "" && e.Status != arg.Status {
 			continue
 		}
 		if arg.BacklogID.Valid && e.BacklogID != arg.BacklogID {
@@ -956,6 +1006,8 @@ func (f *FakeQuerier) ListEpicsByProject(_ context.Context, arg db.ListEpicsByPr
 			ForbiddenScope:               e.ForbiddenScope,
 			EstimatedPoints:              e.EstimatedPoints,
 			AssigneeUserID:               e.AssigneeUserID,
+			Status:                       e.Status,
+			ClosedAt:                     e.ClosedAt,
 			TaskCount:                    taskCount,
 			ClosedTaskCount:              closedTaskCount,
 		})
@@ -1067,6 +1119,32 @@ func (f *FakeQuerier) UpdateEpicForOwner(_ context.Context, arg db.UpdateEpicFor
 			break
 		}
 	}
+	return existing, nil
+}
+
+// CloseEpicForOwner / ReopenEpicForOwner mirror the SQL: member-minimum, and
+// like a backlog's they touch nothing but the two status columns.
+func (f *FakeQuerier) CloseEpicForOwner(_ context.Context, arg db.CloseEpicForOwnerParams) (db.Epic, error) {
+	return f.setEpicStatus(arg.ID, arg.OwnerUserID, "closed")
+}
+
+func (f *FakeQuerier) ReopenEpicForOwner(_ context.Context, arg db.ReopenEpicForOwnerParams) (db.Epic, error) {
+	return f.setEpicStatus(arg.ID, arg.OwnerUserID, "open")
+}
+
+func (f *FakeQuerier) setEpicStatus(id, ownerUserID uuid.UUID, status string) (db.Epic, error) {
+	existing, ok := f.epicsByID[id]
+	if !ok || !f.hasRoleAtLeast(existing.ProjectID, ownerUserID, "member") {
+		return db.Epic{}, pgx.ErrNoRows
+	}
+	existing.Status = status
+	if status == "closed" {
+		existing.ClosedAt = now()
+	} else {
+		existing.ClosedAt = pgtype.Timestamptz{}
+	}
+	existing.UpdatedAt = now()
+	f.storeEpic(existing)
 	return existing, nil
 }
 

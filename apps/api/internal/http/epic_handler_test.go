@@ -356,3 +356,59 @@ func TestHandleUpdateEpic_EstimatedPoints(t *testing.T) {
 	rejected := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+id, map[string]any{"name": "Screens v2", "estimatedPoints": 0}, token)
 	assert.Equal(t, http.StatusBadRequest, rejected.Code)
 }
+
+// --- Close / Reopen (000036) -------------------------------------------------
+
+func TestHandleCloseAndReopenEpic(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, ownerToken := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	e := q.SeedEpic(p.ID, uuid.Nil, "Settings screen")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/epics/"+e.ID.String()+"/close", nil, ownerToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var closed map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &closed))
+	assert.Equal(t, "closed", closed["status"])
+	assert.NotNil(t, closed["closedAt"])
+
+	rec = doRequest(t, s, http.MethodPost, "/api/v1/epics/"+e.ID.String()+"/reopen", nil, ownerToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var reopened map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &reopened))
+	assert.Equal(t, "open", reopened["status"])
+	assert.Nil(t, reopened["closedAt"])
+}
+
+func TestHandleListEpics_StatusFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantCode int
+		wantLen  int
+	}{
+		{"omitted hides closed", "", http.StatusOK, 1},
+		{"all", "?status=all", http.StatusOK, 2},
+		{"rejects unknown", "?status=archived", http.StatusBadRequest, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, q := newTestServer(t)
+			ownerID, ownerToken := loginSession(t, s, q)
+			p := q.SeedProject(ownerID, "Alpha")
+			q.SeedEpic(p.ID, uuid.Nil, "Open one")
+			closed := q.SeedEpic(p.ID, uuid.Nil, "Closed one")
+			require.Equal(t, http.StatusOK,
+				doRequest(t, s, http.MethodPost, "/api/v1/epics/"+closed.ID.String()+"/close", nil, ownerToken).Code)
+
+			rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/epics"+tt.query, nil, ownerToken)
+			require.Equal(t, tt.wantCode, rec.Code)
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+			var body []map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Len(t, body, tt.wantLen)
+		})
+	}
+}

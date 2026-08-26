@@ -7,8 +7,13 @@ import {
 } from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
-import type { Priority, Progress } from "@/types";
+import type { Priority, Progress, StatusFilter } from "@/types";
 
+// The ?status= values the collection accepts. "open" is the default and, like
+// every other default here, drops out of the query string rather than being
+// spelled out — it is also the API's own default, so an omitted parameter and
+// an explicit "open" fetch the same list.
+const STATUSES = ["open", "closed", "all"] as const;
 const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
 const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 
@@ -44,6 +49,7 @@ export default async function BacklogsPage({
 }: {
   params: Promise<{ projectId: string }>;
   searchParams?: Promise<{
+    status?: string;
     priority?: string;
     progress?: string;
     sort?: string;
@@ -55,6 +61,10 @@ export default async function BacklogsPage({
   if (!project) notFound();
 
   const resolvedSearchParams = await searchParams;
+  const statusParam = resolvedSearchParams?.status;
+  const status: StatusFilter = STATUSES.includes(statusParam as StatusFilter)
+    ? (statusParam as StatusFilter)
+    : "open";
   const priorityParam = resolvedSearchParams?.priority;
   const priority = PRIORITIES.includes(priorityParam as Priority)
     ? (priorityParam as Priority)
@@ -96,6 +106,7 @@ export default async function BacklogsPage({
   try {
     const [fetchedBacklogs, unclassifiedTasks] = await Promise.all([
       getBacklogs(projectId, {
+        status,
         priority,
         progress,
         sort: sort === "priority" || sort === "progress" ? sort : undefined,
@@ -125,6 +136,7 @@ export default async function BacklogsPage({
       projectId={project.id}
       backlogs={backlogs}
       links={links}
+      statusFilter={status}
       priorityFilter={priority}
       progressFilter={progress}
       sort={sort}

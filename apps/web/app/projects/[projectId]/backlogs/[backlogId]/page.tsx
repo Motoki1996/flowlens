@@ -30,7 +30,11 @@ export default async function BacklogPage({
   // and a failed fetch reads the same way rather than taking the screen down.
   let epics: Awaited<ReturnType<typeof getEpics>> = [];
   try {
-    epics = await getEpics(projectId, { backlogId: backlog.id });
+    // "all": this tab is the one place this backlog's own epics are listed,
+    // so a closed one has to stay visible here (marked as closed) rather than
+    // disappearing with no filter to bring it back. Narrowing to open epics is
+    // the Epic collection's job.
+    epics = await getEpics(projectId, { backlogId: backlog.id, status: "all" });
   } catch {
     epics = [];
   }

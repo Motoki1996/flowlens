@@ -72,6 +72,13 @@ const (
 
 	SortPriority = backlog.SortPriority
 	SortProgress = backlog.SortProgress
+
+	// Status values, re-exported for the same reason: an epic's open/closed
+	// state means exactly what a backlog's does (000036), including that it
+	// is app-only and that closing one never cascades to its tasks.
+	StatusOpen   = backlog.StatusOpen
+	StatusClosed = backlog.StatusClosed
+	StatusAll    = backlog.StatusAll
 )
 
 // Epic is the API-facing representation of an epic.
@@ -84,10 +91,16 @@ type Epic struct {
 	BacklogID   *uuid.UUID `json:"backlogId"`
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
-	StartDate   *time.Time `json:"startDate"`
-	DueOn       *time.Time `json:"dueOn"`
-	Priority    string     `json:"priority"`
-	Progress    string     `json:"progress"`
+	// Status is StatusOpen or StatusClosed, and ClosedAt the moment it last
+	// became the latter (nil while open) — a backlog's two columns one rung
+	// down, with the same meaning and the same non-cascading close. Neither is
+	// writable through Update: they move only via Close/Reopen.
+	Status    string     `json:"status"`
+	ClosedAt  *time.Time `json:"closedAt"`
+	StartDate *time.Time `json:"startDate"`
+	DueOn     *time.Time `json:"dueOn"`
+	Priority  string     `json:"priority"`
+	Progress  string     `json:"progress"`
 	// DefaultLinkedGitlabProjectID is the GitLab project a task filed in this
 	// epic gets its issue created in, overriding its backlog's own override of
 	// the project default. nil means "fall through to the backlog". Read only
@@ -152,9 +165,13 @@ type Epic struct {
 // context endpoint stays the place to ask "what applies to this task"; this
 // is "what does its epic say".
 type Summary struct {
-	ID              uuid.UUID  `json:"id"`
-	Name            string     `json:"name"`
-	Description     string     `json:"description"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	// Status is here so a caller holding only a task can tell that the rung
+	// above it has been closed — which, since closing never cascades, is not
+	// something the task's own status would ever reveal.
+	Status          string     `json:"status"`
 	StartDate       *time.Time `json:"startDate"`
 	DueOn           *time.Time `json:"dueOn"`
 	Priority        string     `json:"priority"`
@@ -171,6 +188,7 @@ func (e Epic) Summary() Summary {
 		ID:              e.ID,
 		Name:            e.Name,
 		Description:     e.Description,
+		Status:          e.Status,
 		StartDate:       e.StartDate,
 		DueOn:           e.DueOn,
 		Priority:        e.Priority,
@@ -189,6 +207,8 @@ func fromRow(row db.Epic) Epic {
 		BacklogID:                    uuidPtr(row.BacklogID),
 		Name:                         row.Name,
 		Description:                  row.Description,
+		Status:                       row.Status,
+		ClosedAt:                     timePtr(row.ClosedAt),
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -213,6 +233,8 @@ func fromListRow(row db.ListEpicsByProjectRow) Epic {
 		BacklogID:                    uuidPtr(row.BacklogID),
 		Name:                         row.Name,
 		Description:                  row.Description,
+		Status:                       row.Status,
+		ClosedAt:                     timePtr(row.ClosedAt),
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -243,6 +265,16 @@ func toDate(v *time.Time) pgtype.Date {
 		return pgtype.Date{}
 	}
 	return pgtype.Date{Time: *v, Valid: true}
+}
+
+// timePtr converts a nullable timestamptz — only ClosedAt today — to a
+// pointer, the way datePtr does for a nullable date.
+func timePtr(v pgtype.Timestamptz) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := v.Time
+	return &t
 }
 
 func intPtr(v pgtype.Int4) *int {
@@ -446,14 +478,20 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 }
 
 // ListFilter narrows List to a subset of a project's epics. The zero value
-// means "no filter, creation order".
+// means "open epics only, creation order" — Status is the one field whose zero
+// value is a filter rather than the absence of one, exactly as a backlog's is.
 type ListFilter struct {
 	// BacklogID, when non-nil, only returns epics filed in that backlog;
 	// BacklogUnfiled only those in no backlog at all. Mutually exclusive.
 	BacklogID      *uuid.UUID
 	BacklogUnfiled bool
-	Priority       string // one of the Priority* constants, or "" (no filter)
-	Progress       string // one of the Progress* constants, or "" (no filter)
+	// Status behaves exactly as a backlog's ListFilter.Status: "" is not "no
+	// filter" but StatusOpen, and StatusAll is how a caller asks for closed
+	// epics too. Note the two are independent — an open epic in a closed
+	// backlog still appears, since closing does not cascade.
+	Status   string
+	Priority string // one of the Priority* constants, or "" (no filter)
+	Progress string // one of the Progress* constants, or "" (no filter)
 	// AssigneeUserID/AssigneeUnassigned behave exactly as a backlog's: there
 	// is no GitLab axis to OR against, since an epic has no GitLab
 	// counterpart. Mutually exclusive.
@@ -464,8 +502,23 @@ type ListFilter struct {
 	Sort string
 }
 
-// List returns projectID's epics matching filter. It returns ErrNotFound if
-// projectID does not exist or the caller cannot see it.
+// resolveStatusFilter turns a ListFilter.Status into the value the query
+// wants, where "" means "no status filter" — the same two-vocabulary mapping
+// internal/backlog does, since an absent filter means open-only here too.
+func resolveStatusFilter(v string) string {
+	switch v {
+	case "":
+		return StatusOpen
+	case StatusAll:
+		return ""
+	default:
+		return v
+	}
+}
+
+// List returns projectID's epics matching filter. Closed epics are omitted
+// unless filter.Status asks for them. It returns ErrNotFound if projectID
+// does not exist or the caller cannot see it.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Epic, error) {
 	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
 		return nil, err
@@ -473,6 +526,7 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 
 	rows, err := s.q.ListEpicsByProject(ctx, db.ListEpicsByProjectParams{
 		ProjectID:          projectID,
+		Status:             resolveStatusFilter(filter.Status),
 		BacklogID:          toUUID(filter.BacklogID),
 		BacklogUnfiled:     filter.BacklogUnfiled,
 		Priority:           filter.Priority,
@@ -752,6 +806,60 @@ func (s *Service) SetTasks(ctx context.Context, ownerID, epicID uuid.UUID, taskI
 		}
 		return nil
 	})
+}
+
+// Close marks the epic closed and stamps closed_at: the coarse unit it stood
+// for has shipped, or been dropped, and it should leave the collection view.
+// Closing an already-closed epic is a no-op, so closed_at never moves on a
+// re-close.
+//
+// Like a backlog's, it does not cascade: the epic's tasks keep the status and
+// progress they had, and closing an epic inside an open backlog says nothing
+// about that backlog (or the reverse). Nothing is enqueued for GitLab — an
+// epic has no GitLab counterpart at all.
+func (s *Service) Close(ctx context.Context, ownerID, epicID uuid.UUID) (Epic, error) {
+	return s.setStatus(ctx, ownerID, epicID, StatusClosed)
+}
+
+// Reopen marks the epic open again and clears closed_at. Reopening an
+// already-open epic is a no-op, and it cascades no more than Close does.
+func (s *Service) Reopen(ctx context.Context, ownerID, epicID uuid.UUID) (Epic, error) {
+	return s.setStatus(ctx, ownerID, epicID, StatusOpen)
+}
+
+// setStatus is the half Close and Reopen share: read the current row (which
+// is also what enforces visibility), return it untouched when the status is
+// already the requested one, and otherwise run the matching statement.
+func (s *Service) setStatus(ctx context.Context, ownerID, epicID uuid.UUID, status string) (Epic, error) {
+	current, err := s.Get(ctx, ownerID, epicID)
+	if err != nil {
+		return Epic{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Epic{}, err
+	}
+	if current.Status == status {
+		return current, nil
+	}
+
+	var row db.Epic
+	if status == StatusClosed {
+		row, err = s.q.CloseEpicForOwner(ctx, db.CloseEpicForOwnerParams{ID: epicID, OwnerUserID: ownerID})
+	} else {
+		row, err = s.q.ReopenEpicForOwner(ctx, db.ReopenEpicForOwnerParams{ID: epicID, OwnerUserID: ownerID})
+	}
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Epic{}, ErrNotFound
+		}
+		return Epic{}, fmt.Errorf("epic: set status %s: %w", status, err)
+	}
+
+	result := fromRow(row)
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
+		return Epic{}, err
+	}
+	return result, nil
 }
 
 // Delete removes the epic. Ownership is enforced by the query, so a non-member

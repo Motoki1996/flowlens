@@ -82,6 +82,19 @@ A backlog may name its own `baseBranch` (`GET` on the backlog, or via the
 task's `context` response) — branch from that, not from the repo's default
 branch, when the task belongs to one.
 
+## Closed backlogs and epics
+
+A backlog or an epic can be closed — it shipped, or it was dropped. Closed
+ones are **left out of the list endpoints by default**, so
+`GET /api/v1/projects/{projectID}/backlogs` returns only live work; pass
+`?status=all` (or `?status=closed`) to see the rest, and `GET` on the object
+itself always works whatever its status.
+
+Closing does **not** cascade: a task inside a closed backlog or epic keeps
+its own `status` and `progress`, and stays workable. Don't infer that a task
+is finished from its backlog being closed — and don't close a backlog or epic
+to signal that its tasks are done. Close the tasks.
+
 ## Concurrency: one agent at a time
 
 Running multiple agents against `/flowlens:work` concurrently is **not

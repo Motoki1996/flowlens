@@ -69,6 +69,8 @@ const backlog: Backlog = {
   forbiddenScope: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open" as const,
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-02T00:00:00Z",
 };
@@ -81,7 +83,7 @@ function makeTask(overrides: Partial<Task>): Task {
     epicId: null,
     title: "Fix the bug",
     description: "",
-    status: "open",
+    status: "open" as const,
     closedAt: null,
     assigneeGitlabUserId: null,
     assigneeGitlabUsername: "",
@@ -382,6 +384,8 @@ describe("BacklogDetail", () => {
       assigneeDisplayName: "",
       taskCount: 2,
       closedTaskCount: 1,
+      status: "open" as const,
+      closedAt: null,
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
     };
@@ -520,5 +524,67 @@ describe("BacklogDetail", () => {
 
       expect(screen.queryByRole("form", { name: "New epic" })).not.toBeInTheDocument();
     });
+  });
+});
+
+// --- Close / Reopen (000036) -------------------------------------------------
+
+describe("closing a backlog", () => {
+  it("closes through the object's own endpoint and shows the badge", async () => {
+    const closed: Backlog = {
+      ...backlog,
+      status: "closed",
+      closedAt: "2026-08-26T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => closed });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<BacklogDetail backlog={backlog} project={project} />);
+    expect(screen.queryByText("Closed")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close backlog" }));
+
+    await waitFor(() => expect(screen.getByText("Closed")).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/backlogs/b1/close"),
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(screen.getByRole("button", { name: "Reopen backlog" })).toBeInTheDocument();
+  });
+
+  it("reopens a closed backlog through /reopen", async () => {
+    const closed: Backlog = {
+      ...backlog,
+      status: "closed",
+      closedAt: "2026-08-26T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => backlog });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<BacklogDetail backlog={closed} project={project} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reopen backlog" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/v1/backlogs/b1/reopen"),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+  });
+
+  it("reports a failure and leaves the backlog open", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: { code: "forbidden", message: "insufficient project role" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<BacklogDetail backlog={backlog} project={project} />);
+    fireEvent.click(screen.getByRole("button", { name: "Close backlog" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("insufficient project role")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("Closed")).not.toBeInTheDocument();
   });
 });

@@ -493,3 +493,71 @@ func TestHandleDeleteBacklog(t *testing.T) {
 	// Deleting twice is reported as "not found", not as success.
 	assert.Equal(t, http.StatusNotFound, doRequest(t, s, http.MethodDelete, "/api/v1/backlogs/"+id, nil, ownerToken).Code)
 }
+
+// --- Close / Reopen (000036) -------------------------------------------------
+
+func TestHandleCloseAndReopenBacklog(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, ownerToken := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Release 2.4")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/backlogs/"+b.ID.String()+"/close", nil, ownerToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var closed map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &closed))
+	assert.Equal(t, "closed", closed["status"])
+	assert.NotNil(t, closed["closedAt"])
+
+	rec = doRequest(t, s, http.MethodPost, "/api/v1/backlogs/"+b.ID.String()+"/reopen", nil, ownerToken)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var reopened map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &reopened))
+	assert.Equal(t, "open", reopened["status"])
+	assert.Nil(t, reopened["closedAt"])
+}
+
+func TestHandleCloseBacklog_NoCookie(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Release 2.4")
+
+	rec := doRequest(t, s, http.MethodPost, "/api/v1/backlogs/"+b.ID.String()+"/close", nil, "")
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestHandleListBacklogs_StatusFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		wantCode int
+		wantLen  int
+	}{
+		{"omitted hides closed", "", http.StatusOK, 1},
+		{"open", "?status=open", http.StatusOK, 1},
+		{"closed", "?status=closed", http.StatusOK, 1},
+		{"all", "?status=all", http.StatusOK, 2},
+		{"rejects unknown", "?status=archived", http.StatusBadRequest, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, q := newTestServer(t)
+			ownerID, ownerToken := loginSession(t, s, q)
+			p := q.SeedProject(ownerID, "Alpha")
+			q.SeedBacklog(p.ID, "Open one")
+			closed := q.SeedBacklog(p.ID, "Closed one")
+			require.Equal(t, http.StatusOK,
+				doRequest(t, s, http.MethodPost, "/api/v1/backlogs/"+closed.ID.String()+"/close", nil, ownerToken).Code)
+
+			rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/backlogs"+tt.query, nil, ownerToken)
+			require.Equal(t, tt.wantCode, rec.Code)
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+			var body []map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Len(t, body, tt.wantLen)
+		})
+	}
+}

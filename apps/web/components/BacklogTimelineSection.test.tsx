@@ -34,6 +34,8 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     forbiddenScope: "",
     taskCount: 0,
     closedTaskCount: 0,
+    status: "open",
+    closedAt: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -76,6 +78,8 @@ describe("BacklogTimelineSection", () => {
         dueOn: "2026-08-07",
         taskCount: 4,
         closedTaskCount: 2,
+        status: "open",
+        closedAt: null,
       }),
     ];
     render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
@@ -97,6 +101,8 @@ describe("BacklogTimelineSection", () => {
         dueOn: "2026-08-07",
         taskCount: 2,
         closedTaskCount: 1,
+        status: "open",
+        closedAt: null,
       }),
     ];
     const { container } = render(

@@ -44,7 +44,9 @@ export default async function EpicPage({
   // parent picker needs anyway.
   let backlogs: Backlog[] = [];
   try {
-    backlogs = await getBacklogs(projectId);
+    // "all": the edit form's parent picker has to contain this epic's current
+    // backlog even when that backlog has been closed.
+    backlogs = await getBacklogs(projectId, { status: "all" });
   } catch {
     backlogs = [];
   }

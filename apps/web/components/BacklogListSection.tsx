@@ -18,7 +18,9 @@ import type {
   LinkedGitlabProject,
   Priority,
   Progress,
+  StatusFilter,
 } from "@/types";
+import { ClosedBadge } from "@/components/ClosedBadge";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_LABELS, PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -354,6 +356,11 @@ function NewBacklogForm({
  *  the changeXFilter functions below and the "is any filter active" check
  *  that drives the Clear filters control read from here. */
 const FILTER_DEFAULTS = {
+  // "open" rather than "all", and the only default here that hides rows: a
+  // shipped backlog is closed precisely so it stops filling this screen, so
+  // the collection would defeat its own feature by showing closed ones by
+  // default. "all" is one click away, and the URL says which is in force.
+  status: "open",
   priority: "all",
   progress: "all",
   sort: "manual",
@@ -389,6 +396,7 @@ export function BacklogListSection({
   projectId,
   backlogs,
   links = [],
+  statusFilter = "open",
   priorityFilter,
   progressFilter,
   sort = "manual",
@@ -403,6 +411,10 @@ export function BacklogListSection({
    *  — the default, and the case for a project with no GitLab connection —
    *  hides that field entirely. */
   links?: LinkedGitlabProject[];
+  /** The applied `?status=`. Defaults to "open", which is also the API's own
+   *  default — unlike the filters below, this one is never "all" unless it
+   *  was asked for. */
+  statusFilter?: StatusFilter;
   /** The applied `?priority=`; undefined means all of them. */
   priorityFilter?: Priority;
   /** The applied `?progress=`; undefined means all of them. */
@@ -455,6 +467,7 @@ export function BacklogListSection({
   }, [backlogs, search, sort]);
 
   const hasActiveFilters =
+    statusFilter !== FILTER_DEFAULTS.status ||
     priorityFilter !== undefined ||
     progressFilter !== undefined ||
     sort !== FILTER_DEFAULTS.sort ||
@@ -482,6 +495,12 @@ export function BacklogListSection({
     }
     const query = params.toString();
     router.push(query ? `${pathname}?${query}` : pathname);
+  }
+
+  function changeStatusFilter(value: StatusFilter) {
+    updateQuery({
+      status: value === FILTER_DEFAULTS.status ? undefined : value,
+    });
   }
 
   function changePriorityFilter(value: "all" | Priority) {
@@ -516,6 +535,9 @@ export function BacklogListSection({
     if (search) {
       return `No backlogs match "${search}".`;
     }
+    if (statusFilter === "closed") {
+      return "No closed backlogs.";
+    }
     if (priorityFilter) {
       return `No ${PRIORITY_LABELS[priorityFilter].toLowerCase()} priority backlogs.`;
     }
@@ -523,6 +545,32 @@ export function BacklogListSection({
       return `No ${PROGRESS_LABELS[progressFilter].toLowerCase()} backlogs.`;
     }
     return "No backlogs match the current filters.";
+  }
+
+  /** The empty state, shared by all three view modes.
+   *
+   *  It carries a way back to the closed backlogs because the filter row above
+   *  is hidden while the list is empty — so a project whose only backlogs have
+   *  all been closed would otherwise have no control anywhere on the screen
+   *  that could reveal them again. */
+  function emptyState() {
+    if (hasActiveFilters) {
+      return (
+        <p className="text-muted-foreground text-sm">{emptyFilterMessage()}</p>
+      );
+    }
+    return (
+      <p className="text-muted-foreground text-sm">
+        No backlogs yet.{" "}
+        <button
+          type="button"
+          onClick={() => changeStatusFilter("all")}
+          className="hover:text-foreground underline"
+        >
+          Show closed backlogs
+        </button>
+      </p>
+    );
   }
 
   return (
@@ -571,6 +619,21 @@ export function BacklogListSection({
                 onChange={changeSearch}
                 label="backlogs"
               />
+              <Select
+                value={statusFilter}
+                onValueChange={(value) =>
+                  changeStatusFilter(value as StatusFilter)
+                }
+              >
+                <SelectTrigger size="sm" aria-label="Status" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                  <SelectItem value="all">All statuses</SelectItem>
+                </SelectContent>
+              </Select>
               <Select
                 value={priorityFilter ?? "all"}
                 onValueChange={(value) =>
@@ -655,9 +718,7 @@ export function BacklogListSection({
           </p>
         ) : view === "board" ? (
           visibleBacklogs.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
-            </p>
+            emptyState()
           ) : (
             <BacklogBoardSection
               projectId={projectId}
@@ -666,9 +727,7 @@ export function BacklogListSection({
           )
         ) : view === "timeline" ? (
           visibleBacklogs.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
-            </p>
+            emptyState()
           ) : (
             <BacklogTimelineSection
               projectId={projectId}
@@ -682,9 +741,7 @@ export function BacklogListSection({
                 a project with no backlogs but some unclassified tasks still
                 has something to show in List. */}
             {visibleBacklogs.length === 0 && !showUnclassified ? (
-              <p className="text-muted-foreground text-sm">
-                {hasActiveFilters ? emptyFilterMessage() : "No backlogs yet."}
-              </p>
+              emptyState()
             ) : (
               <ul className="space-y-2">
                 {visibleBacklogs.map((backlog) => {
@@ -723,6 +780,9 @@ export function BacklogListSection({
                                 className="text-foreground text-sm hover:underline"
                               />
                               <span className="flex shrink-0 items-center gap-2">
+                                {/* Only ever rendered when ?status= asked for
+                                    closed backlogs — see ClosedBadge. */}
+                                <ClosedBadge status={backlog.status} />
                                 <PriorityBadge priority={backlog.priority} />
                                 <ProgressBadge progress={backlog.progress} />
                               </span>

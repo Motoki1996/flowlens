@@ -15,8 +15,10 @@ import type {
   LinkedGitlabProject,
   Priority,
   Progress,
+  StatusFilter,
   Task,
 } from "@/types";
+import { ClosedBadge } from "@/components/ClosedBadge";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
 import { PRIORITY_LABELS, PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -75,6 +77,9 @@ const EpicTimelineSection = dynamic(
 /** The one place that defines what "no filter" means for each URL-held
  *  filter, mirroring BacklogListSection's own FILTER_DEFAULTS. */
 const FILTER_DEFAULTS = {
+  // "open", not "all", for the same reason the Backlog collection's is — see
+  // its FILTER_DEFAULTS.
+  status: "open",
   backlog: "all",
   priority: "all",
   progress: "all",
@@ -105,6 +110,7 @@ export function EpicListSection({
   backlogs = [],
   tasks = [],
   links = [],
+  statusFilter = "open",
   backlogFilter,
   priorityFilter,
   progressFilter,
@@ -122,6 +128,10 @@ export function EpicListSection({
   tasks?: Task[];
   /** The project's linked GitLab projects; empty hides that form field. */
   links?: LinkedGitlabProject[];
+  /** The applied `?status=`. Defaults to "open", the API's own default — an
+   *  epic's status is independent of its backlog's, so a closed epic in an
+   *  open backlog is hidden here just the same. */
+  statusFilter?: StatusFilter;
   /** The applied `?backlog=` — a backlog UUID, NO_BACKLOG_FILTER, or
    *  undefined for all of them. */
   backlogFilter?: string;
@@ -167,6 +177,7 @@ export function EpicListSection({
   }, [epics, search, sort]);
 
   const hasActiveFilters =
+    statusFilter !== FILTER_DEFAULTS.status ||
     backlogFilter !== undefined ||
     priorityFilter !== undefined ||
     progressFilter !== undefined ||
@@ -191,6 +202,7 @@ export function EpicListSection({
    *  doesn't say whether it's the search term or one of the filters. */
   function emptyFilterMessage(): string {
     if (search) return `No epics match "${search}".`;
+    if (statusFilter === "closed") return "No closed epics.";
     if (backlogFilter === NO_BACKLOG_FILTER)
       return "No epics outside a backlog.";
     if (backlogFilter) {
@@ -240,6 +252,24 @@ export function EpicListSection({
                 }
                 label="epics"
               />
+              <Select
+                value={statusFilter}
+                onValueChange={(value) =>
+                  updateQuery({
+                    status:
+                      value === FILTER_DEFAULTS.status ? undefined : value,
+                  })
+                }
+              >
+                <SelectTrigger size="sm" aria-label="Status" className="w-36">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                  <SelectItem value="all">All statuses</SelectItem>
+                </SelectContent>
+              </Select>
               <Select
                 value={backlogFilter ?? "all"}
                 onValueChange={(value) =>
@@ -364,9 +394,26 @@ export function EpicListSection({
             Failed to load epics. Try refreshing the page.
           </p>
         ) : visibleEpics.length === 0 ? (
-          <p className="text-muted-foreground text-sm">
-            {hasActiveFilters ? emptyFilterMessage() : "No epics yet."}
-          </p>
+          hasActiveFilters ? (
+            <p className="text-muted-foreground text-sm">
+              {emptyFilterMessage()}
+            </p>
+          ) : (
+            /* The way back to the closed epics: the filter row above is hidden
+               while the list is empty, so a project whose only epics have all
+               been closed would otherwise have no control on the screen that
+               could reveal them. */
+            <p className="text-muted-foreground text-sm">
+              No epics yet.{" "}
+              <button
+                type="button"
+                onClick={() => updateQuery({ status: "all" })}
+                className="hover:text-foreground underline"
+              >
+                Show closed epics
+              </button>
+            </p>
+          )
         ) : view === "board" ? (
           <EpicBoardSection projectId={projectId} epics={visibleEpics} />
         ) : view === "timeline" ? (
@@ -414,6 +461,7 @@ export function EpicListSection({
                               className="text-foreground text-sm hover:underline"
                             />
                             <span className="flex shrink-0 items-center gap-2">
+                              <ClosedBadge status={epic.status} />
                               <PriorityBadge priority={epic.priority} />
                               <ProgressBadge progress={epic.progress} />
                             </span>

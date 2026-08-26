@@ -1718,6 +1718,87 @@ remains the keyboard path. Everything else stays in the List mode — creating,
 editing, deleting, and (for tasks) moving between backlogs — since the
 board's one axis is progress.
 
+### Backlog & epic close
+
+A backlog and an epic each also carry a `status` — `open` or `closed`,
+defaulting to `open` — plus the `closedAt` timestamp of when it last became
+the latter. It is the same open/closed concept a task already has, one and two
+rungs up.
+
+The problem it solves is narrow: a shipped backlog had nowhere to go. Once a
+feature is released, its backlog stays in the collection view forever —
+`progress = done` says *the work finished*, which is a different statement from
+*this is no longer something we are tracking*, and a backlog that was abandoned
+rather than delivered never reaches `done` at all. Closing it takes it off the
+screen without deleting it or touching anything inside it.
+
+**It is not a task's `status`, despite the name.** A task's mirrors the GitLab
+issue state and syncs both ways; a backlog's and an epic's are app-only end to
+end, like `priority`, `progress`, `baseBranch` and `assigneeUserId` before
+them. Neither rung has a GitLab counterpart at all — GitLab CE has no Epic, and
+a backlog is not a milestone — so closing one enqueues nothing and no GitLab
+event ever moves it.
+
+#### Closing does not cascade
+
+Closing a backlog leaves its epics open. Closing either leaves their tasks
+exactly as they were — same `status`, same `progress`, still workable, still
+counted by [velocity](#velocity-issue-195) and the forecast.
+
+That is deliberate, and it is the whole reason the feature is shaped this way.
+A cascade would have to do one of two things, and both are wrong:
+
+- **Close the tasks.** A task's close writes `closed_at` and enqueues an
+  `issue.close` for GitLab. `internal/velocity` reads `closed_at` as a
+  completion signal (`min(closed_at, first progress='done' transition)`), so
+  closing 50 leftover tasks at once would post a 50-task completion spike on
+  the day the backlog was retired — inventing throughput that never happened —
+  while closing 50 GitLab issues nobody asked to close, asynchronously through
+  the outbox, with no way to tell afterwards which of them were already closed
+  and therefore no correct `reopen`.
+- **Move the tasks to `progress = done`.** That says unfinished work finished,
+  and lands in the same velocity series by the other door.
+
+Leftover open work is **moved to another backlog** — the ordinary
+`PATCH /api/v1/tasks/{taskID}` with a new `backlogId`, which never re-targets
+an issue that already exists — or simply left where it is. Closing a task is
+still a per-task decision, made on the task.
+
+#### API
+
+- `POST /api/v1/backlogs/{backlogID}/close` and `.../reopen`, and
+  `POST /api/v1/epics/{epicID}/close` and `.../reopen`. Both are on the
+  bearer-token allowlist and need `write` scope, like a task's own
+  `/close`. Closing an already-closed object is a no-op that leaves `closedAt`
+  where it is, so a re-close never moves the timestamp; the same holds for
+  reopening an already-open one.
+- `status` is **not** writable through `PATCH` on either object — a close is
+  an event, not a field edit, exactly as it is for a task.
+- `GET /api/v1/projects/{projectID}/backlogs` and `.../epics` accept
+  `?status=open|closed|all`. **An omitted `?status=` is not "no filter" here:**
+  it means `open`, so a closed object leaves the collection without anyone
+  asking. That default is the point of the feature. `?status=all` is how a
+  caller gets both — needed wherever the result is a lookup table (resolving a
+  task's `backlogId` to a name) rather than a browsable list.
+- `GET` on the object itself always returns it whatever its status, so a
+  bookmark or a task's `backlogId` never dead-ends.
+- `GET /api/v1/tasks/{taskID}`'s embedded `epic` object carries the epic's
+  `status` too — since the close doesn't cascade, the task's own status would
+  otherwise never reveal that the rung above it has been retired.
+
+#### In the web app
+
+Both single views carry a **Close backlog** / **Close epic** button beside
+Edit and ahead of Delete, and show a "Closed" badge next to the name. There is
+no confirmation step: nothing is destroyed, nothing leaves FlowLens, and the
+button reopens it again — closing costs one click to undo, unlike deleting.
+
+Both collection views gain a **Status** filter (Open, the default / Closed /
+All statuses) alongside priority and progress, in the URL like every other
+filter, with `status=open` dropping out of the query string. A closed object is
+marked with a "Closed" badge in list rows; an open one carries no badge, since
+open is the overwhelming default and a badge on every row would say nothing.
+
 ### Bulk task creation
 
 A spec-driven breakdown of a backlog typically produces 10-30 tasks and the

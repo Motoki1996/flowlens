@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flowlens/api/internal/backlog"
 	"github.com/flowlens/api/internal/database/db"
 	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/epic"
@@ -629,4 +630,151 @@ func TestEffectivePoints(t *testing.T) {
 			assert.Equal(t, tt.wantPoints, points)
 		})
 	}
+}
+
+// --- Close / Reopen (000036) -------------------------------------------------
+
+func TestService_Close_SetsStatusAndClosedAt(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Release 2.4")
+	seeded := q.SeedEpic(p.ID, b.ID, "Settings screen")
+
+	closed, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, epic.StatusClosed, closed.Status)
+	require.NotNil(t, closed.ClosedAt)
+
+	reopened, err := svc.Reopen(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, epic.StatusOpen, reopened.Status)
+	assert.Nil(t, reopened.ClosedAt)
+}
+
+func TestService_Close_IsIdempotentAndLeavesClosedAtAlone(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	seeded := q.SeedEpic(p.ID, uuid.Nil, "Settings screen")
+
+	first, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	second, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, first.ClosedAt, second.ClosedAt, "re-closing must not move closed_at")
+}
+
+func TestService_Close_DoesNotCascadeToTasks(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Release 2.4")
+	e := q.SeedEpic(p.ID, b.ID, "Settings screen")
+	seededTask := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Still open")
+	q.SeedTaskEpic(seededTask.ID, e.ID)
+
+	_, err := svc.Close(context.Background(), owner, e.ID)
+	require.NoError(t, err)
+
+	task, err := q.GetTaskForOwner(context.Background(), db.GetTaskForOwnerParams{ID: seededTask.ID, OwnerUserID: owner})
+	require.NoError(t, err)
+	assert.Equal(t, "open", task.Status)
+	assert.False(t, task.ClosedAt.Valid)
+}
+
+// The two rungs' statuses are independent in both directions, which is what
+// "no cascade" means when the parent is itself a parent.
+func TestService_Close_IsIndependentOfItsBacklog(t *testing.T) {
+	q := dbtest.New()
+	epics := newService(q)
+	backlogs := backlog.NewService(q, dbtest.FakeTxRunner{Q: q}, project.NewService(q))
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Release 2.4")
+	e := q.SeedEpic(p.ID, b.ID, "Settings screen")
+
+	_, err := backlogs.Close(context.Background(), owner, b.ID)
+	require.NoError(t, err)
+
+	got, err := epics.Get(context.Background(), owner, e.ID)
+	require.NoError(t, err)
+	assert.Equal(t, epic.StatusOpen, got.Status, "closing a backlog must not close its epics")
+
+	listed, err := epics.List(context.Background(), owner, p.ID, epic.ListFilter{})
+	require.NoError(t, err)
+	require.Len(t, listed, 1, "an open epic stays listed even when its backlog is closed")
+}
+
+func TestService_List_HidesClosedByDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   []string
+	}{
+		{"absent means open only", "", []string{"Open one"}},
+		{"explicit open", epic.StatusOpen, []string{"Open one"}},
+		{"closed only", epic.StatusClosed, []string{"Closed one"}},
+		{"all", epic.StatusAll, []string{"Open one", "Closed one"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+			q.SeedEpic(p.ID, uuid.Nil, "Open one")
+			closed := q.SeedEpic(p.ID, uuid.Nil, "Closed one")
+			_, err := svc.Close(context.Background(), owner, closed.ID)
+			require.NoError(t, err)
+
+			got, err := svc.List(context.Background(), owner, p.ID, epic.ListFilter{Status: tt.status})
+			require.NoError(t, err)
+			names := make([]string, len(got))
+			for i, e := range got {
+				names[i] = e.Name
+			}
+			assert.ElementsMatch(t, tt.want, names)
+		})
+	}
+}
+
+func TestService_Get_StillReturnsClosedEpic(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	seeded := q.SeedEpic(p.ID, uuid.Nil, "Settings screen")
+	_, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+
+	got, err := svc.Get(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, epic.StatusClosed, got.Status)
+	assert.Equal(t, epic.StatusClosed, got.Summary().Status, "a task's embedded epic must show the close too")
+}
+
+func TestService_Close_RequiresMemberRole(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	viewer := q.SeedUser("viewer", "viewer@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	q.SeedProjectMember(p.ID, viewer, "viewer")
+	seeded := q.SeedEpic(p.ID, uuid.Nil, "Settings screen")
+
+	_, err := svc.Close(context.Background(), viewer, seeded.ID)
+	assert.ErrorIs(t, err, epic.ErrForbidden)
+}
+
+func TestService_Close_ReturnsNotFoundForMissingEpic(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+
+	_, err := svc.Close(context.Background(), owner, uuid.New())
+	assert.ErrorIs(t, err, epic.ErrNotFound)
 }

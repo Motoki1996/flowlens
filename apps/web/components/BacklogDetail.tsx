@@ -20,6 +20,8 @@ import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { BacklogEditForm } from "@/components/BacklogEditForm";
 import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
+import { ClosedBadge } from "@/components/ClosedBadge";
+import { CloseReopenButton } from "@/components/CloseReopenButton";
 import { TruncatedName } from "@/components/TruncatedName";
 import { EpicForm } from "@/components/EpicForm";
 import { NewTaskForm } from "@/components/NewTaskForm";
@@ -151,11 +153,18 @@ export function BacklogDetail({
                   screen instead of being cut. */}
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <TruncatedName
-                    as="h1"
-                    text={backlog.name}
-                    className="text-foreground text-xl leading-none font-semibold"
-                  />
+                  <div className="flex min-w-0 items-center gap-2">
+                    <TruncatedName
+                      as="h1"
+                      text={backlog.name}
+                      className="text-foreground text-xl leading-none font-semibold"
+                    />
+                    {/* Closed backlogs are reachable by URL long after they
+                        leave the collection, so the single view has to say so
+                        — otherwise this screen looks identical to an open
+                        one. */}
+                    <ClosedBadge status={backlog.status} />
+                  </div>
                   <CardDescription className="mt-1.5">
                     {backlog.description ? (
                       <Markdown>{backlog.description}</Markdown>
@@ -172,6 +181,19 @@ export function BacklogDetail({
                   >
                     Edit backlog
                   </Button>
+                  {/* Closing is the reversible way to retire a shipped
+                      backlog, so it sits beside Edit and ahead of Delete: it
+                      keeps the backlog and everything filed in it, and only
+                      takes it out of the collection's default listing. */}
+                  <CloseReopenButton
+                    object={backlog}
+                    resource="backlogs"
+                    noun="backlog"
+                    onChanged={(updated) => {
+                      setBacklog(updated);
+                      router.refresh();
+                    }}
+                  />
                   {/* Deleting leaves this screen with no object to show, so
                       it hands back to the Backlog collection — the tasks it
                       kept are still there, under Unclassified. */}

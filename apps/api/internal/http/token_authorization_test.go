@@ -43,8 +43,10 @@ func TestTokenAuthorization_CrossProjectResourceGets404(t *testing.T) {
 		{"POST foreign task close", http.MethodPost, "/api/v1/tasks/" + otherTask.ID.String() + "/close"},
 		{"GET foreign backlog", http.MethodGet, "/api/v1/backlogs/" + otherBacklog.ID.String()},
 		{"PATCH foreign backlog", http.MethodPatch, "/api/v1/backlogs/" + otherBacklog.ID.String()},
+		{"POST foreign backlog close", http.MethodPost, "/api/v1/backlogs/" + otherBacklog.ID.String() + "/close"},
 		{"GET foreign epic", http.MethodGet, "/api/v1/epics/" + otherEpic.ID.String()},
 		{"PATCH foreign epic", http.MethodPatch, "/api/v1/epics/" + otherEpic.ID.String()},
+		{"POST foreign epic close", http.MethodPost, "/api/v1/epics/" + otherEpic.ID.String() + "/close"},
 		{"DELETE foreign epic", http.MethodDelete, "/api/v1/epics/" + otherEpic.ID.String()},
 		{"PATCH foreign epic's tasks", http.MethodPatch, "/api/v1/epics/" + otherEpic.ID.String() + "/tasks"},
 		{"GET foreign project's epics", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String() + "/epics"},
@@ -87,10 +89,14 @@ func TestTokenAuthorization_ReadOnlyTokenGets403OnWrite(t *testing.T) {
 		{"POST bulk create tasks", http.MethodPost, "/api/v1/projects/" + p.ID.String() + "/tasks/bulk"},
 		{"PATCH backlog", http.MethodPatch, "/api/v1/backlogs/" + backlogRow.ID.String()},
 		{"DELETE backlog", http.MethodDelete, "/api/v1/backlogs/" + backlogRow.ID.String()},
+		{"POST backlog close", http.MethodPost, "/api/v1/backlogs/" + backlogRow.ID.String() + "/close"},
+		{"POST backlog reopen", http.MethodPost, "/api/v1/backlogs/" + backlogRow.ID.String() + "/reopen"},
 		{"POST create epic", http.MethodPost, "/api/v1/projects/" + p.ID.String() + "/epics"},
 		{"PATCH epic", http.MethodPatch, "/api/v1/epics/" + epicRow.ID.String()},
 		{"DELETE epic", http.MethodDelete, "/api/v1/epics/" + epicRow.ID.String()},
 		{"PATCH epic tasks", http.MethodPatch, "/api/v1/epics/" + epicRow.ID.String() + "/tasks"},
+		{"POST epic close", http.MethodPost, "/api/v1/epics/" + epicRow.ID.String() + "/close"},
+		{"POST epic reopen", http.MethodPost, "/api/v1/epics/" + epicRow.ID.String() + "/reopen"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

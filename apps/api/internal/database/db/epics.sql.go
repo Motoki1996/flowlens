@@ -69,6 +69,54 @@ func (q *Queries) ClearEpicTasksExcept(ctx context.Context, arg ClearEpicTasksEx
 	return err
 }
 
+const closeEpicForOwner = `-- name: CloseEpicForOwner :one
+UPDATE epics e
+SET status = 'closed', closed_at = now(), updated_at = now()
+WHERE e.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
+RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points, e.status, e.closed_at
+`
+
+type CloseEpicForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// CloseEpicForOwner / ReopenEpicForOwner are CloseBacklogForOwner's epic-rung
+// twins, and carry the same two promises: no outbox job (an epic has no
+// GitLab counterpart at all), and no cascade to the epic's tasks (000036).
+// The current status is not guarded on here — internal/epic returns early
+// when there is nothing to change, so closed_at never moves on a re-close.
+func (q *Queries) CloseEpicForOwner(ctx context.Context, arg CloseEpicForOwnerParams) (Epic, error) {
+	row := q.db.QueryRow(ctx, closeEpicForOwner, arg.ID, arg.OwnerUserID)
+	var i Epic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BacklogID,
+		&i.Name,
+		&i.Description,
+		&i.StartDate,
+		&i.DueOn,
+		&i.Priority,
+		&i.Progress,
+		&i.AssigneeUserID,
+		&i.BaseBranch,
+		&i.AllowedScope,
+		&i.ForbiddenScope,
+		&i.DefaultLinkedGitlabProjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EstimatedPoints,
+		&i.Status,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const countTasksInProjectByIDs = `-- name: CountTasksInProjectByIDs :one
 SELECT COUNT(*) FROM tasks
 WHERE project_id = $1
@@ -112,7 +160,7 @@ VALUES (
     $13,
     $14
 )
-RETURNING id, project_id, backlog_id, name, description, start_date, due_on, priority, progress, assignee_user_id, base_branch, allowed_scope, forbidden_scope, default_linked_gitlab_project_id, created_at, updated_at, estimated_points
+RETURNING id, project_id, backlog_id, name, description, start_date, due_on, priority, progress, assignee_user_id, base_branch, allowed_scope, forbidden_scope, default_linked_gitlab_project_id, created_at, updated_at, estimated_points, status, closed_at
 `
 
 type CreateEpicParams struct {
@@ -181,6 +229,8 @@ func (q *Queries) CreateEpic(ctx context.Context, arg CreateEpicParams) (Epic, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EstimatedPoints,
+		&i.Status,
+		&i.ClosedAt,
 	)
 	return i, err
 }
@@ -208,7 +258,7 @@ func (q *Queries) DeleteEpicForOwner(ctx context.Context, arg DeleteEpicForOwner
 }
 
 const getEpicForOwner = `-- name: GetEpicForOwner :one
-SELECT e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
+SELECT e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points, e.status, e.closed_at
 FROM epics e
 WHERE e.id = $1
   AND EXISTS (
@@ -243,6 +293,8 @@ func (q *Queries) GetEpicForOwner(ctx context.Context, arg GetEpicForOwnerParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EstimatedPoints,
+		&i.Status,
+		&i.ClosedAt,
 	)
 	return i, err
 }
@@ -314,24 +366,25 @@ const listEpicsByProject = `-- name: ListEpicsByProject :many
 SELECT
   e.id, e.project_id, e.backlog_id, e.name, e.description, e.created_at, e.updated_at,
   e.start_date, e.due_on, e.priority, e.progress, e.default_linked_gitlab_project_id, e.base_branch,
-  e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points,
+  e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points, e.status, e.closed_at,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM epics e
 LEFT JOIN tasks t ON t.epic_id = e.id
 WHERE e.project_id = $1
-  AND ($2::uuid IS NULL OR e.backlog_id = $2)
-  AND (NOT $3::boolean OR e.backlog_id IS NULL)
-  AND ($4::text = '' OR e.priority = $4)
-  AND ($5::text = '' OR e.progress = $5)
-  AND ($6::uuid IS NULL OR e.assignee_user_id = $6)
-  AND (NOT $7::boolean OR e.assignee_user_id IS NULL)
+  AND ($2::text = '' OR e.status = $2)
+  AND ($3::uuid IS NULL OR e.backlog_id = $3)
+  AND (NOT $4::boolean OR e.backlog_id IS NULL)
+  AND ($5::text = '' OR e.priority = $5)
+  AND ($6::text = '' OR e.progress = $6)
+  AND ($7::uuid IS NULL OR e.assignee_user_id = $7)
+  AND (NOT $8::boolean OR e.assignee_user_id IS NULL)
 GROUP BY e.id
 ORDER BY
-  (CASE WHEN $8::boolean THEN
+  (CASE WHEN $9::boolean THEN
      CASE e.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
-  (CASE WHEN $9::boolean THEN
+  (CASE WHEN $10::boolean THEN
      CASE e.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
   e.created_at ASC
@@ -339,6 +392,7 @@ ORDER BY
 
 type ListEpicsByProjectParams struct {
 	ProjectID          uuid.UUID   `json:"project_id"`
+	Status             string      `json:"status"`
 	BacklogID          pgtype.UUID `json:"backlog_id"`
 	BacklogUnfiled     bool        `json:"backlog_unfiled"`
 	Priority           string      `json:"priority"`
@@ -367,19 +421,24 @@ type ListEpicsByProjectRow struct {
 	ForbiddenScope               string             `json:"forbidden_scope"`
 	AssigneeUserID               pgtype.UUID        `json:"assignee_user_id"`
 	EstimatedPoints              pgtype.Int4        `json:"estimated_points"`
+	Status                       string             `json:"status"`
+	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
 	TaskCount                    int64              `json:"task_count"`
 	ClosedTaskCount              int64              `json:"closed_task_count"`
 }
 
 // ListEpicsByProject follows ListBacklogsByProject exactly — the same
-// "empty/false disables it" filter convention, the same priority/progress
-// sort ranks, and the same LEFT JOIN task counts so the Epic collection
+// "empty/false disables it" filter convention (including status, which an
+// absent ?status= resolves to 'open' in internal/epic, not to "no filter"),
+// the same priority/progress sort ranks, and the same LEFT JOIN task counts
+// so the Epic collection
 // screen's List row count, Board card ratio and Timeline bar fill come from
 // one query. backlog_id is the extra filter: sqlc.narg(backlog_id) narrows to
 // one backlog's epics, and backlog_unfiled to the epics in no backlog at all.
 func (q *Queries) ListEpicsByProject(ctx context.Context, arg ListEpicsByProjectParams) ([]ListEpicsByProjectRow, error) {
 	rows, err := q.db.Query(ctx, listEpicsByProject,
 		arg.ProjectID,
+		arg.Status,
 		arg.BacklogID,
 		arg.BacklogUnfiled,
 		arg.Priority,
@@ -414,6 +473,8 @@ func (q *Queries) ListEpicsByProject(ctx context.Context, arg ListEpicsByProject
 			&i.ForbiddenScope,
 			&i.AssigneeUserID,
 			&i.EstimatedPoints,
+			&i.Status,
+			&i.ClosedAt,
 			&i.TaskCount,
 			&i.ClosedTaskCount,
 		); err != nil {
@@ -448,6 +509,49 @@ func (q *Queries) MoveEpicTasksToBacklog(ctx context.Context, arg MoveEpicTasksT
 	return err
 }
 
+const reopenEpicForOwner = `-- name: ReopenEpicForOwner :one
+UPDATE epics e
+SET status = 'open', closed_at = NULL, updated_at = now()
+WHERE e.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
+RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points, e.status, e.closed_at
+`
+
+type ReopenEpicForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) ReopenEpicForOwner(ctx context.Context, arg ReopenEpicForOwnerParams) (Epic, error) {
+	row := q.db.QueryRow(ctx, reopenEpicForOwner, arg.ID, arg.OwnerUserID)
+	var i Epic
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.BacklogID,
+		&i.Name,
+		&i.Description,
+		&i.StartDate,
+		&i.DueOn,
+		&i.Priority,
+		&i.Progress,
+		&i.AssigneeUserID,
+		&i.BaseBranch,
+		&i.AllowedScope,
+		&i.ForbiddenScope,
+		&i.DefaultLinkedGitlabProjectID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EstimatedPoints,
+		&i.Status,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const updateEpicForOwner = `-- name: UpdateEpicForOwner :one
 UPDATE epics e
 SET backlog_id = $2, name = $3, description = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12,
@@ -457,7 +561,7 @@ WHERE e.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = e.project_id AND pm.user_id = $15 AND pm.role IN ('member', 'owner')
   )
-RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points
+RETURNING e.id, e.project_id, e.backlog_id, e.name, e.description, e.start_date, e.due_on, e.priority, e.progress, e.assignee_user_id, e.base_branch, e.allowed_scope, e.forbidden_scope, e.default_linked_gitlab_project_id, e.created_at, e.updated_at, e.estimated_points, e.status, e.closed_at
 `
 
 type UpdateEpicForOwnerParams struct {
@@ -518,6 +622,8 @@ func (q *Queries) UpdateEpicForOwner(ctx context.Context, arg UpdateEpicForOwner
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.EstimatedPoints,
+		&i.Status,
+		&i.ClosedAt,
 	)
 	return i, err
 }

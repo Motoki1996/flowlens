@@ -33,8 +33,10 @@ VALUES (
 RETURNING *;
 
 -- ListEpicsByProject follows ListBacklogsByProject exactly — the same
--- "empty/false disables it" filter convention, the same priority/progress
--- sort ranks, and the same LEFT JOIN task counts so the Epic collection
+-- "empty/false disables it" filter convention (including status, which an
+-- absent ?status= resolves to 'open' in internal/epic, not to "no filter"),
+-- the same priority/progress sort ranks, and the same LEFT JOIN task counts
+-- so the Epic collection
 -- screen's List row count, Board card ratio and Timeline bar fill come from
 -- one query. backlog_id is the extra filter: sqlc.narg(backlog_id) narrows to
 -- one backlog's epics, and backlog_unfiled to the epics in no backlog at all.
@@ -42,12 +44,13 @@ RETURNING *;
 SELECT
   e.id, e.project_id, e.backlog_id, e.name, e.description, e.created_at, e.updated_at,
   e.start_date, e.due_on, e.priority, e.progress, e.default_linked_gitlab_project_id, e.base_branch,
-  e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points,
+  e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points, e.status, e.closed_at,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM epics e
 LEFT JOIN tasks t ON t.epic_id = e.id
 WHERE e.project_id = $1
+  AND (sqlc.arg(status)::text = '' OR e.status = sqlc.arg(status))
   AND (sqlc.narg(backlog_id)::uuid IS NULL OR e.backlog_id = sqlc.narg(backlog_id))
   AND (NOT sqlc.arg(backlog_unfiled)::boolean OR e.backlog_id IS NULL)
   AND (sqlc.arg(priority)::text = '' OR e.priority = sqlc.arg(priority))
@@ -102,6 +105,31 @@ SELECT default_linked_gitlab_project_id, backlog_id FROM epics WHERE id = $1;
 UPDATE epics e
 SET backlog_id = $2, name = $3, description = $4, start_date = $5, due_on = $6, priority = $7, progress = $8, default_linked_gitlab_project_id = $9, base_branch = $10, allowed_scope = $11, forbidden_scope = $12,
     assignee_user_id = $13, estimated_points = $14, updated_at = now()
+WHERE e.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
+RETURNING e.*;
+
+-- CloseEpicForOwner / ReopenEpicForOwner are CloseBacklogForOwner's epic-rung
+-- twins, and carry the same two promises: no outbox job (an epic has no
+-- GitLab counterpart at all), and no cascade to the epic's tasks (000036).
+-- The current status is not guarded on here — internal/epic returns early
+-- when there is nothing to change, so closed_at never moves on a re-close.
+-- name: CloseEpicForOwner :one
+UPDATE epics e
+SET status = 'closed', closed_at = now(), updated_at = now()
+WHERE e.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = e.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
+RETURNING e.*;
+
+-- name: ReopenEpicForOwner :one
+UPDATE epics e
+SET status = 'open', closed_at = NULL, updated_at = now()
 WHERE e.id = $1
   AND EXISTS (
     SELECT 1 FROM project_members pm

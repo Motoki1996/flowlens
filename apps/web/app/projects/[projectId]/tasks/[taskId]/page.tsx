@@ -43,8 +43,11 @@ export default async function TaskPage({
   // single view loads the collection alongside the task itself.
   const [backlogs, epics, tasks, dependencies, linkedGitlabProjects, comments] =
     await Promise.all([
-      getBacklogs(projectId),
-      getEpics(projectId),
+      // "all", for the same reason the collection uses it: this task may sit
+      // in a closed backlog or epic, and both the label and the edit form's
+      // picker have to be able to name it.
+      getBacklogs(projectId, { status: "all" }),
+      getEpics(projectId, { status: "all" }),
       getTasks(projectId),
       getTaskDependencies(projectId),
       getLinkedGitlabProjects(projectId),

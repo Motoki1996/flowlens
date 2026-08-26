@@ -23,7 +23,7 @@ function makeTask(overrides: Partial<Task>): Task {
     epicId: null,
     title: "Task",
     description: "",
-    status: "open",
+    status: "open" as const,
     closedAt: null,
     assigneeGitlabUserId: null,
     assigneeGitlabUsername: "",
@@ -69,6 +69,8 @@ const backlog: Backlog = {
   forbiddenScope: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open" as const,
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -1084,6 +1086,8 @@ describe("TaskListSection", () => {
       assigneeDisplayName: "",
       taskCount: 0,
       closedTaskCount: 0,
+      status: "open" as const,
+      closedAt: null,
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
     };

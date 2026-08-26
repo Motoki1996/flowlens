@@ -2,8 +2,11 @@ import { notFound } from "next/navigation";
 import { getBacklogs, getEpics, getLinkedGitlabProjects, getProject, getTasks } from "@/lib/api";
 import { EpicListSection, NO_BACKLOG_FILTER } from "@/components/EpicListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
-import type { Priority, Progress } from "@/types";
+import type { Priority, Progress, StatusFilter } from "@/types";
 
+// The ?status= values the collection accepts; "open" is the default and drops
+// out of the query string, the same as the Backlog collection's.
+const STATUSES = ["open", "closed", "all"] as const;
 const PROGRESSES = ["not_started", "in_progress", "on_hold", "done"] as const;
 const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 
@@ -34,6 +37,7 @@ export default async function EpicsPage({
 }: {
   params: Promise<{ projectId: string }>;
   searchParams?: Promise<{
+    status?: string;
     backlog?: string;
     priority?: string;
     progress?: string;
@@ -46,6 +50,10 @@ export default async function EpicsPage({
   if (!project) notFound();
 
   const resolvedSearchParams = await searchParams;
+  const statusParam = resolvedSearchParams?.status;
+  const status: StatusFilter = STATUSES.includes(statusParam as StatusFilter)
+    ? (statusParam as StatusFilter)
+    : "open";
   const backlogFilter = resolvedSearchParams?.backlog;
   const priorityParam = resolvedSearchParams?.priority;
   const priority = PRIORITIES.includes(priorityParam as Priority)
@@ -73,6 +81,7 @@ export default async function EpicsPage({
   let epicsError = false;
   try {
     epics = await getEpics(projectId, {
+      status,
       // The URL says "none"; the API spells the same thing "unassigned" on
       // backlog_id, the value the task collection already uses.
       backlogId: backlogFilter === NO_BACKLOG_FILTER ? "unassigned" : backlogFilter,
@@ -91,7 +100,10 @@ export default async function EpicsPage({
   // drop the field rather than taking the screen down.
   let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
   try {
-    backlogs = await getBacklogs(projectId);
+    // "all", not the default: these backlogs are a lookup table (the filter
+    // row's names, the create/edit form's parent picker), and a closed backlog
+    // still has epics in it whose row would otherwise say "No backlog".
+    backlogs = await getBacklogs(projectId, { status: "all" });
   } catch {
     backlogs = [];
   }
@@ -120,6 +132,7 @@ export default async function EpicsPage({
       backlogs={backlogs}
       tasks={tasks}
       links={links}
+      statusFilter={status}
       backlogFilter={backlogFilter}
       priorityFilter={priority}
       progressFilter={progress}

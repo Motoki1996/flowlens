@@ -33,6 +33,8 @@ const backlog: Backlog = {
   assigneeDisplayName: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open" as const,
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -58,6 +60,8 @@ function makeEpic(overrides: Partial<Epic> = {}): Epic {
     assigneeDisplayName: "",
     taskCount: 0,
     closedTaskCount: 0,
+    status: "open" as const,
+    closedAt: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -285,5 +289,40 @@ describe("EpicListSection", () => {
     renderList({ epics: [] });
     fireEvent.click(screen.getByRole("button", { name: /New epic/ }));
     expect(screen.queryByLabelText("Tasks in this epic")).not.toBeInTheDocument();
+  });
+});
+
+// --- Status filter (000036) --------------------------------------------------
+
+describe("the status filter", () => {
+  it("defaults to Open", () => {
+    renderList();
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("Open");
+  });
+
+  it("pushes ?status= only when it leaves the open-only default", async () => {
+    renderList();
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(await screen.findByRole("option", { name: "All statuses" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/epics?status=all");
+  });
+
+  it("offers a way back to the closed epics when the open list is empty", async () => {
+    renderList({ epics: [] });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show closed epics" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/epics?status=all");
+  });
+
+  it("marks a closed epic in the list, and never marks an open one", () => {
+    renderList({
+      epics: [makeEpic(), makeEpic({ id: "e2", name: "Endpoints", status: "closed" })],
+      statusFilter: "all",
+    });
+
+    expect(screen.getAllByText("Closed")).toHaveLength(1);
   });
 });

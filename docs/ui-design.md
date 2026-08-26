@@ -80,9 +80,9 @@ The routes that exist today, and the object each one is about:
 | --- | --- | --- |
 | `/projects` | `Project` | Collection |
 | `/projects/[projectId]` | `Project` | Single |
-| `/projects/[projectId]/backlogs` | `Backlog` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress) |
+| `/projects/[projectId]/backlogs` | `Backlog` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress; `?status=`/`?priority=`/`?progress=`/`?sort=` filters, and `?status=` defaults to open-only) |
 | `/projects/[projectId]/backlogs/[backlogId]` | `Backlog` | Single (editing is inline here — no `/edit` route, per rule 4; the collection view's List rows share the same form) |
-| `/projects/[projectId]/epics` | `Epic` | Collection (Board / List / Timeline view modes, exactly as `Backlog`; `?backlog=`/`?priority=`/`?progress=`/`?sort=` filters) |
+| `/projects/[projectId]/epics` | `Epic` | Collection (Board / List / Timeline view modes, exactly as `Backlog`; `?status=`/`?backlog=`/`?priority=`/`?progress=`/`?sort=` filters, `?status=` open-only by default) |
 | `/projects/[projectId]/epics/[epicId]` | `Epic` | Single (editing is inline here — no `/edit` route, per rule 4; the collection view's List rows share the same form) |
 | `/projects/[projectId]/tasks` | `Task` | Collection (Board / List / Timeline view modes; Board is the default, its axis progress; `?backlog=`/`?progress=` filters) |
 | `/projects/[projectId]/tasks/[taskId]` | `Task` | Single (editing is inline here — no `/edit` route, per rule 4) |
@@ -289,6 +289,12 @@ forms:
 
 - **a badge** (`PriorityBadge`, `ProgressBadge`) where the value is being
   *read* — a list row, a card, a single view;
+- **a badge only for the value worth noticing**, where one value of the pair is
+  the overwhelming default. A `Backlog`'s and an `Epic`'s `status` is rendered
+  by `ClosedBadge`, which draws nothing at all for `open`: a badge in every row
+  saying what almost every row is costs the eye something and says nothing.
+  Contrast a `Task`'s `status`, badged both ways — it mirrors GitLab and is the
+  first thing asked of a task.
 - **a colour dot beside its label** (`PriorityDot`, `ProgressDot`) where the
   value is being *picked* — a `Select` in a create/edit form, a filter menu. A
   badge in every row of a dropdown competes with the field it sits inside. The

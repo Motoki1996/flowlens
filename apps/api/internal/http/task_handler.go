@@ -138,7 +138,8 @@ func isValidSize(v string) bool {
 // default creation order; assignee accepts "me", a user UUID or
 // "unassigned" (issue #102, widened to any member by 000031); q free-text
 // matches a task's title or description (issue #106). Any may be omitted to
-// mean "no filter"/"default order".
+// mean "no filter"/"default order". ?page= and ?per_page= page the result;
+// both are defaulted and clamped by task.Service.List itself, not here.
 func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 	var filter task.ListFilter
 
@@ -213,6 +214,9 @@ func parseTaskListFilter(r *http.Request) (task.ListFilter, error) {
 
 	filter.Query = r.URL.Query().Get("q")
 
+	filter.Page = atoiOrZero(r.URL.Query().Get("page"))
+	filter.PerPage = atoiOrZero(r.URL.Query().Get("per_page"))
+
 	return filter, nil
 }
 
@@ -249,8 +253,13 @@ func parseAssigneeFilter(r *http.Request) (*uuid.UUID, bool, error) {
 	return &id, false, nil
 }
 
-// handleListTasks returns the project's tasks matching the backlog_id/status
-// query filters, scoped to the authenticated user.
+// handleListTasks returns one page of the project's tasks matching the
+// backlog_id/status query filters, scoped to the authenticated user. The
+// response is the {tasks, nextPage, totalCount, openCount} envelope, the
+// shape handleListMergeRequests already uses — totalCount/openCount are the
+// filter's totals across every page, which a caller holding one page cannot
+// derive, and openCount is there because the project sidebar wants the
+// open/total split without a second request.
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	projectID, ok := projectIDFromURL(r)
@@ -265,12 +274,22 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := s.tasks.List(r.Context(), u.ID, projectID, filter)
+	page, err := s.tasks.List(r.Context(), u.ID, projectID, filter)
 	if err != nil {
 		writeTaskError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tasks)
+	writeJSON(w, http.StatusOK, struct {
+		Tasks      []task.Task `json:"tasks"`
+		NextPage   int         `json:"nextPage"`
+		TotalCount int64       `json:"totalCount"`
+		OpenCount  int64       `json:"openCount"`
+	}{
+		Tasks:      page.Tasks,
+		NextPage:   page.NextPage,
+		TotalCount: page.TotalCount,
+		OpenCount:  page.OpenCount,
+	})
 }
 
 // parseDateQueryParam reads name as a YYYY-MM-DD date, mirroring the format
@@ -319,10 +338,12 @@ func isValidCrossProjectSort(v string) bool {
 // /api/v1/tasks accepts (issue #76): ?status=, ?priority=, ?progress=, ?dueBefore=,
 // ?dueAfter=, ?startedBefore= (all YYYY-MM-DD), ?projectId= (repeatable —
 // still scoped to the caller's own projects, never a way to reach someone
-// else's), ?sort=, ?limit=, ?assignee= ("me", a user UUID or "unassigned")
-// and ?q= (free-text, matching a task's title or description, issue #106).
-// Every filter may be omitted; sort and limit
-// are defaulted by task.Service.ListForOwner itself, not here.
+// else's), ?sort=, ?limit=, ?page=, ?per_page=, ?assignee= ("me", a user UUID
+// or "unassigned") and ?q= (free-text, matching a task's title or
+// description, issue #106). Every filter may be omitted; sort and the paging
+// parameters are defaulted and clamped by task.Service.ListForOwner itself,
+// not here. ?limit= is ?per_page's original name and still works — see
+// task.CrossProjectFilter.Limit.
 func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, error) {
 	var filter task.CrossProjectFilter
 
@@ -400,6 +421,8 @@ func parseCrossProjectTaskListFilter(r *http.Request) (task.CrossProjectFilter, 
 	}
 
 	filter.Limit = atoiOrZero(r.URL.Query().Get("limit"))
+	filter.Page = atoiOrZero(r.URL.Query().Get("page"))
+	filter.PerPage = atoiOrZero(r.URL.Query().Get("per_page"))
 
 	assigneeID, unassigned, err := parseAssigneeFilter(r)
 	if err != nil {
@@ -427,12 +450,20 @@ func (s *Server) handleListAllTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := s.tasks.ListForOwner(r.Context(), u.ID, filter)
+	page, err := s.tasks.ListForOwner(r.Context(), u.ID, filter)
 	if err != nil {
 		writeTaskError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, tasks)
+	writeJSON(w, http.StatusOK, struct {
+		Tasks      []task.TaskWithProject `json:"tasks"`
+		NextPage   int                    `json:"nextPage"`
+		TotalCount int64                  `json:"totalCount"`
+	}{
+		Tasks:      page.Tasks,
+		NextPage:   page.NextPage,
+		TotalCount: page.TotalCount,
+	})
 }
 
 // handleCreateTask creates a task in the project, scoped to the

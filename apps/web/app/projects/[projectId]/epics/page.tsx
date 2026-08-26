@@ -1,8 +1,15 @@
 import { notFound } from "next/navigation";
-import { getBacklogs, getEpics, getLinkedGitlabProjects, getProject, getTasks } from "@/lib/api";
+import {
+  getBacklogs,
+  getEpics,
+  getLinkedGitlabProjects,
+  getProject,
+  getTasks,
+  MAX_TASKS_PER_PAGE,
+} from "@/lib/api";
 import { EpicListSection, NO_BACKLOG_FILTER } from "@/components/EpicListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
-import type { Priority, Progress, StatusFilter } from "@/types";
+import type { Priority, Progress, StatusFilter, Task } from "@/types";
 
 // The ?status= values the collection accepts; "open" is the default and drops
 // out of the query string, the same as the Backlog collection's.
@@ -111,9 +118,12 @@ export default async function EpicsPage({
   // The create/edit form's task picker draws from the project's tasks. A
   // failed fetch drops the field rather than the screen, the same as links
   // below.
-  let tasks: Awaited<ReturnType<typeof getTasks>> = [];
+  // A picker, not a browsable list — so it asks for the largest page the API
+  // will give rather than paging: a project past MAX_TASKS_PER_PAGE tasks
+  // shows the first page of candidates instead of an unbounded response.
+  let tasks: Task[] = [];
   try {
-    tasks = await getTasks(projectId);
+    tasks = (await getTasks(projectId, { perPage: MAX_TASKS_PER_PAGE })).tasks;
   } catch {
     tasks = [];
   }

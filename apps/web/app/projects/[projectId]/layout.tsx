@@ -62,17 +62,21 @@ export default async function ProjectLayout({
     gitlab: null,
   };
   try {
+    // perPage: 1 for the tasks, for the same reason the merge-request badge
+    // below uses it — the sidebar wants two numbers, and both are counted in
+    // SQL, so it no longer pulls every task of the project on every page load
+    // just to read .length and .filter().length off them.
     const [backlogs, epics, tasks] = await Promise.all([
       getBacklogs(projectId),
       getEpics(projectId),
-      getTasks(projectId),
+      getTasks(projectId, { perPage: 1 }),
     ]);
     counts = {
       ...counts,
       backlogs: backlogs.length,
       epics: epics.length,
-      openTasks: tasks.filter((t) => t.status === "open").length,
-      totalTasks: tasks.length,
+      openTasks: tasks.openCount,
+      totalTasks: tasks.totalCount,
     };
   } catch {
     // Counts stay null.

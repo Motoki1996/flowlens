@@ -222,13 +222,15 @@ func TestService_List_FiltersByAssigneeAcrossBothAxes(t *testing.T) {
 	_, err = svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Nobody's"})
 	require.NoError(t, err)
 
-	matched, err := svc.List(ctx, owner, p.ID, task.ListFilter{AssigneeUserID: &member})
+	matchedPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{AssigneeUserID: &member})
+	matched := matchedPage.Tasks
 	require.NoError(t, err)
 	assert.ElementsMatch(t,
 		[]uuid.UUID{flowlensOnly.ID, gitlabOnly.ID},
 		[]uuid.UUID{matched[0].ID, matched[1].ID})
 
-	unassigned, err := svc.List(ctx, owner, p.ID, task.ListFilter{AssigneeUnassigned: true})
+	unassignedPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{AssigneeUnassigned: true})
+	unassigned := unassignedPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, unassigned, 1)
 	assert.Equal(t, "Nobody's", unassigned[0].Title)

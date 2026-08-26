@@ -357,6 +357,17 @@ paths:
             type: string
         - in: query
           name: limit
+          description: Page size, under its original name. Alias of per_page, which wins when both are given.
+          schema:
+            type: integer
+        - in: query
+          name: page
+          description: 1-based page number; omit for the first page.
+          schema:
+            type: integer
+        - in: query
+          name: per_page
+          description: Page size. Defaults to 50, clamped to 200.
           schema:
             type: integer
         - in: query
@@ -371,13 +382,11 @@ paths:
               - updatedAt
       responses:
         '200':
-          description: Matching tasks, each carrying its project's name
+          description: One page of matching tasks, each carrying its project's name
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/TaskWithProject'
+                $ref: '#/components/schemas/TasksWithProjectPage'
         '401':
           description: Not authenticated
           content:
@@ -2615,15 +2624,23 @@ paths:
           description: Omit for the tasks' creation order.
           schema:
             type: string
+        - in: query
+          name: page
+          description: 1-based page number; omit for the first page.
+          schema:
+            type: integer
+        - in: query
+          name: per_page
+          description: Page size. Defaults to 50, clamped to 200.
+          schema:
+            type: integer
       responses:
         '200':
-          description: Matching tasks
+          description: One page of matching tasks
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Task'
+                $ref: '#/components/schemas/TasksPage'
         '401':
           description: Not authenticated
           content:
@@ -3841,6 +3858,19 @@ components:
           properties:
             projectName:
               type: string
+    TasksWithProjectPage:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskWithProject'
+        nextPage:
+          type: integer
+          description: 0 when there is no next page.
+        totalCount:
+          type: integer
+          description: How many tasks match the filter across every page.
     Project:
       type: object
       properties:
@@ -5056,6 +5086,22 @@ components:
             - 'null'
           format: uuid
           description: A project member to assign this backlog to; null unassigns.
+    TasksPage:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Task'
+        nextPage:
+          type: integer
+          description: 0 when there is no next page.
+        totalCount:
+          type: integer
+          description: How many tasks match the filter across every page.
+        openCount:
+          type: integer
+          description: How many of totalCount are open.
     CreateTaskRequest:
       type: object
       properties:

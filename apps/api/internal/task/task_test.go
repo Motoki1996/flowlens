@@ -287,13 +287,15 @@ func TestService_List_FiltersAndSortsByProgress(t *testing.T) {
 	notStarted, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Not started"})
 	require.NoError(t, err)
 
-	filtered, err := svc.List(ctx, owner, p.ID, task.ListFilter{Progress: task.ProgressOnHold})
+	filteredPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{Progress: task.ProgressOnHold})
+	filtered := filteredPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, onHold.ID, filtered[0].ID)
 
 	// Progress sorts the other way from priority: not_started first, done last.
-	sorted, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortProgress})
+	sortedPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortProgress})
+	sorted := sortedPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, sorted, 4)
 	assert.Equal(t, []uuid.UUID{notStarted.ID, inProgress.ID, onHold.ID, done.ID}, []uuid.UUID{
@@ -402,7 +404,8 @@ func TestService_List_FiltersByBacklogAndStatus(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := svc.List(ctx, owner, p.ID, tt.filter)
+			gotPage, err := svc.List(ctx, owner, p.ID, tt.filter)
+			got := gotPage.Tasks
 			require.NoError(t, err)
 			ids := make([]uuid.UUID, len(got))
 			for i, tk := range got {
@@ -444,7 +447,8 @@ func TestService_List_FiltersByQuery(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := svc.List(ctx, owner, p.ID, tt.filter)
+			gotPage, err := svc.List(ctx, owner, p.ID, tt.filter)
+			got := gotPage.Tasks
 			require.NoError(t, err)
 			ids := make([]uuid.UUID, len(got))
 			for i, tk := range got {
@@ -471,7 +475,8 @@ func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
 	urgent, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Urgent", Priority: task.PriorityUrgent})
 	require.NoError(t, err)
 
-	filtered, err := svc.List(ctx, owner, p.ID, task.ListFilter{Priority: task.PriorityHigh})
+	filteredPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{Priority: task.PriorityHigh})
+	filtered := filteredPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, high.ID, filtered[0].ID)
@@ -479,7 +484,8 @@ func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
 	// Sorting by priority ranks urgent > high > medium > low; the fixture
 	// was created in the opposite (low-to-urgent, i.e. position ASC) order,
 	// so this also proves the sort overrides the manual position order.
-	sorted, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortPriority})
+	sortedPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortPriority})
+	sorted := sortedPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, sorted, 4)
 	assert.Equal(t, []uuid.UUID{urgent.ID, high.ID, medium.ID, low.ID}, []uuid.UUID{
@@ -488,7 +494,8 @@ func TestService_List_FiltersAndSortsByPriority(t *testing.T) {
 
 	// Without Sort, the original position order (creation order) is
 	// unaffected by priority.
-	unsorted, err := svc.List(ctx, owner, p.ID, task.ListFilter{})
+	unsortedPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{})
+	unsorted := unsortedPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, unsorted, 4)
 	assert.Equal(t, []uuid.UUID{low.ID, medium.ID, high.ID, urgent.ID}, []uuid.UUID{
@@ -516,7 +523,8 @@ func TestService_List_SortsByDueDateAndRecency(t *testing.T) {
 	dueEarly, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: "Early", DueOn: &early})
 	require.NoError(t, err)
 
-	byDueOn, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortDueOn})
+	byDueOnPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortDueOn})
+	byDueOn := byDueOnPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, byDueOn, 3)
 	assert.Equal(t, []uuid.UUID{dueEarly.ID, dueLate.ID, undated.ID}, []uuid.UUID{
@@ -528,7 +536,8 @@ func TestService_List_SortsByDueDateAndRecency(t *testing.T) {
 	touched, err := svc.Update(ctx, owner, dueLate.ID, task.UpdateParams{Title: task.Present("Late, edited")}, task.ActorKindUser)
 	require.NoError(t, err)
 
-	byUpdatedAt, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortUpdatedAt})
+	byUpdatedAtPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{Sort: task.SortUpdatedAt})
+	byUpdatedAt := byUpdatedAtPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, byUpdatedAt, 3)
 	assert.Equal(t, touched.ID, byUpdatedAt[0].ID, "the most recently updated task comes first")
@@ -558,7 +567,8 @@ func TestService_ListForOwner_SpansEveryOwnedProjectAndCarriesProjectName(t *tes
 	inBeta, err := svc.Create(ctx, owner, beta.ID, task.CreateParams{Title: "In beta"})
 	require.NoError(t, err)
 
-	got, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	gotPage, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	got := gotPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 
@@ -589,7 +599,8 @@ func TestService_ListForOwner_NeverLeaksAnotherOwnersTasks(t *testing.T) {
 	_, err = svc.Create(ctx, other, theirs.ID, task.CreateParams{Title: "Theirs"})
 	require.NoError(t, err)
 
-	got, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	gotPage, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	got := gotPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, myTask.ID, got[0].ID)
@@ -597,7 +608,8 @@ func TestService_ListForOwner_NeverLeaksAnotherOwnersTasks(t *testing.T) {
 	// Even asking for the other owner's project by ID directly must not
 	// surface it — ProjectIDs only ever narrows within the caller's own
 	// projects, never a way to reach someone else's.
-	got, err = svc.ListForOwner(ctx, owner, task.CrossProjectFilter{ProjectIDs: []uuid.UUID{theirs.ID}})
+	gotPage, err = svc.ListForOwner(ctx, owner, task.CrossProjectFilter{ProjectIDs: []uuid.UUID{theirs.ID}})
+	got = gotPage.Tasks
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -639,7 +651,8 @@ func TestService_ListForOwner_FiltersByStatusPriorityAndDates(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := svc.ListForOwner(ctx, owner, tt.filter)
+			gotPage, err := svc.ListForOwner(ctx, owner, tt.filter)
+			got := gotPage.Tasks
 			require.NoError(t, err)
 			ids := make([]uuid.UUID, len(got))
 			for i, tk := range got {
@@ -671,7 +684,8 @@ func TestService_ListForOwner_Sorts(t *testing.T) {
 
 	// Default (no Sort given) behaves like sort=dueOn: ascending due date,
 	// with the no-due-date task sinking to the bottom.
-	byDueOn, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	byDueOnPage, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{})
+	byDueOn := byDueOnPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, byDueOn, 3)
 	assert.Equal(t, []uuid.UUID{dueSoon.ID, dueLater.ID, noDueDate.ID}, []uuid.UUID{
@@ -679,7 +693,8 @@ func TestService_ListForOwner_Sorts(t *testing.T) {
 	})
 
 	// sort=priority ranks urgent first regardless of due date.
-	byPriority, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{Sort: task.SortPriority})
+	byPriorityPage, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{Sort: task.SortPriority})
+	byPriority := byPriorityPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, byPriority, 3)
 	assert.Equal(t, dueLater.ID, byPriority[0].ID)
@@ -697,9 +712,111 @@ func TestService_ListForOwner_CapsAtLimit(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	got, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{Limit: 2})
+	gotPage, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{Limit: 2})
+	got := gotPage.Tasks
 	require.NoError(t, err)
 	assert.Len(t, got, 2)
+}
+
+// The two collections page identically, so the table below drives both. Each
+// case seeds five tasks and asks for a two-per-page slice of them.
+func TestService_ListCollections_Page(t *testing.T) {
+	tests := []struct {
+		name         string
+		page         int
+		wantTitles   []string
+		wantNextPage int
+	}{
+		{name: "first page", page: 1, wantTitles: []string{"Task 1", "Task 2"}, wantNextPage: 2},
+		{name: "middle page", page: 2, wantTitles: []string{"Task 3", "Task 4"}, wantNextPage: 3},
+		{name: "last page has no next", page: 3, wantTitles: []string{"Task 5"}, wantNextPage: 0},
+		{name: "page past the end is empty", page: 9, wantTitles: []string{}, wantNextPage: 0},
+		{name: "page below 1 is the first page", page: 0, wantTitles: []string{"Task 1", "Task 2"}, wantNextPage: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			ctx := context.Background()
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+			for i := 1; i <= 5; i++ {
+				_, err := svc.Create(ctx, owner, p.ID, task.CreateParams{Title: fmt.Sprintf("Task %d", i)})
+				require.NoError(t, err)
+			}
+
+			got, err := svc.List(ctx, owner, p.ID, task.ListFilter{Page: tt.page, PerPage: 2})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTitles, taskTitles(got.Tasks))
+			assert.Equal(t, tt.wantNextPage, got.NextPage)
+			assert.EqualValues(t, 5, got.TotalCount, "totalCount counts every match, not just this page")
+			assert.EqualValues(t, 5, got.OpenCount)
+
+			all, err := svc.ListForOwner(ctx, owner, task.CrossProjectFilter{Page: tt.page, PerPage: 2, Sort: task.SortDueOn})
+			require.NoError(t, err)
+			titles := make([]string, len(all.Tasks))
+			for i, x := range all.Tasks {
+				titles[i] = x.Title
+			}
+			assert.Equal(t, tt.wantTitles, titles)
+			assert.Equal(t, tt.wantNextPage, all.NextPage)
+			assert.EqualValues(t, 5, all.TotalCount)
+		})
+	}
+}
+
+// PerPage above MaxPerPage is clamped rather than rejected, so a caller
+// asking for "everything" gets a bounded page instead of an error — the same
+// treatment internal/mergerequest gives it.
+func TestService_List_ClampsPerPage(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	for i := 0; i < task.MaxPerPage+5; i++ {
+		q.SeedTask(p.ID, owner, fmt.Sprintf("Task %d", i))
+	}
+
+	got, err := svc.List(ctx, owner, p.ID, task.ListFilter{PerPage: 10_000})
+	require.NoError(t, err)
+	assert.Len(t, got.Tasks, task.MaxPerPage)
+	assert.Equal(t, 2, got.NextPage)
+	assert.EqualValues(t, task.MaxPerPage+5, got.TotalCount)
+}
+
+// The counts are the filter's totals, not the project's: a filtered list that
+// reported the project's whole task count would make "N of M" a lie.
+func TestService_List_CountsFollowTheFilter(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	q.SeedTask(p.ID, owner, "Open one")
+	closed := q.SeedTask(p.ID, owner, "Closed one")
+	_, err := svc.Close(ctx, owner, closed.ID)
+	require.NoError(t, err)
+
+	unfiltered, err := svc.List(ctx, owner, p.ID, task.ListFilter{})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, unfiltered.TotalCount)
+	assert.EqualValues(t, 1, unfiltered.OpenCount)
+
+	filtered, err := svc.List(ctx, owner, p.ID, task.ListFilter{Status: task.StatusOpen})
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, filtered.TotalCount)
+	assert.EqualValues(t, 1, filtered.OpenCount)
+}
+
+// taskTitles is the titles of a page's tasks, in order.
+func taskTitles(tasks []task.Task) []string {
+	out := make([]string, len(tasks))
+	for i, t := range tasks {
+		out[i] = t.Title
+	}
+	return out
 }
 
 func TestService_Close_IsIdempotent(t *testing.T) {
@@ -2012,7 +2129,8 @@ func TestService_Get_OmitsEpicWhenTaskHasNone_AndListNeverEmbedsOne(t *testing.T
 	require.NoError(t, err)
 	assert.Nil(t, got.Epic)
 
-	listed, err := svc.List(ctx, owner, p.ID, task.ListFilter{})
+	listedPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{})
+	listed := listedPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, listed, 2)
 	for _, l := range listed {
@@ -2032,12 +2150,14 @@ func TestService_List_FiltersByEpic(t *testing.T) {
 	q.SeedTaskEpic(inEpic.ID, e.ID)
 	q.SeedTaskInBacklog(p.ID, b.ID, owner, "Directly in the backlog")
 
-	filed, err := svc.List(ctx, owner, p.ID, task.ListFilter{EpicID: &e.ID})
+	filedPage, err := svc.List(ctx, owner, p.ID, task.ListFilter{EpicID: &e.ID})
+	filed := filedPage.Tasks
 	require.NoError(t, err)
 	require.Len(t, filed, 1)
 	assert.Equal(t, inEpic.ID, filed[0].ID)
 
-	loose, err := svc.List(ctx, owner, p.ID, task.ListFilter{EpicUnfiled: true})
+	loosePage, err := svc.List(ctx, owner, p.ID, task.ListFilter{EpicUnfiled: true})
+	loose := loosePage.Tasks
 	require.NoError(t, err)
 	require.Len(t, loose, 1)
 	assert.Equal(t, "Directly in the backlog", loose[0].Title)

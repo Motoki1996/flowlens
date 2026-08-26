@@ -47,7 +47,7 @@ vi.mock("@/lib/api", () => ({
   getProjects: () => getProjects(),
   getBacklogs: (id: string) => getBacklogs(id),
   getEpics: (id: string) => getEpics(id),
-  getTasks: (id: string) => getTasks(id),
+  getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
   getGitlabConnection: (id: string) => getGitlabConnection(id),
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
 }));
@@ -75,6 +75,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import ProjectLayout from "./layout";
+import { taskPage } from "@/lib/test-pages";
 
 function renderLayout() {
   return ProjectLayout({
@@ -91,10 +92,10 @@ describe("ProjectLayout", () => {
     getProjects.mockResolvedValue([project]);
     getBacklogs.mockResolvedValue([{ id: "b1" }, { id: "b2" }]);
     getEpics.mockResolvedValue([{ id: "e1" }]);
-    getTasks.mockResolvedValue([
+    getTasks.mockResolvedValue(taskPage([
       { id: "t1", status: "open" },
       { id: "t2", status: "closed" },
-    ]);
+    ]));
     getGitlabConnection.mockResolvedValue(connection);
     getLinkedGitlabProjects.mockResolvedValue([{ id: "l1" }]);
   });

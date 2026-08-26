@@ -17,6 +17,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testListLimit is a LIMIT large enough to stand in for "every row" now that
+// ListTasksByProject/ListTasksForMember are paged. These assertions are about
+// the queries' filters and ordering, not their paging (which has tests of its
+// own), and a zero LimitCount would be a literal LIMIT 0.
+const testListLimit = 1000
+
 func testCipher(t *testing.T) *crypto.Cipher {
 	t.Helper()
 	c, err := crypto.New([]byte("01234567890123456789012345678901"[:32]))
@@ -99,7 +105,7 @@ func (f fixture) runKind(t *testing.T, runKind, jobKind string, full bool) db.Gi
 
 func (f fixture) tasksInProject(t *testing.T) []db.Task {
 	t.Helper()
-	tasks, err := f.q.ListTasksByProject(context.Background(), db.ListTasksByProjectParams{ProjectID: f.project.ID})
+	tasks, err := f.q.ListTasksByProject(context.Background(), db.ListTasksByProjectParams{ProjectID: f.project.ID, LimitCount: testListLimit})
 	require.NoError(t, err)
 	return tasks
 }

@@ -45,6 +45,19 @@ RETURNING id, project_id, backlog_id, title, description, status, closed_at, ass
 -- assignee_gitlab_user_id, so that half of the OR simply never matches
 -- instead of erroring. assignee_unassigned is the complement: assigned to
 -- nobody on either axis.
+-- ListTasksByProject's dueOn and updatedAt sorts follow the same guarded-CASE
+-- shape as the three rank sorts, and for the same reason they must live in
+-- SQL rather than in Go: this list is paged, so the ORDER BY decides which
+-- rows a page *contains*, not merely the sequence they arrive in. When a flag
+-- is false its CASE is NULL for every row, which is a true tie that leaves the
+-- created_at order untouched — and due_on ASC's default NULLS LAST is exactly
+-- "a task with no due date sorts last", so it needs no guard of its own.
+--
+-- LIMIT/OFFSET paging follows the same "fetch one extra row to detect a next
+-- page" convention ListMergeRequestsByProject and
+-- ListWebhookEventsByLinkedGitlabProjectID use. A project accumulates tasks
+-- without bound, and this view used to return every one of them — with every
+-- column, description included — in a single response.
 -- ListTasksByProject's q filter (issue #106) matches tasks.search_vector
 -- (the 'simple'-config tsvector generated column, see the 000016
 -- migration) against websearch_to_tsquery, GIN-indexed; an empty q disables
@@ -79,7 +92,38 @@ ORDER BY
   (CASE WHEN sqlc.arg(sort_by_size)::boolean THEN
      CASE tasks.size WHEN 'xl' THEN 5 WHEN 'l' THEN 4 WHEN 'm' THEN 3 WHEN 's' THEN 2 WHEN 'xs' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
-  tasks.created_at ASC;
+  (CASE WHEN sqlc.arg(sort_by_due_on)::boolean THEN tasks.due_on END) ASC,
+  (CASE WHEN sqlc.arg(sort_by_updated_at)::boolean THEN tasks.updated_at END) DESC,
+  tasks.created_at ASC
+LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
+
+-- CountTasksByProject is ListTasksByProject's total: the same scoping and
+-- the same filters, minus the ordering and paging. The collection view needs
+-- it for the same reason CountMergeRequestsByProject exists — a paged list
+-- can no longer be counted client-side by its length, and the project
+-- sidebar's task badges are counts rather than lists.
+-- name: CountTasksByProject :one
+SELECT
+  count(*) AS total_count,
+  count(*) FILTER (WHERE tasks.status = 'open') AS open_count
+FROM tasks
+LEFT JOIN gitlab_connections gc ON gc.project_id = tasks.project_id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = sqlc.narg(assignee_user_id)
+WHERE tasks.project_id = sqlc.arg(project_id)
+  AND (NOT sqlc.arg(unassigned)::boolean OR tasks.backlog_id IS NULL)
+  AND (sqlc.narg(backlog_id)::uuid IS NULL OR tasks.backlog_id = sqlc.narg(backlog_id))
+  AND (sqlc.narg(epic_id)::uuid IS NULL OR tasks.epic_id = sqlc.narg(epic_id))
+  AND (NOT sqlc.arg(epic_unfiled)::boolean OR tasks.epic_id IS NULL)
+  AND (sqlc.arg(status)::text = '' OR tasks.status = sqlc.arg(status))
+  AND (sqlc.arg(priority)::text = '' OR tasks.priority = sqlc.arg(priority))
+  AND (sqlc.arg(progress)::text = '' OR tasks.progress = sqlc.arg(progress))
+  AND (sqlc.arg(size)::text = '' OR tasks.size = sqlc.arg(size))
+  AND (sqlc.narg(assignee_user_id)::uuid IS NULL
+       OR tasks.assignee_user_id = sqlc.narg(assignee_user_id)
+       OR tasks.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (NOT sqlc.arg(assignee_unassigned)::boolean
+       OR (tasks.assignee_user_id IS NULL AND tasks.assignee_gitlab_user_id IS NULL))
+  AND (sqlc.arg(q)::text = '' OR tasks.search_vector @@ websearch_to_tsquery('simple', sqlc.arg(q)::text));
 
 -- ListTasksByProjectPaged backs the AI-facing bulk context endpoint (GET
 -- /api/v1/projects/{projectID}/tasks/context, docs/plans/issue-sync.md
@@ -166,7 +210,40 @@ ORDER BY
   (CASE WHEN sqlc.arg(sort)::text = 'updatedAt' THEN t.updated_at END) DESC,
   t.due_on ASC,
   t.created_at ASC
-LIMIT sqlc.arg(limit_count);
+LIMIT sqlc.arg(limit_count) OFFSET sqlc.arg(offset_count);
+
+-- CountTasksForMember is ListTasksForMember's total, with the same
+-- membership scoping and the same filters, minus the ordering and paging.
+-- Without it the cross-project collection could only ever report the length
+-- of the page in hand: the list used to be capped by a bare LIMIT with no
+-- OFFSET, so anything past the cap was not merely unpaged but unreachable,
+-- and silently so.
+--
+-- The user_gitlab_identities join is kept because the assignee filter reads
+-- it; the projects join is not, since nothing here selects a project name.
+-- name: CountTasksForMember :one
+SELECT count(*)
+FROM tasks t
+JOIN project_members pm ON pm.project_id = t.project_id
+LEFT JOIN gitlab_connections gc ON gc.project_id = t.project_id
+LEFT JOIN user_gitlab_identities ugi ON ugi.gitlab_base_url = gc.base_url AND ugi.user_id = sqlc.narg(assignee_user_id)
+WHERE pm.user_id = sqlc.arg(owner_user_id)
+  AND (sqlc.arg(status)::text = '' OR t.status = sqlc.arg(status))
+  AND (sqlc.arg(priority)::text = '' OR t.priority = sqlc.arg(priority))
+  AND (sqlc.arg(progress)::text = '' OR t.progress = sqlc.arg(progress))
+  AND (sqlc.arg(size)::text = '' OR t.size = sqlc.arg(size))
+  AND (sqlc.narg(epic_id)::uuid IS NULL OR t.epic_id = sqlc.narg(epic_id))
+  AND (NOT sqlc.arg(epic_unfiled)::boolean OR t.epic_id IS NULL)
+  AND (sqlc.narg(due_before)::date IS NULL OR t.due_on <= sqlc.narg(due_before))
+  AND (sqlc.narg(due_after)::date IS NULL OR t.due_on >= sqlc.narg(due_after))
+  AND (sqlc.narg(started_before)::date IS NULL OR t.start_date <= sqlc.narg(started_before))
+  AND (cardinality(sqlc.arg(project_ids)::uuid[]) = 0 OR t.project_id = ANY(sqlc.arg(project_ids)::uuid[]))
+  AND (sqlc.narg(assignee_user_id)::uuid IS NULL
+       OR t.assignee_user_id = sqlc.narg(assignee_user_id)
+       OR t.assignee_gitlab_user_id = ugi.gitlab_user_id)
+  AND (NOT sqlc.arg(assignee_unassigned)::boolean
+       OR (t.assignee_user_id IS NULL AND t.assignee_gitlab_user_id IS NULL))
+  AND (sqlc.arg(q)::text = '' OR t.search_vector @@ websearch_to_tsquery('simple', sqlc.arg(q)::text));
 
 -- name: GetTaskForOwner :one
 SELECT t.id, t.project_id, t.backlog_id, t.title, t.description, t.status, t.closed_at, t.assignee_gitlab_user_id, t.assignee_gitlab_username, t.labels, t.due_on, t.created_by_user_id, t.created_at, t.updated_at, t.start_date, t.priority, t.progress, t.search_vector, t.design_started_at, t.implementation_started_at, t.size, t.assignee_user_id, t.epic_id

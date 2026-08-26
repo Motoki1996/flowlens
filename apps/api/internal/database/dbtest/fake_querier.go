@@ -1464,7 +1464,12 @@ func matchesTaskQuery(title, description, q string) bool {
 	return strings.Contains(strings.ToLower(title), q) || strings.Contains(strings.ToLower(description), q)
 }
 
-func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByProjectParams) ([]db.Task, error) {
+// tasksByProjectFilter is the WHERE clause ListTasksByProject and
+// CountTasksByProject share in SQL, shared here for the same reason: the two
+// must agree on what a page's total counts, or a list would report a page
+// count its own rows contradict. The duplicated Size check the SQL doesn't
+// have is gone with it.
+func (f *FakeQuerier) tasksByProjectFilter(arg db.ListTasksByProjectParams) []db.Task {
 	items := []db.Task{}
 	for _, t := range f.tasks {
 		if t.ProjectID != arg.ProjectID {
@@ -1494,9 +1499,6 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		if arg.Size != "" && t.Size != arg.Size {
 			continue
 		}
-		if arg.Size != "" && t.Size != arg.Size {
-			continue
-		}
 		if arg.AssigneeUserID.Valid && !f.matchesAssignee(t, uuid.UUID(arg.AssigneeUserID.Bytes)) {
 			continue
 		}
@@ -1508,6 +1510,11 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 		}
 		items = append(items, t)
 	}
+	return items
+}
+
+func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByProjectParams) ([]db.Task, error) {
+	items := f.tasksByProjectFilter(arg)
 	sort.SliceStable(items, func(i, j int) bool {
 		if arg.SortByPriority {
 			if ri, rj := priorityRank(items[i].Priority), priorityRank(items[j].Priority); ri != rj {
@@ -1524,9 +1531,64 @@ func (f *FakeQuerier) ListTasksByProject(_ context.Context, arg db.ListTasksByPr
 				return ri > rj
 			}
 		}
+		// due_on ASC NULLS LAST and updated_at DESC, matching the two guarded
+		// CASE terms the SQL grew when this list became paged.
+		if arg.SortByDueOn {
+			di, dj := items[i].DueOn, items[j].DueOn
+			if di.Valid != dj.Valid {
+				return di.Valid
+			}
+			if di.Valid && !di.Time.Equal(dj.Time) {
+				return di.Time.Before(dj.Time)
+			}
+		}
+		if arg.SortByUpdatedAt {
+			if ui, uj := items[i].UpdatedAt.Time, items[j].UpdatedAt.Time; !ui.Equal(uj) {
+				return ui.After(uj)
+			}
+		}
 		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
-	return items, nil
+	return pageSlice(items, int(arg.OffsetCount), int(arg.LimitCount)), nil
+}
+
+// CountTasksByProject counts what ListTasksByProject would return unpaged,
+// and how many of those are open.
+func (f *FakeQuerier) CountTasksByProject(_ context.Context, arg db.CountTasksByProjectParams) (db.CountTasksByProjectRow, error) {
+	items := f.tasksByProjectFilter(db.ListTasksByProjectParams{
+		ProjectID:          arg.ProjectID,
+		Unassigned:         arg.Unassigned,
+		BacklogID:          arg.BacklogID,
+		EpicID:             arg.EpicID,
+		EpicUnfiled:        arg.EpicUnfiled,
+		Status:             arg.Status,
+		Priority:           arg.Priority,
+		Progress:           arg.Progress,
+		Size:               arg.Size,
+		AssigneeUserID:     arg.AssigneeUserID,
+		AssigneeUnassigned: arg.AssigneeUnassigned,
+		Q:                  arg.Q,
+	})
+	var open int64
+	for _, t := range items {
+		if t.Status == "open" {
+			open++
+		}
+	}
+	return db.CountTasksByProjectRow{TotalCount: int64(len(items)), OpenCount: open}, nil
+}
+
+// pageSlice applies a LIMIT/OFFSET to an already-ordered slice, the arithmetic
+// every paged fake here repeats.
+func pageSlice[T any](items []T, offset, limit int) []T {
+	if offset > len(items) {
+		offset = len(items)
+	}
+	items = items[offset:]
+	if limit >= 0 && limit < len(items) {
+		items = items[:limit]
+	}
+	return items
 }
 
 // ListTasksByProjectPaged mirrors the SQL: ListTasksByProject's
@@ -1910,52 +1972,8 @@ func dueOnEqual(a, b pgtype.Date) bool {
 // (internal/database/queries/tasks.sql) for why the ORDER BY tiers apply
 // unconditionally rather than branching per sort value.
 func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForMemberParams) ([]db.ListTasksForMemberRow, error) {
-	allowed := map[uuid.UUID]bool{}
-	for _, id := range arg.ProjectIds {
-		allowed[id] = true
-	}
-
 	items := []db.ListTasksForMemberRow{}
-	for _, t := range f.tasks {
-		if !f.hasMembership(t.ProjectID, arg.OwnerUserID) {
-			continue
-		}
-		if arg.Status != "" && t.Status != arg.Status {
-			continue
-		}
-		if arg.Priority != "" && t.Priority != arg.Priority {
-			continue
-		}
-		if arg.Progress != "" && t.Progress != arg.Progress {
-			continue
-		}
-		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
-			continue
-		}
-		if arg.EpicUnfiled && t.EpicID.Valid {
-			continue
-		}
-		if arg.DueBefore.Valid && (!t.DueOn.Valid || t.DueOn.Time.After(arg.DueBefore.Time)) {
-			continue
-		}
-		if arg.DueAfter.Valid && (!t.DueOn.Valid || t.DueOn.Time.Before(arg.DueAfter.Time)) {
-			continue
-		}
-		if arg.StartedBefore.Valid && (!t.StartDate.Valid || t.StartDate.Time.After(arg.StartedBefore.Time)) {
-			continue
-		}
-		if len(allowed) > 0 && !allowed[t.ProjectID] {
-			continue
-		}
-		if arg.AssigneeUserID.Valid && !f.matchesAssignee(t, uuid.UUID(arg.AssigneeUserID.Bytes)) {
-			continue
-		}
-		if arg.AssigneeUnassigned && !unassignedOnBothAxes(t) {
-			continue
-		}
-		if !matchesTaskQuery(t.Title, t.Description, arg.Q) {
-			continue
-		}
+	for _, t := range f.tasksForMemberFilter(arg) {
 		items = append(items, db.ListTasksForMemberRow{
 			ID:                     t.ID,
 			ProjectID:              t.ProjectID,
@@ -2005,10 +2023,84 @@ func (f *FakeQuerier) ListTasksForMember(_ context.Context, arg db.ListTasksForM
 		return items[i].CreatedAt.Time.Before(items[j].CreatedAt.Time)
 	})
 
-	if int(arg.LimitCount) < len(items) {
-		items = items[:arg.LimitCount]
+	return pageSlice(items, int(arg.OffsetCount), int(arg.LimitCount)), nil
+}
+
+// CountTasksForMember counts what ListTasksForMember would return unpaged,
+// sharing its filter for the same reason CountTasksByProject shares
+// ListTasksByProject's.
+func (f *FakeQuerier) CountTasksForMember(_ context.Context, arg db.CountTasksForMemberParams) (int64, error) {
+	return int64(len(f.tasksForMemberFilter(db.ListTasksForMemberParams{
+		OwnerUserID:        arg.OwnerUserID,
+		Status:             arg.Status,
+		Priority:           arg.Priority,
+		Progress:           arg.Progress,
+		Size:               arg.Size,
+		EpicID:             arg.EpicID,
+		EpicUnfiled:        arg.EpicUnfiled,
+		DueBefore:          arg.DueBefore,
+		DueAfter:           arg.DueAfter,
+		StartedBefore:      arg.StartedBefore,
+		ProjectIds:         arg.ProjectIds,
+		AssigneeUserID:     arg.AssigneeUserID,
+		AssigneeUnassigned: arg.AssigneeUnassigned,
+		Q:                  arg.Q,
+	}))), nil
+}
+
+// tasksForMemberFilter is the WHERE clause ListTasksForMember and
+// CountTasksForMember share, ordered arbitrarily — both callers order or
+// count for themselves.
+func (f *FakeQuerier) tasksForMemberFilter(arg db.ListTasksForMemberParams) []db.Task {
+	allowed := map[uuid.UUID]bool{}
+	for _, id := range arg.ProjectIds {
+		allowed[id] = true
 	}
-	return items, nil
+
+	items := []db.Task{}
+	for _, t := range f.tasks {
+		if !f.hasMembership(t.ProjectID, arg.OwnerUserID) {
+			continue
+		}
+		if arg.Status != "" && t.Status != arg.Status {
+			continue
+		}
+		if arg.Priority != "" && t.Priority != arg.Priority {
+			continue
+		}
+		if arg.Progress != "" && t.Progress != arg.Progress {
+			continue
+		}
+		if arg.EpicID.Valid && (!t.EpicID.Valid || t.EpicID.Bytes != arg.EpicID.Bytes) {
+			continue
+		}
+		if arg.EpicUnfiled && t.EpicID.Valid {
+			continue
+		}
+		if arg.DueBefore.Valid && (!t.DueOn.Valid || t.DueOn.Time.After(arg.DueBefore.Time)) {
+			continue
+		}
+		if arg.DueAfter.Valid && (!t.DueOn.Valid || t.DueOn.Time.Before(arg.DueAfter.Time)) {
+			continue
+		}
+		if arg.StartedBefore.Valid && (!t.StartDate.Valid || t.StartDate.Time.After(arg.StartedBefore.Time)) {
+			continue
+		}
+		if len(allowed) > 0 && !allowed[t.ProjectID] {
+			continue
+		}
+		if arg.AssigneeUserID.Valid && !f.matchesAssignee(t, uuid.UUID(arg.AssigneeUserID.Bytes)) {
+			continue
+		}
+		if arg.AssigneeUnassigned && !unassignedOnBothAxes(t) {
+			continue
+		}
+		if !matchesTaskQuery(t.Title, t.Description, arg.Q) {
+			continue
+		}
+		items = append(items, t)
+	}
+	return items
 }
 
 // GetTaskForOwner mirrors the SQL: viewer-minimum (any project_members

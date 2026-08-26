@@ -39,14 +39,20 @@ list:
         name: sort
         description: Omit for the tasks' creation order.
         schema: { type: string }
+      - in: query
+        name: page
+        description: 1-based page number; omit for the first page.
+        schema: { type: integer }
+      - in: query
+        name: per_page
+        description: Page size. Defaults to 50, clamped to 200.
+        schema: { type: integer }
     responses:
       "200":
-        description: Matching tasks
+        description: One page of matching tasks
         content:
           application/json:
-            schema:
-              type: array
-              items: { $ref: '../components/schemas/domain.yaml#/Task' }
+            schema: { $ref: '../components/schemas/domain.yaml#/TasksPage' }
       "401":
         description: Not authenticated
         content:

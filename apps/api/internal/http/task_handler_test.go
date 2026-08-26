@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// decodeTaskList unwraps the {tasks, nextPage, totalCount, ...} envelope both
+// task collections return, for the assertions that are about which tasks come
+// back rather than about paging — paging has tests of its own below.
+func decodeTaskList(t *testing.T, rec *httptest.ResponseRecorder) []map[string]any {
+	t.Helper()
+	var body struct {
+		Tasks []map[string]any `json:"tasks"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	return body.Tasks
+}
 
 func TestHandleListTasks_NoCookie(t *testing.T) {
 	s, q := newTestServer(t)
@@ -62,8 +75,7 @@ func TestHandleListTasks_FiltersByBacklogIDQuery(t *testing.T) {
 			rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks"+query, nil, token)
 			require.Equal(t, http.StatusOK, rec.Code)
 
-			var body []map[string]any
-			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			body := decodeTaskList(t, rec)
 			titles := make([]string, len(body))
 			for i, task := range body {
 				titles[i] = task["title"].(string)
@@ -121,16 +133,14 @@ func TestHandleListTasks_FiltersAndSortsByProgressQuery(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?progress=done", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var filtered []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	filtered := decodeTaskList(t, rec)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, "Done", filtered[0]["title"])
 
 	// Progress sorts not_started first, the reverse of priority's ranking.
 	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort=progress", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var sorted []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sorted))
+	sorted := decodeTaskList(t, rec)
 	require.Len(t, sorted, 2)
 	assert.Equal(t, "Not started", sorted[0]["title"])
 	assert.Equal(t, "Done", sorted[1]["title"])
@@ -157,15 +167,13 @@ func TestHandleListTasks_FiltersAndSortsByPriorityQuery(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?priority=urgent", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var filtered []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	filtered := decodeTaskList(t, rec)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, "Urgent", filtered[0]["title"])
 
 	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort=priority", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var sorted []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &sorted))
+	sorted := decodeTaskList(t, rec)
 	require.Len(t, sorted, 2)
 	assert.Equal(t, "Urgent", sorted[0]["title"])
 	assert.Equal(t, "Low", sorted[1]["title"])
@@ -186,8 +194,7 @@ func TestHandleListTasks_FiltersByQQuery(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?q=login", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var filtered []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &filtered))
+	filtered := decodeTaskList(t, rec)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, "Fix login bug", filtered[0]["title"])
 }
@@ -231,7 +238,7 @@ func TestHandleListTasks_FiltersByAssigneeMeQuery(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?assignee=me", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.JSONEq(t, "[]", rec.Body.String(), "no identity registered yet must return an empty list, not an error")
+	assert.Empty(t, decodeTaskList(t, rec), "no identity registered yet must return an empty list, not an error")
 
 	rec = doRequest(t, s, http.MethodPost, "/api/v1/projects/"+p.ID.String()+"/tasks",
 		createTaskRequest{Title: "Mine", AssigneeGitlabUserID: int64Ptr(42)}, token)
@@ -244,8 +251,7 @@ func TestHandleListTasks_FiltersByAssigneeMeQuery(t *testing.T) {
 
 	rec = doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?assignee=me", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Mine", body[0]["title"])
 }
@@ -284,8 +290,7 @@ func TestHandleListAllTasks_SpansOwnProjectsAndExcludesOthers(t *testing.T) {
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	titles := make([]string, len(body))
 	projectNames := make([]string, len(body))
 	for i, tk := range body {
@@ -313,8 +318,7 @@ func TestHandleListAllTasks_FiltersByStatusQuery(t *testing.T) {
 
 	rec = doRequest(t, s, http.MethodGet, "/api/v1/tasks?status=open", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Open task", body[0]["title"])
 }
@@ -331,8 +335,7 @@ func TestHandleListAllTasks_FiltersByQQuery(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks?q=login", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Fix login bug", body[0]["title"])
 }
@@ -354,15 +357,14 @@ func TestHandleListAllTasks_FiltersByAssigneeMeQuery(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks?assignee=me", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.JSONEq(t, "[]", rec.Body.String(), "no identity registered yet must return an empty list, not an error")
+	assert.Empty(t, decodeTaskList(t, rec), "no identity registered yet must return an empty list, not an error")
 
 	doRequest(t, s, http.MethodPut, "/api/v1/me/gitlab-identities",
 		putGitlabIdentityRequest{GitlabBaseURL: conn.BaseUrl, GitlabUserID: 42, GitlabUsername: "octocat"}, token)
 
 	rec = doRequest(t, s, http.MethodGet, "/api/v1/tasks?assignee=me", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	require.Len(t, body, 1)
 	assert.Equal(t, "Mine", body[0]["title"])
 }
@@ -404,9 +406,62 @@ func TestHandleListAllTasks_LimitCapsResults(t *testing.T) {
 
 	rec := doRequest(t, s, http.MethodGet, "/api/v1/tasks?limit=2", nil, token)
 	require.Equal(t, http.StatusOK, rec.Code)
-	var body []map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	body := decodeTaskList(t, rec)
 	assert.Len(t, body, 2)
+}
+
+// Both task collections answer with a paging envelope rather than a bare
+// array, so the two are asserted together: ?page=/?per_page= walk the pages,
+// nextPage reports whether another follows, and the counts are the filter's
+// totals rather than the page's length.
+func TestHandleListTasks_PagingEnvelope(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	for _, title := range []string{"One", "Two", "Three"} {
+		q.SeedTask(p.ID, ownerID, title)
+	}
+	closed := q.SeedTask(p.ID, ownerID, "Four")
+	require.Equal(t, http.StatusOK,
+		doRequest(t, s, http.MethodPost, "/api/v1/tasks/"+closed.ID.String()+"/close", nil, token).Code)
+
+	for _, path := range []string{"/api/v1/projects/" + p.ID.String() + "/tasks", "/api/v1/tasks"} {
+		t.Run(path, func(t *testing.T) {
+			rec := doRequest(t, s, http.MethodGet, path+"?per_page=3", nil, token)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var first struct {
+				Tasks      []map[string]any `json:"tasks"`
+				NextPage   int              `json:"nextPage"`
+				TotalCount int              `json:"totalCount"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &first))
+			assert.Len(t, first.Tasks, 3)
+			assert.Equal(t, 2, first.NextPage)
+			assert.Equal(t, 4, first.TotalCount)
+
+			rec = doRequest(t, s, http.MethodGet, path+"?per_page=3&page=2", nil, token)
+			require.Equal(t, http.StatusOK, rec.Code)
+			var second struct {
+				Tasks    []map[string]any `json:"tasks"`
+				NextPage int              `json:"nextPage"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &second))
+			assert.Len(t, second.Tasks, 1)
+			assert.Equal(t, 0, second.NextPage, "the last page reports no next page")
+		})
+	}
+
+	// openCount is the project-scoped collection's own field: it is what lets
+	// the project sidebar show open/total without a second request.
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?per_page=1", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var counts struct {
+		TotalCount int `json:"totalCount"`
+		OpenCount  int `json:"openCount"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &counts))
+	assert.Equal(t, 4, counts.TotalCount)
+	assert.Equal(t, 3, counts.OpenCount)
 }
 
 func int64Ptr(v int64) *int64 { return &v }
@@ -1186,16 +1241,14 @@ func TestHandleListTasks_FiltersAndSortsBySizeQuery(t *testing.T) {
 
 	filtered := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?size=xl", nil, token)
 	require.Equal(t, http.StatusOK, filtered.Code)
-	var only []map[string]any
-	require.NoError(t, json.Unmarshal(filtered.Body.Bytes(), &only))
+	only := decodeTaskList(t, filtered)
 	require.Len(t, only, 1)
 	assert.Equal(t, "Huge one", only[0]["title"])
 	assert.Equal(t, "xl", only[0]["size"])
 
 	sorted := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks?sort=size", nil, token)
 	require.Equal(t, http.StatusOK, sorted.Code)
-	var ranked []map[string]any
-	require.NoError(t, json.Unmarshal(sorted.Body.Bytes(), &ranked))
+	ranked := decodeTaskList(t, sorted)
 	require.Len(t, ranked, 3)
 	assert.Equal(t, []any{"xl", "m", "xs"},
 		[]any{ranked[0]["size"], ranked[1]["size"], ranked[2]["size"]})

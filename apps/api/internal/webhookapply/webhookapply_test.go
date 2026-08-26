@@ -19,6 +19,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testListLimit is a LIMIT large enough to stand in for "every row" now that
+// ListTasksByProject/ListTasksForMember are paged. These assertions are about
+// the queries' filters and ordering, not their paging (which has tests of its
+// own), and a zero LimitCount would be a literal LIMIT 0.
+const testListLimit = 1000
+
 // fixture bundles a webhookapply Service with an in-memory querier and a
 // linked GitLab project already wired to a real project/owner chain, so
 // tests that create a new unclassified task (the "unknown issue" path) can
@@ -441,7 +447,7 @@ func TestProcessNext_SecondEventForSameNewIssue_UpdatesInsteadOfDuplicating(t *t
 	require.NoError(t, err)
 	assert.Equal(t, "Second delivery", got.Title, "the second delivery must update the same task")
 
-	tasks, err := f.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{ProjectID: f.projectID})
+	tasks, err := f.q.ListTasksByProject(ctx, db.ListTasksByProjectParams{ProjectID: f.projectID, LimitCount: testListLimit})
 	require.NoError(t, err)
 	assert.Len(t, tasks, 1, "two deliveries for the same new issue must never create two tasks")
 }

@@ -12,7 +12,14 @@ import { UNCLASSIFIED_BACKLOG } from "@/lib/routes";
 import { toDateParam } from "@/lib/dates";
 import { NO_EPIC, TaskListSection, type AssigneeAvailability } from "@/components/TaskListSection";
 import type { ViewMode } from "@/components/ViewModeToggle";
-import type { TaskStatus } from "@/types";
+import type { Task, TaskStatus } from "@/types";
+
+// One page of the collection. Deliberately larger than the merge-request
+// collection's: this list groups by backlog and is scanned as a whole, so a
+// small page would split most groups — and the two client-side filters
+// (?label=, ?due=) narrow the page in hand rather than the whole match, which
+// a big page keeps rare.
+const TASKS_PER_PAGE = 100;
 
 const STATUSES = ["all", "open", "closed"] as const;
 type StatusFilter = (typeof STATUSES)[number];
@@ -77,6 +84,7 @@ export default async function TasksPage({
     assignee?: string;
     sort?: string;
     view?: string;
+    page?: string;
   }>;
 }) {
   const { projectId } = await params;
@@ -100,12 +108,15 @@ export default async function TasksPage({
   // the client component below — see TaskListSection's `today` prop doc
   // comment for why.
   const today = toDateParam(new Date());
+  const page = Number(resolvedSearchParams?.page) || 1;
   const project = await getProject(projectId);
   if (!project) notFound();
 
-  let tasks: Awaited<ReturnType<typeof getTasks>> = [];
+  let tasks: Task[] = [];
   let backlogs: Awaited<ReturnType<typeof getBacklogs>> = [];
   let epics: Awaited<ReturnType<typeof getEpics>> = [];
+  let matchedCount: number | undefined;
+  let nextPage = 0;
   let totalCount: number | undefined;
   let tasksError = false;
   try {
@@ -130,18 +141,24 @@ export default async function TasksPage({
         sort: sort === "manual" ? undefined : sort,
         assignee: assigneeMe ? "me" : undefined,
         q: search,
+        page,
+        perPage: TASKS_PER_PAGE,
       }),
       // "all": these two are lookup tables for the task rows' backlog/epic
       // labels and the filter dropdowns, not browsable lists. A task filed in
       // a backlog that has since been closed must still name it.
       getBacklogs(projectId, { status: "all" }),
       getEpics(projectId, { status: "all" }),
-      getTasks(projectId, {}),
+      // perPage: 1 — only its totalCount is wanted, and that is counted in
+      // SQL, so the 母数 no longer costs a second full fetch of the project.
+      getTasks(projectId, { perPage: 1 }),
     ]);
-    tasks = fetchedTasks;
+    tasks = fetchedTasks.tasks;
+    matchedCount = fetchedTasks.totalCount;
+    nextPage = fetchedTasks.nextPage;
     backlogs = fetchedBacklogs;
     epics = fetchedEpics;
-    totalCount = allTasks.length;
+    totalCount = allTasks.totalCount;
   } catch {
     tasksError = true;
   }
@@ -190,6 +207,10 @@ export default async function TasksPage({
       sort={sort}
       today={today}
       totalCount={totalCount}
+      matchedCount={matchedCount}
+      page={page}
+      perPage={TASKS_PER_PAGE}
+      nextPage={nextPage}
       error={tasksError}
       initialView={initialView}
     />

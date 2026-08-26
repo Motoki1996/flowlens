@@ -87,7 +87,8 @@ vi.mock("@/lib/api", () => ({
   getCurrentUser: () => getCurrentUser(),
   getBacklog: (id: string) => getBacklog(id),
   getProject: (id: string) => getProject(id),
-  getTasks: (id: string) => getTasks(id),
+  getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
+  MAX_TASKS_PER_PAGE: 200,
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
@@ -100,24 +101,29 @@ vi.mock("next/navigation", () => ({
 }));
 
 import BacklogPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 describe("BacklogPage", () => {
   beforeEach(() => {
     getCurrentUser.mockResolvedValue(user);
     getBacklog.mockResolvedValue(backlog);
     getProject.mockResolvedValue(project);
-    getTasks.mockResolvedValue([]);
+    getTasks.mockResolvedValue(taskPage([]));
   });
 
+  // The scoping is the API's now, not this page's: it asks for the backlog's
+  // tasks rather than the project's and narrowing them here.
   it("renders the backlog's single view, scoped to its own tasks", async () => {
-    getTasks.mockResolvedValue([
-      makeTask({ id: "t1", title: "In this backlog", backlogId: "b1" }),
-      makeTask({ id: "t2", title: "In another backlog", backlogId: "b2" }),
-    ]);
+    getTasks.mockResolvedValue(
+      taskPage([makeTask({ id: "t1", title: "In this backlog", backlogId: "b1" })]),
+    );
     render(await BacklogPage({ params: Promise.resolve({ projectId: "p1", backlogId: "b1" }) }));
+    expect(getTasks).toHaveBeenCalledWith(
+      "p1",
+      expect.objectContaining({ backlogId: "b1" }),
+    );
     expect(screen.getByRole("heading", { name: "Sprint 1" })).toBeInTheDocument();
     expect(screen.getByText("In this backlog")).toBeInTheDocument();
-    expect(screen.queryByText("In another backlog")).not.toBeInTheDocument();
   });
 
   // The project itself is reached from the sidebar in the surrounding layout,

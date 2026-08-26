@@ -232,6 +232,10 @@ export function TaskListSection({
   assigneeAvailability = "available",
   today,
   totalCount,
+  matchedCount,
+  page = 1,
+  perPage = 0,
+  nextPage = 0,
   error = false,
   initialView = "board",
 }: {
@@ -285,6 +289,18 @@ export function TaskListSection({
    *  Undefined omits the "/ total" part rather than showing a wrong number,
    *  since the caller (page.tsx) may not always have one to hand. */
   totalCount?: number;
+  /** How many tasks match the *server-side* filters across every page —
+   *  what the header counts, since `tasks` is now one page of them rather
+   *  than all of them. Undefined falls back to the page's own length, which
+   *  is what tests and stories that don't page pass. */
+  matchedCount?: number;
+  /** The applied `?page=` (1-based), the page size it was fetched with, and
+   *  the API's nextPage (0 when this is the last page). Together they drive
+   *  the pager below; a caller that passes none of them gets no pager, which
+   *  is the right answer for a list that fits in one page. */
+  page?: number;
+  perPage?: number;
+  nextPage?: number;
   error?: boolean;
   /** The applied `?view=` (issue #153) — page.tsx already validated it, the
    *  same fallback-to-default treatment every other filter above gets.
@@ -420,40 +436,47 @@ export function TaskListSection({
     router.push(query ? `${pathname}?${query}` : pathname);
   }
 
+  /** changeFilter is updateQuery plus the page reset every filter needs:
+   *  narrowing the list while standing on page 4 would otherwise land on a
+   *  page the new filter doesn't have. */
+  function changeFilter(next: Record<string, string | undefined>) {
+    updateQuery({ ...next, page: undefined });
+  }
+
   function changeBacklogFilter(value: string) {
-    updateQuery({
+    changeFilter({
       backlog: value === FILTER_DEFAULTS.backlog ? undefined : value,
     });
   }
 
   function changeEpicFilter(value: string) {
-    updateQuery({ epic: value === FILTER_DEFAULTS.epic ? undefined : value });
+    changeFilter({ epic: value === FILTER_DEFAULTS.epic ? undefined : value });
   }
 
   function changeStatusFilter(value: "all" | TaskStatus) {
-    updateQuery({
+    changeFilter({
       status: value === FILTER_DEFAULTS.status ? undefined : value,
     });
   }
 
   function changeAssigneeMe(checked: boolean) {
-    updateQuery({ assignee: checked ? "me" : undefined });
+    changeFilter({ assignee: checked ? "me" : undefined });
   }
 
   function changeDueFilter(value: string) {
-    updateQuery({ due: value === FILTER_DEFAULTS.due ? undefined : value });
+    changeFilter({ due: value === FILTER_DEFAULTS.due ? undefined : value });
   }
 
   function changeSearch(value: string) {
-    updateQuery({ q: value.trim() === "" ? undefined : value });
+    changeFilter({ q: value.trim() === "" ? undefined : value });
   }
 
   function changeSort(value: TaskSort) {
-    updateQuery({ sort: value === FILTER_DEFAULTS.sort ? undefined : value });
+    changeFilter({ sort: value === FILTER_DEFAULTS.sort ? undefined : value });
   }
 
   function toggleLabelFilter(label: string) {
-    updateQuery({ label: labelFilter === label ? undefined : label });
+    changeFilter({ label: labelFilter === label ? undefined : label });
   }
 
   // Drives the Clear filters control (issue #150): true once any filter
@@ -670,7 +693,7 @@ export function TaskListSection({
                   the filter row below. */}
               {!error ? (
                 <span className="text-muted-foreground text-xs">
-                  {`${visibleTasks.length}${totalCount !== undefined ? ` / ${totalCount}` : ""} tasks`}
+                  {`${matchedCount ?? visibleTasks.length}${totalCount !== undefined ? ` / ${totalCount}` : ""} tasks`}
                 </span>
               ) : null}
             </div>
@@ -1125,6 +1148,41 @@ export function TaskListSection({
             </div>
           </div>
         )}
+        {/* The pager, shaped like the merge-request collection's. It appears
+            only once there is somewhere to go: a project whose filtered tasks
+            fit in one page never sees it. Note ?label= and ?due= are applied
+            in the browser, so on a paged result they narrow the page in hand
+            rather than the whole match — the header count above stays the
+            server's, which is the number the pager is walking. */}
+        {!error && (page > 1 || nextPage > 0) ? (
+          <nav aria-label="Pagination" className="mt-4 flex items-center justify-between gap-3">
+            <p className="text-muted-foreground text-xs">
+              {tasks.length === 0 ? 0 : (page - 1) * perPage + 1}–
+              {(page - 1) * perPage + tasks.length}
+              {matchedCount !== undefined ? ` of ${matchedCount}` : ""}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={page <= 1}
+                onClick={() => updateQuery({ page: page > 2 ? String(page - 1) : undefined })}
+              >
+                Previous
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={nextPage === 0}
+                onClick={() => updateQuery({ page: String(nextPage) })}
+              >
+                Next
+              </Button>
+            </div>
+          </nav>
+        ) : null}
       </CardContent>
     </Card>
   );

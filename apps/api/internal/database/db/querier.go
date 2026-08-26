@@ -121,6 +121,22 @@ type Querier interface {
 	// open count is just the sum of these rows' counts.
 	//
 	CountOpenTasksBySizeForVelocity(ctx context.Context, arg CountOpenTasksBySizeForVelocityParams) ([]CountOpenTasksBySizeForVelocityRow, error)
+	// CountTasksByProject is ListTasksByProject's total: the same scoping and
+	// the same filters, minus the ordering and paging. The collection view needs
+	// it for the same reason CountMergeRequestsByProject exists — a paged list
+	// can no longer be counted client-side by its length, and the project
+	// sidebar's task badges are counts rather than lists.
+	CountTasksByProject(ctx context.Context, arg CountTasksByProjectParams) (CountTasksByProjectRow, error)
+	// CountTasksForMember is ListTasksForMember's total, with the same
+	// membership scoping and the same filters, minus the ordering and paging.
+	// Without it the cross-project collection could only ever report the length
+	// of the page in hand: the list used to be capped by a bare LIMIT with no
+	// OFFSET, so anything past the cap was not merely unpaged but unreachable,
+	// and silently so.
+	//
+	// The user_gitlab_identities join is kept because the assignee filter reads
+	// it; the projects join is not, since nothing here selects a project name.
+	CountTasksForMember(ctx context.Context, arg CountTasksForMemberParams) (int64, error)
 	// CountTasksInProjectByIDs is SetEpicTasks' pre-check: how many of the given
 	// ids are really tasks in the epic's project. internal/epic rejects the whole
 	// request before writing anything when the count falls short, so a foreign or
@@ -571,10 +587,23 @@ type Querier interface {
 	// as a tiebreak. sort_by_priority and sort_by_progress are mutually exclusive
 	// in practice — internal/backlog sets at most one from a single ?sort=.
 	//
-	// The LEFT JOIN to tasks (issue #144) computes each backlog's task_count and
+	// The join to tasks (issue #144) computes each backlog's task_count and
 	// closed_task_count in the same query, so the Backlog collection screen (its
 	// List row count, Board card ratio and Timeline bar fill) doesn't need to
 	// fetch every task in the project just to derive them.
+	//
+	// The counts come from a *pre-aggregated derived table* rather than a plain
+	// LEFT JOIN to tasks plus an outer GROUP BY. Both return the same rows, but
+	// the outer form materializes one row per (backlog, task) pair — carrying
+	// every backlog column, description included — and only then collapses them,
+	// so what it sorts and groups grows with the project's task count. Grouping
+	// inside the subquery collapses tasks to one row per backlog first, leaving
+	// the outer query one row per backlog throughout, and
+	// idx_tasks_project_id_backlog_id covers exactly that scan. The subquery is
+	// filtered by project_id too (not just joined on backlog_id) so it never
+	// aggregates another project's tasks before throwing them away, and its
+	// counts are COALESCEd because a backlog with no tasks joins to NULL rather
+	// than to 0.
 	ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]ListBacklogsByProjectRow, error)
 	// Backlog-level flow metrics (issue #173): one level up from the
 	// task-level queries above, sourced from backlog_progress_events (issue
@@ -590,8 +619,9 @@ type Querier interface {
 	// ListEpicsByProject follows ListBacklogsByProject exactly — the same
 	// "empty/false disables it" filter convention (including status, which an
 	// absent ?status= resolves to 'open' in internal/epic, not to "no filter"),
-	// the same priority/progress sort ranks, and the same LEFT JOIN task counts
-	// so the Epic collection
+	// the same priority/progress sort ranks, and the same pre-aggregated task
+	// counts (see ListBacklogsByProject for why the counts are grouped in a
+	// derived table rather than by an outer GROUP BY) so the Epic collection
 	// screen's List row count, Board card ratio and Timeline bar fill come from
 	// one query. backlog_id is the extra filter: sqlc.narg(backlog_id) narrows to
 	// one backlog's epics, and backlog_unfiled to the epics in no backlog at all.
@@ -712,6 +742,19 @@ type Querier interface {
 	// assignee_gitlab_user_id, so that half of the OR simply never matches
 	// instead of erroring. assignee_unassigned is the complement: assigned to
 	// nobody on either axis.
+	// ListTasksByProject's dueOn and updatedAt sorts follow the same guarded-CASE
+	// shape as the three rank sorts, and for the same reason they must live in
+	// SQL rather than in Go: this list is paged, so the ORDER BY decides which
+	// rows a page *contains*, not merely the sequence they arrive in. When a flag
+	// is false its CASE is NULL for every row, which is a true tie that leaves the
+	// created_at order untouched — and due_on ASC's default NULLS LAST is exactly
+	// "a task with no due date sorts last", so it needs no guard of its own.
+	//
+	// LIMIT/OFFSET paging follows the same "fetch one extra row to detect a next
+	// page" convention ListMergeRequestsByProject and
+	// ListWebhookEventsByLinkedGitlabProjectID use. A project accumulates tasks
+	// without bound, and this view used to return every one of them — with every
+	// column, description included — in a single response.
 	// ListTasksByProject's q filter (issue #106) matches tasks.search_vector
 	// (the 'simple'-config tsvector generated column, see the 000016
 	// migration) against websearch_to_tsquery, GIN-indexed; an empty q disables

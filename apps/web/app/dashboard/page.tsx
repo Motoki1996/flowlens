@@ -77,18 +77,25 @@ export default async function DashboardPage() {
   let failedSyncProjects: Project[] = [];
   let error = false;
   try {
-    [duePool, waitingTasks, priorityPool, assignedToMeTasks, failedSyncProjects] = await Promise.all([
+    // Each teaser wants a top-N, never a second page, so these keep reading
+    // ?limit= and take the page's rows — the dashboard has nothing to page.
+    const [due, waiting, priority, assignedToMe, failedSync] = await Promise.all([
       // Sorted by due date ascending (nulls last): the same fetch covers
       // both "overdue" and "due this week", split client-side below.
       getAllTasks({ status: "open", sort: "dueOn", limit: DUE_POOL_LIMIT }),
       getAllTasks({ status: "open", startedBefore: today, sort: "dueOn", limit: WAITING_LIMIT }),
       getAllTasks({ status: "open", sort: "priority", limit: PRIORITY_POOL_LIMIT }),
       // Empty for a user who hasn't registered a GitLab identity yet
-      // (issue #102) — GET /api/v1/tasks?assignee=me itself returns [],
+      // (issue #102) — GET /api/v1/tasks?assignee=me itself returns no tasks,
       // not an error, so this teaser is just another empty state.
       getAllTasks({ status: "open", sort: "dueOn", limit: ASSIGNED_TO_ME_LIMIT, assignee: "me" }),
       getFailedSyncProjects(),
     ]);
+    duePool = due.tasks;
+    waitingTasks = waiting.tasks;
+    priorityPool = priority.tasks;
+    assignedToMeTasks = assignedToMe.tasks;
+    failedSyncProjects = failedSync;
   } catch {
     error = true;
   }

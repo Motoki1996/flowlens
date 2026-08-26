@@ -367,10 +367,17 @@ SELECT
   e.id, e.project_id, e.backlog_id, e.name, e.description, e.created_at, e.updated_at,
   e.start_date, e.due_on, e.priority, e.progress, e.default_linked_gitlab_project_id, e.base_branch,
   e.allowed_scope, e.forbidden_scope, e.assignee_user_id, e.estimated_points, e.status, e.closed_at,
-  COUNT(t.id) AS task_count,
-  COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
+  COALESCE(tc.task_count, 0)::bigint AS task_count,
+  COALESCE(tc.closed_task_count, 0)::bigint AS closed_task_count
 FROM epics e
-LEFT JOIN tasks t ON t.epic_id = e.id
+LEFT JOIN (
+  SELECT t.epic_id,
+         COUNT(*) AS task_count,
+         COUNT(*) FILTER (WHERE t.status = 'closed') AS closed_task_count
+  FROM tasks t
+  WHERE t.project_id = $1 AND t.epic_id IS NOT NULL
+  GROUP BY t.epic_id
+) tc ON tc.epic_id = e.id
 WHERE e.project_id = $1
   AND ($2::text = '' OR e.status = $2)
   AND ($3::uuid IS NULL OR e.backlog_id = $3)
@@ -379,7 +386,6 @@ WHERE e.project_id = $1
   AND ($6::text = '' OR e.progress = $6)
   AND ($7::uuid IS NULL OR e.assignee_user_id = $7)
   AND (NOT $8::boolean OR e.assignee_user_id IS NULL)
-GROUP BY e.id
 ORDER BY
   (CASE WHEN $9::boolean THEN
      CASE e.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
@@ -430,8 +436,9 @@ type ListEpicsByProjectRow struct {
 // ListEpicsByProject follows ListBacklogsByProject exactly — the same
 // "empty/false disables it" filter convention (including status, which an
 // absent ?status= resolves to 'open' in internal/epic, not to "no filter"),
-// the same priority/progress sort ranks, and the same LEFT JOIN task counts
-// so the Epic collection
+// the same priority/progress sort ranks, and the same pre-aggregated task
+// counts (see ListBacklogsByProject for why the counts are grouped in a
+// derived table rather than by an outer GROUP BY) so the Epic collection
 // screen's List row count, Board card ratio and Timeline bar fill come from
 // one query. backlog_id is the extra filter: sqlc.narg(backlog_id) narrows to
 // one backlog's epics, and backlog_unfiled to the epics in no backlog at all.

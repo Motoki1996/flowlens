@@ -66,13 +66,14 @@ vi.mock("next/navigation", () => ({
 }));
 
 import BacklogsPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 describe("BacklogsPage", () => {
   beforeEach(() => {
     getCurrentUser.mockResolvedValue(user);
     getProject.mockResolvedValue(project);
     getBacklogs.mockResolvedValue([backlog]);
-    getTasks.mockResolvedValue([]);
+    getTasks.mockResolvedValue(taskPage([]));
   });
 
   it("renders the backlog collection", async () => {
@@ -122,10 +123,12 @@ describe("BacklogsPage", () => {
   // (backlog_id=unassigned is the API's value for "no backlog", distinct
   // from UNCLASSIFIED_BACKLOG which is this app's own route/filter value),
   // and is passed through to the collection as a trailing List-only row.
+  // perPage: 1 because it is a count, not a list — the number itself is
+  // totalCount, counted in SQL.
   it("fetches the unclassified task count and shows it as a trailing List row", async () => {
-    getTasks.mockResolvedValue([{ id: "t1" }, { id: "t2" }]);
+    getTasks.mockResolvedValue(taskPage([{ id: "t1" }], { totalCount: 2 }));
     render(await BacklogsPage({ params: Promise.resolve({ projectId: "p1" }) }));
-    expect(getTasks).toHaveBeenCalledWith("p1", { backlogId: "unassigned" });
+    expect(getTasks).toHaveBeenCalledWith("p1", { backlogId: "unassigned", perPage: 1 });
 
     fireEvent.click(screen.getByRole("button", { name: "List" }));
     const unclassified = screen.getByRole("link", { name: /Unclassified/ });

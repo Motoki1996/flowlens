@@ -48,7 +48,9 @@ Backlog ID: $1
      points. **Derive it from this project's own data, never from a bare
      hunch**: an absolute number pulled out of the air cannot be
      calibrated against anything later. Concretely — `GET
-     {baseUrl}/api/v1/projects/{projectId}/tasks` for the existing tasks,
+     {baseUrl}/api/v1/projects/{projectId}/tasks?per_page=200` for the
+     existing tasks (the list is paged — read them from the response's
+     `tasks` array, and `totalCount` tells you how many there are in all),
      look at how this project's work actually divides into `size` values,
      then estimate how many tasks of which sizes this epic will become and
      total them on the scale velocity uses: `xs`=1, `s`=2, `m`=3, `l`=5,

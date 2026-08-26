@@ -87,7 +87,8 @@ vi.mock("@/lib/api", () => ({
   getProject: (id: string) => getProject(id),
   getBacklogs: (id: string) => getBacklogs(id),
   getEpics: (id: string) => getEpics(id),
-  getTasks: () => Promise.resolve([]),
+  getTasks: () => Promise.resolve(taskPage([])),
+  MAX_TASKS_PER_PAGE: 200,
   getTaskDependencies: () => Promise.resolve([]),
   // The single view loads the project's default linked GitLab project to fill
   // the assignee/label pickers (issue #80); with none linked it falls back to
@@ -109,6 +110,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import TaskPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 describe("TaskPage", () => {
   beforeEach(() => {

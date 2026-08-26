@@ -23,6 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testListLimit is a LIMIT large enough to stand in for "every row" now that
+// ListTasksByProject/ListTasksForMember are paged. These assertions are about
+// the queries' filters and ordering, not their paging (which has tests of its
+// own), and a zero LimitCount would be a literal LIMIT 0.
+const testListLimit = 1000
+
 func testDB(t *testing.T) *db.Queries {
 	t.Helper()
 	pool := testPool(t)
@@ -807,6 +813,117 @@ func TestListTasksForMember(t *testing.T) {
 	})
 }
 
+// The paging and the two date sorts ListTasksByProject grew live only in
+// SQL: the ORDER BY now decides which rows a page contains, and both guarded
+// CASE terms rely on Postgres's own NULL ordering (due_on ASC NULLS LAST,
+// and a NULL CASE collapsing to a true tie when its flag is off). The fake
+// querier reimplements all of it, so this pins the real query rather than
+// trusting the two to agree. CountTasksByProject is asserted alongside,
+// because a total that disagreed with the list it pages would be worse than
+// no total at all.
+func TestListTasksByProject_PagesAndSortsByDate(t *testing.T) {
+	q := testDB(t)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: fmt.Sprintf("Paged-%d", time.Now().UnixNano())})
+	require.NoError(t, err)
+	_, err = q.AddProjectMember(ctx, db.AddProjectMemberParams{ProjectID: p.ID, UserID: owner.ID, Role: "owner"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+
+	day := func(d int) pgtype.Date {
+		return pgtype.Date{Time: time.Date(2026, 3, d, 0, 0, 0, 0, time.UTC), Valid: true}
+	}
+	mk := func(title string, due pgtype.Date) db.Task {
+		tsk, err := q.CreateTask(ctx, db.CreateTaskParams{
+			ProjectID: p.ID, Title: title, Labels: []string{}, Priority: "medium",
+			Progress: "not_started", Size: "m", CreatedByUserID: owner.ID, DueOn: due,
+		})
+		require.NoError(t, err)
+		return tsk
+	}
+	// Created in an order that no sort under test reproduces, so a passing
+	// assertion can't be the creation order in disguise.
+	mk("Second", day(2))
+	mk("No due date", pgtype.Date{})
+	first := mk("First", day(1))
+	third := mk("Third", day(3))
+
+	base := db.ListTasksByProjectParams{ProjectID: p.ID, LimitCount: testListLimit}
+	titles := func(rows []db.Task) []string {
+		out := make([]string, len(rows))
+		for i, r := range rows {
+			out[i] = r.Title
+		}
+		return out
+	}
+
+	t.Run("sort by due_on puts the undated task last", func(t *testing.T) {
+		params := base
+		params.SortByDueOn = true
+		rows, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"First", "Second", "Third", "No due date"}, titles(rows))
+	})
+
+	t.Run("no sort flag leaves the creation order untouched", func(t *testing.T) {
+		rows, err := q.ListTasksByProject(ctx, base)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Second", "No due date", "First", "Third"}, titles(rows))
+	})
+
+	t.Run("sort by updated_at is most-recent first", func(t *testing.T) {
+		// UpdateTaskForOwner writes every column, so due_on has to be
+		// restated — dropping it here would silently change what the
+		// due_on paging below is sorting.
+		_, err := q.UpdateTaskForOwner(ctx, db.UpdateTaskForOwnerParams{
+			ID: first.ID, OwnerUserID: owner.ID, Title: "First", Labels: []string{},
+			Priority: "medium", Progress: "not_started", Size: "m", DueOn: day(1),
+		})
+		require.NoError(t, err)
+		params := base
+		params.SortByUpdatedAt = true
+		rows, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		assert.Equal(t, "First", titles(rows)[0])
+	})
+
+	t.Run("limit and offset walk the pages", func(t *testing.T) {
+		params := base
+		params.SortByDueOn = true
+		params.LimitCount = 2
+		firstPage, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"First", "Second"}, titles(firstPage))
+
+		params.OffsetCount = 2
+		secondPage, err := q.ListTasksByProject(ctx, params)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"Third", "No due date"}, titles(secondPage))
+	})
+
+	t.Run("the count is the filter's total, independent of the page", func(t *testing.T) {
+		counts, err := q.CountTasksByProject(ctx, db.CountTasksByProjectParams{ProjectID: p.ID})
+		require.NoError(t, err)
+		assert.EqualValues(t, 4, counts.TotalCount)
+		assert.EqualValues(t, 4, counts.OpenCount)
+
+		_, err = q.CloseTaskForOwner(ctx, db.CloseTaskForOwnerParams{ID: third.ID, OwnerUserID: owner.ID})
+		require.NoError(t, err)
+		counts, err = q.CountTasksByProject(ctx, db.CountTasksByProjectParams{ProjectID: p.ID})
+		require.NoError(t, err)
+		assert.EqualValues(t, 4, counts.TotalCount)
+		assert.EqualValues(t, 3, counts.OpenCount)
+
+		filtered, err := q.CountTasksByProject(ctx, db.CountTasksByProjectParams{ProjectID: p.ID, Status: "closed"})
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, filtered.TotalCount, "a filtered count must follow the filter, not the project")
+	})
+}
+
 // TestTasksSearchVector (issue #106) drives tasks.search_vector — the
 // 'simple'-config generated column the 000016 migration adds — against a
 // real Postgres, since neither FakeQuerier's substring approximation nor a
@@ -847,7 +964,8 @@ func TestListTasksByProject_SizeFilterAndSort(t *testing.T) {
 
 	t.Run("an empty size filter returns every task", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
-			ProjectID: p.ID,
+			ProjectID:  p.ID,
+			LimitCount: testListLimit,
 		})
 		require.NoError(t, err)
 		assert.Len(t, rows, 5)
@@ -856,6 +974,7 @@ func TestListTasksByProject_SizeFilterAndSort(t *testing.T) {
 	t.Run("a size filter narrows to that size alone", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
 			ProjectID: p.ID, Size: "xl",
+			LimitCount: testListLimit,
 		})
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
@@ -865,6 +984,7 @@ func TestListTasksByProject_SizeFilterAndSort(t *testing.T) {
 	t.Run("sort_by_size ranks biggest first", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
 			ProjectID: p.ID, SortBySize: true,
+			LimitCount: testListLimit,
 		})
 		require.NoError(t, err)
 		require.Len(t, rows, 5)
@@ -917,7 +1037,7 @@ func TestTasksSearchVector(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	baseParams := db.ListTasksByProjectParams{ProjectID: p.ID}
+	baseParams := db.ListTasksByProjectParams{ProjectID: p.ID, LimitCount: testListLimit}
 
 	t.Run("hits on a title match", func(t *testing.T) {
 		params := baseParams

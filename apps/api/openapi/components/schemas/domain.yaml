@@ -502,6 +502,35 @@ TaskWithProject:
       properties:
         projectName: { type: string }
 
+TasksPage:
+  type: object
+  properties:
+    tasks:
+      type: array
+      items: { $ref: '#/Task' }
+    nextPage:
+      type: integer
+      description: 0 when there is no next page.
+    totalCount:
+      type: integer
+      description: How many tasks match the filter across every page.
+    openCount:
+      type: integer
+      description: How many of totalCount are open.
+
+TasksWithProjectPage:
+  type: object
+  properties:
+    tasks:
+      type: array
+      items: { $ref: '#/TaskWithProject' }
+    nextPage:
+      type: integer
+      description: 0 when there is no next page.
+    totalCount:
+      type: integer
+      description: How many tasks match the filter across every page.
+
 TaskGitlabContext:
   allOf:
     - $ref: '#/TaskGitlabInfo'

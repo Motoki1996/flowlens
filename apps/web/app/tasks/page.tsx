@@ -2,7 +2,11 @@ import { redirect } from "next/navigation";
 import { getAllTasks, getCurrentUser, getProjects } from "@/lib/api";
 import { AppHeader } from "@/components/AppHeader";
 import { AllTasksSection } from "@/components/AllTasksSection";
-import type { Priority, Progress, TaskStatus } from "@/types";
+import type { Priority, Progress, TaskStatus, TaskWithProject } from "@/types";
+
+// One page of the cross-project collection. It replaces the old bare
+// ?limit=50, which capped the list with no way to reach anything past it.
+const TASKS_PER_PAGE = 50;
 
 const SORTS = ["dueOn", "priority", "progress", "updatedAt"] as const;
 type Sort = (typeof SORTS)[number];
@@ -70,11 +74,15 @@ export default async function AllTasksPage({
   const assigneeMe = firstParam(params.assignee) === "me";
   const search = firstParam(params.q);
 
-  let tasks: Awaited<ReturnType<typeof getAllTasks>> = [];
+  const page = Number(firstParam(params.page)) || 1;
+
+  let tasks: TaskWithProject[] = [];
+  let totalCount = 0;
+  let nextPage = 0;
   let projects: Awaited<ReturnType<typeof getProjects>> = [];
   let error = false;
   try {
-    [tasks, projects] = await Promise.all([
+    const [taskPage, fetchedProjects] = await Promise.all([
       getAllTasks({
         status: status === "all" ? undefined : (status as TaskStatus),
         priority,
@@ -86,9 +94,15 @@ export default async function AllTasksPage({
         startedBefore,
         assignee: assigneeMe ? "me" : undefined,
         q: search,
+        page,
+        perPage: TASKS_PER_PAGE,
       }),
       getProjects(),
     ]);
+    tasks = taskPage.tasks;
+    totalCount = taskPage.totalCount;
+    nextPage = taskPage.nextPage;
+    projects = fetchedProjects;
   } catch {
     error = true;
   }
@@ -110,6 +124,10 @@ export default async function AllTasksPage({
             sort={sort}
             assigneeMe={assigneeMe}
             search={search}
+            totalCount={totalCount}
+            page={page}
+            perPage={TASKS_PER_PAGE}
+            nextPage={nextPage}
             error={error}
           />
         </div>

@@ -1118,4 +1118,61 @@ describe("TaskListSection", () => {
     );
     expect(screen.queryByLabelText("Epic")).not.toBeInTheDocument();
   });
+
+  // The header count is the server's match total, not the page's length, and
+  // the pager only appears once there is another page to reach.
+  describe("paging", () => {
+    const tasks = [makeTask({ id: "t1", title: "Filed task", backlogId: "b1" })];
+
+    it("has no pager when everything fits in one page", () => {
+      render(<TaskListSection projectId="p1" tasks={tasks} backlogs={[]} />);
+      expect(screen.queryByRole("navigation", { name: "Pagination" })).not.toBeInTheDocument();
+    });
+
+    it("counts the whole match rather than the page in hand", () => {
+      render(
+        <TaskListSection
+          projectId="p1"
+          tasks={tasks}
+          backlogs={[]}
+          matchedCount={137}
+          totalCount={340}
+        />,
+      );
+      expect(screen.getByText("137 / 340 tasks")).toBeInTheDocument();
+    });
+
+    it("walks to the next page and reports the server's range", () => {
+      render(
+        <TaskListSection
+          projectId="p1"
+          tasks={tasks}
+          backlogs={[]}
+          matchedCount={137}
+          page={2}
+          perPage={100}
+          nextPage={3}
+        />,
+      );
+      expect(screen.getByText(/101–101 of 137/)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Next" }));
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?page=3");
+    });
+
+    it("resets the page when a filter changes", () => {
+      render(
+        <TaskListSection
+          projectId="p1"
+          tasks={tasks}
+          backlogs={[]}
+          matchedCount={137}
+          page={4}
+          perPage={100}
+          nextPage={5}
+        />,
+      );
+      fireEvent.click(screen.getByRole("checkbox", { name: "My tasks" }));
+      expect(push).toHaveBeenCalledWith("/projects/p1/tasks?assignee=me");
+    });
+  });
 });

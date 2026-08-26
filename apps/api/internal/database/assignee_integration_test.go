@@ -76,6 +76,7 @@ func TestListTasksByProject_AssigneeFilterMatchesBothAxes(t *testing.T) {
 	t.Run("a user matches on either axis", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
 			ProjectID: p.ID, AssigneeUserID: memberUUID,
+			LimitCount: testListLimit,
 		})
 		require.NoError(t, err)
 		assert.ElementsMatch(t, []uuid.UUID{flowlensOnly.ID, gitlabOnly.ID}, titles(rows))
@@ -84,13 +85,14 @@ func TestListTasksByProject_AssigneeFilterMatchesBothAxes(t *testing.T) {
 	t.Run("unassigned means assigned on neither axis", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
 			ProjectID: p.ID, AssigneeUnassigned: true,
+			LimitCount: testListLimit,
 		})
 		require.NoError(t, err)
 		assert.Equal(t, []uuid.UUID{nobodys.ID}, titles(rows))
 	})
 
 	t.Run("no assignee filter returns every task", func(t *testing.T) {
-		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{ProjectID: p.ID})
+		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{ProjectID: p.ID, LimitCount: testListLimit})
 		require.NoError(t, err)
 		assert.Len(t, rows, 3)
 	})
@@ -98,6 +100,7 @@ func TestListTasksByProject_AssigneeFilterMatchesBothAxes(t *testing.T) {
 	t.Run("a user with no identity matches on the FlowLens axis alone", func(t *testing.T) {
 		rows, err := q.ListTasksByProject(ctx, db.ListTasksByProjectParams{
 			ProjectID: p.ID, AssigneeUserID: pgtype.UUID{Bytes: owner.ID, Valid: true},
+			LimitCount: testListLimit,
 		})
 		require.NoError(t, err)
 		assert.Empty(t, rows, "the owner has no identity and owns no task, so neither axis can match")

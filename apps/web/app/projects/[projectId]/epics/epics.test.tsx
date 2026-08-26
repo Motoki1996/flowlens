@@ -80,7 +80,8 @@ vi.mock("@/lib/api", () => ({
   getProject: (id: string) => getProject(id),
   getEpics: (id: string, filter?: unknown) => getEpics(id, filter),
   getBacklogs: (id: string) => getBacklogs(id),
-  getTasks: (id: string) => getTasks(id),
+  getTasks: (id: string, filter?: unknown) => getTasks(id, filter),
+  MAX_TASKS_PER_PAGE: 200,
   getLinkedGitlabProjects: (id: string) => getLinkedGitlabProjects(id),
 }));
 vi.mock("next/navigation", () => ({
@@ -96,6 +97,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 import EpicsPage from "./page";
+import { taskPage } from "@/lib/test-pages";
 
 describe("EpicsPage", () => {
   beforeEach(() => {
@@ -104,7 +106,7 @@ describe("EpicsPage", () => {
     getProject.mockResolvedValue(project);
     getEpics.mockResolvedValue([epic]);
     getBacklogs.mockResolvedValue([backlog]);
-    getTasks.mockResolvedValue([]);
+    getTasks.mockResolvedValue(taskPage([]));
     getLinkedGitlabProjects.mockResolvedValue([]);
   });
 

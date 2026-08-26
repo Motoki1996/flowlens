@@ -1418,6 +1418,50 @@ the same idea across its own three view modes, at a smaller scale:
   server round trip for it. It's still held in the URL (`?q=`) for
   shareability and reload, the same as the client-only filters above.
 
+### Paged task collections
+
+Both task collections — the per-project `GET /api/v1/projects/{projectID}/tasks`
+and the cross-project `GET /api/v1/tasks` — return **one page** of tasks, not
+the whole match. A project accumulates tasks without bound, and each row
+carries every column including its Markdown `description`, so an unpaged list
+grew with the project until it was the slowest thing on the screen.
+
+- `?page=` is the 1-based page number (absent means the first) and
+  `?per_page=` the page size — default 50, clamped to 200 rather than
+  rejected, so asking for "everything" yields a bounded page instead of a 400.
+  `GET /api/v1/tasks` also still accepts `?limit=` as `?per_page=`'s original
+  name.
+- The response is an envelope, matching the merge-request collection's:
+
+  ```json
+  { "tasks": [ … ], "nextPage": 2, "totalCount": 137, "openCount": 96 }
+  ```
+
+  `nextPage` is `0` on the last page. `totalCount` and `openCount` (the latter
+  only on the per-project list) count **the filter's whole match**, not the
+  page — they are counted in SQL, which is what lets the project sidebar and
+  the Project single view show "96 open / 137 total" without fetching a single
+  task row (`?per_page=1`). A filtered list reports its own totals, never the
+  project's.
+- Every `?sort=` order is applied in SQL. On an unpaged list the sort only
+  decided the sequence rows arrived in, so `dueOn`/`updatedAt` were applied in
+  Go; on a paged one it decides which rows a page *contains*, so all five now
+  live in the query.
+- **Backlogs and epics are deliberately not paged.** They run orders of
+  magnitude fewer than tasks and both collection screens group by them, so
+  they still return a plain array. What their lists *did* get is a cheaper
+  task-count join: each backlog's/epic's `taskCount`/`closedTaskCount` now
+  comes from a pre-aggregated subquery keyed by `backlog_id`/`epic_id` rather
+  than a `LEFT JOIN tasks` plus an outer `GROUP BY` over every selected
+  column, so the cost follows the number of backlogs rather than the number of
+  tasks.
+- On the web side, both collection screens carry a Previous/Next pager and
+  reset `?page=` whenever a filter changes. Note the two client-side-only
+  filters (`?label=` and `?due=` on the project collection, "Only with a due
+  date" on the cross-project one) narrow **the page in hand**, not the whole
+  match — the header count and the pager both report the server's numbers, so
+  the two never masquerade as each other.
+
 ### Task full-text search
 
 `GET /api/v1/projects/{projectID}/tasks` and the cross-project
@@ -1878,10 +1922,12 @@ owner has.
   registered GitLab identity — see [GitLab user identity](#gitlab-user-identity)
   below; a caller with no registered identity gets an empty list, not an
   error), and `q=` (free-text over title/description — see
-  [Task full-text search](#task-full-text-search) above). `limit=` caps the
-  result count (default 50, max 200); there is no cursor/offset pagination
-  yet. The same `assignee=me` and `q=` filters are also accepted on the
-  per-project `GET .../tasks` list.
+  [Task full-text search](#task-full-text-search) above). `page=`/`per_page=`
+  page the result (default 50 per page, capped at 200) — see
+  [Paged task collections](#paged-task-collections) above; `limit=` is
+  `per_page=`'s original name and still works, which is what the dashboard's
+  top-N teasers use. The same `assignee=me` and `q=` filters are also accepted
+  on the per-project `GET .../tasks` list.
 - Each task in the response carries a `projectName` field alongside every
   field `GET .../tasks/{taskID}` returns, so a cross-project list is readable
   without a second look-up per row. It never resolves GitLab sync state,

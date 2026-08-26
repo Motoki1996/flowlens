@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import type { Backlog, LinkedGitlabProject } from "@/types";
 import { BacklogListSection } from "./BacklogListSection";
@@ -125,6 +126,25 @@ describe("BacklogListSection", () => {
     showList();
     const link = screen.getByRole("link", { name: "Sprint 1" });
     expect(link).toHaveAttribute("href", "/projects/p1/backlogs/b1");
+  });
+
+  // A name long enough to push the badges onto their own line used to grow the
+  // row; it clips now, and the full text is on hover — but only when it really
+  // did clip, which jsdom has to be told.
+  it("offers a row's full name on hover once it has been truncated", async () => {
+    const user = userEvent.setup();
+    const name =
+      "Sprint 1: reconcile the outbox worker with the webhook receiver";
+    render(
+      <BacklogListSection projectId="p1" backlogs={[{ ...backlog, name }]} />,
+    );
+    showList();
+
+    const link = screen.getByRole("link", { name });
+    Object.defineProperty(link, "scrollWidth", { value: 400, configurable: true });
+    Object.defineProperty(link, "clientWidth", { value: 200, configurable: true });
+    await user.hover(link);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(name);
   });
 
   it("shows each row's closed/total completion, the same reading the Board mode's cards use", () => {

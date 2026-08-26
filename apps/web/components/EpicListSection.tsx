@@ -36,6 +36,7 @@ import { EpicDeleteButton } from "@/components/EpicDeleteButton";
 import { EpicBoardSection } from "@/components/EpicBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
+import { TruncatedName } from "@/components/TruncatedName";
 
 /** The sort values the Epic collection's `?sort=` accepts, the same set the
  *  Backlog collection's does: "manual" is the API's own default (creation)
@@ -403,14 +404,19 @@ export function EpicListSection({
                       <div className="flex items-center justify-between gap-4">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <Link
+                            {/* The name clips rather than wraps: a long one
+                                used to push the badges onto their own line and
+                                grow the row. The full text is on hover when it
+                                did clip. */}
+                            <TruncatedName
                               href={epicPath(projectId, epic.id)}
+                              text={epic.name}
                               className="text-foreground text-sm hover:underline"
-                            >
-                              {epic.name}
-                            </Link>
-                            <PriorityBadge priority={epic.priority} />
-                            <ProgressBadge progress={epic.progress} />
+                            />
+                            <span className="flex shrink-0 items-center gap-2">
+                              <PriorityBadge priority={epic.priority} />
+                              <ProgressBadge progress={epic.progress} />
+                            </span>
                           </div>
                           <p className="text-muted-foreground truncate text-xs">
                             {backlogName ?? "No backlog"}

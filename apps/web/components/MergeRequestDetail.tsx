@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { MergeRequestStateBadge } from "@/components/MergeRequestStateBadge";
 import { PipelineStatusBadge } from "@/components/PipelineStatusBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 /**
  * MergeRequestDetail is the single view for one merge request (issue #112),
@@ -32,14 +33,26 @@ export function MergeRequestDetail({
     <>
       <Card>
         <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-foreground text-xl leading-none font-semibold">
-                  !{mr.number} {mr.title}
-                </h1>
-                {mr.isDraft ? <Badge variant="outline">Draft</Badge> : null}
-                <MergeRequestStateBadge state={mr.state} />
+          {/* min-w-0 at every level: CardHeader is a grid, and a grid item's
+              automatic minimum size is its content's, so a nowrap title would
+              size the track and run the card off the screen instead of being
+              cut. */}
+          <div className="flex min-w-0 items-start justify-between gap-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <TruncatedName
+                  as="h1"
+                  text={`!${mr.number} ${mr.title}`}
+                  className="text-foreground text-xl leading-none font-semibold"
+                />
+                {mr.isDraft ? (
+                  <Badge variant="outline" className="shrink-0">
+                    Draft
+                  </Badge>
+                ) : null}
+                <span className="shrink-0">
+                  <MergeRequestStateBadge state={mr.state} />
+                </span>
               </div>
               <CardDescription className="mt-1.5">
                 {mr.authorGitlabUsername || "Unknown author"} wants to merge{" "}

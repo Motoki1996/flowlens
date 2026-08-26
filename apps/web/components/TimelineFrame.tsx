@@ -1,8 +1,7 @@
 "use client";
 
 import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import Link from "next/link";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TruncatedName } from "@/components/TruncatedName";
 import type { DateRange, GanttRow } from "@/lib/timeline";
 import type { useTimelineViewport } from "@/lib/useTimelineViewport";
 import {
@@ -25,46 +24,6 @@ const MIN_PLOT_VISIBLE = 240;
  *  column has been measured (matching NAME_COLUMN_CLASS's `sm:w-64`). */
 const NAME_WIDTH_STEP = 16;
 const DEFAULT_NAME_WIDTH = 256;
-
-/** Long enough not to fire while the pointer crosses the column on its way
- *  somewhere else, short enough to read as part of the hover rather than as a
- *  wait. The browser's own `title` tooltip took about a second, which is long
- *  enough to give up on — which is why this is a real tooltip now. */
-const NAME_TOOLTIP_DELAY_MS = 150;
-
-/**
- * TimelineName is a row's title: a link to the object, and — only when the
- * column is too narrow to show the whole thing — the full text on hover or
- * keyboard focus. Gating the tooltip on actual truncation is the point: one
- * that repeats a title already fully on screen is noise, and a reader who
- * wants the names permanently can widen the column instead (the splitter
- * below).
- */
-function TimelineName({ href, title }: { href: string; title: string }) {
-  const ref = useRef<HTMLAnchorElement>(null);
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Tooltip
-      open={open}
-      onOpenChange={(next) => {
-        // Measured at the moment of hover rather than tracked: the column is
-        // resizable and the viewport is not, so anything cached would be stale.
-        const el = ref.current;
-        setOpen(next && !!el && el.scrollWidth > el.clientWidth);
-      }}
-    >
-      <TooltipTrigger asChild>
-        <Link ref={ref} href={href} className="text-foreground truncate text-sm hover:underline">
-          {title}
-        </Link>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="start" className="max-w-xs">
-        {title}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
 
 /**
  * TimelineFrame is the layout every Timeline view mode shares: a column of
@@ -143,68 +102,70 @@ export function TimelineFrame({
   };
 
   return (
-    <TooltipProvider delayDuration={NAME_TOOLTIP_DELAY_MS}>
-      <div className="flex">
-        <div
-          ref={nameRef}
-          className={nameWidth === null ? `shrink-0 ${NAME_COLUMN_CLASS}` : "shrink-0"}
-          style={{
-            ...rowBandStyle(AXIS_HEIGHT),
-            ...(nameWidth === null ? {} : { width: nameWidth }),
-          }}
-        >
-          {/* Spacer keeping the first name aligned with the first bar, not with the date axis. */}
-          <div style={{ height: AXIS_HEIGHT }} />
-          <ul>
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="flex flex-col justify-center pr-3"
-                style={{ height: ROW_HEIGHT }}
-              >
-                {/* The title gets the line to itself: sharing it with a priority
-                    and a progress pill left it a few dozen pixels and every row
-                    read as an ellipsis. Both fields are on the bar's tooltip
-                    instead, with high/urgent still flagged below so a scan
-                    doesn't have to hover to find it. */}
-                <TimelineName href={href(row)} title={row.title} />
-                <div className="flex min-w-0 items-center gap-1.5 text-xs">{meta(row)}</div>
-              </li>
-            ))}
-          </ul>
-        </div>
+    <div className="flex">
+      <div
+        ref={nameRef}
+        className={nameWidth === null ? `shrink-0 ${NAME_COLUMN_CLASS}` : "shrink-0"}
+        style={{
+          ...rowBandStyle(AXIS_HEIGHT),
+          ...(nameWidth === null ? {} : { width: nameWidth }),
+        }}
+      >
+        {/* Spacer keeping the first name aligned with the first bar, not with the date axis. */}
+        <div style={{ height: AXIS_HEIGHT }} />
+        <ul>
+          {rows.map((row) => (
+            <li
+              key={row.id}
+              className="flex flex-col justify-center pr-3"
+              style={{ height: ROW_HEIGHT }}
+            >
+              {/* The title gets the line to itself: sharing it with a priority
+                  and a progress pill left it a few dozen pixels and every row
+                  read as an ellipsis. Both fields are on the bar's tooltip
+                  instead, with high/urgent still flagged below so a scan
+                  doesn't have to hover to find it. */}
+              <TruncatedName
+                href={href(row)}
+                text={row.title}
+                className="text-foreground text-sm hover:underline"
+              />
+              <div className="flex min-w-0 items-center gap-1.5 text-xs">{meta(row)}</div>
+            </li>
+          ))}
+        </ul>
+      </div>
 
-        {/* A focusable separator is the splitter pattern: dragging is the obvious
-            gesture, arrow keys are the one that works without a pointer, and a
-            double-click hands the width back to the viewport. */}
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize name column"
-          aria-valuenow={Math.round(nameWidth ?? DEFAULT_NAME_WIDTH)}
-          aria-valuemin={MIN_NAME_WIDTH}
-          aria-valuemax={MAX_NAME_WIDTH}
-          tabIndex={0}
-          title="Drag to resize the name column; double-click to reset"
-          // The ::after pseudo-element widens the grab area either side without
-          // widening the seam itself, which stays 4px so it reads as a divider
-          // rather than as a third column.
-          className="hover:bg-border focus-visible:bg-ring relative w-1 shrink-0 cursor-col-resize touch-none rounded-full after:absolute after:inset-y-0 after:-left-1 after:-right-1 after:content-[''] focus-visible:outline-none"
-          onPointerDown={onPointerDown}
-          onKeyDown={onKeyDown}
-          onDoubleClick={() => setNameWidth(null)}
-        />
+      {/* A focusable separator is the splitter pattern: dragging is the obvious
+          gesture, arrow keys are the one that works without a pointer, and a
+          double-click hands the width back to the viewport. */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize name column"
+        aria-valuenow={Math.round(nameWidth ?? DEFAULT_NAME_WIDTH)}
+        aria-valuemin={MIN_NAME_WIDTH}
+        aria-valuemax={MAX_NAME_WIDTH}
+        tabIndex={0}
+        title="Drag to resize the name column; double-click to reset"
+        // The ::after pseudo-element widens the grab area either side without
+        // widening the seam itself, which stays 4px so it reads as a divider
+        // rather than as a third column.
+        className="hover:bg-border focus-visible:bg-ring relative w-1 shrink-0 cursor-col-resize touch-none rounded-full after:absolute after:inset-y-0 after:-left-1 after:-right-1 after:content-[''] focus-visible:outline-none"
+        onPointerDown={onPointerDown}
+        onKeyDown={onKeyDown}
+        onDoubleClick={() => setNameWidth(null)}
+      />
 
-        <div
-          ref={viewport.scrollRef}
-          onScroll={viewport.onScroll}
-          className="min-w-0 flex-1 overflow-x-auto"
-        >
-          <div style={{ minWidth: viewport.plotWidth, ...rowBandStyle(AXIS_HEIGHT) }}>
-            <GanttChart rows={rows} bounds={bounds} now={now} zoom={viewport.zoom} href={href} />
-          </div>
+      <div
+        ref={viewport.scrollRef}
+        onScroll={viewport.onScroll}
+        className="min-w-0 flex-1 overflow-x-auto"
+      >
+        <div style={{ minWidth: viewport.plotWidth, ...rowBandStyle(AXIS_HEIGHT) }}>
+          <GanttChart rows={rows} bounds={bounds} now={now} zoom={viewport.zoom} href={href} />
         </div>
       </div>
-    </TooltipProvider>
+    </div>
   );
 }

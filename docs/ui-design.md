@@ -92,7 +92,7 @@ The routes that exist today, and the object each one is about:
 | `/projects/[projectId]/gitlab-connection` | `GitLabConnection` | Single (+ the `LinkedGitLabProject` collection) |
 | `/projects/[projectId]/linked-gitlab-projects/[linkId]` | `LinkedGitLabProject` | Single (+ its `SyncRun` and `WebhookEvent` history) |
 | `/dashboard` | — | Aggregation of teasers onto `Task` and `Project` (see below) |
-| `/login`, `/signup` | — | Auth flows (rule 7) |
+| `/login`, `/signup` | — | Auth flows (rule 10) |
 
 Backlogs and tasks exist only inside a project, so both halves of each pair are
 nested under it. The flat `/backlogs/[id]` and `/tasks/[id]` routes predate the
@@ -305,7 +305,35 @@ advances" is already the order you pick in. Sizes stay uncoloured
 (`SizeBadge`): size is not urgency, and a red XL would read as a problem when
 it only means "this is big".
 
-### 9. Authentication is the deliberate exception
+### 9. A name never grows the layout — it clips, and hover gives it back
+
+An object's name is written by a person and can be any length, so nothing may
+be sized by it — not a row, not a card, not a heading. Names go through
+`TruncatedName`: one line in a list row, where the name shares the line with
+badges and dates, two in a board card, which has the height to spare and only
+its column's width to work with. The timeline's name column is the same
+component, widened by its own splitter.
+
+A **single view's heading** clips the same way, and its header row does not
+wrap: Edit and Delete belong beside the name however long it is, never pushed
+onto a line of their own. That clip needs `min-w-0` on **every** box between
+the heading and the card — `CardHeader` is a grid, and a grid item's automatic
+minimum size is its content's, so a `nowrap` heading sizes the track and runs
+the whole card off the screen rather than being cut. The same is true of a
+board column, which is a grid item too. A **breadcrumb** takes a share of the line and no
+more (`CRUMB_WIDTH`) — it points at another screen rather than being where its
+object is read, and a trail that wrapped to three lines pushed the heading
+below the fold.
+
+The full text comes back on hover or keyboard focus, and **only when the name
+was actually clipped** — measured at the moment of hover, since a column can be
+resized under it. A tooltip repeating a name already fully on screen is noise.
+
+Because hover doesn't exist on touch, the tooltip is a convenience, never the
+only route to the whole name: the object's single view always states it in
+full, and every clipped name links there.
+
+### 10. Authentication is the deliberate exception
 
 Login, signup, and logout are genuinely task-shaped: one flow, one outcome, no
 object to browse. They stay task-oriented, and the current `/login` and

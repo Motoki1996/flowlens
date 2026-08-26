@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
+import { TruncatedName } from "@/components/TruncatedName";
 
 type SortValue = "dueOn" | "priority" | "progress" | "updatedAt";
 
@@ -200,7 +201,7 @@ export function AllTasksSection({
                   className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
                 >
                   <span className="flex min-w-0 flex-col">
-                    <span className="text-foreground truncate">{task.title}</span>
+                    <TruncatedName text={task.title} className="text-foreground" />
                     <span className="text-muted-foreground text-xs">{task.projectName}</span>
                   </span>
                   <span className="text-muted-foreground flex shrink-0 items-center gap-3 text-xs">

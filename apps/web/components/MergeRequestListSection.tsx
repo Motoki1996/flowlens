@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { MergeRequestStateBadge } from "@/components/MergeRequestStateBadge";
 import { PipelineStatusBadge } from "@/components/PipelineStatusBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 const STATES: MergeRequestState[] = ["opened", "merged", "closed", "locked"];
 
@@ -154,9 +155,10 @@ export function MergeRequestListSection({
                   className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
                 >
                   <span className="flex min-w-0 flex-col">
-                    <span className="text-foreground truncate">
-                      !{mr.number} {mr.title}
-                    </span>
+                    <TruncatedName
+                      text={`!${mr.number} ${mr.title}`}
+                      className="text-foreground"
+                    />
                     <span className="text-muted-foreground text-xs">
                       {mr.authorGitlabUsername || "Unknown author"}
                       {mr.gitlabCreatedAt ? ` · opened ${formatDate(mr.gitlabCreatedAt)}` : ""}

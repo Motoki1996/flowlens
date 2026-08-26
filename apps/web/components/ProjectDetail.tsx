@@ -31,6 +31,7 @@ import { Markdown } from "@/components/Markdown";
 import { ProjectInviteSection } from "@/components/ProjectInviteSection";
 import { ProjectMemberSection } from "@/components/ProjectMemberSection";
 import { VelocitySection } from "@/components/VelocitySection";
+import { TruncatedName } from "@/components/TruncatedName";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -294,11 +295,17 @@ export function ProjectDetail({
             />
           ) : (
             <>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h1 className="text-foreground text-xl leading-none font-semibold">
-                    {project.name}
-                  </h1>
+              {/* min-w-0: CardHeader is a grid, and a grid item's automatic
+                  minimum size is its content's, so a nowrap heading would size
+                  the track and run the card off the screen instead of being
+                  cut. */}
+              <div className="flex min-w-0 items-start justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <TruncatedName
+                    as="h1"
+                    text={project.name}
+                    className="text-foreground text-xl leading-none font-semibold"
+                  />
                   <CardDescription className="mt-1.5">
                     {project.description ? (
                       <Markdown>{project.description}</Markdown>

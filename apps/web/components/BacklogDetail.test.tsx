@@ -124,6 +124,23 @@ describe("BacklogDetail", () => {
     expect(screen.getByText("The first sprint")).toBeInTheDocument();
   });
 
+  // The heading clips instead of running the card off the screen, which takes
+  // a min-w-0 on every box between it and the card: CardHeader is a grid, and
+  // a grid item's automatic minimum size is its content's, so a nowrap heading
+  // otherwise sizes the track. jsdom computes no layout, so the chain itself
+  // is what a test can see.
+  it("keeps the header row shrinkable so a long name clips beside the actions", () => {
+    render(<BacklogDetail backlog={backlog} project={project} tasks={[]} />);
+
+    const heading = screen.getByRole("heading", { name: "Sprint 1" });
+    expect(heading).toHaveClass("truncate");
+    for (let box = heading.parentElement; box; box = box.parentElement) {
+      if (box.dataset.slot === "card-header") break;
+      expect(box).toHaveClass("min-w-0");
+      expect(box).not.toHaveClass("flex-wrap");
+    }
+  });
+
   it("shows the planned period, or says it is unset", () => {
     const { rerender } = render(
       <BacklogDetail backlog={backlog} project={project} tasks={[]} />,

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { taskPath } from "@/lib/routes";
@@ -15,6 +14,7 @@ import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 const UNCLASSIFIED_LABEL = "Unclassified";
 
@@ -133,7 +133,10 @@ export function TaskBoardSection({
                 e.preventDefault();
                 handleDrop(column.progress);
               }}
-              className={`bg-muted/40 rounded-md p-2 ${
+              // min-w-0: a column is a grid item, whose automatic minimum
+              // size is its content's — without it a single unbreakable title
+              // widens the column and pushes the board off the screen.
+              className={`bg-muted/40 min-w-0 rounded-md p-2 ${
                 dragOverProgress === column.progress ? "ring-primary/50 ring-2" : ""
               }`}
             >
@@ -171,12 +174,15 @@ export function TaskBoardSection({
                         draggingId === task.id ? "opacity-50" : ""
                       } ${task.status === "closed" ? "opacity-70" : ""}`}
                     >
-                      <Link
+                      {/* Two lines, then the rest on hover: a card is only as
+                          wide as its column, and a title left to run freely
+                          stretched the card instead of fitting it. */}
+                      <TruncatedName
                         href={taskPath(projectId, task.id)}
-                        className="text-foreground block text-sm hover:underline"
-                      >
-                        {task.title}
-                      </Link>
+                        text={task.title}
+                        lines={2}
+                        className="text-foreground text-sm hover:underline"
+                      />
 
                       <p className="text-muted-foreground truncate text-xs">
                         {task.backlogId

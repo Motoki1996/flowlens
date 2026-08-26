@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import type { Backlog, Task } from "@/types";
 import { TaskBoardSection } from "./TaskBoardSection";
@@ -89,6 +90,29 @@ describe("TaskBoardSection", () => {
     expect(
       within(screen.getByRole("region", { name: "Done tasks" })).getByText("No tasks."),
     ).toBeInTheDocument();
+  });
+
+  // A card is only as wide as its column, so a long title clips at two lines
+  // rather than stretching the card — and the whole of it stays reachable on
+  // hover. jsdom lays nothing out, so the heights that decide "clipped" are set
+  // here directly.
+  it("offers a card's full title on hover once it has been clamped", async () => {
+    const user = userEvent.setup();
+    const title =
+      "Reconcile the outbox worker with the webhook receiver before the resync";
+    render(
+      <TaskBoardSection
+        projectId="p1"
+        tasks={[{ ...task, title }]}
+        backlogs={[backlog]}
+      />,
+    );
+
+    const name = screen.getByRole("link", { name: title });
+    Object.defineProperty(name, "scrollHeight", { value: 60, configurable: true });
+    Object.defineProperty(name, "clientHeight", { value: 40, configurable: true });
+    await user.hover(name);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(title);
   });
 
   it("names each card's backlog, falling back to Unclassified", () => {

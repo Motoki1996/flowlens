@@ -12,6 +12,7 @@ import { PROGRESS_ACCENT, PROGRESS_COLUMNS } from "@/lib/progress";
 import type { ApiError, Progress } from "@/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { PriorityBadge } from "@/components/PriorityBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 /**
  * GroupBoardSection is the Board view mode shared by the Backlog and Epic
@@ -115,7 +116,10 @@ export function GroupBoardSection({
                 e.preventDefault();
                 handleDrop(column.progress);
               }}
-              className={`bg-muted/40 rounded-md p-2 ${
+              // min-w-0: a column is a grid item, whose automatic minimum
+              // size is its content's — without it a single unbreakable name
+              // widens the column and pushes the board off the screen.
+              className={`bg-muted/40 min-w-0 rounded-md p-2 ${
                 dragOverProgress === column.progress ? "ring-primary/50 ring-2" : ""
               }`}
             >
@@ -158,12 +162,15 @@ export function GroupBoardSection({
                           draggingId === backlog.id ? "opacity-50" : ""
                         }`}
                       >
-                        <Link
+                        {/* Two lines, then the rest on hover: a card is only
+                            as wide as its column, and a name left to run freely
+                            stretched the card instead of fitting it. */}
+                        <TruncatedName
                           href={config.detailPath(projectId, backlog.id)}
-                          className="text-foreground block text-sm font-medium hover:underline"
-                        >
-                          {backlog.name}
-                        </Link>
+                          text={backlog.name}
+                          lines={2}
+                          className="text-foreground text-sm font-medium hover:underline"
+                        />
 
                         {schedule ? (
                           <p className="text-muted-foreground truncate text-xs">{schedule}</p>

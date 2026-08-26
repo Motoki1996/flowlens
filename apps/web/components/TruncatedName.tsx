@@ -18,6 +18,19 @@ const CLIP_CLASS = {
   2: "line-clamp-2 break-words",
 } as const;
 
+/** A display utility would override the one `line-clamp-*` relies on — see the
+ *  note on `className` below. `block` is what a caller reaches for out of
+ *  habit; the rest are here because they would break the clamp just as
+ *  quietly. */
+const DISPLAY_CLASS = /^(inline-)?(block|flex|grid|table)$|^(inline|contents|flow-root)$/;
+
+function stripDisplay(className?: string) {
+  return className
+    ?.split(" ")
+    .filter((c) => !DISPLAY_CLASS.test(c))
+    .join(" ");
+}
+
 /**
  * TruncatedName is an object's name wherever a collection view shows it: the
  * text clipped to the room the row or card actually has, and — only when it
@@ -32,6 +45,13 @@ const CLIP_CLASS = {
  * which has the height to spare and only the card's width to work with. Two
  * lines measures height rather than width, since that is what line-clamp
  * bounds.
+ *
+ * `className` must not carry a display utility. `line-clamp-2` works by
+ * setting `display: -webkit-box`, and Tailwind emits `.block` *after*
+ * `.line-clamp-*`, so a `block` passed in here silently wins and the name
+ * wraps freely again — which is exactly the bug this component exists to fix.
+ * It is dropped below rather than trusted, since nothing in jsdom can catch
+ * it.
  *
  * Rendered as a <Link> when `href` is given and a <span> otherwise; both stay
  * reachable by keyboard, so the tooltip is too.
@@ -108,7 +128,7 @@ export function TruncatedName({
     setOpen(false);
   }, [cancel]);
 
-  const classes = cn("min-w-0", CLIP_CLASS[lines], className);
+  const classes = cn("min-w-0", CLIP_CLASS[lines], stripDisplay(className));
   const handlers = {
     onPointerEnter: () => show(false),
     onPointerLeave: hide,

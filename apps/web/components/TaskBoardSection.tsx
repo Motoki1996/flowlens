@@ -178,7 +178,7 @@ export function TaskBoardSection({
                         href={taskPath(projectId, task.id)}
                         text={task.title}
                         lines={2}
-                        className="text-foreground block text-sm hover:underline"
+                        className="text-foreground text-sm hover:underline"
                       />
 
                       <p className="text-muted-foreground truncate text-xs">

@@ -166,7 +166,7 @@ export function GroupBoardSection({
                           href={config.detailPath(projectId, backlog.id)}
                           text={backlog.name}
                           lines={2}
-                          className="text-foreground block text-sm font-medium hover:underline"
+                          className="text-foreground text-sm font-medium hover:underline"
                         />
 
                         {schedule ? (

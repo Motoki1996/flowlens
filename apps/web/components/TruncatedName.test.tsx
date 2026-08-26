@@ -112,6 +112,18 @@ describe("TruncatedName", () => {
     expect(screen.getByRole("link", { name: LONG })).toHaveFocus();
   });
 
+  // `line-clamp-2` clips by setting `display: -webkit-box`, and Tailwind emits
+  // `.block` after it — so a display utility from a caller wins in the browser
+  // and the name wraps freely again. Nothing in jsdom computes that cascade,
+  // which is why the class list itself is asserted here.
+  it("drops a display utility that would defeat the clamp", () => {
+    render(<TruncatedName text={LONG} lines={2} className="text-foreground block text-sm" />);
+
+    const el = screen.getByText(LONG);
+    expect(el).toHaveClass("line-clamp-2", "text-foreground", "text-sm");
+    expect(el).not.toHaveClass("block");
+  });
+
   it("links to the object when given an href, and is a plain span otherwise", () => {
     const { rerender } = render(<TruncatedName text="Sprint 1" href="/projects/p1" />);
     expect(screen.getByRole("link", { name: "Sprint 1" })).toHaveAttribute("href", "/projects/p1");

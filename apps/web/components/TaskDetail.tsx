@@ -32,6 +32,7 @@ import { PriorityBadge } from "@/components/PriorityBadge";
 import { SizeBadge } from "@/components/SizeBadge";
 import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 /** CloseReopenButton toggles a task between open and closed in place. */
 function CloseReopenButton({
@@ -420,12 +421,20 @@ export function TaskDetail({
           <>
             <CardHeader>
               <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h1 className="text-foreground text-xl leading-none font-semibold">
-                      {task.title}
-                    </h1>
-                    <Badge variant={task.status === "open" ? "default" : "secondary"}>
+                <div className="min-w-0 flex-1">
+                  {/* No flex-wrap: the status badge and the actions beside it
+                      belong on the title's line however long it is, and a
+                      title that doesn't fit clips instead. */}
+                  <div className="flex items-center gap-2">
+                    <TruncatedName
+                      as="h1"
+                      text={task.title}
+                      className="text-foreground text-xl leading-none font-semibold"
+                    />
+                    <Badge
+                      variant={task.status === "open" ? "default" : "secondary"}
+                      className="shrink-0"
+                    >
                       {task.status === "open" ? "Open" : "Closed"}
                     </Badge>
                   </div>

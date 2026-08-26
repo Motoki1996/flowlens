@@ -20,6 +20,7 @@ import { Markdown } from "@/components/Markdown";
 import { Button } from "@/components/ui/button";
 import { EpicForm } from "@/components/EpicForm";
 import { EpicDeleteButton } from "@/components/EpicDeleteButton";
+import { TruncatedName } from "@/components/TruncatedName";
 import { EpicTaskPicker, epicTasksBody } from "@/components/EpicTaskPicker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { API_PUBLIC_URL } from "@/lib/config";
@@ -200,11 +201,16 @@ export function EpicDetail({
         ) : (
           <>
             <CardHeader>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <h1 className="text-foreground text-xl leading-none font-semibold">
-                    {epic.name}
-                  </h1>
+              {/* No flex-wrap: the actions belong beside the name however long
+                  it is, and a name that doesn't fit clips instead of pushing
+                  them onto a line of their own. */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <TruncatedName
+                    as="h1"
+                    text={epic.name}
+                    className="text-foreground text-xl leading-none font-semibold"
+                  />
                   <CardDescription className="mt-1.5">
                     {epic.description ? (
                       <Markdown>{epic.description}</Markdown>

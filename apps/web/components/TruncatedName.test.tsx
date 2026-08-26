@@ -124,6 +124,16 @@ describe("TruncatedName", () => {
     expect(el).not.toHaveClass("block");
   });
 
+  // A single view's heading is the same problem as a row's name — it can't be
+  // allowed to push the Edit and Delete buttons onto a line of their own — but
+  // it has to stay a heading for the screen to be navigable.
+  it("renders a heading when asked, and still clips it", () => {
+    render(<TruncatedName text={LONG} as="h1" />);
+
+    const heading = screen.getByRole("heading", { name: LONG, level: 1 });
+    expect(heading).toHaveClass("truncate");
+  });
+
   it("links to the object when given an href, and is a plain span otherwise", () => {
     const { rerender } = render(<TruncatedName text="Sprint 1" href="/projects/p1" />);
     expect(screen.getByRole("link", { name: "Sprint 1" })).toHaveAttribute("href", "/projects/p1");

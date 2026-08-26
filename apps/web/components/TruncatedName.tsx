@@ -53,8 +53,11 @@ function stripDisplay(className?: string) {
  * It is dropped below rather than trusted, since nothing in jsdom can catch
  * it.
  *
- * Rendered as a <Link> when `href` is given and a <span> otherwise; both stay
- * reachable by keyboard, so the tooltip is too.
+ * Rendered as a <Link> when `href` is given, and otherwise as `as` — a <span>
+ * in a row, an <h1> where the name is the screen's heading. A link stays
+ * reachable by keyboard, so its tooltip is too; a heading is not focusable, so
+ * there the tooltip is hover-only and the name is also in the edit form below
+ * it.
  *
  * **Nothing from Radix is mounted until the name is first pointed at or
  * focused.** A project's task list is not paginated, so a screen can hold
@@ -67,12 +70,15 @@ function stripDisplay(className?: string) {
 export function TruncatedName({
   text,
   href,
+  as: Tag = "span",
   lines = 1,
   className,
   tooltipText,
 }: {
   text: string;
   href?: string;
+  /** The element to render when there is no `href`. */
+  as?: "span" | "h1";
   /** Lines the name gets before it clips. 1 (default) truncates, 2 clamps. */
   lines?: 1 | 2;
   className?: string;
@@ -141,9 +147,9 @@ export function TruncatedName({
       {text}
     </Link>
   ) : (
-    <span ref={ref as Ref<HTMLSpanElement>} className={classes} {...handlers}>
+    <Tag ref={ref as Ref<HTMLSpanElement & HTMLHeadingElement>} className={classes} {...handlers}>
       {text}
-    </span>
+    </Tag>
   );
 
   if (!mounted) return name;

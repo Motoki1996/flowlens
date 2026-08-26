@@ -325,4 +325,151 @@ describe("the status filter", () => {
 
     expect(screen.getAllByText("Closed")).toHaveLength(1);
   });
+
+  /** The Epic collection's own half of the bulk editing the Task and Backlog
+   *  collections have — the four shared actions plus "Move to backlog",
+   *  which carries each epic's tasks along with it. */
+  describe("Bulk actions", () => {
+    const second = makeEpic({ id: "e2", name: "API" });
+
+    it("shows no selection bar until something is selected", () => {
+      renderList();
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("selects every visible epic at once", () => {
+      renderList({ epics: [makeEpic(), second] });
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select all epics" }),
+      );
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+    });
+
+    it("applies a bulk priority change to every selected epic", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList({ epics: [makeEpic(), second] });
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select all epics" }),
+      );
+
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Priority to set" }),
+      );
+      fireEvent.click(await screen.findByRole("option", { name: "Urgent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Set priority" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      for (const id of ["e1", "e2"]) {
+        expect(fetch).toHaveBeenCalledWith(
+          `/api/v1/epics/${id}`,
+          expect.objectContaining({
+            method: "PATCH",
+            body: JSON.stringify({ priority: "urgent" }),
+          }),
+        );
+      }
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("applies a bulk progress change to every selected epic", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Screens" }));
+
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Progress to set" }),
+      );
+      fireEvent.click(await screen.findByRole("option", { name: "On hold" }));
+      fireEvent.click(screen.getByRole("button", { name: "Set progress" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/epics/e1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ progress: "on_hold" }),
+        }),
+      );
+    });
+
+    it("moves every selected epic into the chosen backlog", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList({ epics: [makeEpic({ backlogId: null })] });
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Screens" }));
+
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Backlog to move to" }),
+      );
+      fireEvent.click(await screen.findByRole("option", { name: "Sprint 1" }));
+      fireEvent.click(screen.getByRole("button", { name: "Move to backlog" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/epics/e1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ backlogId: "b1" }),
+        }),
+      );
+    });
+
+    it("moves a selected epic out of every backlog", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Screens" }));
+
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Backlog to move to" }),
+      );
+      fireEvent.click(
+        await screen.findByRole("option", { name: "No backlog" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Move to backlog" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/epics/e1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ backlogId: null }),
+        }),
+      );
+    });
+
+    it("closes and reopens every selected epic in bulk", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList();
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Screens" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close selected" }));
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/epics/e1/close",
+        expect.objectContaining({ method: "POST" }),
+      );
+
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Screens" }));
+      fireEvent.click(screen.getByRole("button", { name: "Reopen selected" }));
+      await waitFor(() =>
+        expect(fetch).toHaveBeenCalledWith(
+          "/api/v1/epics/e1/reopen",
+          expect.objectContaining({ method: "POST" }),
+        ),
+      );
+    });
+
+    it("reports a wholesale failure and keeps the selection", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 500 }));
+      renderList();
+      fireEvent.click(screen.getByRole("checkbox", { name: "Select Screens" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close selected" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("Failed to update 1 epic."),
+        ).toBeInTheDocument(),
+      );
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+    });
+  });
 });

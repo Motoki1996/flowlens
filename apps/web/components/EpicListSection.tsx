@@ -39,12 +39,27 @@ import { EpicBoardSection } from "@/components/EpicBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
 import { TruncatedName } from "@/components/TruncatedName";
+import {
+  RowCheckbox,
+  SelectAllCheckbox,
+  useBulkSelection,
+  type BaseBulkAction,
+} from "@/components/BulkSelection";
+import { BulkActionBar } from "@/components/BulkActionBar";
+import { API_PUBLIC_URL } from "@/lib/config";
+import { csrfHeaders } from "@/lib/csrf";
 
 /** The sort values the Epic collection's `?sort=` accepts, the same set the
  *  Backlog collection's does: "manual" is the API's own default (creation)
  *  order, "priority"/"progress" are applied server-side, and
  *  "dueOn" is applied here because the API has no concept of it. */
 type EpicSort = "manual" | "dueOn" | "priority" | "progress";
+
+/** The bulk actions the Epic collection offers: the four every collection
+ *  shares (BulkActionBar) plus its own "Move to backlog", which is the epic
+ *  equivalent of the Task collection's "Assign to backlog" — and, like it,
+ *  carries the epic's tasks along (internal/epic). */
+type BulkAction = BaseBulkAction | "move";
 
 /** The `?backlog=` value standing for "epics in no backlog at all". The API
  *  spells it "unassigned" on `backlog_id`; the URL says "none" because on
@@ -175,6 +190,49 @@ export function EpicListSection({
     }
     return result;
   }, [epics, search, sort]);
+
+  // Bulk editing, the same machinery the Task and Backlog collections' List
+  // views use (issue #149). "Move to backlog" is this screen's own fifth
+  // action: moving an epic between backlogs moves its tasks with it, which
+  // is exactly what makes it worth doing to several at once.
+  const [targetBacklogId, setTargetBacklogId] = useState("");
+  const selection = useBulkSelection<BulkAction>({
+    visibleIds: visibleEpics.map((e) => e.id),
+    noun: "epic",
+  });
+  const { selected, setSelected } = selection;
+
+  function patchSelected(
+    action: BulkAction,
+    body: Record<string, string | null>,
+  ) {
+    return selection.run(action, (epicId) =>
+      fetch(`${API_PUBLIC_URL}/api/v1/epics/${epicId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  function postSelected(action: "close" | "reopen") {
+    return selection.run(action, (epicId) =>
+      fetch(`${API_PUBLIC_URL}/api/v1/epics/${epicId}/${action}`, {
+        method: "POST",
+        credentials: "include",
+        headers: csrfHeaders(),
+      }),
+    );
+  }
+
+  async function handleMoveSelected() {
+    if (!targetBacklogId) return;
+    const failed = await patchSelected("move", {
+      backlogId: targetBacklogId === NO_BACKLOG_FILTER ? null : targetBacklogId,
+    });
+    if (failed.length === 0) setTargetBacklogId("");
+  }
 
   const hasActiveFilters =
     statusFilter !== FILTER_DEFAULTS.status ||
@@ -420,6 +478,63 @@ export function EpicListSection({
           <EpicTimelineSection projectId={projectId} epics={visibleEpics} />
         ) : (
           <div className="space-y-2">
+            <div className="mb-4 space-y-4">
+              <div className="flex items-center gap-2">
+                <SelectAllCheckbox
+                  label="Select all epics"
+                  ids={visibleEpics.map((e) => e.id)}
+                  selected={selected}
+                  onChange={setSelected}
+                />
+                <span className="text-muted-foreground text-xs">
+                  Select all
+                </span>
+              </div>
+              <BulkActionBar
+                selection={selection}
+                onPriority={(priority) =>
+                  patchSelected("priority", { priority })
+                }
+                onProgress={(progress) =>
+                  patchSelected("progress", { progress })
+                }
+                onClose={() => postSelected("close")}
+                onReopen={() => postSelected("reopen")}
+              >
+                {/* "No backlog" is a destination here, not a filter — an epic
+                    outside every backlog is a valid state, unlike the filter
+                    row's "all". */}
+                <Select
+                  value={targetBacklogId}
+                  onValueChange={setTargetBacklogId}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    aria-label="Backlog to move to"
+                    className="w-44"
+                  >
+                    <SelectValue placeholder="Choose a backlog…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_BACKLOG_FILTER}>
+                      No backlog
+                    </SelectItem>
+                    {backlogs.map((backlog) => (
+                      <SelectItem key={backlog.id} value={backlog.id}>
+                        {backlog.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  onClick={handleMoveSelected}
+                  disabled={!targetBacklogId || selection.pending !== null}
+                >
+                  {selection.pending === "move" ? "Moving…" : "Move to backlog"}
+                </Button>
+              </BulkActionBar>
+            </div>
             <ul className="space-y-2">
               {visibleEpics.map((epic) => {
                 const completion = groupTaskCompletion(epic);
@@ -449,6 +564,12 @@ export function EpicListSection({
                       />
                     ) : (
                       <div className="flex items-center justify-between gap-4">
+                        <RowCheckbox
+                          label={`Select ${epic.name}`}
+                          id={epic.id}
+                          selected={selected}
+                          onToggle={selection.toggle}
+                        />
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             {/* The name clips rather than wraps: a long one

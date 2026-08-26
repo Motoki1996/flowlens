@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
@@ -18,14 +18,10 @@ import { useViewMode } from "@/lib/useViewMode";
 import type {
   Backlog,
   Epic,
-  Priority,
-  Progress,
   Task,
   TaskDependency,
   TaskStatus,
 } from "@/types";
-import { PROGRESS_COLUMNS } from "@/lib/progress";
-import { PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,14 +37,21 @@ import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { CreateFormRegion } from "@/components/CreateFormRegion";
-import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
+import { PriorityBadge } from "@/components/PriorityBadge";
 import { SizeBadge } from "@/components/SizeBadge";
-import { ProgressBadge, ProgressDot } from "@/components/ProgressBadge";
+import { ProgressBadge } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskBoardSection } from "@/components/TaskBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { TruncatedName } from "@/components/TruncatedName";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
+import {
+  RowCheckbox,
+  SelectAllCheckbox,
+  useBulkSelection,
+  type BaseBulkAction,
+} from "@/components/BulkSelection";
+import { BulkActionBar } from "@/components/BulkActionBar";
 
 /**
  * The Timeline view mode pulls in the charting library, which the default List
@@ -84,22 +87,9 @@ function isDueFilterValue(value: string | null): value is DueFilterValue {
   return value === "overdue" || value === "dueSoon" || value === "undated";
 }
 
-/** Which bulk action the selection bar is mid-flight on (issue #149) — drives
- *  the pending label on its own button and disables the rest, so two bulk
- *  requests never race each other over the same selection. */
-type BulkAction = "assign" | "priority" | "progress" | "close" | "reopen";
-
-/** requestOk resolves a fetch to whether it succeeded, folding a thrown
- *  network error into the same "this one failed" outcome a non-ok response
- *  produces — so a bulk action's per-task Promise.all never rejects outright
- *  and loses track of which of the other tasks came back fine. */
-async function requestOk(promise: Promise<Response>): Promise<boolean> {
-  try {
-    return (await promise).ok;
-  } catch {
-    return false;
-  }
-}
+/** The bulk actions the Task collection offers: the four every collection
+ *  shares (BulkActionBar) plus its own "Assign to backlog". */
+type BulkAction = BaseBulkAction | "assign";
 
 /** Whether the "My tasks" filter (issue #146) can actually match anything:
  *  "available" once both a GitLab connection and a matching identity exist,
@@ -146,53 +136,6 @@ function StatusBadge({ status }: { status: TaskStatus }) {
     <Badge variant={status === "open" ? "default" : "secondary"}>
       {status === "open" ? "Open" : "Closed"}
     </Badge>
-  );
-}
-
-/**
- * SelectAllCheckbox drives one tri-state checkbox against a set of task ids —
- * checked once every id is selected, indeterminate once some but not all are
- * — so selecting "everything visible" or "everything in this backlog" is one
- * click instead of one per row (issue #149). `indeterminate` isn't a DOM
- * attribute React can set via props, so it goes through a ref.
- */
-function SelectAllCheckbox({
-  label,
-  ids,
-  selected,
-  onChange,
-}: {
-  label: string;
-  ids: string[];
-  selected: Set<string>;
-  onChange: (next: Set<string>) => void;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
-  const selectedCount = ids.filter((id) => selected.has(id)).length;
-  const allSelected = ids.length > 0 && selectedCount === ids.length;
-  const indeterminate = selectedCount > 0 && !allSelected;
-
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = indeterminate;
-  }, [indeterminate]);
-
-  return (
-    <input
-      ref={ref}
-      type="checkbox"
-      aria-label={label}
-      checked={allSelected}
-      disabled={ids.length === 0}
-      onChange={() => {
-        const next = new Set(selected);
-        for (const id of ids) {
-          if (allSelected) next.delete(id);
-          else next.add(id);
-        }
-        onChange(next);
-      }}
-      className="border-input h-4 w-4 shrink-0 rounded disabled:cursor-not-allowed disabled:opacity-50"
-    />
   );
 }
 
@@ -318,12 +261,7 @@ export function TaskListSection({
   const searchParams = useSearchParams();
   const [view, setView] = useViewMode(initialView);
   const [creating, setCreating] = useState(false);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [targetBacklogId, setTargetBacklogId] = useState("");
-  const [bulkPriority, setBulkPriority] = useState<Priority | "">("");
-  const [bulkProgress, setBulkProgress] = useState<Progress | "">("");
-  const [bulkPending, setBulkPending] = useState<BulkAction | null>(null);
-  const [bulkError, setBulkError] = useState<string | null>(null);
 
   // See the class doc comment: unlike every other filter, `?label=` and
   // `?due=` narrow the list here rather than the API request.
@@ -345,17 +283,14 @@ export function TaskListSection({
     return result;
   }, [tasks, labelFilter, dueFilter, now]);
 
-  // A task selected under one filter can fall out of view under the next —
-  // prune it from the selection rather than leaving an invisible task as the
-  // target of the next bulk action (issue #149).
-  useEffect(() => {
-    setSelected((prev) => {
-      if (prev.size === 0) return prev;
-      const visibleIds = new Set(visibleTasks.map((t) => t.id));
-      const next = new Set([...prev].filter((id) => visibleIds.has(id)));
-      return next.size === prev.size ? prev : next;
-    });
-  }, [visibleTasks]);
+  // Selection, pruning and the bulk-request folding all live in
+  // useBulkSelection (issue #149), shared with the Backlog and Epic
+  // collections' own List views.
+  const selection = useBulkSelection<BulkAction>({
+    visibleIds: visibleTasks.map((t) => t.id),
+    noun: "task",
+  });
+  const { selected, setSelected } = selection;
 
   // The filter offers every backlog plus the two groupings that aren't
   // backlogs: "all" and the trailing Unclassified group.
@@ -553,123 +488,34 @@ export function TaskListSection({
     return "No tasks match the current filters.";
   }
 
-  function toggleSelected(taskId: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(taskId)) {
-        next.delete(taskId);
-      } else {
-        next.add(taskId);
-      }
-      return next;
-    });
-  }
-
-  /**
-   * runBulkAction fires one request per selected task and folds the results
-   * into a single outcome: full success clears the selection, a partial
-   * failure reports how many of how many failed (issue #149) and narrows the
-   * selection down to just those, so retrying only resends to the tasks that
-   * actually need it.
-   */
-  async function runBulkAction(
-    action: BulkAction,
-    ids: string[],
-    request: (taskId: string) => Promise<Response>,
-  ): Promise<string[]> {
-    setBulkPending(action);
-    setBulkError(null);
-    try {
-      const results = await Promise.all(
-        ids.map(async (taskId) => ({
-          taskId,
-          ok: await requestOk(request(taskId)),
-        })),
-      );
-      const failed = results.filter((r) => !r.ok).map((r) => r.taskId);
-      if (failed.length > 0) {
-        setBulkError(
-          failed.length === ids.length
-            ? `Failed to update ${ids.length} task${ids.length === 1 ? "" : "s"}.`
-            : `${failed.length} of ${ids.length} tasks failed to update.`,
-        );
-        setSelected(new Set(failed));
-      } else {
-        setSelected(new Set());
-      }
-      router.refresh();
-      return failed;
-    } finally {
-      setBulkPending(null);
-    }
-  }
-
   async function handleAssignSelected() {
-    if (!targetBacklogId || selected.size === 0) return;
+    if (!targetBacklogId) return;
     const backlogId = targetBacklogId === UNCLASSIFIED ? null : targetBacklogId;
-    const failed = await runBulkAction(
-      "assign",
-      Array.from(selected),
-      (taskId) =>
-        fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/assign-backlog`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json", ...csrfHeaders() },
-          body: JSON.stringify({ backlogId }),
-        }),
+    const failed = await selection.run("assign", (taskId) =>
+      fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/assign-backlog`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify({ backlogId }),
+      }),
     );
     if (failed.length === 0) setTargetBacklogId("");
   }
 
-  async function handleBulkPriority() {
-    if (!bulkPriority || selected.size === 0) return;
-    const priority = bulkPriority;
-    const failed = await runBulkAction(
-      "priority",
-      Array.from(selected),
-      (taskId) =>
-        fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}`, {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json", ...csrfHeaders() },
-          body: JSON.stringify({ priority }),
-        }),
-    );
-    if (failed.length === 0) setBulkPriority("");
-  }
-
-  async function handleBulkProgress() {
-    if (!bulkProgress || selected.size === 0) return;
-    const progress = bulkProgress;
-    const failed = await runBulkAction(
-      "progress",
-      Array.from(selected),
-      (taskId) =>
-        fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}`, {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json", ...csrfHeaders() },
-          body: JSON.stringify({ progress }),
-        }),
-    );
-    if (failed.length === 0) setBulkProgress("");
-  }
-
-  async function handleBulkClose() {
-    if (selected.size === 0) return;
-    await runBulkAction("close", Array.from(selected), (taskId) =>
-      fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/close`, {
-        method: "POST",
+  function patchSelected(action: BulkAction, body: Record<string, string>) {
+    return selection.run(action, (taskId) =>
+      fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}`, {
+        method: "PATCH",
         credentials: "include",
-        headers: csrfHeaders(),
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify(body),
       }),
     );
   }
 
-  async function handleBulkReopen() {
-    if (selected.size === 0) return;
-    await runBulkAction("reopen", Array.from(selected), (taskId) =>
-      fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/reopen`, {
+  function postSelected(action: "close" | "reopen") {
+    return selection.run(action, (taskId) =>
+      fetch(`${API_PUBLIC_URL}/api/v1/tasks/${taskId}/${action}`, {
         method: "POST",
         credentials: "include",
         headers: csrfHeaders(),
@@ -935,124 +781,40 @@ export function TaskListSection({
               />
               <span className="text-muted-foreground text-xs">Select all</span>
             </div>
-            {selected.size > 0 ? (
-              <div className="flex flex-wrap items-center gap-2">
-                {bulkError ? (
-                  <span className="text-destructive text-xs">{bulkError}</span>
-                ) : null}
-                <span className="text-muted-foreground text-xs">
-                  {selected.size} selected
-                </span>
-                {backlogs.length > 0 ? (
-                  <>
-                    {/* Named apart from the "Assign to backlog" button next
-                        to it, which is the action rather than the picker. */}
-                    <Combobox
-                      aria-label="Backlog to assign"
-                      options={assignOptions}
-                      value={targetBacklogId}
-                      onChange={setTargetBacklogId}
-                      size="sm"
-                      className="w-44"
-                      placeholder="Choose a backlog…"
-                      searchPlaceholder="Search backlogs…"
-                      emptyText="No backlog found."
-                    />
-                    <Button
-                      size="sm"
-                      onClick={handleAssignSelected}
-                      disabled={!targetBacklogId || bulkPending !== null}
-                    >
-                      {bulkPending === "assign"
-                        ? "Assigning…"
-                        : "Assign to backlog"}
-                    </Button>
-                  </>
-                ) : null}
-                <Select
-                  value={bulkPriority}
-                  onValueChange={(value) => setBulkPriority(value as Priority)}
-                >
-                  <SelectTrigger
+            <BulkActionBar
+              selection={selection}
+              onPriority={(priority) => patchSelected("priority", { priority })}
+              onProgress={(progress) => patchSelected("progress", { progress })}
+              onClose={() => postSelected("close")}
+              onReopen={() => postSelected("reopen")}
+            >
+              {backlogs.length > 0 ? (
+                <>
+                  {/* Named apart from the "Assign to backlog" button next to
+                      it, which is the action rather than the picker. */}
+                  <Combobox
+                    aria-label="Backlog to assign"
+                    options={assignOptions}
+                    value={targetBacklogId}
+                    onChange={setTargetBacklogId}
                     size="sm"
-                    aria-label="Priority to set"
-                    className="w-36"
-                  >
-                    <SelectValue placeholder="Set priority…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PRIORITY_OPTIONS.map((option) => (
-                      <SelectItem key={option.priority} value={option.priority}>
-                        <PriorityDot priority={option.priority} />
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  onClick={handleBulkPriority}
-                  disabled={!bulkPriority || bulkPending !== null}
-                >
-                  {bulkPending === "priority" ? "Setting…" : "Set priority"}
-                </Button>
-                <Select
-                  value={bulkProgress}
-                  onValueChange={(value) => setBulkProgress(value as Progress)}
-                >
-                  <SelectTrigger
+                    className="w-44"
+                    placeholder="Choose a backlog…"
+                    searchPlaceholder="Search backlogs…"
+                    emptyText="No backlog found."
+                  />
+                  <Button
                     size="sm"
-                    aria-label="Progress to set"
-                    className="w-36"
+                    onClick={handleAssignSelected}
+                    disabled={!targetBacklogId || selection.pending !== null}
                   >
-                    <SelectValue placeholder="Set progress…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PROGRESS_COLUMNS.map((option) => (
-                      <SelectItem key={option.progress} value={option.progress}>
-                        <ProgressDot progress={option.progress} />
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="sm"
-                  onClick={handleBulkProgress}
-                  disabled={!bulkProgress || bulkPending !== null}
-                >
-                  {bulkPending === "progress" ? "Setting…" : "Set progress"}
-                </Button>
-                {/* Both stay offered regardless of the selection's current
-                    mix of open/closed tasks — closing an already-closed task
-                    (or reopening an already-open one) is a no-op server-side,
-                    the same as the single-task CloseReopenButton relies on. */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleBulkClose}
-                  disabled={bulkPending !== null}
-                >
-                  {bulkPending === "close" ? "Closing…" : "Close selected"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleBulkReopen}
-                  disabled={bulkPending !== null}
-                >
-                  {bulkPending === "reopen" ? "Reopening…" : "Reopen selected"}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setSelected(new Set())}
-                  disabled={bulkPending !== null}
-                >
-                  Cancel
-                </Button>
-              </div>
-            ) : null}
+                    {selection.pending === "assign"
+                      ? "Assigning…"
+                      : "Assign to backlog"}
+                  </Button>
+                </>
+              ) : null}
+            </BulkActionBar>
             <div className="space-y-6">
               {groups.map((group) => {
                 return (
@@ -1077,12 +839,11 @@ export function TaskListSection({
                       {group.tasks.map((task) => {
                         return (
                           <li key={task.id} className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              aria-label={`Select ${task.title}`}
-                              checked={selected.has(task.id)}
-                              onChange={() => toggleSelected(task.id)}
-                              className="border-input h-4 w-4 shrink-0 rounded"
+                            <RowCheckbox
+                              label={`Select ${task.title}`}
+                              id={task.id}
+                              selected={selected}
+                              onToggle={selection.toggle}
                             />
                             <Link
                               href={taskPath(projectId, task.id)}

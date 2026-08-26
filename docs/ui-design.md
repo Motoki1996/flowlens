@@ -253,6 +253,22 @@ only the rows currently visible**, stating its own count ("Select all (12)").
 A "clear" that also dropped hidden selections would unfile work the reader
 never saw.
 
+The `Task`, `Backlog` and `Epic` collections' List modes all carry the same
+bulk editing, built on one shared selection (`components/BulkSelection.tsx`)
+and one shared action bar (`components/BulkActionBar.tsx`): a tri-state
+select-all, a checkbox per row, and — since all three objects carry their own
+`priority`, `progress` and open/closed `status` — the same four actions.
+Each screen adds only what is its own: the Task collection's "Assign to
+backlog", the Epic collection's "Move to backlog". A selection is pruned to
+what the current filters leave visible rather than kept whole, the opposite
+of the picker rule above and for the same reason it exists: here the
+selection *is* the target of a write, so an invisible row in it would be
+edited unseen.
+
+An action is one request per selected object, folded into one outcome: a
+partial failure says how many of how many failed and narrows the selection to
+just those, so the retry is one click.
+
 `Backlog` and `Epic` share their Board and Timeline view modes
 (`GroupBoardSection` / `GroupTimelineSection`, `lib/groups.ts`): an epic is
 deliberately shaped as a backlog that lives inside a backlog, and a board that

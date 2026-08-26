@@ -190,4 +190,18 @@ describe("TaskTimelineSection", () => {
     expect(screen.queryByRole("link", { name: "No dates yet" })).not.toBeInTheDocument();
     expect(screen.getByText(/No dates yet/)).toBeInTheDocument();
   });
+
+  it("caps the unscheduled list at 3 names and summarises the rest as a count", () => {
+    const tasks = [
+      makeTask({ id: "t1", title: "Design", startDate: "2026-08-01" }),
+      makeTask({ id: "t2", title: "Idea A" }),
+      makeTask({ id: "t3", title: "Idea B" }),
+      makeTask({ id: "t4", title: "Idea C" }),
+      makeTask({ id: "t5", title: "Idea D" }),
+      makeTask({ id: "t6", title: "Idea E" }),
+    ];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+    expect(screen.getByText(/Idea A, Idea B, Idea C, and 2 more/)).toBeInTheDocument();
+    expect(screen.queryByText(/Idea D/)).not.toBeInTheDocument();
+  });
 });

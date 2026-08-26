@@ -7,6 +7,7 @@ import {
   defaultZoom,
   effectiveRange,
   formatAxisTick,
+  formatUnscheduledNames,
   hasSchedule,
   MIN_PLOT_WIDTH,
   plotWidth,
@@ -107,6 +108,16 @@ describe("hasSchedule", () => {
 
   it("is true with only one date set", () => {
     expect(hasSchedule({ startDate: "2026-08-01", dueOn: null })).toBe(true);
+  });
+});
+
+describe("formatUnscheduledNames", () => {
+  it("joins every name when there are 3 or fewer", () => {
+    expect(formatUnscheduledNames(["A", "B", "C"])).toBe("A, B, C");
+  });
+
+  it("caps at 3 names and summarises the rest as a count", () => {
+    expect(formatUnscheduledNames(["A", "B", "C", "D", "E"])).toBe("A, B, C, and 2 more");
   });
 });
 

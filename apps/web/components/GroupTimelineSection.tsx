@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import {
   computeTimelineBounds,
+  formatUnscheduledNames,
   groupTaskCompletion,
   hasSchedule,
   toGroupGanttRows,
@@ -189,7 +190,7 @@ export function GroupTimelineSection({
           {unscheduled.length} {unscheduled.length > 1 ? config.plural : config.noun}{" "}
           {unscheduled.length > 1 ? "have" : "has"} no start or due date and{" "}
           {unscheduled.length > 1 ? "aren't" : "isn't"} shown above:{" "}
-          {unscheduled.map((b) => b.name).join(", ")}
+          {formatUnscheduledNames(unscheduled.map((b) => b.name))}
         </p>
       ) : null}
     </div>

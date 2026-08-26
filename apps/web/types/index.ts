@@ -44,11 +44,32 @@ export type Progress = "not_started" | "in_progress" | "on_hold" | "done";
 // server-side in apps/api/internal/velocity. "m" is the default.
 export type Size = "xs" | "s" | "m" | "l" | "xl";
 
+// Status is the open/closed state shared by Task, Backlog and Epic. It means
+// the same thing on all three — "is this still something we're tracking?" —
+// but not from the same source: a task's mirrors the GitLab issue state and
+// syncs both ways, while a backlog's and an epic's are app-only, since
+// neither has a GitLab counterpart at all.
+//
+// Closing a backlog or an epic never cascades: its epics and tasks keep the
+// status they had. It is also not `progress` — progress "done" says the work
+// finished, which an abandoned backlog never does.
+export type Status = "open" | "closed";
+
+/** StatusFilter is the ?status= vocabulary the Backlog and Epic collections
+ *  share: the two stored values plus "all", which is not a stored value but
+ *  the switch that turns the API's open-only default off. */
+export type StatusFilter = Status | "all";
+
 export interface Backlog {
   id: string;
   projectId: string;
   name: string;
   description: string;
+  // Whether this backlog is still being tracked. Closed backlogs drop out of
+  // the collection view unless ?status= asks for them, and are moved only by
+  // the close/reopen actions — never by the edit form.
+  status: Status;
+  closedAt: string | null;
   // The backlog's planned period, drawn as one bar on the Backlog timeline.
   // App-only, like a task's startDate — neither ever syncs to GitLab.
   startDate: string | null;
@@ -98,6 +119,11 @@ export interface Epic {
   backlogId: string | null;
   name: string;
   description: string;
+  // The same pair a Backlog carries, with the same meaning and the same
+  // non-cascading close. An epic's status is independent of its backlog's:
+  // closing the backlog leaves its epics open, and vice versa.
+  status: Status;
+  closedAt: string | null;
   startDate: string | null;
   dueOn: string | null;
   priority: Priority;
@@ -134,7 +160,10 @@ export interface Epic {
   updatedAt: string;
 }
 
-export type TaskStatus = "open" | "closed";
+/** A task's own open/closed state — the GitLab-mirrored half of Status. The
+ *  alias is kept because a task's status is the one that syncs, so code that
+ *  names it deliberately reads more clearly than the shared name would. */
+export type TaskStatus = Status;
 
 export interface TaskAIContext {
   acceptanceCriteria: string;

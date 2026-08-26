@@ -8,6 +8,13 @@ list:
     parameters:
       - $ref: '#/components/parameters/projectID'
       - in: query
+        name: status
+        description: >-
+          "open" (the default when omitted), "closed", or "all". Unlike the
+          other filters, omitting this one is not "no filter": a closed
+          backlog leaves the collection unless "closed" or "all" is asked for.
+        schema: { type: string, enum: [open, closed, all] }
+      - in: query
         name: priority
         schema: { type: string, enum: [low, medium, high, urgent] }
       - in: query
@@ -174,6 +181,78 @@ backlog:
         content:
           application/json:
             schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+close:
+  post:
+    summary: Close a backlog
+    description: >-
+      Marks the backlog closed and stamps closedAt, taking it out of the
+      collection's default (open-only) listing. App-only: nothing is written to
+      GitLab, and the close never cascades to the backlog's epics or tasks. Closing an already-closed
+      backlog is a no-op. Requires write scope for a bearer token.
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/backlogID'
+    responses:
+      "200":
+        description: The closed backlog
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Backlog' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+reopen:
+  post:
+    summary: Reopen a backlog
+    description: >-
+      Marks the backlog open again and clears closedAt. Reopening an
+      already-open backlog is a no-op, and it cascades no more than closing
+      does. Requires write scope for a bearer token.
+    tags: [backlogs]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/backlogID'
+    responses:
+      "200":
+        description: The reopened backlog
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Backlog' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
 
 components:
   parameters:

@@ -395,11 +395,18 @@ func (s *Server) Router() chi.Router {
 			shared.With(backlogResource).Get("/backlogs/{backlogID}", s.handleGetBacklog)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Patch("/backlogs/{backlogID}", s.handleUpdateBacklog)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Delete("/backlogs/{backlogID}", s.handleDeleteBacklog)
+			// A backlog's own open/closed state (000036), moved by its own
+			// routes rather than PATCH for the same reason a task's is: a
+			// close is an event, not a field edit. Neither cascades.
+			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Post("/backlogs/{backlogID}/close", s.handleCloseBacklog)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), backlogResource).Post("/backlogs/{backlogID}/reopen", s.handleReopenBacklog)
 
 			epicResource := requireTokenResourceProject("epicID", epic.ErrNotFound, s.epics.ProjectID)
 			shared.With(epicResource).Get("/epics/{epicID}", s.handleGetEpic)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Patch("/epics/{epicID}", s.handleUpdateEpic)
 			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Delete("/epics/{epicID}", s.handleDeleteEpic)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Post("/epics/{epicID}/close", s.handleCloseEpic)
+			shared.With(requireTokenScope(apitoken.ScopeWrite), epicResource).Post("/epics/{epicID}/reopen", s.handleReopenEpic)
 			// The epic's own view of "which tasks are mine", written as a
 			// whole set. The task-shaped half of the same relationship is
 			// PATCH /tasks/{taskID}'s own epicId.

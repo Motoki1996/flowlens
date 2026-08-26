@@ -95,6 +95,19 @@ func (s *Server) handleListBacklogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, backlogs)
 }
 
+// isValidBacklogStatus reports whether v is one of the values ?status=
+// accepts on the backlog and epic collections: the two stored values, plus
+// "all" — which is not a stored value but the switch that turns the
+// collections' open-only default off.
+func isValidBacklogStatus(v string) bool {
+	switch v {
+	case backlog.StatusOpen, backlog.StatusClosed, backlog.StatusAll:
+		return true
+	default:
+		return false
+	}
+}
+
 // isValidBacklogPriority reports whether v is one of the fixed priority
 // values.
 func isValidBacklogPriority(v string) bool {
@@ -117,13 +130,22 @@ func isValidBacklogProgress(v string) bool {
 	}
 }
 
-// parseBacklogListFilter reads the ?priority=, ?progress=, ?assignee= and
-// ?sort= query parameters, the same way parseTaskListFilter does for tasks —
-// ?assignee= shares parseAssigneeFilter with it, so "me"/a UUID/"unassigned"
-// mean the same thing on both collections. Any may be omitted to mean "no
-// filter"/"default order".
+// parseBacklogListFilter reads the ?status=, ?priority=, ?progress=,
+// ?assignee= and ?sort= query parameters, the same way parseTaskListFilter
+// does for tasks — ?assignee= shares parseAssigneeFilter with it, so "me"/a
+// UUID/"unassigned" mean the same thing on both collections. Any may be
+// omitted to mean "no filter"/"default order", with the one exception the
+// close feature exists for: an omitted ?status= is open-only, not "no
+// filter", and ?status=all is how a caller asks for closed backlogs too.
 func parseBacklogListFilter(r *http.Request) (backlog.ListFilter, error) {
 	var filter backlog.ListFilter
+
+	if v := r.URL.Query().Get("status"); v != "" {
+		if !isValidBacklogStatus(v) {
+			return backlog.ListFilter{}, errors.New("status must be one of open, closed, all")
+		}
+		filter.Status = v
+	}
 
 	if v := r.URL.Query().Get("priority"); v != "" {
 		if !isValidBacklogPriority(v) {
@@ -245,6 +267,43 @@ func (s *Server) handleUpdateBacklog(w http.ResponseWriter, r *http.Request) {
 		ForbiddenScope:               req.ForbiddenScope,
 		AssigneeUserID:               req.AssigneeUserID,
 	}, actorKind)
+	if err != nil {
+		writeBacklogError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
+// handleCloseBacklog closes one backlog, scoped to the authenticated user via
+// its project. Closing an already-closed backlog is a no-op, and the close
+// never cascades to the backlog's epics or tasks.
+func (s *Server) handleCloseBacklog(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	backlogID, ok := backlogIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "backlog not found")
+		return
+	}
+
+	b, err := s.backlogs.Close(r.Context(), u.ID, backlogID)
+	if err != nil {
+		writeBacklogError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
+// handleReopenBacklog reopens one backlog, scoped to the authenticated user
+// via its project. Reopening an already-open backlog is a no-op.
+func (s *Server) handleReopenBacklog(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	backlogID, ok := backlogIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "backlog not found")
+		return
+	}
+
+	b, err := s.backlogs.Reopen(r.Context(), u.ID, backlogID)
 	if err != nil {
 		writeBacklogError(w, err)
 		return

@@ -131,8 +131,11 @@ export default async function TasksPage({
         assignee: assigneeMe ? "me" : undefined,
         q: search,
       }),
-      getBacklogs(projectId),
-      getEpics(projectId),
+      // "all": these two are lookup tables for the task rows' backlog/epic
+      // labels and the filter dropdowns, not browsable lists. A task filed in
+      // a backlog that has since been closed must still name it.
+      getBacklogs(projectId, { status: "all" }),
+      getEpics(projectId, { status: "all" }),
       getTasks(projectId, {}),
     ]);
     tasks = fetchedTasks;

@@ -1915,6 +1915,15 @@ paths:
           schema:
             type: string
         - in: query
+          name: status
+          description: '"open" (the default when omitted), "closed", or "all". Unlike the other filters, omitting this one is not "no filter": a closed epic leaves the collection unless "closed" or "all" is asked for.'
+          schema:
+            type: string
+            enum:
+              - open
+              - closed
+              - all
+        - in: query
           name: priority
           schema:
             type: string
@@ -2171,6 +2180,78 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/epics/{epicID}/close:
+    post:
+      summary: Close a epic
+      description: 'Marks the epic closed and stamps closedAt, taking it out of the collection''s default (open-only) listing. App-only: nothing is written to GitLab, and the close never cascades to the epic''s tasks. Closing an already-closed epic is a no-op. Requires write scope for a bearer token.'
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/epicID'
+      responses:
+        '200':
+          description: The closed epic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Epic'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/epics/{epicID}/reopen:
+    post:
+      summary: Reopen a epic
+      description: Marks the epic open again and clears closedAt. Reopening an already-open epic is a no-op, and it cascades no more than closing does. Requires write scope for a bearer token.
+      tags:
+        - epics
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/epicID'
+      responses:
+        '200':
+          description: The reopened epic
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Epic'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/projects/{projectID}/backlogs:
     get:
       summary: List a project's backlogs
@@ -2181,6 +2262,15 @@ paths:
         - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/projectID'
+        - in: query
+          name: status
+          description: '"open" (the default when omitted), "closed", or "all". Unlike the other filters, omitting this one is not "no filter": a closed backlog leaves the collection unless "closed" or "all" is asked for.'
+          schema:
+            type: string
+            enum:
+              - open
+              - closed
+              - all
         - in: query
           name: priority
           schema:
@@ -2365,6 +2455,78 @@ paths:
       responses:
         '204':
           description: Deleted
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/backlogs/{backlogID}/close:
+    post:
+      summary: Close a backlog
+      description: 'Marks the backlog closed and stamps closedAt, taking it out of the collection''s default (open-only) listing. App-only: nothing is written to GitLab, and the close never cascades to the backlog''s epics or tasks. Closing an already-closed backlog is a no-op. Requires write scope for a bearer token.'
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/backlogID'
+      responses:
+        '200':
+          description: The closed backlog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backlog'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/backlogs/{backlogID}/reopen:
+    post:
+      summary: Reopen a backlog
+      description: Marks the backlog open again and clears closedAt. Reopening an already-open backlog is a no-op, and it cascades no more than closing does. Requires write scope for a bearer token.
+      tags:
+        - backlogs
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/backlogID'
+      responses:
+        '200':
+          description: The reopened backlog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Backlog'
         '401':
           description: Not authenticated
           content:
@@ -3507,6 +3669,12 @@ components:
           type: string
         description:
           type: string
+        status:
+          type: string
+          enum:
+            - open
+            - closed
+          description: Whether the epic above this task has been closed. Present here because closing an epic does not cascade, so the task's own status never reveals it. See Epic.status.
         startDate:
           type:
             - string
@@ -4522,6 +4690,18 @@ components:
           type: string
         description:
           type: string
+        status:
+          type: string
+          enum:
+            - open
+            - closed
+          description: 'The epic''s own open/closed state. App-only and never synced to GitLab — unlike Task.status, which mirrors the GitLab issue state, this is FlowLens''s alone, and closing a epic never cascades to its tasks. It is also not progress: progress=done says the work finished, which an abandoned epic never does. Moved only by POST /epics/{epicID}/close and /reopen, never by PATCH. Closed epics are omitted from the list endpoint unless ?status= asks for them.'
+        closedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: When the epic was last closed; null while open.
         startDate:
           type:
             - string
@@ -4739,6 +4919,18 @@ components:
           type: string
         description:
           type: string
+        status:
+          type: string
+          enum:
+            - open
+            - closed
+          description: 'The backlog''s own open/closed state. App-only and never synced to GitLab — unlike Task.status, which mirrors the GitLab issue state, this is FlowLens''s alone, and closing a backlog never cascades to its epics or tasks. It is also not progress: progress=done says the work finished, which an abandoned backlog never does. Moved only by POST /backlogs/{backlogID}/close and /reopen, never by PATCH. Closed backlogs are omitted from the list endpoint unless ?status= asks for them.'
+        closedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+          description: When the backlog was last closed; null while open.
         startDate:
           type:
             - string

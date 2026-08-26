@@ -36,6 +36,8 @@ const backlog: Backlog = {
   forbiddenScope: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open",
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -141,6 +143,7 @@ describe("BacklogsPage", () => {
       }),
     );
     expect(getBacklogs).toHaveBeenCalledWith("p1", {
+      status: "open",
       priority: "urgent",
       progress: "on_hold",
       sort: "priority",
@@ -158,6 +161,7 @@ describe("BacklogsPage", () => {
       }),
     );
     expect(getBacklogs).toHaveBeenCalledWith("p1", {
+      status: "open",
       priority: undefined,
       progress: undefined,
       sort: undefined,
@@ -172,6 +176,7 @@ describe("BacklogsPage", () => {
       }),
     );
     expect(getBacklogs).toHaveBeenCalledWith("p1", {
+      status: "open",
       priority: undefined,
       progress: undefined,
       sort: undefined,

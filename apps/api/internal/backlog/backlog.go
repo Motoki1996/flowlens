@@ -69,6 +69,25 @@ const (
 	SortProgress = fieldnorm.SortProgress
 )
 
+// Status values, the backlog's own open/closed state (000036). Shaped as a
+// task's status because it is the same concept one rung up — a backlog that
+// has shipped, or been abandoned, is closed and leaves the collection view —
+// but not the same *kind* of field: tasks.status mirrors the GitLab issue
+// state and syncs both ways, while a backlog has no GitLab counterpart at all,
+// so this is app-only end to end like Priority and Progress.
+//
+// Closing is deliberately not a statement about the backlog's tasks: it never
+// cascades (see the 000036 migration). It is also not Progress — ProgressDone
+// says the work finished, which an abandoned backlog never does.
+//
+// StatusAll is not a stored value: it is the ListFilter.Status escape hatch
+// that turns the collection's open-only default off.
+const (
+	StatusOpen   = "open"
+	StatusClosed = "closed"
+	StatusAll    = "all"
+)
+
 // Actor kind values Update accepts to attribute a backlog_progress_events
 // row (issue #173) to whoever changed progress — a bearer-token (agent)
 // caller or a session (user) caller — mirroring internal/task's own
@@ -84,14 +103,19 @@ const (
 // timeline. Both are app-only and never synced to GitLab — a backlog is not a
 // GitLab milestone (see the 000008 migration).
 type Backlog struct {
-	ID          uuid.UUID  `json:"id"`
-	ProjectID   uuid.UUID  `json:"projectId"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	StartDate   *time.Time `json:"startDate"`
-	DueOn       *time.Time `json:"dueOn"`
-	Priority    string     `json:"priority"`
-	Progress    string     `json:"progress"`
+	ID          uuid.UUID `json:"id"`
+	ProjectID   uuid.UUID `json:"projectId"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	// Status is StatusOpen or StatusClosed, and ClosedAt the moment it last
+	// became the latter (nil while open). Neither is writable through Update:
+	// they move only via Close/Reopen, exactly as a task's do.
+	Status    string     `json:"status"`
+	ClosedAt  *time.Time `json:"closedAt"`
+	StartDate *time.Time `json:"startDate"`
+	DueOn     *time.Time `json:"dueOn"`
+	Priority  string     `json:"priority"`
+	Progress  string     `json:"progress"`
 	// DefaultLinkedGitlabProjectID is the GitLab project a task filed in this
 	// backlog gets its issue created in, overriding the project's own default
 	// link. nil — the value every backlog starts with — means "use the project
@@ -145,6 +169,8 @@ func fromRow(row db.Backlog) Backlog {
 		ProjectID:                    row.ProjectID,
 		Name:                         row.Name,
 		Description:                  row.Description,
+		Status:                       row.Status,
+		ClosedAt:                     timePtr(row.ClosedAt),
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -167,6 +193,8 @@ func fromListRow(row db.ListBacklogsByProjectRow) Backlog {
 		ProjectID:                    row.ProjectID,
 		Name:                         row.Name,
 		Description:                  row.Description,
+		Status:                       row.Status,
+		ClosedAt:                     timePtr(row.ClosedAt),
 		StartDate:                    datePtr(row.StartDate),
 		DueOn:                        datePtr(row.DueOn),
 		Priority:                     row.Priority,
@@ -196,6 +224,16 @@ func toDate(v *time.Time) pgtype.Date {
 		return pgtype.Date{}
 	}
 	return pgtype.Date{Time: *v, Valid: true}
+}
+
+// timePtr converts a nullable timestamptz — only ClosedAt today — to a
+// pointer, the way datePtr does for a nullable date.
+func timePtr(v pgtype.Timestamptz) *time.Time {
+	if !v.Valid {
+		return nil
+	}
+	t := v.Time
+	return &t
 }
 
 func uuidPtr(v pgtype.UUID) *uuid.UUID {
@@ -417,9 +455,17 @@ func (s *Service) Create(ctx context.Context, ownerID, projectID uuid.UUID, p Cr
 	return b, nil
 }
 
-// ListFilter narrows List to a subset of a project's backlogs. The zero
-// value means "no filter, creation order".
+// ListFilter narrows List to a subset of a project's backlogs. The zero value
+// means "open backlogs only, creation order" — note that Status is the one
+// field whose zero value is a filter rather than the absence of one.
 type ListFilter struct {
+	// Status is StatusOpen, StatusClosed, StatusAll, or "" — and "" is the
+	// one filter field whose zero value is not "no filter": it resolves to
+	// StatusOpen, so a closed backlog drops out of the collection without the
+	// caller asking. StatusAll is how a caller asks for both, and is what the
+	// web app's Status filter sends when it is set to "All statuses". Getting
+	// a closed backlog by ID always works; only the list hides it.
+	Status   string
 	Priority string // one of the Priority* constants, or "" (no filter)
 	Progress string // one of the Progress* constants, or "" (no filter)
 	// AssigneeUserID, when non-nil, only returns backlogs assigned to that
@@ -434,9 +480,25 @@ type ListFilter struct {
 	Sort string
 }
 
+// resolveStatusFilter turns a ListFilter.Status into the value the query
+// wants, where "" means "no status filter". The two are not the same
+// vocabulary: an absent filter means open-only here, and only StatusAll
+// disables the filter entirely.
+func resolveStatusFilter(v string) string {
+	switch v {
+	case "":
+		return StatusOpen
+	case StatusAll:
+		return ""
+	default:
+		return v
+	}
+}
+
 // List returns projectID's backlogs matching filter, in creation order (or
-// by priority when filter.Sort is SortPriority). It returns ErrNotFound if
-// projectID does not exist or belongs to another user.
+// by priority when filter.Sort is SortPriority). Closed backlogs are omitted
+// unless filter.Status asks for them. It returns ErrNotFound if projectID
+// does not exist or belongs to another user.
 func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter ListFilter) ([]Backlog, error) {
 	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
 		return nil, err
@@ -444,6 +506,7 @@ func (s *Service) List(ctx context.Context, ownerID, projectID uuid.UUID, filter
 
 	rows, err := s.q.ListBacklogsByProject(ctx, db.ListBacklogsByProjectParams{
 		ProjectID:          projectID,
+		Status:             resolveStatusFilter(filter.Status),
 		Priority:           filter.Priority,
 		Progress:           filter.Progress,
 		AssigneeUserID:     toUUID(filter.AssigneeUserID),
@@ -659,6 +722,64 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 	if err != nil {
 		return Backlog{}, err
 	}
+	if err := s.attachAssigneeName(ctx, &result); err != nil {
+		return Backlog{}, err
+	}
+	return result, nil
+}
+
+// Close marks the backlog closed and stamps closed_at: it has shipped, or
+// been abandoned, and should leave the collection view. Closing an
+// already-closed backlog is a no-op, so closed_at never moves on a re-close —
+// the same rule internal/task.Service.Close follows.
+//
+// It does not cascade. The backlog's epics and tasks are left exactly as they
+// were, deliberately: see the 000036 migration for why closing them by proxy
+// would either invent completions in internal/velocity or close GitLab issues
+// nobody asked to close. Leftover work is moved to another backlog instead.
+//
+// Nothing is enqueued for GitLab either — a backlog has no issue behind it.
+func (s *Service) Close(ctx context.Context, ownerID, backlogID uuid.UUID) (Backlog, error) {
+	return s.setStatus(ctx, ownerID, backlogID, StatusClosed)
+}
+
+// Reopen marks the backlog open again and clears closed_at, bringing it back
+// into the collection view. Reopening an already-open backlog is a no-op, and
+// it no more cascades than Close does: a task closed while its backlog was
+// closed stays closed.
+func (s *Service) Reopen(ctx context.Context, ownerID, backlogID uuid.UUID) (Backlog, error) {
+	return s.setStatus(ctx, ownerID, backlogID, StatusOpen)
+}
+
+// setStatus is the half Close and Reopen share: read the current row (which
+// is also what enforces visibility), return it untouched when the status is
+// already the requested one, and otherwise run the matching statement.
+func (s *Service) setStatus(ctx context.Context, ownerID, backlogID uuid.UUID, status string) (Backlog, error) {
+	current, err := s.Get(ctx, ownerID, backlogID)
+	if err != nil {
+		return Backlog{}, err
+	}
+	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Backlog{}, err
+	}
+	if current.Status == status {
+		return current, nil
+	}
+
+	var row db.Backlog
+	if status == StatusClosed {
+		row, err = s.q.CloseBacklogForOwner(ctx, db.CloseBacklogForOwnerParams{ID: backlogID, OwnerUserID: ownerID})
+	} else {
+		row, err = s.q.ReopenBacklogForOwner(ctx, db.ReopenBacklogForOwnerParams{ID: backlogID, OwnerUserID: ownerID})
+	}
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Backlog{}, ErrNotFound
+		}
+		return Backlog{}, fmt.Errorf("backlog: set status %s: %w", status, err)
+	}
+
+	result := fromRow(row)
 	if err := s.attachAssigneeName(ctx, &result); err != nil {
 		return Backlog{}, err
 	}

@@ -27,6 +27,8 @@ const backlog: Backlog = {
   forbiddenScope: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open" as const,
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -74,6 +76,8 @@ describe("BacklogBoardSection", () => {
       dueOn: "2026-08-31T00:00:00Z",
       taskCount: 2,
       closedTaskCount: 1,
+      status: "open" as const,
+      closedAt: null,
     };
     render(<BacklogBoardSection projectId="p1" backlogs={[scheduled]} />);
 

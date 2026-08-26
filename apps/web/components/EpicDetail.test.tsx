@@ -27,6 +27,8 @@ const backlog: Backlog = {
   assigneeDisplayName: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open" as const,
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -52,6 +54,8 @@ function makeEpic(overrides: Partial<Epic> = {}): Epic {
     assigneeDisplayName: "",
     taskCount: 0,
     closedTaskCount: 0,
+    status: "open" as const,
+    closedAt: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -189,7 +193,7 @@ describe("EpicDetail", () => {
       epicId: "e1",
       title: "Build the list screen",
       description: "",
-      status: "open",
+      status: "open" as const,
       closedAt: null,
       assigneeGitlabUserId: null,
       assigneeGitlabUsername: "",
@@ -355,5 +359,27 @@ describe("EpicDetail", () => {
       await waitFor(() => expect(screen.getByText("nope")).toBeInTheDocument());
       expect(refresh).not.toHaveBeenCalled();
     });
+  });
+});
+
+// --- Close / Reopen (000036) -------------------------------------------------
+
+describe("closing an epic", () => {
+  it("closes through the epic's own endpoint and shows the badge", async () => {
+    const epic = makeEpic();
+    const closed = { ...epic, status: "closed" as const, closedAt: "2026-08-26T00:00:00Z" };
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => closed });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<EpicDetail epic={epic} project={project} />);
+    expect(screen.queryByText("Closed")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close epic" }));
+
+    await waitFor(() => expect(screen.getByText("Closed")).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/epics/e1/close"),
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 });

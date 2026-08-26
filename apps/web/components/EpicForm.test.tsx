@@ -21,6 +21,8 @@ const backlog: Backlog = {
   assigneeDisplayName: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open",
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -46,6 +48,8 @@ function makeEpic(overrides: Partial<Epic> = {}): Epic {
     assigneeDisplayName: "",
     taskCount: 0,
     closedTaskCount: 0,
+    status: "open",
+    closedAt: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,

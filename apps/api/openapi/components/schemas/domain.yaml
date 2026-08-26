@@ -280,6 +280,21 @@ Backlog:
     projectId: { type: string, format: uuid }
     name: { type: string }
     description: { type: string }
+    status:
+      type: string
+      enum: [open, closed]
+      description: >-
+        The backlog's own open/closed state. App-only and never synced to
+        GitLab — unlike Task.status, which mirrors the GitLab issue state, this
+        is FlowLens's alone, and closing a backlog never cascades to its epics or tasks. It is
+        also not progress: progress=done says the work finished, which an
+        abandoned backlog never does. Moved only by POST /backlogs/{backlogID}/close
+        and /reopen, never by PATCH. Closed backlogs are omitted from the list
+        endpoint unless ?status= asks for them.
+    closedAt:
+      type: [string, "null"]
+      format: date-time
+      description: When the backlog was last closed; null while open.
     startDate: { type: [string, "null"], format: date-time }
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
@@ -313,6 +328,21 @@ Epic:
       description: The backlog this epic belongs to; null means unfiled.
     name: { type: string }
     description: { type: string }
+    status:
+      type: string
+      enum: [open, closed]
+      description: >-
+        The epic's own open/closed state. App-only and never synced to
+        GitLab — unlike Task.status, which mirrors the GitLab issue state, this
+        is FlowLens's alone, and closing a epic never cascades to its tasks. It is
+        also not progress: progress=done says the work finished, which an
+        abandoned epic never does. Moved only by POST /epics/{epicID}/close
+        and /reopen, never by PATCH. Closed epics are omitted from the list
+        endpoint unless ?status= asks for them.
+    closedAt:
+      type: [string, "null"]
+      format: date-time
+      description: When the epic was last closed; null while open.
     startDate: { type: [string, "null"], format: date-time }
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }
@@ -365,6 +395,13 @@ EpicSummary:
     id: { type: string, format: uuid }
     name: { type: string }
     description: { type: string }
+    status:
+      type: string
+      enum: [open, closed]
+      description: >-
+        Whether the epic above this task has been closed. Present here because
+        closing an epic does not cascade, so the task's own status never
+        reveals it. See Epic.status.
     startDate: { type: [string, "null"], format: date-time }
     dueOn: { type: [string, "null"], format: date-time }
     priority: { type: string, enum: [low, medium, high, urgent] }

@@ -30,6 +30,7 @@ import type {
   ProjectInvite,
   ProjectInvitePreview,
   ProjectMember,
+  StatusFilter,
   SyncJob,
   SyncRun,
   Task,
@@ -152,6 +153,12 @@ export const getProject = cache(async (id: string): Promise<Project | null> => {
  *  collection's own snake_case parameter. */
 export type EpicListFilter = {
   backlogId?: string;
+  /** "open", "closed", or "all". Unlike every other filter here, omitting
+   *  this one is not "no filter": the API hides closed epics by default, so
+   *  "all" is what a caller passes to get them back — needed wherever the
+   *  result is a lookup table (resolving an epic id to a name) rather than a
+   *  browsable list. */
+  status?: StatusFilter;
   priority?: Priority;
   progress?: Progress;
   sort?: "priority" | "progress";
@@ -166,6 +173,7 @@ export const getEpics = cache(
   async (projectId: string, filter: EpicListFilter = {}): Promise<Epic[]> => {
     const cookieStore = await cookies();
     const params = new URLSearchParams();
+    if (filter.status) params.set("status", filter.status);
     if (filter.backlogId) params.set("backlog_id", filter.backlogId);
     if (filter.priority) params.set("priority", filter.priority);
     if (filter.progress) params.set("progress", filter.progress);
@@ -207,6 +215,9 @@ export async function getEpic(id: string): Promise<Epic | null> {
  *  sort is a Backlog collection concept the client applies itself (see
  *  BacklogListSection), so it never appears here. */
 export type BacklogListFilter = {
+  /** "open", "closed", or "all"; omitted means open-only. See
+   *  EpicListFilter.status. */
+  status?: StatusFilter;
   priority?: Priority;
   progress?: Progress;
   sort?: "priority" | "progress";
@@ -221,6 +232,7 @@ export const getBacklogs = cache(
   async (projectId: string, filter: BacklogListFilter = {}): Promise<Backlog[]> => {
     const cookieStore = await cookies();
     const params = new URLSearchParams();
+    if (filter.status) params.set("status", filter.status);
     if (filter.priority) params.set("priority", filter.priority);
     if (filter.progress) params.set("progress", filter.progress);
     if (filter.sort) params.set("sort", filter.sort);

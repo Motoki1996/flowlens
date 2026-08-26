@@ -81,6 +81,22 @@ type Querier interface {
 	// set no longer names. The tasks keep their backlog — dropping out of an epic
 	// returns a task to sitting directly in it, the same as deleting the epic.
 	ClearEpicTasksExcept(ctx context.Context, arg ClearEpicTasksExceptParams) error
+	// CloseBacklogForOwner / ReopenBacklogForOwner mirror
+	// CloseTaskForOwner/ReopenTaskForOwner in tasks.sql, minus everything GitLab:
+	// a backlog has no issue behind it, so closing one writes these two columns
+	// and nothing else — no outbox job, and nothing at all to its epics or tasks
+	// (000036 explains why the close deliberately does not cascade).
+	//
+	// Neither statement guards on the current status; internal/backlog returns
+	// early when there is nothing to change, so closed_at never moves on a
+	// re-close.
+	CloseBacklogForOwner(ctx context.Context, arg CloseBacklogForOwnerParams) (Backlog, error)
+	// CloseEpicForOwner / ReopenEpicForOwner are CloseBacklogForOwner's epic-rung
+	// twins, and carry the same two promises: no outbox job (an epic has no
+	// GitLab counterpart at all), and no cascade to the epic's tasks (000036).
+	// The current status is not guarded on here — internal/epic returns early
+	// when there is nothing to change, so closed_at never moves on a re-close.
+	CloseEpicForOwner(ctx context.Context, arg CloseEpicForOwnerParams) (Epic, error)
 	CloseTaskForOwner(ctx context.Context, arg CloseTaskForOwnerParams) (Task, error)
 	CompleteGitlabSyncRun(ctx context.Context, arg CompleteGitlabSyncRunParams) (GitlabSyncRun, error)
 	CompleteRepositorySyncRun(ctx context.Context, arg CompleteRepositorySyncRunParams) (RepositorySyncRun, error)
@@ -541,9 +557,14 @@ type Querier interface {
 	// went in_progress" (the exclusion issue #173 asks for), which a
 	// task-created_at bound would silently break.
 	ListBacklogTaskCreatedAtForFlowMetrics(ctx context.Context, arg ListBacklogTaskCreatedAtForFlowMetricsParams) ([]ListBacklogTaskCreatedAtForFlowMetricsRow, error)
-	// ListBacklogsByProject's priority and progress filters and sorts follow the
-	// same "empty/false disables it" convention as internal/task's
-	// ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
+	// ListBacklogsByProject's status, priority and progress filters and sorts
+	// follow the same "empty/false disables it" convention as internal/task's
+	// ListTasksByProject — but note that an empty status is what
+	// internal/backlog.Service.List sends only for an explicit ?status=all: an
+	// absent one resolves to 'open' there, so a closed backlog leaves the
+	// collection by default. That default is the point of the column (000036).
+	//
+	// Sorting by priority ranks urgent > high > medium > low;
 	// sorting by progress runs the other way, not_started first through done, so
 	// the order reads as the work advancing (and matches the Board view's
 	// left-to-right axis). Both fall back to the usual created_at order
@@ -567,8 +588,10 @@ type Querier interface {
 	// worker runs outside any request.
 	ListEnabledNotificationSettings(ctx context.Context) ([]NotificationSetting, error)
 	// ListEpicsByProject follows ListBacklogsByProject exactly — the same
-	// "empty/false disables it" filter convention, the same priority/progress
-	// sort ranks, and the same LEFT JOIN task counts so the Epic collection
+	// "empty/false disables it" filter convention (including status, which an
+	// absent ?status= resolves to 'open' in internal/epic, not to "no filter"),
+	// the same priority/progress sort ranks, and the same LEFT JOIN task counts
+	// so the Epic collection
 	// screen's List row count, Board card ratio and Timeline bar fill come from
 	// one query. backlog_id is the extra filter: sqlc.narg(backlog_id) narrows to
 	// one backlog's epics, and backlog_unfiled to the epics in no backlog at all.
@@ -843,6 +866,8 @@ type Querier interface {
 	PromoteOldestLinkedGitlabProjectAsDefault(ctx context.Context, gitlabConnectionID uuid.UUID) error
 	ReclaimStaleRunningSyncJobs(ctx context.Context, updatedAt pgtype.Timestamptz) (int64, error)
 	RemoveProjectMember(ctx context.Context, arg RemoveProjectMemberParams) (int64, error)
+	ReopenBacklogForOwner(ctx context.Context, arg ReopenBacklogForOwnerParams) (Backlog, error)
+	ReopenEpicForOwner(ctx context.Context, arg ReopenEpicForOwnerParams) (Epic, error)
 	ReopenTaskForOwner(ctx context.Context, arg ReopenTaskForOwnerParams) (Task, error)
 	// RetryFailedSyncJobForTask powers POST /tasks/{taskID}/sync-retry: it
 	// forces the task's most recent pending-or-failed job to run again

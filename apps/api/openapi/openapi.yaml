@@ -133,10 +133,18 @@ paths:
     $ref: './paths/epics.yaml#/epic'
   /api/v1/epics/{epicID}/tasks:
     $ref: './paths/epics.yaml#/tasks'
+  /api/v1/epics/{epicID}/close:
+    $ref: './paths/epics.yaml#/close'
+  /api/v1/epics/{epicID}/reopen:
+    $ref: './paths/epics.yaml#/reopen'
   /api/v1/projects/{projectID}/backlogs:
     $ref: './paths/backlogs.yaml#/list'
   /api/v1/backlogs/{backlogID}:
     $ref: './paths/backlogs.yaml#/backlog'
+  /api/v1/backlogs/{backlogID}/close:
+    $ref: './paths/backlogs.yaml#/close'
+  /api/v1/backlogs/{backlogID}/reopen:
+    $ref: './paths/backlogs.yaml#/reopen'
 
   /api/v1/projects/{projectID}/tasks:
     $ref: './paths/tasks.yaml#/list'

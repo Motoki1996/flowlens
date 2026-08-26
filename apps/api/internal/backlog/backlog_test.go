@@ -849,3 +849,135 @@ func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidScope)
 }
+
+// --- Close / Reopen (000036) -------------------------------------------------
+
+func TestService_Close_SetsStatusAndClosedAt(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	seeded := q.SeedBacklog(p.ID, "Release 2.4")
+
+	before, err := svc.Get(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, backlog.StatusOpen, before.Status)
+	assert.Nil(t, before.ClosedAt)
+
+	closed, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, backlog.StatusClosed, closed.Status)
+	require.NotNil(t, closed.ClosedAt)
+
+	reopened, err := svc.Reopen(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, backlog.StatusOpen, reopened.Status)
+	assert.Nil(t, reopened.ClosedAt)
+}
+
+func TestService_Close_IsIdempotentAndLeavesClosedAtAlone(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	seeded := q.SeedBacklog(p.ID, "Release 2.4")
+
+	first, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	require.NotNil(t, first.ClosedAt)
+
+	second, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, backlog.StatusClosed, second.Status)
+	assert.Equal(t, first.ClosedAt, second.ClosedAt, "re-closing must not move closed_at")
+}
+
+// The rule the whole design turns on: a backlog's close is a statement about
+// the backlog, never about the work inside it.
+func TestService_Close_DoesNotCascadeToTasks(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Release 2.4")
+	open := q.SeedTaskInBacklog(p.ID, b.ID, owner, "Still open")
+
+	_, err := svc.Close(context.Background(), owner, b.ID)
+	require.NoError(t, err)
+
+	task, err := q.GetTaskForOwner(context.Background(), db.GetTaskForOwnerParams{ID: open.ID, OwnerUserID: owner})
+	require.NoError(t, err)
+	assert.Equal(t, "open", task.Status, "closing a backlog must not close its tasks")
+	assert.False(t, task.ClosedAt.Valid, "closing a backlog must not stamp a task's closed_at — internal/velocity reads it as a completion")
+}
+
+func TestService_List_HidesClosedByDefault(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   []string
+	}{
+		{"absent means open only", "", []string{"Open one"}},
+		{"explicit open", backlog.StatusOpen, []string{"Open one"}},
+		{"closed only", backlog.StatusClosed, []string{"Closed one"}},
+		{"all", backlog.StatusAll, []string{"Open one", "Closed one"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := dbtest.New()
+			svc := newService(q)
+			owner := q.SeedUser("octocat", "octocat@example.com").ID
+			p := q.SeedProject(owner, "Alpha")
+			q.SeedBacklog(p.ID, "Open one")
+			closed := q.SeedBacklog(p.ID, "Closed one")
+			_, err := svc.Close(context.Background(), owner, closed.ID)
+			require.NoError(t, err)
+
+			got, err := svc.List(context.Background(), owner, p.ID, backlog.ListFilter{Status: tt.status})
+			require.NoError(t, err)
+			names := make([]string, len(got))
+			for i, b := range got {
+				names[i] = b.Name
+			}
+			assert.ElementsMatch(t, tt.want, names)
+		})
+	}
+}
+
+// A closed backlog only leaves the *collection*; it stays reachable by ID, so
+// a bookmark or a task's backlogId never dead-ends.
+func TestService_Get_StillReturnsClosedBacklog(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	seeded := q.SeedBacklog(p.ID, "Release 2.4")
+	_, err := svc.Close(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+
+	got, err := svc.Get(context.Background(), owner, seeded.ID)
+	require.NoError(t, err)
+	assert.Equal(t, backlog.StatusClosed, got.Status)
+}
+
+func TestService_Close_RequiresMemberRole(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	viewer := q.SeedUser("viewer", "viewer@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	q.SeedProjectMember(p.ID, viewer, "viewer")
+	seeded := q.SeedBacklog(p.ID, "Release 2.4")
+
+	_, err := svc.Close(context.Background(), viewer, seeded.ID)
+	assert.ErrorIs(t, err, backlog.ErrForbidden)
+}
+
+func TestService_Close_ReturnsNotFoundForMissingBacklog(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+
+	_, err := svc.Close(context.Background(), owner, uuid.New())
+	assert.ErrorIs(t, err, backlog.ErrNotFound)
+}

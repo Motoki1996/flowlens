@@ -12,6 +12,56 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeBacklogForOwner = `-- name: CloseBacklogForOwner :one
+UPDATE backlogs b
+SET status = 'closed', closed_at = now(), updated_at = now()
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
+RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at
+`
+
+type CloseBacklogForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+// CloseBacklogForOwner / ReopenBacklogForOwner mirror
+// CloseTaskForOwner/ReopenTaskForOwner in tasks.sql, minus everything GitLab:
+// a backlog has no issue behind it, so closing one writes these two columns
+// and nothing else — no outbox job, and nothing at all to its epics or tasks
+// (000036 explains why the close deliberately does not cascade).
+//
+// Neither statement guards on the current status; internal/backlog returns
+// early when there is nothing to change, so closed_at never moves on a
+// re-close.
+func (q *Queries) CloseBacklogForOwner(ctx context.Context, arg CloseBacklogForOwnerParams) (Backlog, error) {
+	row := q.db.QueryRow(ctx, closeBacklogForOwner, arg.ID, arg.OwnerUserID)
+	var i Backlog
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartDate,
+		&i.DueOn,
+		&i.Priority,
+		&i.Progress,
+		&i.DefaultLinkedGitlabProjectID,
+		&i.BaseBranch,
+		&i.AllowedScope,
+		&i.ForbiddenScope,
+		&i.AssigneeUserID,
+		&i.Status,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const createBacklog = `-- name: CreateBacklog :one
 
 INSERT INTO backlogs (project_id, name, description, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id)
@@ -29,7 +79,7 @@ VALUES (
     $11,
     $12
 )
-RETURNING id, project_id, name, description, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id
+RETURNING id, project_id, name, description, created_at, updated_at, start_date, due_on, priority, progress, default_linked_gitlab_project_id, base_branch, allowed_scope, forbidden_scope, assignee_user_id, status, closed_at
 `
 
 type CreateBacklogParams struct {
@@ -93,6 +143,8 @@ func (q *Queries) CreateBacklog(ctx context.Context, arg CreateBacklogParams) (B
 		&i.AllowedScope,
 		&i.ForbiddenScope,
 		&i.AssigneeUserID,
+		&i.Status,
+		&i.ClosedAt,
 	)
 	return i, err
 }
@@ -120,7 +172,7 @@ func (q *Queries) DeleteBacklogForOwner(ctx context.Context, arg DeleteBacklogFo
 }
 
 const getBacklogForOwner = `-- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
+SELECT b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -153,6 +205,8 @@ func (q *Queries) GetBacklogForOwner(ctx context.Context, arg GetBacklogForOwner
 		&i.AllowedScope,
 		&i.ForbiddenScope,
 		&i.AssigneeUserID,
+		&i.Status,
+		&i.ClosedAt,
 	)
 	return i, err
 }
@@ -198,22 +252,23 @@ const listBacklogsByProject = `-- name: ListBacklogsByProject :many
 SELECT
   b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at,
   b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch,
-  b.allowed_scope, b.forbidden_scope, b.assignee_user_id,
+  b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM backlogs b
 LEFT JOIN tasks t ON t.backlog_id = b.id
 WHERE b.project_id = $1
-  AND ($2::text = '' OR b.priority = $2)
-  AND ($3::text = '' OR b.progress = $3)
-  AND ($4::uuid IS NULL OR b.assignee_user_id = $4)
-  AND (NOT $5::boolean OR b.assignee_user_id IS NULL)
+  AND ($2::text = '' OR b.status = $2)
+  AND ($3::text = '' OR b.priority = $3)
+  AND ($4::text = '' OR b.progress = $4)
+  AND ($5::uuid IS NULL OR b.assignee_user_id = $5)
+  AND (NOT $6::boolean OR b.assignee_user_id IS NULL)
 GROUP BY b.id
 ORDER BY
-  (CASE WHEN $6::boolean THEN
+  (CASE WHEN $7::boolean THEN
      CASE b.priority WHEN 'urgent' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 WHEN 'low' THEN 1 ELSE 0 END
    ELSE 0 END) DESC,
-  (CASE WHEN $7::boolean THEN
+  (CASE WHEN $8::boolean THEN
      CASE b.progress WHEN 'not_started' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'on_hold' THEN 3 WHEN 'done' THEN 4 ELSE 0 END
    ELSE 0 END) ASC,
   b.created_at ASC
@@ -221,6 +276,7 @@ ORDER BY
 
 type ListBacklogsByProjectParams struct {
 	ProjectID          uuid.UUID   `json:"project_id"`
+	Status             string      `json:"status"`
 	Priority           string      `json:"priority"`
 	Progress           string      `json:"progress"`
 	AssigneeUserID     pgtype.UUID `json:"assignee_user_id"`
@@ -245,13 +301,20 @@ type ListBacklogsByProjectRow struct {
 	AllowedScope                 string             `json:"allowed_scope"`
 	ForbiddenScope               string             `json:"forbidden_scope"`
 	AssigneeUserID               pgtype.UUID        `json:"assignee_user_id"`
+	Status                       string             `json:"status"`
+	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
 	TaskCount                    int64              `json:"task_count"`
 	ClosedTaskCount              int64              `json:"closed_task_count"`
 }
 
-// ListBacklogsByProject's priority and progress filters and sorts follow the
-// same "empty/false disables it" convention as internal/task's
-// ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
+// ListBacklogsByProject's status, priority and progress filters and sorts
+// follow the same "empty/false disables it" convention as internal/task's
+// ListTasksByProject — but note that an empty status is what
+// internal/backlog.Service.List sends only for an explicit ?status=all: an
+// absent one resolves to 'open' there, so a closed backlog leaves the
+// collection by default. That default is the point of the column (000036).
+//
+// Sorting by priority ranks urgent > high > medium > low;
 // sorting by progress runs the other way, not_started first through done, so
 // the order reads as the work advancing (and matches the Board view's
 // left-to-right axis). Both fall back to the usual created_at order
@@ -265,6 +328,7 @@ type ListBacklogsByProjectRow struct {
 func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByProjectParams) ([]ListBacklogsByProjectRow, error) {
 	rows, err := q.db.Query(ctx, listBacklogsByProject,
 		arg.ProjectID,
+		arg.Status,
 		arg.Priority,
 		arg.Progress,
 		arg.AssigneeUserID,
@@ -295,6 +359,8 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 			&i.AllowedScope,
 			&i.ForbiddenScope,
 			&i.AssigneeUserID,
+			&i.Status,
+			&i.ClosedAt,
 			&i.TaskCount,
 			&i.ClosedTaskCount,
 		); err != nil {
@@ -308,6 +374,47 @@ func (q *Queries) ListBacklogsByProject(ctx context.Context, arg ListBacklogsByP
 	return items, nil
 }
 
+const reopenBacklogForOwner = `-- name: ReopenBacklogForOwner :one
+UPDATE backlogs b
+SET status = 'open', closed_at = NULL, updated_at = now()
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = $2 AND pm.role IN ('member', 'owner')
+  )
+RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at
+`
+
+type ReopenBacklogForOwnerParams struct {
+	ID          uuid.UUID `json:"id"`
+	OwnerUserID uuid.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) ReopenBacklogForOwner(ctx context.Context, arg ReopenBacklogForOwnerParams) (Backlog, error) {
+	row := q.db.QueryRow(ctx, reopenBacklogForOwner, arg.ID, arg.OwnerUserID)
+	var i Backlog
+	err := row.Scan(
+		&i.ID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartDate,
+		&i.DueOn,
+		&i.Priority,
+		&i.Progress,
+		&i.DefaultLinkedGitlabProjectID,
+		&i.BaseBranch,
+		&i.AllowedScope,
+		&i.ForbiddenScope,
+		&i.AssigneeUserID,
+		&i.Status,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const updateBacklogForOwner = `-- name: UpdateBacklogForOwner :one
 UPDATE backlogs b
 SET name = $2, description = $3, start_date = $4, due_on = $5, priority = $6, progress = $7, default_linked_gitlab_project_id = $8, base_branch = $9, allowed_scope = $10, forbidden_scope = $11,
@@ -317,7 +424,7 @@ WHERE b.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = b.project_id AND pm.user_id = $13 AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
+RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at
 `
 
 type UpdateBacklogForOwnerParams struct {
@@ -374,6 +481,8 @@ func (q *Queries) UpdateBacklogForOwner(ctx context.Context, arg UpdateBacklogFo
 		&i.AllowedScope,
 		&i.ForbiddenScope,
 		&i.AssigneeUserID,
+		&i.Status,
+		&i.ClosedAt,
 	)
 	return i, err
 }

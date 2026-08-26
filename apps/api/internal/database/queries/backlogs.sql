@@ -31,9 +31,14 @@ VALUES (
 )
 RETURNING *;
 
--- ListBacklogsByProject's priority and progress filters and sorts follow the
--- same "empty/false disables it" convention as internal/task's
--- ListTasksByProject. Sorting by priority ranks urgent > high > medium > low;
+-- ListBacklogsByProject's status, priority and progress filters and sorts
+-- follow the same "empty/false disables it" convention as internal/task's
+-- ListTasksByProject — but note that an empty status is what
+-- internal/backlog.Service.List sends only for an explicit ?status=all: an
+-- absent one resolves to 'open' there, so a closed backlog leaves the
+-- collection by default. That default is the point of the column (000036).
+--
+-- Sorting by priority ranks urgent > high > medium > low;
 -- sorting by progress runs the other way, not_started first through done, so
 -- the order reads as the work advancing (and matches the Board view's
 -- left-to-right axis). Both fall back to the usual created_at order
@@ -48,12 +53,13 @@ RETURNING *;
 SELECT
   b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at,
   b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch,
-  b.allowed_scope, b.forbidden_scope, b.assignee_user_id,
+  b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at,
   COUNT(t.id) AS task_count,
   COUNT(t.id) FILTER (WHERE t.status = 'closed') AS closed_task_count
 FROM backlogs b
 LEFT JOIN tasks t ON t.backlog_id = b.id
 WHERE b.project_id = $1
+  AND (sqlc.arg(status)::text = '' OR b.status = sqlc.arg(status))
   AND (sqlc.arg(priority)::text = '' OR b.priority = sqlc.arg(priority))
   AND (sqlc.arg(progress)::text = '' OR b.progress = sqlc.arg(progress))
   AND (sqlc.narg(assignee_user_id)::uuid IS NULL OR b.assignee_user_id = sqlc.narg(assignee_user_id))
@@ -69,7 +75,7 @@ ORDER BY
   b.created_at ASC;
 
 -- name: GetBacklogForOwner :one
-SELECT b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id
+SELECT b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at
 FROM backlogs b
 WHERE b.id = $1
   AND EXISTS (
@@ -106,7 +112,36 @@ WHERE b.id = $1
     SELECT 1 FROM project_members pm
     WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
   )
-RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id;
+RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at;
+
+-- CloseBacklogForOwner / ReopenBacklogForOwner mirror
+-- CloseTaskForOwner/ReopenTaskForOwner in tasks.sql, minus everything GitLab:
+-- a backlog has no issue behind it, so closing one writes these two columns
+-- and nothing else — no outbox job, and nothing at all to its epics or tasks
+-- (000036 explains why the close deliberately does not cascade).
+--
+-- Neither statement guards on the current status; internal/backlog returns
+-- early when there is nothing to change, so closed_at never moves on a
+-- re-close.
+-- name: CloseBacklogForOwner :one
+UPDATE backlogs b
+SET status = 'closed', closed_at = now(), updated_at = now()
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
+RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at;
+
+-- name: ReopenBacklogForOwner :one
+UPDATE backlogs b
+SET status = 'open', closed_at = NULL, updated_at = now()
+WHERE b.id = $1
+  AND EXISTS (
+    SELECT 1 FROM project_members pm
+    WHERE pm.project_id = b.project_id AND pm.user_id = sqlc.arg(owner_user_id) AND pm.role IN ('member', 'owner')
+  )
+RETURNING b.id, b.project_id, b.name, b.description, b.created_at, b.updated_at, b.start_date, b.due_on, b.priority, b.progress, b.default_linked_gitlab_project_id, b.base_branch, b.allowed_scope, b.forbidden_scope, b.assignee_user_id, b.status, b.closed_at;
 
 -- name: DeleteBacklogForOwner :execrows
 DELETE FROM backlogs b

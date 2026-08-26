@@ -27,6 +27,8 @@ const backlog: Backlog = {
   forbiddenScope: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open" as const,
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -39,7 +41,7 @@ function makeTask(overrides: Partial<Task>): Task {
     epicId: null,
     title: "Fix the bug",
     description: "Details about the bug.",
-    status: "open",
+    status: "open" as const,
     closedAt: null,
     assigneeGitlabUserId: null,
     assigneeGitlabUsername: "octocat",
@@ -102,7 +104,7 @@ describe("TaskDetail", () => {
   });
 
   it("reopens a closed task", async () => {
-    const reopened = makeTask({ status: "open", closedAt: null });
+    const reopened = makeTask({ status: "open" as const, closedAt: null });
     vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(reopened), { status: 200 }));
 
     render(<TaskDetail task={makeTask({ status: "closed" })} backlogs={[backlog]} tasks={[]} dependencies={[]} />);
@@ -472,6 +474,8 @@ describe("TaskDetail", () => {
       assigneeDisplayName: "",
       taskCount: 0,
       closedTaskCount: 0,
+      status: "open" as const,
+      closedAt: null,
       createdAt: "2026-01-01T00:00:00Z",
       updatedAt: "2026-01-01T00:00:00Z",
     };

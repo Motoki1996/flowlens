@@ -25,6 +25,8 @@ type Backlog struct {
 	AllowedScope                 string             `json:"allowed_scope"`
 	ForbiddenScope               string             `json:"forbidden_scope"`
 	AssigneeUserID               pgtype.UUID        `json:"assignee_user_id"`
+	Status                       string             `json:"status"`
+	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
 }
 
 type BacklogProgressEvent struct {
@@ -55,6 +57,8 @@ type Epic struct {
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	EstimatedPoints              pgtype.Int4        `json:"estimated_points"`
+	Status                       string             `json:"status"`
+	ClosedAt                     pgtype.Timestamptz `json:"closed_at"`
 }
 
 type GitlabConnection struct {

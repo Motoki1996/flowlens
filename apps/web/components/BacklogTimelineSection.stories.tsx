@@ -27,6 +27,8 @@ function makeBacklog(overrides: Partial<Backlog>): Backlog {
     forbiddenScope: "",
     taskCount: 0,
     closedTaskCount: 0,
+    status: "open",
+    closedAt: null,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     ...overrides,
@@ -41,6 +43,8 @@ const quarter: Backlog[] = [
     dueOn: "2026-08-07",
     taskCount: 6,
     closedTaskCount: 5,
+    status: "open",
+    closedAt: null,
   }),
   makeBacklog({
     id: "b2",
@@ -49,6 +53,8 @@ const quarter: Backlog[] = [
     dueOn: "2026-08-21",
     taskCount: 8,
     closedTaskCount: 2,
+    status: "open",
+    closedAt: null,
   }),
   makeBacklog({
     id: "b3",
@@ -57,6 +63,8 @@ const quarter: Backlog[] = [
     dueOn: "2026-09-04",
     taskCount: 4,
     closedTaskCount: 0,
+    status: "open",
+    closedAt: null,
   }),
 ];
 
@@ -93,6 +101,8 @@ export const CompleteAndOverdue: Story = {
         dueOn: "2026-08-05",
         taskCount: 4,
         closedTaskCount: 4,
+        status: "open",
+        closedAt: null,
       }),
       makeBacklog({
         id: "b2",
@@ -101,6 +111,8 @@ export const CompleteAndOverdue: Story = {
         dueOn: "2026-08-07",
         taskCount: 4,
         closedTaskCount: 1,
+        status: "open",
+        closedAt: null,
       }),
       makeBacklog({
         id: "b3",
@@ -109,6 +121,8 @@ export const CompleteAndOverdue: Story = {
         dueOn: "2026-08-21",
         taskCount: 5,
         closedTaskCount: 0,
+        status: "open",
+        closedAt: null,
       }),
     ],
   },
@@ -138,6 +152,8 @@ export const Roadmap: Story = {
         dueOn: "2026-06-30",
         taskCount: 24,
         closedTaskCount: 24,
+        status: "open",
+        closedAt: null,
       }),
       makeBacklog({
         id: "b2",
@@ -146,6 +162,8 @@ export const Roadmap: Story = {
         dueOn: "2026-12-18",
         taskCount: 18,
         closedTaskCount: 7,
+        status: "open",
+        closedAt: null,
       }),
       makeBacklog({
         id: "b3",
@@ -154,6 +172,8 @@ export const Roadmap: Story = {
         dueOn: "2027-01-12",
         taskCount: 2,
         closedTaskCount: 0,
+        status: "open",
+        closedAt: null,
       }),
       makeBacklog({
         id: "b4",
@@ -162,6 +182,8 @@ export const Roadmap: Story = {
         dueOn: "2027-09-30",
         taskCount: 12,
         closedTaskCount: 0,
+        status: "open",
+        closedAt: null,
       }),
     ],
   },

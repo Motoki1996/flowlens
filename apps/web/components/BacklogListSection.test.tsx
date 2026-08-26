@@ -34,6 +34,8 @@ const backlog: Backlog = {
   forbiddenScope: "",
   taskCount: 0,
   closedTaskCount: 0,
+  status: "open",
+  closedAt: null,
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
@@ -590,5 +592,64 @@ describe("BacklogListSection", () => {
       showList();
       expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?priority=urgent&view=list");
     });
+  });
+});
+
+// --- Status filter (000036) --------------------------------------------------
+
+describe("the status filter", () => {
+  beforeEach(() => {
+    currentSearchParams = new URLSearchParams();
+    push.mockClear();
+  });
+
+  it("defaults to Open, so a shipped backlog stays off the screen", () => {
+    render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+    expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent("Open");
+  });
+
+  it("pushes ?status= only when it leaves the open-only default", async () => {
+    render(<BacklogListSection projectId="p1" backlogs={[backlog]} />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(await screen.findByRole("option", { name: "All statuses" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?status=all");
+  });
+
+  it("drops ?status= back out of the query string when it returns to Open", async () => {
+    currentSearchParams = new URLSearchParams("status=all");
+    render(<BacklogListSection projectId="p1" backlogs={[backlog]} statusFilter="all" />);
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Status" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Open" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/backlogs");
+  });
+
+  // The filter row is hidden while the list is empty, so without this the
+  // screen would have no control at all that could reveal the closed ones.
+  it("offers a way back to the closed backlogs when the open list is empty", async () => {
+    render(<BacklogListSection projectId="p1" backlogs={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show closed backlogs" }));
+
+    expect(push).toHaveBeenCalledWith("/projects/p1/backlogs?status=all");
+  });
+
+  it("marks a closed backlog in the list, and never marks an open one", () => {
+    const closed: Backlog = { ...backlog, id: "b2", name: "Release 2.3", status: "closed" };
+    currentSearchParams = new URLSearchParams("status=all&view=list");
+    render(
+      <BacklogListSection
+        projectId="p1"
+        backlogs={[backlog, closed]}
+        statusFilter="all"
+        initialView="list"
+      />,
+    );
+
+    // One badge for two backlogs: the open one carries none.
+    expect(screen.getAllByText("Closed")).toHaveLength(1);
   });
 });

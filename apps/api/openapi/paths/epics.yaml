@@ -12,6 +12,13 @@ list:
         description: 'A backlog UUID, or "unassigned" for the epics in no backlog at all.'
         schema: { type: string }
       - in: query
+        name: status
+        description: >-
+          "open" (the default when omitted), "closed", or "all". Unlike the
+          other filters, omitting this one is not "no filter": a closed
+          epic leaves the collection unless "closed" or "all" is asked for.
+        schema: { type: string, enum: [open, closed, all] }
+      - in: query
         name: priority
         schema: { type: string, enum: [low, medium, high, urgent] }
       - in: query
@@ -235,6 +242,78 @@ tasks:
         content:
           application/json:
             schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+close:
+  post:
+    summary: Close a epic
+    description: >-
+      Marks the epic closed and stamps closedAt, taking it out of the
+      collection's default (open-only) listing. App-only: nothing is written to
+      GitLab, and the close never cascades to the epic's tasks. Closing an already-closed
+      epic is a no-op. Requires write scope for a bearer token.
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/epicID'
+    responses:
+      "200":
+        description: The closed epic
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
+reopen:
+  post:
+    summary: Reopen a epic
+    description: >-
+      Marks the epic open again and clears closedAt. Reopening an
+      already-open epic is a no-op, and it cascades no more than closing
+      does. Requires write scope for a bearer token.
+    tags: [epics]
+    security:
+      - cookieAuth: []
+      - bearerAuth: []
+    parameters:
+      - $ref: '#/components/parameters/epicID'
+    responses:
+      "200":
+        description: The reopened epic
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/domain.yaml#/Epic' }
+      "401":
+        description: Not authenticated
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "403":
+        description: Token missing write scope
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+      "404":
+        description: Not found
+        content:
+          application/json:
+            schema: { $ref: '../components/schemas/error.yaml#/Error' }
+
 
 components:
   parameters:

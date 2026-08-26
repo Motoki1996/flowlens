@@ -55,6 +55,20 @@ export function hasSchedule(task: Scheduled): boolean {
   return effectiveRange(task) !== null;
 }
 
+const MAX_UNSCHEDULED_NAMES = 3;
+
+/**
+ * formatUnscheduledNames joins the names of items the timeline can't plot,
+ * capped so a large backlog doesn't turn the "not shown above" note into an
+ * unreadable wall of text — the rest are summarised as a count instead.
+ */
+export function formatUnscheduledNames(names: string[]): string {
+  if (names.length <= MAX_UNSCHEDULED_NAMES) return names.join(", ");
+  const shown = names.slice(0, MAX_UNSCHEDULED_NAMES);
+  const hidden = names.length - shown.length;
+  return `${shown.join(", ")}, and ${hidden} more`;
+}
+
 /**
  * computeTimelineBounds returns the date span covering every scheduled task,
  * snapped to day boundaries and padded by one day on each side so edge bars

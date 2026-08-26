@@ -131,3 +131,22 @@ export const WithUnscheduledBacklogs: Story = {
     backlogs: [...quarter, makeBacklog({ id: "b9", name: "Someday / maybe" })],
   },
 };
+
+/** A large pile of unscheduled backlogs is capped at 3 names plus a count
+ *  rather than spilling into an unreadable wall of text. */
+export const WithManyUnscheduledBacklogs: Story = {
+  args: {
+    backlogs: [
+      ...quarter,
+      makeBacklog({ id: "b9", name: "Someday idea A" }),
+      makeBacklog({ id: "b10", name: "Someday idea B" }),
+      makeBacklog({ id: "b11", name: "Someday idea C" }),
+      makeBacklog({ id: "b12", name: "Someday idea D" }),
+      makeBacklog({ id: "b13", name: "Someday idea E" }),
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(/and 2 more/)).toBeInTheDocument();
+  },
+};

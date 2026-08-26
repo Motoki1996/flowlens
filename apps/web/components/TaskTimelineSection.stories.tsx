@@ -152,3 +152,23 @@ export const WithUnscheduledTasks: Story = {
     dependencies: [],
   },
 };
+
+/** A large pile of unscheduled tasks is capped at 3 names plus a count rather
+ *  than spilling into an unreadable wall of text. */
+export const WithManyUnscheduledTasks: Story = {
+  args: {
+    tasks: [
+      ...sprint,
+      makeTask({ id: "t9", title: "Someday idea A" }),
+      makeTask({ id: "t10", title: "Someday idea B" }),
+      makeTask({ id: "t11", title: "Someday idea C" }),
+      makeTask({ id: "t12", title: "Someday idea D" }),
+      makeTask({ id: "t13", title: "Someday idea E" }),
+    ],
+    dependencies: [],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(/and 2 more/)).toBeInTheDocument();
+  },
+};

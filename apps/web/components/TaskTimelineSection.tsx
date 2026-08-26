@@ -4,7 +4,12 @@ import { useMemo } from "react";
 import Link from "next/link";
 import type { Task, TaskDependency } from "@/types";
 import { taskPath } from "@/lib/routes";
-import { computeTimelineBounds, hasSchedule, toTaskGanttRows } from "@/lib/timeline";
+import {
+  computeTimelineBounds,
+  formatUnscheduledNames,
+  hasSchedule,
+  toTaskGanttRows,
+} from "@/lib/timeline";
 import { useTimelineViewport } from "@/lib/useTimelineViewport";
 import {
   AXIS_HEIGHT,
@@ -186,7 +191,8 @@ export function TaskTimelineSection({
       {unscheduled.length > 0 ? (
         <p className="text-muted-foreground mt-4 text-xs">
           {unscheduled.length} task{unscheduled.length > 1 ? "s have" : " has"} no start or due date and
-          {unscheduled.length > 1 ? " aren't" : " isn't"} shown above: {unscheduled.map((t) => t.title).join(", ")}
+          {unscheduled.length > 1 ? " aren't" : " isn't"} shown above:{" "}
+          {formatUnscheduledNames(unscheduled.map((t) => t.title))}
         </p>
       ) : null}
     </div>

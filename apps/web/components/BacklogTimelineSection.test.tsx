@@ -157,4 +157,18 @@ describe("BacklogTimelineSection", () => {
     expect(screen.queryByRole("link", { name: "Someday" })).not.toBeInTheDocument();
     expect(screen.getByText(/Someday/)).toBeInTheDocument();
   });
+
+  it("caps the unscheduled list at 3 names and summarises the rest as a count", () => {
+    const backlogs = [
+      makeBacklog({ id: "b1", name: "Sprint 1", startDate: "2026-08-01" }),
+      makeBacklog({ id: "b2", name: "Idea A" }),
+      makeBacklog({ id: "b3", name: "Idea B" }),
+      makeBacklog({ id: "b4", name: "Idea C" }),
+      makeBacklog({ id: "b5", name: "Idea D" }),
+      makeBacklog({ id: "b6", name: "Idea E" }),
+    ];
+    render(<BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />);
+    expect(screen.getByText(/Idea A, Idea B, Idea C, and 2 more/)).toBeInTheDocument();
+    expect(screen.queryByText(/Idea D/)).not.toBeInTheDocument();
+  });
 });

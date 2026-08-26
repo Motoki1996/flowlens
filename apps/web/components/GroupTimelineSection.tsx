@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import Link from "next/link";
 import {
   computeTimelineBounds,
   formatUnscheduledNames,
@@ -11,14 +10,8 @@ import {
 } from "@/lib/timeline";
 import { GROUP_CONFIG, type GroupKind, type Grouping } from "@/lib/groups";
 import { useTimelineViewport } from "@/lib/useTimelineViewport";
-import {
-  AXIS_HEIGHT,
-  GanttChart,
-  NAME_COLUMN_CLASS,
-  percent,
-  ROW_HEIGHT,
-  STATE_LABEL,
-} from "@/components/GanttChart";
+import { percent, STATE_LABEL } from "@/components/GanttChart";
+import { TimelineFrame } from "@/components/TimelineFrame";
 import { TimelineControls } from "@/components/TimelineControls";
 import { PriorityFlag } from "@/components/PriorityBadge";
 
@@ -109,58 +102,25 @@ export function GroupTimelineSection({
         />
       </div>
 
-      <div className="flex">
-        <div className={NAME_COLUMN_CLASS}>
-          {/* Spacer keeping the first name aligned with the first bar, not with the date axis. */}
-          <div style={{ height: AXIS_HEIGHT }} />
-          <ul>
-            {rows.map((row) => (
-              <li
-                key={row.id}
-                className="flex flex-col justify-center pr-3"
-                style={{ height: ROW_HEIGHT }}
-              >
-                {/* The title gets the line to itself — see TaskTimelineSection
-                    for why the priority and progress pills left it unreadable.
-                    Both are on the bar's tooltip instead. */}
-                <Link
-                  href={config.detailPath(projectId, row.id)}
-                  className="text-foreground truncate text-sm hover:underline"
-                  title={row.title}
-                >
-                  {row.title}
-                </Link>
-                <div className="flex min-w-0 items-center gap-1.5 text-xs">
-                  <PriorityFlag priority={row.priority} />
-                  {row.completion ? (
-                    <span className="text-muted-foreground truncate tabular-nums">
-                      {row.completion.total === 0
-                        ? "No tasks"
-                        : `${row.completion.closed}/${row.completion.total} closed (${percent(row.completion.ratio)})`}
-                    </span>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div
-          ref={viewport.scrollRef}
-          onScroll={viewport.onScroll}
-          className="min-w-0 flex-1 overflow-x-auto"
-        >
-          <div style={{ minWidth: viewport.plotWidth }}>
-            <GanttChart
-              rows={rows}
-              bounds={bounds}
-              now={today}
-              zoom={viewport.zoom}
-              href={(row) => config.detailPath(projectId, row.id)}
-            />
-          </div>
-        </div>
-      </div>
+      <TimelineFrame
+        rows={rows}
+        bounds={bounds}
+        now={today}
+        viewport={viewport}
+        href={(row) => config.detailPath(projectId, row.id)}
+        meta={(row) => (
+          <>
+            <PriorityFlag priority={row.priority} />
+            {row.completion ? (
+              <span className="text-muted-foreground truncate tabular-nums">
+                {row.completion.total === 0
+                  ? "No tasks"
+                  : `${row.completion.closed}/${row.completion.total} closed (${percent(row.completion.ratio)})`}
+              </span>
+            ) : null}
+          </>
+        )}
+      />
 
       <ul
         aria-label="Bar colours"

@@ -124,6 +124,56 @@ export const WithoutTasks: Story = {
   args: { backlogs: quarter.map((b) => ({ ...b, taskCount: 0, closedTaskCount: 0 })) },
 };
 
+/** A roadmap spanning years opens at quarterly labels, with the months inside
+ *  each quarter ruled but unlabelled — a bar has to be placeable against
+ *  something narrower than "Q3 2026". A backlog only a few days long still
+ *  draws as a visible bar at that width rather than as a smudge. */
+export const Roadmap: Story = {
+  args: {
+    backlogs: [
+      makeBacklog({
+        id: "b1",
+        name: "Issue sync MVP",
+        startDate: "2026-01-06",
+        dueOn: "2026-06-30",
+        taskCount: 24,
+        closedTaskCount: 24,
+      }),
+      makeBacklog({
+        id: "b2",
+        name: "Merge-request and pipeline sync",
+        startDate: "2026-07-01",
+        dueOn: "2026-12-18",
+        taskCount: 18,
+        closedTaskCount: 7,
+      }),
+      makeBacklog({
+        id: "b3",
+        name: "Cutover",
+        startDate: "2027-01-11",
+        dueOn: "2027-01-12",
+        taskCount: 2,
+        closedTaskCount: 0,
+      }),
+      makeBacklog({
+        id: "b4",
+        name: "Delivery metrics",
+        startDate: "2027-02-01",
+        dueOn: "2027-09-30",
+        taskCount: 12,
+        closedTaskCount: 0,
+      }),
+    ],
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("button", { name: "Quarter" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  },
+};
+
 /** Backlogs with neither date are named below the chart instead of being
  *  dropped silently, so the collection count still reconciles. */
 export const WithUnscheduledBacklogs: Story = {

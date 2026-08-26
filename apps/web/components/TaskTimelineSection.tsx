@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import Link from "next/link";
 import type { Task, TaskDependency } from "@/types";
 import { taskPath } from "@/lib/routes";
 import {
@@ -11,13 +10,8 @@ import {
   toTaskGanttRows,
 } from "@/lib/timeline";
 import { useTimelineViewport } from "@/lib/useTimelineViewport";
-import {
-  AXIS_HEIGHT,
-  GanttChart,
-  NAME_COLUMN_CLASS,
-  ROW_HEIGHT,
-  STATE_LABEL,
-} from "@/components/GanttChart";
+import { STATE_LABEL } from "@/components/GanttChart";
+import { TimelineFrame } from "@/components/TimelineFrame";
 import { TimelineControls } from "@/components/TimelineControls";
 import { PriorityFlag } from "@/components/PriorityBadge";
 
@@ -114,63 +108,26 @@ export function TaskTimelineSection({
         />
       </div>
 
-      <div className="flex">
-        <div className={NAME_COLUMN_CLASS}>
-          {/* Spacer keeping the first name aligned with the first bar, not with the date axis. */}
-          <div style={{ height: AXIS_HEIGHT }} />
-          <ul>
-            {rows.map((row) => {
-              const predecessors = predecessorsByTask.get(row.id);
-              return (
-                <li
-                  key={row.id}
-                  className="flex flex-col justify-center pr-3"
-                  style={{ height: ROW_HEIGHT }}
-                >
-                  {/* The title gets the line to itself: sharing it with a
-                      priority and a progress pill left it a few dozen pixels
-                      and every row read as an ellipsis. Both fields are on the
-                      bar's tooltip instead, with high/urgent still flagged
-                      below so a scan doesn't have to hover to find it. */}
-                  <Link
-                    href={taskPath(projectId, row.id)}
-                    className="text-foreground truncate text-sm hover:underline"
-                    title={row.title}
-                  >
-                    {row.title}
-                  </Link>
-                  {/* Empty when the row has neither, and an empty flex row is
-                      zero-height, so a plain task keeps its title centred. */}
-                  <div className="flex min-w-0 items-center gap-1.5 text-xs">
-                    <PriorityFlag priority={row.priority} />
-                    {predecessors ? (
-                      <span className="text-muted-foreground truncate">
-                        After: {predecessors.join(", ")}
-                      </span>
-                    ) : null}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-
-        <div
-          ref={viewport.scrollRef}
-          onScroll={viewport.onScroll}
-          className="min-w-0 flex-1 overflow-x-auto"
-        >
-          <div style={{ minWidth: viewport.plotWidth }}>
-            <GanttChart
-              rows={rows}
-              bounds={bounds}
-              now={today}
-              zoom={viewport.zoom}
-              href={(row) => taskPath(projectId, row.id)}
-            />
-          </div>
-        </div>
-      </div>
+      <TimelineFrame
+        rows={rows}
+        bounds={bounds}
+        now={today}
+        viewport={viewport}
+        href={(row) => taskPath(projectId, row.id)}
+        meta={(row) => {
+          const predecessors = predecessorsByTask.get(row.id);
+          return (
+            <>
+              <PriorityFlag priority={row.priority} />
+              {predecessors ? (
+                <span className="text-muted-foreground truncate">
+                  After: {predecessors.join(", ")}
+                </span>
+              ) : null}
+            </>
+          );
+        }}
+      />
 
       <ul
         aria-label="Bar colours"

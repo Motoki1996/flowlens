@@ -1,14 +1,26 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceArea,
+  ReferenceLine,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { PRIORITY_LABELS } from "@/lib/priority";
 import { PROGRESS_LABELS } from "@/lib/progress";
 import {
   computeAxis,
   formatAxisTick,
+  minBarDuration,
   todayOffset,
+  weekendBands,
   type DateRange,
   type GanttRow,
   type ScheduleState,
@@ -22,13 +34,44 @@ import {
 export const ROW_HEIGHT = 44;
 export const AXIS_HEIGHT = 28;
 
-/** NAME_COLUMN_CLASS sizes that same sibling column, shared so the Task and the
- *  Backlog timeline read as one chart. Width is Tailwind classes rather than a
- *  pixel constant because — unlike the row height, which must match exactly for
- *  a name to line up with its bar — width only has to be identical between the
- *  two sections: a narrow viewport can hand the plot more room, and a wide one
- *  gives titles enough space not to be truncated on sight. */
-export const NAME_COLUMN_CLASS = "w-40 shrink-0 sm:w-64 lg:w-72";
+/** NAME_COLUMN_CLASS is the *initial* width of that sibling column, until the
+ *  reader drags it wider (TimelineFrame). Tailwind classes rather than a pixel
+ *  constant because — unlike the row height, which must match exactly for a
+ *  name to line up with its bar — the starting width only has to suit the
+ *  viewport: a narrow one hands the plot more room, a wide one gives titles
+ *  more before they truncate. */
+export const NAME_COLUMN_CLASS = "w-40 sm:w-64 lg:w-72";
+
+/**
+ * rowBandStyle shades alternate rows, applied to the name column and the plot
+ * alike so one continuous band ties a name to its bar. On a chart wide enough
+ * to scroll, the two are far apart and nothing else connects them; the pointer
+ * gets the tooltip cursor, but only for the one row it is over.
+ *
+ * `offsetPx` is where the first row starts within the element — 0 in the name
+ * column, AXIS_HEIGHT in the plot, whose SVG begins with the date axis. The
+ * background tile is exactly two rows tall so it repeats seamlessly at any
+ * element height.
+ */
+export function rowBandStyle(offsetPx: number): CSSProperties {
+  return {
+    backgroundImage: `linear-gradient(to bottom, color-mix(in oklab, var(--muted) 45%, transparent) 0 ${ROW_HEIGHT}px, transparent ${ROW_HEIGHT}px)`,
+    backgroundSize: `100% ${ROW_HEIGHT * 2}px`,
+    backgroundPosition: `0 ${offsetPx}px`,
+  };
+}
+
+/**
+ * Gridline colours. --border sits a couple of steps off the card surface, so a
+ * grid drawn in it (the shadcn chart default) is all but invisible on this
+ * theme; both are mixed from --muted-foreground instead — the same value the
+ * axis labels use — at strengths that keep the grid readable while still
+ * receding behind the bars. The minor lines are half the major ones, which is
+ * what makes them read as a subdivision rather than as a second grid.
+ */
+const GRID_COLOR = "color-mix(in oklab, var(--muted-foreground) 32%, transparent)";
+const MINOR_GRID_COLOR = "color-mix(in oklab, var(--muted-foreground) 16%, transparent)";
+
 /** A bar is deliberately shorter than its row: the leftover height is the gap
  *  that keeps neighbouring bars from reading as one block. */
 const BAR_SIZE = 20;
@@ -122,14 +165,6 @@ export function GanttTooltip({
   );
 }
 
-/** doneWidth / remainingWidth split a bar at its completion ratio. A row with
- *  no progress (a task) is all "done" and draws as one solid bar, since a task
- *  is closed or it isn't — its colour already says which. */
-const doneWidth = (row: GanttRow) =>
-  row.completion ? row.duration * row.completion.ratio : row.duration;
-const remainingWidth = (row: GanttRow) =>
-  row.completion ? row.duration * (1 - row.completion.ratio) : 0;
-
 /**
  * GanttChart draws the bars of a Timeline view mode. It renders only the plot:
  * the row names live in a sibling column in the section that wraps it, so each
@@ -159,6 +194,22 @@ export function GanttChart({
   const total = bounds.end.getTime() - bounds.start.getTime();
   const today = todayOffset(bounds, now);
   const hasProgress = rows.some((row) => row.completion);
+  // Weekends are shaded at day zoom only: it is the level at which the working
+  // days inside a bar can be counted, and at any coarser one the bands would
+  // stripe the whole plot into noise.
+  const weekends = axis.granularity === "day" ? weekendBands(bounds) : [];
+
+  /** barWidth is a row's duration, floored so a short one stays visible at a
+   *  coarse zoom (minBarDuration). The floor is applied to the whole bar and
+   *  then split, so a part-done backlog keeps its ratio. */
+  const barWidth = (row: GanttRow) => Math.max(row.duration, minBarDuration(axis.granularity));
+  /** doneWidth / remainingWidth split that width at the completion ratio. A row
+   *  with no completion (a task) is all "done" and draws as one solid bar,
+   *  since a task is closed or it isn't — its colour already says which. */
+  const doneWidth = (row: GanttRow) =>
+    row.completion ? barWidth(row) * row.completion.ratio : barWidth(row);
+  const remainingWidth = (row: GanttRow) =>
+    row.completion ? barWidth(row) * (1 - row.completion.ratio) : 0;
 
   const open = (data: unknown) => {
     const row = (data as { payload?: GanttRow })?.payload;
@@ -177,7 +228,27 @@ export function GanttChart({
         layout="vertical"
         margin={{ top: 0, right: 8, bottom: 0, left: 0 }}
       >
-        <CartesianGrid horizontal={false} />
+        {/* SVG has no z-index, so paint order is child order: the weekend bands
+            go under the gridlines, and both under the bars. */}
+        {weekends.map((band) => (
+          <ReferenceArea
+            key={`weekend-${band.start}`}
+            x1={band.start}
+            x2={band.end}
+            fill="var(--muted)"
+            fillOpacity={1}
+            stroke="none"
+          />
+        ))}
+        <CartesianGrid horizontal={false} stroke={GRID_COLOR} />
+        {axis.minorTicks.map((tick) => (
+          <ReferenceLine
+            key={`minor-${tick}`}
+            x={tick}
+            stroke={MINOR_GRID_COLOR}
+            className="timeline-minor-gridline"
+          />
+        ))}
         {/* The axis is a date scale, not a measure of any one series, so it
             carries no dataKey — the domain is the plotted range and the ticks
             are real calendar dates. */}

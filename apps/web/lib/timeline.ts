@@ -90,12 +90,23 @@ export function spanDays(bounds: DateRange): number {
   return Math.max(1, Math.round((bounds.end.getTime() - bounds.start.getTime()) / ONE_DAY_MS));
 }
 
-export type TickGranularity = "day" | "week" | "month";
+/** TickGranularity is a zoom level read as an interval. The two are one set of
+ *  names on purpose — a level is named after the ticks it affords — so no
+ *  mapping table can drift between them. */
+export type TickGranularity = TimelineZoom;
 
 export interface TimelineAxis {
   granularity: TickGranularity;
-  /** Tick positions, in ms offset from bounds.start. */
+  /** Labelled tick positions, in ms offset from bounds.start. */
   ticks: number[];
+  /**
+   * Unlabelled gridlines subdividing those ticks, same units. A coarse zoom
+   * labels a span too long to judge a bar against — "Aug 2026" says nothing
+   * about which week a bar ends in — so the interval below it is still drawn,
+   * fainter and without a label. Empty at the two finest zooms, where the
+   * labels are already at the finest interval a calendar offers.
+   */
+  minorTicks: number[];
 }
 
 /**
@@ -105,16 +116,22 @@ export interface TimelineAxis {
  * scheduled object (the chart never hides data), and zoom decides whether that
  * range is skimmed at a glance or scrolled through day by day.
  */
-export type TimelineZoom = "day" | "week" | "month";
+export type TimelineZoom = "day" | "week" | "month" | "quarter";
 
-export const TIMELINE_ZOOMS: TimelineZoom[] = ["month", "week", "day"];
+export const TIMELINE_ZOOMS: TimelineZoom[] = ["quarter", "month", "week", "day"];
 
 /** dayWidth is in px; the axis granularity follows from it rather than from the
- *  span, so zooming in on a year-long project really does yield daily ticks. */
+ *  span, so zooming in on a year-long project really does yield daily ticks.
+ *
+ *  Quarter is deliberately the coarsest level. It is the unit a roadmap is
+ *  actually planned in, and it is the last one at which a bar is still a bar:
+ *  a year-wide level would draw a fortnight of work half a pixel wide, which
+ *  is a heatmap, not a Gantt. Anything longer is read by scrolling. */
 export const ZOOM_LEVELS: Record<TimelineZoom, { label: string; dayWidth: number }> = {
   day: { label: "Day", dayWidth: 28 },
   week: { label: "Week", dayWidth: 10 },
   month: { label: "Month", dayWidth: 4 },
+  quarter: { label: "Quarter", dayWidth: 1.6 },
 };
 
 /** The plot never draws narrower than this, so a one-week project still gets a
@@ -130,7 +147,7 @@ export const MIN_PLOT_WIDTH = 480;
  */
 export function defaultZoom(bounds: DateRange): TimelineZoom {
   const days = spanDays(bounds);
-  return days <= 21 ? "day" : days <= 120 ? "week" : "month";
+  return days <= 21 ? "day" : days <= 120 ? "week" : days <= 550 ? "month" : "quarter";
 }
 
 /** plotWidth is how wide the bars area is drawn at a zoom level. Anything past
@@ -139,10 +156,63 @@ export function plotWidth(bounds: DateRange, zoom: TimelineZoom): number {
   return Math.max(MIN_PLOT_WIDTH, spanDays(bounds) * ZOOM_LEVELS[zoom].dayWidth);
 }
 
+/** The narrowest a bar may be drawn, whatever its duration works out to in px. */
+export const MIN_BAR_PX = 6;
+
 /**
- * computeAxis returns the tick positions as offsets from bounds.start. Week and
- * month ticks are snapped to real week/month starts rather than to multiples of
- * the range, so the labels are dates a reader recognises.
+ * minBarDuration is MIN_BAR_PX expressed in milliseconds at a zoom level, so a
+ * short task stays visible at a coarse one: a single day is 1.6px wide at
+ * quarter zoom, which is a smudge, and a bar nobody can see reads as a task
+ * that isn't scheduled at all. It only ever widens a bar — at day and week
+ * zoom a whole day is already past the floor, so nothing moves.
+ */
+export function minBarDuration(zoom: TimelineZoom): number {
+  return (MIN_BAR_PX / ZOOM_LEVELS[zoom].dayWidth) * ONE_DAY_MS;
+}
+
+/** ticksFrom walks `first` forward by `next` and returns every step that lands
+ *  inside bounds, as ms offsets from bounds.start. */
+function ticksFrom(bounds: DateRange, first: Date, next: (d: Date) => Date): number[] {
+  const ticks: number[] = [];
+  for (let d = first; d.getTime() < bounds.end.getTime(); d = next(d)) {
+    if (d.getTime() >= bounds.start.getTime()) ticks.push(d.getTime() - bounds.start.getTime());
+  }
+  return ticks;
+}
+
+/** monthTicks returns the first of every `step`th month in bounds — step 1 for
+ *  months, 3 for quarters, which are snapped to January/April/July/October
+ *  rather than to whichever month the range happens to open in. */
+function monthTicks(bounds: DateRange, step: number): number[] {
+  const month = bounds.start.getMonth();
+  const first = new Date(bounds.start.getFullYear(), step === 3 ? month - (month % 3) : month, 1);
+  if (first.getTime() < bounds.start.getTime()) first.setMonth(first.getMonth() + step);
+  return ticksFrom(bounds, first, (d) => new Date(d.getFullYear(), d.getMonth() + step, 1));
+}
+
+/** weekTicks returns every Monday in bounds, starting at the first one at or
+ *  after bounds.start. */
+function weekTicks(bounds: DateRange): number[] {
+  const first = addDays(bounds.start, (8 - bounds.start.getDay()) % 7);
+  return ticksFrom(bounds, first, (d) => addDays(d, 7));
+}
+
+/** subdivide drops the minor ticks that a labelled tick already sits on — a
+ *  month that starts on a Monday is one gridline, not two stacked ones, which
+ *  would draw darker than its neighbours for no reason. */
+function subdivide(ticks: number[], candidates: number[]): number[] {
+  const labelled = new Set(ticks);
+  return candidates.filter((t) => !labelled.has(t));
+}
+
+/**
+ * computeAxis returns the tick positions as offsets from bounds.start, snapped
+ * to real quarter/month/week starts rather than to multiples of the range, so
+ * the labels are dates a reader recognises.
+ *
+ * The two coarse levels also return `minorTicks`, the interval one step finer:
+ * a month label is too wide to place a bar against on its own, so the weeks
+ * inside it are still drawn — unlabelled and fainter (see TimelineAxis).
  *
  * With no zoom given it picks the interval the span calls for — every day for a
  * couple of weeks, then weekly, then the first of each month. Passing a zoom
@@ -152,27 +222,25 @@ export function computeAxis(bounds: DateRange, zoom?: TimelineZoom): TimelineAxi
   // A zoom level is named after the tick interval it affords, so it *is* the
   // granularity — no mapping table sits between the two.
   const granularity: TickGranularity = zoom ?? defaultZoom(bounds);
-  const offset = (d: Date) => d.getTime() - bounds.start.getTime();
-  const ticks: number[] = [];
 
-  if (granularity === "month") {
-    const cursor = new Date(bounds.start.getFullYear(), bounds.start.getMonth(), 1);
-    if (cursor.getTime() < bounds.start.getTime()) cursor.setMonth(cursor.getMonth() + 1);
-    while (cursor.getTime() < bounds.end.getTime()) {
-      ticks.push(offset(cursor));
-      cursor.setMonth(cursor.getMonth() + 1);
+  switch (granularity) {
+    case "quarter": {
+      const ticks = monthTicks(bounds, 3);
+      return { granularity, ticks, minorTicks: subdivide(ticks, monthTicks(bounds, 1)) };
     }
-    return { granularity, ticks };
+    case "month": {
+      const ticks = monthTicks(bounds, 1);
+      return { granularity, ticks, minorTicks: subdivide(ticks, weekTicks(bounds)) };
+    }
+    case "week":
+      return { granularity, ticks: weekTicks(bounds), minorTicks: [] };
+    default:
+      return {
+        granularity,
+        ticks: ticksFrom(bounds, bounds.start, (d) => addDays(d, 1)),
+        minorTicks: [],
+      };
   }
-
-  const step = granularity === "day" ? 1 : 7;
-  // Weekly ticks start on the first Monday at or after bounds.start.
-  const first =
-    granularity === "day" ? bounds.start : addDays(bounds.start, (8 - bounds.start.getDay()) % 7);
-  for (let d = first; d.getTime() < bounds.end.getTime(); d = addDays(d, step)) {
-    ticks.push(offset(d));
-  }
-  return { granularity, ticks };
 }
 
 /** formatAxisTick renders a tick offset as the date label its granularity calls for. */
@@ -182,9 +250,40 @@ export function formatAxisTick(
   granularity: TickGranularity,
 ): string {
   const date = new Date(bounds.start.getTime() + offsetMs);
+  // Intl has no quarter field, so that one label is composed by hand.
+  if (granularity === "quarter") {
+    return `Q${Math.floor(date.getMonth() / 3) + 1} ${date.getFullYear()}`;
+  }
   return granularity === "month"
     ? date.toLocaleDateString(undefined, { year: "numeric", month: "short" })
     : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** AxisBand is a shaded span of the axis, in ms offsets from bounds.start —
+ *  the same units as a tick, so the chart places both the same way. */
+export interface AxisBand {
+  start: number;
+  end: number;
+}
+
+/**
+ * weekendBands returns Saturday→Monday spans across bounds, clipped to it. The
+ * chart shades them at day zoom, which is where the question a Gantt gets asked
+ * is "how many working days is that?" — a bar crossing a weekend is shorter
+ * than its width claims, and nothing else on the axis says so.
+ */
+export function weekendBands(bounds: DateRange): AxisBand[] {
+  const total = bounds.end.getTime() - bounds.start.getTime();
+  // Start from the Saturday at or before bounds.start, so a range that opens
+  // mid-weekend still gets its remaining shaded day.
+  const first = addDays(bounds.start, -((bounds.start.getDay() + 1) % 7));
+  const bands: AxisBand[] = [];
+  for (let d = first; d.getTime() < bounds.end.getTime(); d = addDays(d, 7)) {
+    const start = Math.max(0, d.getTime() - bounds.start.getTime());
+    const end = Math.min(total, addDays(d, 2).getTime() - bounds.start.getTime());
+    if (end > start) bands.push({ start, end });
+  }
+  return bands;
 }
 
 /**

@@ -137,6 +137,15 @@ describe("TaskTimelineSection", () => {
     expect(zoom.getByRole("button", { name: "Month" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  // Monthly ticks over a multi-year plan are still 30-odd labels to scroll
+  // past, so the coarsest level is the quarter a roadmap is planned in.
+  it("opens a multi-year plan at quarterly detail", () => {
+    const tasks = [makeTask({ id: "t1", title: "Rollout", startDate: "2026-01-01", dueOn: "2028-12-31" })];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+    const zoom = within(screen.getByRole("group", { name: "Zoom" }));
+    expect(zoom.getByRole("button", { name: "Quarter" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("disables the Today button when today is outside the plotted range", () => {
     const tasks = [makeTask({ id: "t1", title: "Design", startDate: "2026-08-01", dueOn: "2026-08-10" })];
     const { rerender } = render(
@@ -153,6 +162,84 @@ describe("TaskTimelineSection", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Today" })).toBeDisabled();
+  });
+
+  // A month label spans thirty-odd days of plot, which is far too wide to
+  // place the end of a bar against; the weeks inside it are drawn unlabelled
+  // so there is still something to measure by.
+  it("rules the plot by week under monthly labels, and shades weekends at daily detail", async () => {
+    const user = userEvent.setup();
+    const tasks = [makeTask({ id: "t1", title: "Rollout", startDate: "2026-01-01", dueOn: "2026-12-31" })];
+    const { container } = render(
+      <TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />,
+    );
+    expect(container.querySelectorAll(".timeline-minor-gridline").length).toBeGreaterThan(0);
+    // Weekends over a year would stripe the whole plot into noise, and the
+    // days inside a bar can't be counted at that width anyway.
+    expect(container.querySelectorAll(".recharts-reference-area")).toHaveLength(0);
+
+    await user.click(within(screen.getByRole("group", { name: "Zoom" })).getByRole("button", { name: "Day" }));
+    expect(container.querySelectorAll(".timeline-minor-gridline")).toHaveLength(0);
+    expect(container.querySelectorAll(".recharts-reference-area").length).toBeGreaterThan(0);
+  });
+
+  // The full name has to be reachable without navigating away. jsdom lays
+  // nothing out, so the two widths that decide whether a name is clipped are
+  // set here directly.
+  it("offers the full name on hover once the column has truncated it", async () => {
+    const user = userEvent.setup();
+    const title = "Reconcile the outbox worker with the webhook receiver";
+    const tasks = [makeTask({ id: "t1", title, startDate: "2026-08-01" })];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+
+    const name = screen.getByRole("link", { name: title });
+    Object.defineProperty(name, "scrollWidth", { value: 400, configurable: true });
+    Object.defineProperty(name, "clientWidth", { value: 200, configurable: true });
+    await user.hover(name);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(title);
+  });
+
+  // …and stays quiet otherwise: a tooltip repeating a title already fully on
+  // screen is noise, which is the whole reason it is gated on truncation.
+  it("shows no tooltip for a name the column fits", async () => {
+    const user = userEvent.setup();
+    const tasks = [makeTask({ id: "t1", title: "Short", startDate: "2026-08-01" })];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+
+    const name = screen.getByRole("link", { name: "Short" });
+    Object.defineProperty(name, "scrollWidth", { value: 80, configurable: true });
+    Object.defineProperty(name, "clientWidth", { value: 200, configurable: true });
+    await user.hover(name);
+    // Well past the hover delay, so this is "never opened" rather than "not yet".
+    await expect(screen.findByRole("tooltip", {}, { timeout: 400 })).rejects.toThrow();
+  });
+
+  // A name column wide enough for every title would leave no room for the
+  // plot, so long titles truncate — and the reader can widen the column when
+  // that is the part they need. Arrow keys are asserted rather than a drag:
+  // both go through the same clamp, and only one of them exists in jsdom.
+  it("lets the reader widen the name column past its default", async () => {
+    const user = userEvent.setup();
+    const tasks = [
+      makeTask({
+        id: "t1",
+        title: "Reconcile the outbox worker with the webhook receiver",
+        startDate: "2026-08-01",
+        dueOn: "2026-08-10",
+      }),
+    ];
+    render(<TaskTimelineSection projectId="p1" tasks={tasks} dependencies={[]} now={NOW} />);
+    const handle = screen.getByRole("separator", { name: "Resize name column" });
+    const column = handle.previousElementSibling as HTMLElement;
+    expect(column.style.width).toBe("");
+
+    handle.focus();
+    await user.keyboard("{ArrowRight}");
+    const widened = parseInt(column.style.width, 10);
+    expect(widened).toBeGreaterThan(0);
+
+    await user.keyboard("{ArrowLeft}{ArrowLeft}");
+    expect(parseInt(column.style.width, 10)).toBeLessThan(widened);
   });
 
   it("labels a task with its predecessor's title", () => {

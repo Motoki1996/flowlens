@@ -10,12 +10,14 @@ import {
   formatUnscheduledNames,
   hasSchedule,
   MIN_PLOT_WIDTH,
+  minBarDuration,
   plotWidth,
   spanDays,
   startOfDay,
   toBacklogGanttRows,
   toTaskGanttRows,
   todayOffset,
+  weekendBands,
 } from "./timeline";
 import type { Backlog, Task } from "@/types";
 
@@ -202,6 +204,34 @@ describe("computeAxis", () => {
       expect(tick).toBeLessThan(total);
     }
   });
+
+  // A quarter is a calendar quarter, not "every third month from wherever the
+  // range starts" — Q3 has to mean July to a reader who plans in quarters.
+  it("snaps quarterly ticks to January, April, July and October", () => {
+    const bounds = boundsOf("2026-02-15", 800);
+    const axis = computeAxis(bounds, "quarter");
+    const dates = axis.ticks.map((t) => new Date(bounds.start.getTime() + t));
+    expect(dates.map((d) => d.getMonth())).toEqual([3, 6, 9, 0, 3, 6, 9, 0, 3]);
+    expect(dates.every((d) => d.getDate() === 1)).toBe(true);
+  });
+
+  it.each([
+    { zoom: "quarter", of: "months", isExpected: (d: Date) => d.getDate() === 1 },
+    { zoom: "month", of: "Mondays", isExpected: (d: Date) => d.getDay() === 1 },
+  ])("subdivides $zoom ticks with unlabelled $of", ({ zoom, isExpected }) => {
+    const bounds = boundsOf("2026-02-15", 400);
+    const axis = computeAxis(bounds, zoom as "quarter" | "month");
+    expect(axis.minorTicks.length).toBeGreaterThan(0);
+    expect(
+      axis.minorTicks.every((t) => isExpected(new Date(bounds.start.getTime() + t))),
+    ).toBe(true);
+    // A minor tick under a labelled one would draw the same gridline twice.
+    expect(axis.minorTicks.some((t) => axis.ticks.includes(t))).toBe(false);
+  });
+
+  it.each(["week", "day"] as const)("leaves %s ticks undivided, being the finest already", (zoom) => {
+    expect(computeAxis(boundsOf("2026-02-15", 400), zoom).minorTicks).toEqual([]);
+  });
 });
 
 describe("defaultZoom", () => {
@@ -209,8 +239,49 @@ describe("defaultZoom", () => {
     { days: 10, zoom: "day" },
     { days: 60, zoom: "week" },
     { days: 200, zoom: "month" },
+    { days: 900, zoom: "quarter" },
   ])("opens a $days-day span at $zoom zoom", ({ days, zoom }) => {
     expect(defaultZoom(boundsOf("2026-08-03", days))).toBe(zoom);
+  });
+});
+
+describe("minBarDuration", () => {
+  // A bar is never shorter than a whole day, so at the fine zooms the floor is
+  // already met and no bar is stretched past its real due date.
+  it.each(["day", "week"] as const)("never widens a bar at %s zoom", (zoom) => {
+    expect(minBarDuration(zoom)).toBeLessThanOrEqual(ONE_DAY_MS);
+  });
+
+  it.each(["month", "quarter"] as const)("keeps a one-day bar visible at %s zoom", (zoom) => {
+    expect(minBarDuration(zoom)).toBeGreaterThan(ONE_DAY_MS);
+  });
+});
+
+describe("weekendBands", () => {
+  it("returns each Saturday-to-Monday span in the range", () => {
+    // 2026-08-03 is a Monday, so a fortnight from it holds two whole weekends.
+    const bounds = boundsOf("2026-08-03", 14);
+    const bands = weekendBands(bounds);
+    expect(bands).toHaveLength(2);
+    expect(day(new Date(bounds.start.getTime() + bands[0].start))).toBe("2026-08-08");
+    expect(bands.every((b) => b.end - b.start === 2 * ONE_DAY_MS)).toBe(true);
+  });
+
+  // A range opening mid-weekend still shades the rest of it rather than
+  // skipping to the next one.
+  it("clips a weekend the range starts inside", () => {
+    const bounds = boundsOf("2026-08-09", 7); // a Sunday
+    const [first] = weekendBands(bounds);
+    expect(first).toEqual({ start: 0, end: ONE_DAY_MS });
+  });
+
+  it("keeps every band inside the plotted range", () => {
+    const bounds = boundsOf("2026-08-03", 30);
+    const total = bounds.end.getTime() - bounds.start.getTime();
+    for (const band of weekendBands(bounds)) {
+      expect(band.start).toBeGreaterThanOrEqual(0);
+      expect(band.end).toBeLessThanOrEqual(total);
+    }
   });
 });
 
@@ -235,6 +306,11 @@ describe("formatAxisTick", () => {
 
   it("names the year on month ticks", () => {
     expect(formatAxisTick(0, bounds, "month")).toMatch(/2026/);
+  });
+
+  // Intl has no quarter field, so this label is the one composed by hand.
+  it("names the quarter and the year on quarter ticks", () => {
+    expect(formatAxisTick(0, bounds, "quarter")).toBe("Q3 2026");
   });
 });
 

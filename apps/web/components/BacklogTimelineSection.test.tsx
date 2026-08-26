@@ -114,7 +114,8 @@ describe("BacklogTimelineSection", () => {
     const inRange = render(
       <BacklogTimelineSection projectId="p1" backlogs={backlogs} now={NOW} />,
     );
-    expect(inRange.container.querySelectorAll(".recharts-reference-line")).toHaveLength(1);
+    const marker = ".recharts-reference-line:not(.timeline-minor-gridline)";
+    expect(inRange.container.querySelectorAll(marker)).toHaveLength(1);
 
     const outOfRange = render(
       <BacklogTimelineSection
@@ -123,7 +124,7 @@ describe("BacklogTimelineSection", () => {
         now={new Date("2027-01-01T00:00:00Z")}
       />,
     );
-    expect(outOfRange.container.querySelectorAll(".recharts-reference-line")).toHaveLength(0);
+    expect(outOfRange.container.querySelectorAll(marker)).toHaveLength(0);
   });
 
   it("names every bar colour in a legend, so status is never colour-only", () => {

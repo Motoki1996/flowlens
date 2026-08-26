@@ -1283,11 +1283,23 @@ until someone switches to the Timeline:
   single day.
 - The plotted range always covers every scheduled task, so the chart never hides
   data. How much detail that range is read at is the reader's choice: a **Zoom**
-  control (Month / Week / Day) sets both the width a day gets and the axis tick
-  interval, and the plot scrolls horizontally rather than compressing bars into
-  slivers. The initial level is derived from the span — daily ticks up to three
-  weeks, then weekly, then monthly — so a short sprint and a year-long plan are
-  each legible without touching the control.
+  control (Quarter / Month / Week / Day) sets both the width a day gets and the
+  axis tick interval, and the plot scrolls horizontally rather than compressing
+  bars into slivers. The initial level is derived from the span — daily ticks up
+  to three weeks, then weekly, then monthly, then quarterly past about eighteen
+  months — so a short sprint and a multi-year roadmap are each legible without
+  touching the control. Quarter is deliberately the coarsest level: it is the
+  unit a roadmap is planned in, and the last one at which a bar is still a bar.
+- The two coarse levels rule the plot at the interval below their labels —
+  weeks under monthly labels, months under quarterly ones — drawn fainter and
+  unlabelled, because "Aug 2026" spans thirty-odd days of plot and a bar has to
+  be placeable against something narrower than that. Day zoom instead shades
+  **weekends**, which is where the question becomes "how many working days is
+  that?"; at any coarser level the bands would stripe the whole plot into noise.
+- A bar is never drawn narrower than 6px, so a one-day task stays visible at
+  quarter zoom (where a day is 1.6px) instead of reading as a task nobody
+  scheduled. The floor applies to the whole bar and is then split at the
+  completion ratio, so a part-done backlog keeps its fill.
 - "Today" is drawn as a reference line when it falls in range, a **Today** button
   scrolls the plot back to it (disabled when today is outside the range), and a
   long project opens scrolled to today rather than to its earliest date. Changing
@@ -1301,7 +1313,23 @@ until someone switches to the Timeline:
   muted. A legend names all three, so colour is never the only cue.
 - Task names sit in a column beside the plot rather than as axis labels, so each
   one stays a real link to the task's single view; the bars themselves are also
-  clickable.
+  clickable. The trade is a fixed-width column that truncates long names, so the
+  divider between the two is a **splitter**: drag it (or focus it and use the
+  arrow keys) to give names more room, double-click to hand the width back to
+  the viewport. Like zoom, it is local view state. A name the column has
+  actually clipped also states itself in full on hover or keyboard focus — a
+  real tooltip rather than the browser's `title`, which took about a second to
+  appear; it is gated on the name being clipped, since one repeating a title
+  already on screen is noise.
+- Gridlines are mixed from the same `--muted-foreground` the axis labels use,
+  not from `--border`: on this theme the border sits a couple of steps off the
+  card surface, and the shadcn chart default drew a grid nobody could see. The
+  minor lines are half the strength of the major ones, which is what makes them
+  read as a subdivision rather than as a second grid.
+- Alternate rows are shaded, in the name column and the plot alike, so one
+  continuous band ties a name to its bar — on a chart wide enough to scroll,
+  the two are far apart and the tooltip cursor only ever highlights the one row
+  the pointer is on.
 - That column belongs to the name: the title has the line to itself, and only a
   **high or urgent** priority appears under it, as the same badge the list rows
   use. Every priority and a task's progress are stated on the bar's tooltip
@@ -1336,7 +1364,10 @@ unavailable rather than 0%.
 The date math lives in `apps/web/lib/timeline.ts`, separate from the components
 so it is unit-testable without rendering a chart; the zoom level and scroll
 position are owned by the `useTimelineViewport` hook beside it, shared by both
-timelines.
+timelines. The layout they share — the name column, the splitter, the row
+banding and the scrolling plot — is `components/TimelineFrame.tsx`, which the
+Task and the Backlog/Epic sections differ inside only by what sits under each
+name (a predecessor list, or a completion ratio).
 
 ### Task collection search, filters and sort
 

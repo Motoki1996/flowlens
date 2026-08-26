@@ -279,7 +279,33 @@ long-text field should use the same component rather than
 `whitespace-pre-wrap`. Short single-line attributes (a name, a branch, a
 label) stay plain text.
 
-### 8. Authentication is the deliberate exception
+### 8. An enumerated value reads the same everywhere, in two forms
+
+`priority`, `progress`, `status`, `size` — every small closed set — has one
+label and one accent colour, owned in `lib/` (`PRIORITY_LABELS`/
+`PRIORITY_ACCENT`, `PROGRESS_LABELS`/`PROGRESS_ACCENT`) and rendered by one
+component pair, never re-spelled inline in a screen. It appears in exactly two
+forms:
+
+- **a badge** (`PriorityBadge`, `ProgressBadge`) where the value is being
+  *read* — a list row, a card, a single view;
+- **a colour dot beside its label** (`PriorityDot`, `ProgressDot`) where the
+  value is being *picked* — a `Select` in a create/edit form, a filter menu. A
+  badge in every row of a dropdown competes with the field it sits inside. The
+  dot is `aria-hidden` and the label always renders beside it, so colour is the
+  scan aid and never the only way to read the value.
+
+Order is the one thing the two forms don't share, and deliberately so. A
+**board's columns** ramp left to right in the direction the value grows —
+`PRIORITY_COLUMNS` is Low → Urgent, `PROGRESS_COLUMNS` is Not started → Done.
+A **menu** is a ranked list scanned top-down for the value you reached for, so
+priority inverts: `PRIORITY_OPTIONS` is Urgent → Low, matching every tracker a
+reader arrives from. Progress keeps one order in both, because "the order work
+advances" is already the order you pick in. Sizes stay uncoloured
+(`SizeBadge`): size is not urgency, and a red XL would read as a problem when
+it only means "this is big".
+
+### 9. Authentication is the deliberate exception
 
 Login, signup, and logout are genuinely task-shaped: one flow, one outcome, no
 object to browse. They stay task-oriented, and the current `/login` and

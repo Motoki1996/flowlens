@@ -1,5 +1,7 @@
 import type { Progress } from "@/types";
+import { PROGRESS_ACCENT, PROGRESS_LABELS } from "@/lib/progress";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 /**
  * ProgressBadge shows a task's or backlog's progress — FlowLens's own
@@ -29,4 +31,21 @@ export function ProgressBadge({ progress }: { progress: Progress }) {
     case "not_started":
       return <Badge variant="outline">Not started</Badge>;
   }
+}
+
+/**
+ * ProgressDot is the same vocabulary reduced to its accent colour — the form
+ * shown inside a picker (a Select item, a filter menu), where a full badge in
+ * every row would compete with the field it is inside. The label always sits
+ * beside it, so the dot is `aria-hidden`: colour is the scan aid, never the
+ * only way to read the value. Mirrors PriorityDot.
+ */
+export function ProgressDot({ progress }: { progress: Progress }) {
+  return (
+    <span
+      aria-hidden
+      className={cn("size-2 shrink-0 rounded-full", PROGRESS_ACCENT[progress])}
+      title={PROGRESS_LABELS[progress]}
+    />
+  );
 }

@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { taskPath } from "@/lib/routes";
 import { formatDate } from "@/lib/dates";
 import type { Priority, Project, TaskStatus, TaskWithProject } from "@/types";
+import { PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Combobox } from "@/components/ui/combobox";
@@ -16,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PriorityBadge } from "@/components/PriorityBadge";
+import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 
 type SortValue = "dueOn" | "priority" | "progress" | "updatedAt";
@@ -125,10 +126,12 @@ export function AllTasksSection({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All priorities</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-                <SelectItem value="urgent">Urgent</SelectItem>
+                {PRIORITY_OPTIONS.map((option) => (
+                  <SelectItem key={option.priority} value={option.priority}>
+                    <PriorityDot priority={option.priority} />
+                    {option.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={sort} onValueChange={(value) => updateQuery({ sort: value })}>

@@ -21,7 +21,7 @@ import type {
   TaskStatus,
 } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
-import { PRIORITY_COLUMNS } from "@/lib/priority";
+import { PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,9 +37,9 @@ import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { CreateFormRegion } from "@/components/CreateFormRegion";
-import { PriorityBadge } from "@/components/PriorityBadge";
+import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
 import { SizeBadge } from "@/components/SizeBadge";
-import { ProgressBadge } from "@/components/ProgressBadge";
+import { ProgressBadge, ProgressDot } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskBoardSection } from "@/components/TaskBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
@@ -953,8 +953,9 @@ export function TaskListSection({
                     <SelectValue placeholder="Set priority…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {PRIORITY_COLUMNS.map((option) => (
+                    {PRIORITY_OPTIONS.map((option) => (
                       <SelectItem key={option.priority} value={option.priority}>
+                        <PriorityDot priority={option.priority} />
                         {option.label}
                       </SelectItem>
                     ))}
@@ -981,6 +982,7 @@ export function TaskListSection({
                   <SelectContent>
                     {PROGRESS_COLUMNS.map((option) => (
                       <SelectItem key={option.progress} value={option.progress}>
+                        <ProgressDot progress={option.progress} />
                         {option.label}
                       </SelectItem>
                     ))}

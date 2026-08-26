@@ -1,5 +1,7 @@
 import type { Priority } from "@/types";
+import { PRIORITY_ACCENT, PRIORITY_LABELS } from "@/lib/priority";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 /**
  * PriorityBadge shows a task's or backlog's priority, app-only and never
@@ -22,6 +24,23 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
     case "low":
       return <Badge variant="outline">Low</Badge>;
   }
+}
+
+/**
+ * PriorityDot is the same vocabulary reduced to its accent colour — the form
+ * shown inside a picker (a Select item, a filter menu), where a full badge in
+ * every row would compete with the field it is inside. The label always sits
+ * beside it, so the dot is `aria-hidden`: colour is the scan aid, never the
+ * only way to read the value.
+ */
+export function PriorityDot({ priority }: { priority: Priority }) {
+  return (
+    <span
+      aria-hidden
+      className={cn("size-2 shrink-0 rounded-full", PRIORITY_ACCENT[priority])}
+      title={PRIORITY_LABELS[priority]}
+    />
+  );
 }
 
 /**

@@ -20,7 +20,7 @@ import type {
   Progress,
 } from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
-import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
+import { PRIORITY_LABELS, PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -40,8 +40,8 @@ import {
   LinkedGitlabProjectField,
 } from "@/components/BacklogEditForm";
 import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
-import { PriorityBadge } from "@/components/PriorityBadge";
-import { ProgressBadge } from "@/components/ProgressBadge";
+import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
+import { ProgressBadge, ProgressDot } from "@/components/ProgressBadge";
 import { BacklogBoardSection } from "@/components/BacklogBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
@@ -231,10 +231,12 @@ function NewBacklogForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="urgent">Urgent</SelectItem>
+            {PRIORITY_OPTIONS.map((option) => (
+              <SelectItem key={option.priority} value={option.priority}>
+                <PriorityDot priority={option.priority} />
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -258,6 +260,7 @@ function NewBacklogForm({
           <SelectContent>
             {PROGRESS_COLUMNS.map((option) => (
               <SelectItem key={option.progress} value={option.progress}>
+                <ProgressDot progress={option.progress} />
                 {option.label}
               </SelectItem>
             ))}
@@ -578,8 +581,9 @@ export function BacklogListSection({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All priorities</SelectItem>
-                  {PRIORITY_COLUMNS.map((option) => (
+                  {PRIORITY_OPTIONS.map((option) => (
                     <SelectItem key={option.priority} value={option.priority}>
+                      <PriorityDot priority={option.priority} />
                       {option.label}
                     </SelectItem>
                   ))}
@@ -598,6 +602,7 @@ export function BacklogListSection({
                   <SelectItem value="all">All progress</SelectItem>
                   {PROGRESS_COLUMNS.map((option) => (
                     <SelectItem key={option.progress} value={option.progress}>
+                      <ProgressDot progress={option.progress} />
                       {option.label}
                     </SelectItem>
                   ))}

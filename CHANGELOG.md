@@ -8,6 +8,8 @@ procedure itself.
 
 ## Unreleased
 
+## v0.3.0 — 2026-08-26
+
 ### Added
 
 - **A backlog and an epic can be closed.** Both rungs now carry their own

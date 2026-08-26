@@ -652,4 +652,133 @@ describe("the status filter", () => {
     // One badge for two backlogs: the open one carries none.
     expect(screen.getAllByText("Closed")).toHaveLength(1);
   });
+
+  /** The Backlog collection's own half of the bulk editing the Task
+   *  collection has had since issue #149 — a backlog carries its own
+   *  priority, progress and open/closed status, so the same four actions
+   *  apply. List-only, like the Task collection's. */
+  describe("Bulk actions", () => {
+    const other: Backlog = { ...backlog, id: "b2", name: "Sprint 2" };
+
+    function renderList(backlogs: Backlog[] = [backlog, other]) {
+      currentSearchParams = new URLSearchParams("view=list");
+      render(
+        <BacklogListSection
+          projectId="p1"
+          backlogs={backlogs}
+          initialView="list"
+        />,
+      );
+    }
+
+    it("shows no selection bar until something is selected", () => {
+      renderList();
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("selects every visible backlog at once", () => {
+      renderList();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select all backlogs" }),
+      );
+      expect(screen.getByText("2 selected")).toBeInTheDocument();
+    });
+
+    it("applies a bulk priority change to every selected backlog", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select all backlogs" }),
+      );
+
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Priority to set" }),
+      );
+      fireEvent.click(await screen.findByRole("option", { name: "Urgent" }));
+      fireEvent.click(screen.getByRole("button", { name: "Set priority" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      for (const id of ["b1", "b2"]) {
+        expect(fetch).toHaveBeenCalledWith(
+          `/api/v1/backlogs/${id}`,
+          expect.objectContaining({
+            method: "PATCH",
+            body: JSON.stringify({ priority: "urgent" }),
+          }),
+        );
+      }
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("applies a bulk progress change to every selected backlog", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList([backlog]);
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select Sprint 1" }),
+      );
+
+      fireEvent.click(
+        screen.getByRole("combobox", { name: "Progress to set" }),
+      );
+      fireEvent.click(await screen.findByRole("option", { name: "On hold" }));
+      fireEvent.click(screen.getByRole("button", { name: "Set progress" }));
+
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/backlogs/b1",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ progress: "on_hold" }),
+        }),
+      );
+    });
+
+    it("closes and reopens every selected backlog in bulk", async () => {
+      vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 200 }));
+      renderList([backlog]);
+
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select Sprint 1" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Close selected" }));
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      expect(fetch).toHaveBeenCalledWith(
+        "/api/v1/backlogs/b1/close",
+        expect.objectContaining({ method: "POST" }),
+      );
+
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select Sprint 1" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Reopen selected" }));
+      await waitFor(() =>
+        expect(fetch).toHaveBeenCalledWith(
+          "/api/v1/backlogs/b1/reopen",
+          expect.objectContaining({ method: "POST" }),
+        ),
+      );
+    });
+
+    it("keeps only the failures selected when part of the bulk fails", async () => {
+      vi.mocked(fetch).mockImplementation(((url: string) =>
+        Promise.resolve(
+          new Response(null, { status: url.includes("b2") ? 500 : 200 }),
+        )) as unknown as typeof fetch);
+      renderList();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select all backlogs" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Close selected" }));
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("1 of 2 backlogs failed to update."),
+        ).toBeInTheDocument(),
+      );
+      expect(screen.getByText("1 selected")).toBeInTheDocument();
+      expect(
+        screen.getByRole("checkbox", { name: "Select Sprint 2" }),
+      ).toBeChecked();
+    });
+  });
 });

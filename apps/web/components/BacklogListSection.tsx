@@ -48,6 +48,13 @@ import { TruncatedName } from "@/components/TruncatedName";
 import { BacklogBoardSection } from "@/components/BacklogBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
+import {
+  RowCheckbox,
+  SelectAllCheckbox,
+  useBulkSelection,
+  type BaseBulkAction,
+} from "@/components/BulkSelection";
+import { BulkActionBar } from "@/components/BulkActionBar";
 
 /** The sort values the Backlog collection's `?sort=` accepts (issue #151):
  *  "manual" keeps the API's own default (creation) order;
@@ -466,6 +473,38 @@ export function BacklogListSection({
     return result;
   }, [backlogs, search, sort]);
 
+  // Bulk editing, the same machinery the Task collection's List view uses
+  // (issue #149): a backlog carries its own priority, progress and
+  // open/closed status, so the four actions BulkActionBar owns are exactly
+  // the ones that apply here — there is no fifth, since a backlog has no
+  // parent to be moved into. List-only, like the Task collection's.
+  const selection = useBulkSelection<BaseBulkAction>({
+    visibleIds: visibleBacklogs.map((b) => b.id),
+    noun: "backlog",
+  });
+  const { selected, setSelected } = selection;
+
+  function patchSelected(action: BaseBulkAction, body: Record<string, string>) {
+    return selection.run(action, (backlogId) =>
+      fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlogId}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  function postSelected(action: "close" | "reopen") {
+    return selection.run(action, (backlogId) =>
+      fetch(`${API_PUBLIC_URL}/api/v1/backlogs/${backlogId}/${action}`, {
+        method: "POST",
+        credentials: "include",
+        headers: csrfHeaders(),
+      }),
+    );
+  }
+
   const hasActiveFilters =
     statusFilter !== FILTER_DEFAULTS.status ||
     priorityFilter !== undefined ||
@@ -743,121 +782,158 @@ export function BacklogListSection({
             {visibleBacklogs.length === 0 && !showUnclassified ? (
               emptyState()
             ) : (
-              <ul className="space-y-2">
-                {visibleBacklogs.map((backlog) => {
-                  // Same closed/total reading the Board mode's cards use (issue
-                  // #144) — see the class doc comment.
-                  const completion = backlogTaskCompletion(backlog);
-                  return (
-                    <li
-                      key={backlog.id}
-                      className="border-border rounded-md border px-3 py-2"
-                    >
-                      {editingId === backlog.id ? (
-                        <BacklogEditForm
-                          backlog={backlog}
-                          links={links}
-                          onSaved={() => {
-                            // The row is rendered from the server-fetched
-                            // list, so the saved values only appear after a
-                            // refresh.
-                            router.refresh();
-                            setEditingId(null);
-                          }}
-                          onCancel={() => setEditingId(null)}
-                        />
-                      ) : (
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              {/* The name clips rather than wraps: a long one
+              <>
+                {/* The Unclassified row is deliberately outside this: it
+                    isn't a backlog, so there is nothing to bulk-edit about
+                    it. */}
+                {visibleBacklogs.length > 0 ? (
+                  <div className="mb-4 space-y-4">
+                    <div className="flex items-center gap-2">
+                      <SelectAllCheckbox
+                        label="Select all backlogs"
+                        ids={visibleBacklogs.map((b) => b.id)}
+                        selected={selected}
+                        onChange={setSelected}
+                      />
+                      <span className="text-muted-foreground text-xs">
+                        Select all
+                      </span>
+                    </div>
+                    <BulkActionBar
+                      selection={selection}
+                      onPriority={(priority) =>
+                        patchSelected("priority", { priority })
+                      }
+                      onProgress={(progress) =>
+                        patchSelected("progress", { progress })
+                      }
+                      onClose={() => postSelected("close")}
+                      onReopen={() => postSelected("reopen")}
+                    />
+                  </div>
+                ) : null}
+                <ul className="space-y-2">
+                  {visibleBacklogs.map((backlog) => {
+                    // Same closed/total reading the Board mode's cards use (issue
+                    // #144) — see the class doc comment.
+                    const completion = backlogTaskCompletion(backlog);
+                    return (
+                      <li
+                        key={backlog.id}
+                        className="border-border rounded-md border px-3 py-2"
+                      >
+                        {editingId === backlog.id ? (
+                          <BacklogEditForm
+                            backlog={backlog}
+                            links={links}
+                            onSaved={() => {
+                              // The row is rendered from the server-fetched
+                              // list, so the saved values only appear after a
+                              // refresh.
+                              router.refresh();
+                              setEditingId(null);
+                            }}
+                            onCancel={() => setEditingId(null)}
+                          />
+                        ) : (
+                          <div className="flex items-center justify-between gap-4">
+                            <RowCheckbox
+                              label={`Select ${backlog.name}`}
+                              id={backlog.id}
+                              selected={selected}
+                              onToggle={selection.toggle}
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                {/* The name clips rather than wraps: a long one
                                   used to push the badges onto their own line
                                   and grow the row. The full text is on hover
                                   when it did clip. */}
-                              <TruncatedName
-                                href={backlogPath(projectId, backlog.id)}
-                                text={backlog.name}
-                                className="text-foreground text-sm hover:underline"
-                              />
-                              <span className="flex shrink-0 items-center gap-2">
-                                {/* Only ever rendered when ?status= asked for
+                                <TruncatedName
+                                  href={backlogPath(projectId, backlog.id)}
+                                  text={backlog.name}
+                                  className="text-foreground text-sm hover:underline"
+                                />
+                                <span className="flex shrink-0 items-center gap-2">
+                                  {/* Only ever rendered when ?status= asked for
                                     closed backlogs — see ClosedBadge. */}
-                                <ClosedBadge status={backlog.status} />
-                                <PriorityBadge priority={backlog.priority} />
-                                <ProgressBadge progress={backlog.progress} />
-                              </span>
-                            </div>
-                            {backlogScheduleLabel(backlog) ? (
-                              <p className="text-muted-foreground truncate text-xs">
-                                {backlogScheduleLabel(backlog)}
-                              </p>
-                            ) : null}
-                            {/* The fill is a second reading of the ratio stated
+                                  <ClosedBadge status={backlog.status} />
+                                  <PriorityBadge priority={backlog.priority} />
+                                  <ProgressBadge progress={backlog.progress} />
+                                </span>
+                              </div>
+                              {backlogScheduleLabel(backlog) ? (
+                                <p className="text-muted-foreground truncate text-xs">
+                                  {backlogScheduleLabel(backlog)}
+                                </p>
+                              ) : null}
+                              {/* The fill is a second reading of the ratio stated
                           beside it, never the only one — same rule the
                           Board mode's cards and the timeline's bars
                           follow. */}
-                            <div className="mt-1 flex items-center gap-2">
-                              <div className="bg-muted h-1 w-24 shrink-0 overflow-hidden rounded-full">
-                                <div
-                                  aria-hidden
-                                  className="bg-primary h-full"
-                                  style={{
-                                    width: `${Math.round(completion.ratio * 100)}%`,
-                                  }}
-                                />
+                              <div className="mt-1 flex items-center gap-2">
+                                <div className="bg-muted h-1 w-24 shrink-0 overflow-hidden rounded-full">
+                                  <div
+                                    aria-hidden
+                                    className="bg-primary h-full"
+                                    style={{
+                                      width: `${Math.round(completion.ratio * 100)}%`,
+                                    }}
+                                  />
+                                </div>
+                                <span className="text-muted-foreground text-xs tabular-nums">
+                                  {completion.total === 0
+                                    ? "No tasks"
+                                    : `${completion.closed}/${completion.total} closed`}
+                                </span>
                               </div>
-                              <span className="text-muted-foreground text-xs tabular-nums">
-                                {completion.total === 0
-                                  ? "No tasks"
-                                  : `${completion.closed}/${completion.total} closed`}
-                              </span>
                             </div>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            {/* Tasks live in the Task collection, filtered — this row
+                            <div className="flex shrink-0 items-center gap-2">
+                              {/* Tasks live in the Task collection, filtered — this row
                           hands off to it instead of the list growing a second
                           place to browse tasks (docs/ui-design.md rule 5). */}
-                            <Link
-                              href={tasksPath(projectId, {
-                                backlogId: backlog.id,
-                              })}
-                              className="text-muted-foreground hover:text-foreground text-sm hover:underline"
-                            >
-                              View tasks
-                            </Link>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setEditingId(backlog.id)}
-                            >
-                              Edit
-                            </Button>
-                            <BacklogDeleteButton
-                              backlog={backlog}
-                              onDeleted={() => router.refresh()}
-                            />
+                              <Link
+                                href={tasksPath(projectId, {
+                                  backlogId: backlog.id,
+                                })}
+                                className="text-muted-foreground hover:text-foreground text-sm hover:underline"
+                              >
+                                View tasks
+                              </Link>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setEditingId(backlog.id)}
+                              >
+                                Edit
+                              </Button>
+                              <BacklogDeleteButton
+                                backlog={backlog}
+                                onDeleted={() => router.refresh()}
+                              />
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        )}
+                      </li>
+                    );
+                  })}
+                  {showUnclassified ? (
+                    <li className="border-border rounded-md border border-dashed px-3 py-2">
+                      <Link
+                        href={tasksPath(projectId, {
+                          backlogId: UNCLASSIFIED_BACKLOG,
+                        })}
+                        className="text-foreground text-sm hover:underline"
+                      >
+                        Unclassified{" "}
+                        <span className="text-muted-foreground text-xs">
+                          ({unclassifiedCount})
+                        </span>
+                      </Link>
                     </li>
-                  );
-                })}
-                {showUnclassified ? (
-                  <li className="border-border rounded-md border border-dashed px-3 py-2">
-                    <Link
-                      href={tasksPath(projectId, {
-                        backlogId: UNCLASSIFIED_BACKLOG,
-                      })}
-                      className="text-foreground text-sm hover:underline"
-                    >
-                      Unclassified{" "}
-                      <span className="text-muted-foreground text-xs">
-                        ({unclassifiedCount})
-                      </span>
-                    </Link>
-                  </li>
-                ) : null}
-              </ul>
+                  ) : null}
+                </ul>
+              </>
             )}
           </div>
         )}

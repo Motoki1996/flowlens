@@ -36,18 +36,21 @@ type createBacklogRequest struct {
 	AssigneeUserID *uuid.UUID `json:"assigneeUserId"`
 }
 
-// The dates, priority, progress, base branch and scope are Optional so
-// PATCH stays a partial update for them: a body without
-// "startDate"/"priority"/"progress"/"baseBranch"/"allowedScope"/
-// "forbiddenScope" keeps the stored value, and an explicit null clears a
-// date (priority and progress have no null case — see
-// backlog.normalizePriority/normalizeProgress — and an explicit empty
-// string clears baseBranch/allowedScope/forbiddenScope instead, since none
-// of them has a null case either). Name and description predate that
-// and are still overwritten wholesale.
+// Every field is Optional, so PATCH is a real partial update: a body
+// without a key keeps the stored value, and an explicit null clears a date
+// (priority and progress have no null case — see
+// backlog.normalizePriority/normalizeProgress — and an explicit empty string
+// clears baseBranch/allowedScope/forbiddenScope instead, since none of them
+// has a null case either).
+//
+// Name and description were plain strings until they weren't: they were
+// overwritten wholesale, so `{"priority":"high"}` renamed the backlog to ""
+// and came back 400 invalid_name — which is what the collection's bulk edit
+// sends. An explicit empty name is still refused; only an absent one is
+// left alone.
 type updateBacklogRequest struct {
-	Name        string                        `json:"name"`
-	Description string                        `json:"description"`
+	Name        optional.Optional[string]     `json:"name"`
+	Description optional.Optional[string]     `json:"description"`
 	StartDate   optional.Optional[*time.Time] `json:"startDate"`
 	DueOn       optional.Optional[*time.Time] `json:"dueOn"`
 	Priority    optional.Optional[string]     `json:"priority"`

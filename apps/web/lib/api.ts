@@ -9,6 +9,7 @@
 
 import { cache } from "react";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import type {
   ApiToken,
   Backlog,
@@ -51,6 +52,42 @@ const API_INTERNAL_URL =
 export { API_PUBLIC_URL } from "./config";
 
 /**
+ * apiFetch is the one request every authenticated reader below makes: the
+ * browser's session cookie forwarded to the API, never cached, and a 401
+ * answered by redirecting to /login.
+ *
+ * The redirect is the point. A page and the layout above it render
+ * concurrently, so ProjectLayout sending a signed-out visitor to /login does
+ * not stop the page inside it from calling the API in the same moment — and
+ * every reader here used to turn that 401 into a thrown "Failed to load ...",
+ * an error whose appearance depended on which of the two finished first.
+ * Answering a 401 the way the layout already does removes the race instead of
+ * hiding it, and leaves a thrown error meaning what it says: the API failed,
+ * not the session ended.
+ *
+ * getCurrentUser deliberately doesn't go through this - it is the one reader
+ * whose job is to *report* "not signed in", and redirecting there would send
+ * /login back to itself. getInvitePreview doesn't either: it is
+ * unauthenticated by design (the invite screen is shown to someone with no
+ * account yet).
+ *
+ * One thing to know before wrapping a reader in a try/catch: redirect()
+ * unwinds by throwing, so a bare `catch {}` swallows it. Every route already
+ * guards with getCurrentUser() outside any try (a page's own, or
+ * ProjectLayout's), so the redirect always has an uncaught path today — but a
+ * screen whose only 401 handling is this one must not bury it in a catch.
+ */
+async function apiFetch(path: string): Promise<Response> {
+  const cookieStore = await cookies();
+  const res = await fetch(`${API_INTERNAL_URL}${path}`, {
+    headers: { cookie: cookieStore.toString() },
+    cache: "no-store",
+  });
+  if (res.status === 401) redirect("/login");
+  return res;
+}
+
+/**
  * getCurrentUser returns the authenticated user, or null when the request
  * has no valid session. It never throws for the unauthenticated case so
  * callers can redirect cleanly.
@@ -83,11 +120,7 @@ export const getCurrentUser = cache(async (): Promise<User | null> => {
  * already know the request is authenticated (e.g. via getCurrentUser).
  */
 export const getProjects = cache(async (): Promise<Project[]> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects`);
   if (!res.ok) {
     throw new Error(`Failed to load projects: ${res.status}`);
   }
@@ -101,11 +134,7 @@ export const getProjects = cache(async (): Promise<Project[]> => {
  * know the request is authenticated.
  */
 export const getFailedSyncProjects = cache(async (): Promise<Project[]> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects?failedSync=true`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects?failedSync=true`);
   if (!res.ok) {
     throw new Error(`Failed to load failed-sync projects: ${res.status}`);
   }
@@ -118,11 +147,7 @@ export const getFailedSyncProjects = cache(async (): Promise<Project[]> => {
  * registration form. Callers must already know the request is authenticated.
  */
 export const getMyGitlabIdentities = cache(async (): Promise<GitlabIdentity[]> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/me/gitlab-identities`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/me/gitlab-identities`);
   if (!res.ok) {
     throw new Error(`Failed to load GitLab identities: ${res.status}`);
   }
@@ -134,11 +159,7 @@ export const getMyGitlabIdentities = cache(async (): Promise<GitlabIdentity[]> =
  * owned by the current user (the API reports both cases as 404).
  */
 export const getProject = cache(async (id: string): Promise<Project | null> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${id}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${id}`);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load project: ${res.status}`);
@@ -171,7 +192,6 @@ export type EpicListFilter = {
  */
 export const getEpics = cache(
   async (projectId: string, filter: EpicListFilter = {}): Promise<Epic[]> => {
-    const cookieStore = await cookies();
     const params = new URLSearchParams();
     if (filter.status) params.set("status", filter.status);
     if (filter.backlogId) params.set("backlog_id", filter.backlogId);
@@ -180,10 +200,7 @@ export const getEpics = cache(
     if (filter.sort) params.set("sort", filter.sort);
     const query = params.toString();
 
-    const res = await fetch(
-      `${API_INTERNAL_URL}/api/v1/projects/${projectId}/epics${query ? `?${query}` : ""}`,
-      { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
-    );
+    const res = await apiFetch(`/api/v1/projects/${projectId}/epics${query ? `?${query}` : ""}`);
     if (!res.ok) {
       throw new Error(`Failed to load epics: ${res.status}`);
     }
@@ -196,11 +213,7 @@ export const getEpics = cache(
  * can't see it (the API reports both cases as 404).
  */
 export async function getEpic(id: string): Promise<Epic | null> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/epics/${id}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/epics/${id}`);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load epic: ${res.status}`);
@@ -230,7 +243,6 @@ export type BacklogListFilter = {
  */
 export const getBacklogs = cache(
   async (projectId: string, filter: BacklogListFilter = {}): Promise<Backlog[]> => {
-    const cookieStore = await cookies();
     const params = new URLSearchParams();
     if (filter.status) params.set("status", filter.status);
     if (filter.priority) params.set("priority", filter.priority);
@@ -238,10 +250,7 @@ export const getBacklogs = cache(
     if (filter.sort) params.set("sort", filter.sort);
     const query = params.toString();
 
-    const res = await fetch(
-      `${API_INTERNAL_URL}/api/v1/projects/${projectId}/backlogs${query ? `?${query}` : ""}`,
-      { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
-    );
+    const res = await apiFetch(`/api/v1/projects/${projectId}/backlogs${query ? `?${query}` : ""}`);
     if (!res.ok) {
       throw new Error(`Failed to load backlogs: ${res.status}`);
     }
@@ -254,11 +263,7 @@ export const getBacklogs = cache(
  * owned by the current user (the API reports both cases as 404).
  */
 export async function getBacklog(id: string): Promise<Backlog | null> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/backlogs/${id}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/backlogs/${id}`);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load backlog: ${res.status}`);
@@ -320,7 +325,6 @@ export type TasksPage = {
  */
 export const getTasks = cache(
   async (projectId: string, filter: ProjectTasksFilter = {}): Promise<TasksPage> => {
-    const cookieStore = await cookies();
     const params = new URLSearchParams();
     if (filter.backlogId) params.set("backlog_id", filter.backlogId);
     if (filter.epicId) params.set("epic_id", filter.epicId);
@@ -335,10 +339,7 @@ export const getTasks = cache(
     if (filter.perPage) params.set("per_page", String(filter.perPage));
     const query = params.toString();
 
-    const res = await fetch(
-      `${API_INTERNAL_URL}/api/v1/projects/${projectId}/tasks${query ? `?${query}` : ""}`,
-      { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
-    );
+    const res = await apiFetch(`/api/v1/projects/${projectId}/tasks${query ? `?${query}` : ""}`);
     if (!res.ok) {
       throw new Error(`Failed to load tasks: ${res.status}`);
     }
@@ -390,7 +391,6 @@ export type TasksWithProjectPage = {
  * (issue #76). Callers must already know the request is authenticated.
  */
 export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TasksWithProjectPage> {
-  const cookieStore = await cookies();
   const params = new URLSearchParams();
   if (filter.status) params.set("status", filter.status);
   if (filter.priority) params.set("priority", filter.priority);
@@ -408,10 +408,7 @@ export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TasksWit
   for (const id of filter.projectIds ?? []) params.append("projectId", id);
   const query = params.toString();
 
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/tasks${query ? `?${query}` : ""}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/tasks${query ? `?${query}` : ""}`);
   if (!res.ok) {
     throw new Error(`Failed to load tasks: ${res.status}`);
   }
@@ -424,11 +421,7 @@ export async function getAllTasks(filter: AllTasksFilter = {}): Promise<TasksWit
  * cases as 404).
  */
 export async function getTask(id: string): Promise<Task | null> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/tasks/${id}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/tasks/${id}`);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load task: ${res.status}`);
@@ -472,7 +465,6 @@ export async function getMergeRequests(
   projectId: string,
   filter: MergeRequestFilter = {},
 ): Promise<MergeRequestsPage> {
-  const cookieStore = await cookies();
   const params = new URLSearchParams();
   if (filter.state) params.set("state", filter.state);
   if (filter.author) params.set("author", filter.author);
@@ -484,10 +476,7 @@ export async function getMergeRequests(
   if (filter.perPage) params.set("per_page", String(filter.perPage));
   const query = params.toString();
 
-  const res = await fetch(
-    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/merge-requests${query ? `?${query}` : ""}`,
-    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
-  );
+  const res = await apiFetch(`/api/v1/projects/${projectId}/merge-requests${query ? `?${query}` : ""}`);
   if (!res.ok) {
     throw new Error(`Failed to load merge requests: ${res.status}`);
   }
@@ -499,11 +488,7 @@ export async function getMergeRequests(
  * or isn't visible to the current user (the API reports both cases as 404).
  */
 export async function getMergeRequest(id: string): Promise<MergeRequest | null> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/merge-requests/${id}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/merge-requests/${id}`);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load merge request: ${res.status}`);
@@ -532,17 +517,13 @@ export async function getProjectMetrics(
   projectId: string,
   filter: ProjectMetricsFilter = {},
 ): Promise<DeliveryMetrics> {
-  const cookieStore = await cookies();
   const params = new URLSearchParams();
   if (filter.from) params.set("from", filter.from);
   if (filter.to) params.set("to", filter.to);
   if (filter.interval) params.set("interval", filter.interval);
   const query = params.toString();
 
-  const res = await fetch(
-    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/metrics${query ? `?${query}` : ""}`,
-    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
-  );
+  const res = await apiFetch(`/api/v1/projects/${projectId}/metrics${query ? `?${query}` : ""}`);
   if (!res.ok) {
     throw new Error(`Failed to load project metrics: ${res.status}`);
   }
@@ -560,17 +541,13 @@ export async function getProjectFlowMetrics(
   projectId: string,
   filter: ProjectMetricsFilter = {},
 ): Promise<FlowMetrics> {
-  const cookieStore = await cookies();
   const params = new URLSearchParams();
   if (filter.from) params.set("from", filter.from);
   if (filter.to) params.set("to", filter.to);
   if (filter.interval) params.set("interval", filter.interval);
   const query = params.toString();
 
-  const res = await fetch(
-    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/flow-metrics${query ? `?${query}` : ""}`,
-    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
-  );
+  const res = await apiFetch(`/api/v1/projects/${projectId}/flow-metrics${query ? `?${query}` : ""}`);
   if (!res.ok) {
     throw new Error(`Failed to load project flow metrics: ${res.status}`);
   }
@@ -588,17 +565,13 @@ export async function getProjectVelocity(
   projectId: string,
   filter: ProjectMetricsFilter = {},
 ): Promise<Velocity> {
-  const cookieStore = await cookies();
   const params = new URLSearchParams();
   if (filter.from) params.set("from", filter.from);
   if (filter.to) params.set("to", filter.to);
   if (filter.interval) params.set("interval", filter.interval);
   const query = params.toString();
 
-  const res = await fetch(
-    `${API_INTERNAL_URL}/api/v1/projects/${projectId}/velocity${query ? `?${query}` : ""}`,
-    { headers: { cookie: cookieStore.toString() }, cache: "no-store" },
-  );
+  const res = await apiFetch(`/api/v1/projects/${projectId}/velocity${query ? `?${query}` : ""}`);
   if (!res.ok) {
     throw new Error(`Failed to load project velocity: ${res.status}`);
   }
@@ -611,11 +584,7 @@ export async function getProjectVelocity(
  * know the request is authenticated.
  */
 export async function getTaskDependencies(projectId: string): Promise<TaskDependency[]> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/task-dependencies`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/task-dependencies`);
   if (!res.ok) {
     throw new Error(`Failed to load task dependencies: ${res.status}`);
   }
@@ -628,11 +597,7 @@ export async function getTaskDependencies(projectId: string): Promise<TaskDepend
  * authenticated.
  */
 export async function getTaskComments(taskId: string): Promise<TaskComment[]> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/tasks/${taskId}/comments`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/tasks/${taskId}/comments`);
   if (!res.ok) {
     throw new Error(`Failed to load task comments: ${res.status}`);
   }
@@ -645,11 +610,7 @@ export async function getTaskComments(taskId: string): Promise<TaskComment[]> {
  * as 404).
  */
 export const getGitlabConnection = cache(async (projectId: string): Promise<GitlabConnection | null> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/gitlab-connection`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/gitlab-connection`);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load gitlab connection: ${res.status}`);
@@ -663,11 +624,7 @@ export const getGitlabConnection = cache(async (projectId: string): Promise<Gitl
  * authenticated.
  */
 export const getLinkedGitlabProjects = cache(async (projectId: string): Promise<LinkedGitlabProject[]> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/linked-gitlab-projects`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/linked-gitlab-projects`);
   if (!res.ok) {
     throw new Error(`Failed to load linked gitlab projects: ${res.status}`);
   }
@@ -685,11 +642,7 @@ export async function getLinkedGitlabProject(
   projectId: string,
   linkId: string,
 ): Promise<LinkedGitlabProject | null> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/linked-gitlab-projects/${linkId}`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/linked-gitlab-projects/${linkId}`);
   if (res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load linked gitlab project: ${res.status}`);
@@ -703,11 +656,7 @@ export async function getLinkedGitlabProject(
  * authenticated.
  */
 export async function getLinkedGitlabProjectMembers(linkId: string): Promise<GitlabMemberOption[]> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/members`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/linked-gitlab-projects/${linkId}/members`);
   if (!res.ok) {
     throw new Error(`Failed to load linked gitlab project members: ${res.status}`);
   }
@@ -721,11 +670,7 @@ export async function getLinkedGitlabProjectMembers(linkId: string): Promise<Git
  * is authenticated.
  */
 export async function getLinkedGitlabProjectLabels(linkId: string): Promise<GitlabLabelOption[]> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/labels`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/linked-gitlab-projects/${linkId}/labels`);
   if (!res.ok) {
     throw new Error(`Failed to load linked gitlab project labels: ${res.status}`);
   }
@@ -738,11 +683,7 @@ export async function getLinkedGitlabProjectLabels(linkId: string): Promise<Gitl
  * first. Callers must already know the request is authenticated.
  */
 export async function getSyncRuns(linkId: string): Promise<SyncRun[]> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/sync-runs`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/linked-gitlab-projects/${linkId}/sync-runs`);
   if (!res.ok) {
     throw new Error(`Failed to load sync runs: ${res.status}`);
   }
@@ -758,14 +699,7 @@ export async function getSyncRuns(linkId: string): Promise<SyncRun[]> {
  * already know the request is authenticated.
  */
 export async function getWebhookEvents(linkId: string, perPage = 10): Promise<WebhookEventPage> {
-  const cookieStore = await cookies();
-  const res = await fetch(
-    `${API_INTERNAL_URL}/api/v1/linked-gitlab-projects/${linkId}/webhook-events?per_page=${perPage}`,
-    {
-      headers: { cookie: cookieStore.toString() },
-      cache: "no-store",
-    },
-  );
+  const res = await apiFetch(`/api/v1/linked-gitlab-projects/${linkId}/webhook-events?per_page=${perPage}`);
   if (!res.ok) {
     throw new Error(`Failed to load webhook events: ${res.status}`);
   }
@@ -778,11 +712,7 @@ export async function getWebhookEvents(linkId: string, perPage = 10): Promise<We
  * authenticated.
  */
 export async function getFailedSyncJobs(projectId: string): Promise<SyncJob[]> {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/sync-jobs?status=failed`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/sync-jobs?status=failed`);
   if (!res.ok) {
     throw new Error(`Failed to load failed sync jobs: ${res.status}`);
   }
@@ -796,11 +726,7 @@ export async function getFailedSyncJobs(projectId: string): Promise<SyncJob[]> {
  * Callers must already know the request is authenticated.
  */
 export const getProjectApiTokens = cache(async (projectId: string): Promise<ApiToken[]> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/api-tokens`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/api-tokens`);
   if (!res.ok) {
     throw new Error(`Failed to load api tokens: ${res.status}`);
   }
@@ -814,11 +740,7 @@ export const getProjectApiTokens = cache(async (projectId: string): Promise<ApiT
  * reported as `null` rather than thrown.
  */
 export const getProjectInvites = cache(async (projectId: string): Promise<ProjectInvite[] | null> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/invites`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/invites`);
   if (res.status === 403 || res.status === 404) return null;
   if (!res.ok) {
     throw new Error(`Failed to load project invites: ${res.status}`);
@@ -848,11 +770,7 @@ export async function getInvitePreview(token: string): Promise<ProjectInvitePrev
  * outcome the section renders a read-only state for, not a load failure.
  */
 export const getProjectMembers = cache(async (projectId: string): Promise<ProjectMember[] | null> => {
-  const cookieStore = await cookies();
-  const res = await fetch(`${API_INTERNAL_URL}/api/v1/projects/${projectId}/members`, {
-    headers: { cookie: cookieStore.toString() },
-    cache: "no-store",
-  });
+  const res = await apiFetch(`/api/v1/projects/${projectId}/members`);
   if (res.status === 403) return null;
   if (!res.ok) {
     throw new Error(`Failed to load project members: ${res.status}`);

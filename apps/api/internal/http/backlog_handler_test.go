@@ -346,6 +346,35 @@ func TestHandleUpdateBacklog(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 
+	// The Backlog collection's bulk edit sends one field and nothing else.
+	// That used to come back 400 invalid_name: name and description were
+	// plain strings on the request, so an absent name arrived as "" and was
+	// written straight over the stored one. Every other test here happens to
+	// send a name, which is why the spec (requests.yaml, "every field is
+	// optional-if-omitted") and the handler could disagree unnoticed.
+	t.Run("a body naming neither leaves name and description alone", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+			map[string]any{"name": "Sprint 1", "description": "the original"}, ownerToken)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		rec = doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+			map[string]any{"priority": "high"}, ownerToken)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, "high", body["priority"])
+		assert.Equal(t, "Sprint 1", body["name"])
+		assert.Equal(t, "the original", body["description"])
+	})
+
+	// Absent and blank stay different things: a backlog still has to be
+	// called something, so only the absent case is left alone.
+	t.Run("an explicit blank name is still rejected", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
+			map[string]any{"name": "  "}, ownerToken)
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
 	t.Run("owner can change priority; invalid priority is rejected", func(t *testing.T) {
 		rec := doRequest(t, s, http.MethodPatch, "/api/v1/backlogs/"+id,
 			map[string]any{"name": "Sprint 1", "priority": "urgent"}, ownerToken)

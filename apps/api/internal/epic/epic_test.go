@@ -159,7 +159,7 @@ func TestService_ForeignProjectIsNotFound(t *testing.T) {
 	_, err = svc.Get(ctx, stranger, created.ID)
 	assert.ErrorIs(t, err, epic.ErrNotFound)
 
-	_, err = svc.Update(ctx, stranger, created.ID, epic.UpdateParams{Name: "Renamed"})
+	_, err = svc.Update(ctx, stranger, created.ID, epic.UpdateParams{Name: optional.Present("Renamed")})
 	assert.ErrorIs(t, err, epic.ErrNotFound)
 
 	assert.ErrorIs(t, svc.Delete(ctx, stranger, created.ID), epic.ErrNotFound)
@@ -187,7 +187,7 @@ func TestService_Update_KeepsAbsentFields(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	renamed, err := svc.Update(ctx, owner, created.ID, epic.UpdateParams{Name: "Screens v2"})
+	renamed, err := svc.Update(ctx, owner, created.ID, epic.UpdateParams{Name: optional.Present("Screens v2")})
 	require.NoError(t, err)
 	assert.Equal(t, "Screens v2", renamed.Name)
 	assert.Equal(t, "develop", renamed.BaseBranch)
@@ -196,6 +196,40 @@ func TestService_Update_KeepsAbsentFields(t *testing.T) {
 	assert.Equal(t, epic.PriorityHigh, renamed.Priority)
 	require.NotNil(t, renamed.BacklogID)
 	assert.Equal(t, b.ID, *renamed.BacklogID)
+}
+
+// Name and description join the rule TestService_Update_KeepsAbsentFields
+// above states for everything else — they were plain strings until the Epic
+// collection grew a bulk edit that sends one field and nothing else, and an
+// absent name arrived as "" and was written over the stored one.
+func TestService_Update_AbsentNameAndDescriptionKeepTheStoredOnes(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	created, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{
+		Name:        "Screens",
+		Description: "the original",
+		BacklogID:   &b.ID,
+	})
+	require.NoError(t, err)
+
+	updated, err := svc.Update(ctx, owner, created.ID, epic.UpdateParams{
+		Priority: optional.Present(epic.PriorityHigh),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, epic.PriorityHigh, updated.Priority)
+	assert.Equal(t, "Screens", updated.Name)
+	assert.Equal(t, "the original", updated.Description)
+
+	// Absent and blank stay different things: an epic has to be called
+	// something, so only the absent case is left alone.
+	_, err = svc.Update(ctx, owner, created.ID, epic.UpdateParams{
+		Name: optional.Present("  "),
+	})
+	assert.ErrorIs(t, err, epic.ErrInvalidName)
 }
 
 // An explicit empty string clears an optional text field; an explicit null
@@ -213,7 +247,7 @@ func TestService_Update_ExplicitlyClearsFields(t *testing.T) {
 	require.NoError(t, err)
 
 	cleared, err := svc.Update(ctx, owner, created.ID, epic.UpdateParams{
-		Name:           "Screens",
+		Name:           optional.Present("Screens"),
 		BaseBranch:     optional.Present(""),
 		BacklogID:      optional.Present[*uuid.UUID](nil),
 		AssigneeUserID: optional.Present[*uuid.UUID](nil),
@@ -242,7 +276,7 @@ func TestService_Update_MovesTasksWithTheEpic(t *testing.T) {
 	task := q.SeedTaskInBacklog(p.ID, from.ID, owner, "Build the list screen")
 	q.SeedTaskEpic(task.ID, created.ID)
 
-	_, err = svc.Update(ctx, owner, created.ID, epic.UpdateParams{Name: "Screens", BacklogID: optional.Present(&to.ID)})
+	_, err = svc.Update(ctx, owner, created.ID, epic.UpdateParams{Name: optional.Present("Screens"), BacklogID: optional.Present(&to.ID)})
 	require.NoError(t, err)
 
 	stored := q.TaskByID(task.ID)
@@ -261,7 +295,7 @@ func TestService_Update_RejectsForeignBacklog(t *testing.T) {
 	created, err := svc.Create(ctx, owner, p.ID, epic.CreateParams{Name: "Screens"})
 	require.NoError(t, err)
 
-	_, err = svc.Update(ctx, owner, created.ID, epic.UpdateParams{Name: "Screens", BacklogID: optional.Present(&foreign.ID)})
+	_, err = svc.Update(ctx, owner, created.ID, epic.UpdateParams{Name: optional.Present("Screens"), BacklogID: optional.Present(&foreign.ID)})
 	assert.ErrorIs(t, err, epic.ErrBacklogNotInProject)
 }
 
@@ -515,31 +549,31 @@ func TestService_EstimatedPoints(t *testing.T) {
 		{
 			name:       "absent on update keeps the stored estimate",
 			create:     epic.CreateParams{Name: "Screens", EstimatedPoints: &five},
-			update:     &epic.UpdateParams{Name: "Screens"},
+			update:     &epic.UpdateParams{Name: optional.Present("Screens")},
 			wantPoints: &five,
 		},
 		{
 			name:       "an explicit null clears it",
 			create:     epic.CreateParams{Name: "Screens", EstimatedPoints: &five},
-			update:     &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present[*int](nil)},
+			update:     &epic.UpdateParams{Name: optional.Present("Screens"), EstimatedPoints: optional.Present[*int](nil)},
 			wantPoints: nil,
 		},
 		{
 			name:       "an estimate can be added after the fact",
 			create:     epic.CreateParams{Name: "Screens"},
-			update:     &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present(&five)},
+			update:     &epic.UpdateParams{Name: optional.Present("Screens"), EstimatedPoints: optional.Present(&five)},
 			wantPoints: &five,
 		},
 		{
 			name:    "zero is rejected on update",
 			create:  epic.CreateParams{Name: "Screens", EstimatedPoints: &five},
-			update:  &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present(&zero)},
+			update:  &epic.UpdateParams{Name: optional.Present("Screens"), EstimatedPoints: optional.Present(&zero)},
 			wantErr: epic.ErrInvalidEstimate,
 		},
 		{
 			name:    "negative is rejected on update",
 			create:  epic.CreateParams{Name: "Screens"},
-			update:  &epic.UpdateParams{Name: "Screens", EstimatedPoints: optional.Present(&negative)},
+			update:  &epic.UpdateParams{Name: optional.Present("Screens"), EstimatedPoints: optional.Present(&negative)},
 			wantErr: epic.ErrInvalidEstimate,
 		},
 	}

@@ -175,6 +175,36 @@ func TestHandleUpdateEpic(t *testing.T) {
 	assert.Equal(t, b.ID.String(), body["backlogId"])
 }
 
+// The Epic collection's bulk edit (set priority/progress, move to another
+// backlog) sends one field and nothing else — see the same test on the
+// Backlog handler for why that used to be a 400.
+func TestHandleUpdateEpic_LeavesAbsentNameAndDescriptionAlone(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	b := q.SeedBacklog(p.ID, "Sprint 1")
+	e := q.SeedEpic(p.ID, b.ID, "Screens")
+
+	rec := doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String(),
+		map[string]any{"description": "the original"}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	rec = doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String(),
+		map[string]any{"priority": "high"}, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "high", body["priority"])
+	assert.Equal(t, "Screens", body["name"])
+	assert.Equal(t, "the original", body["description"])
+
+	// Absent and blank stay different things: an epic still has to be called
+	// something.
+	rec = doRequest(t, s, http.MethodPatch, "/api/v1/epics/"+e.ID.String(),
+		map[string]any{"name": "  "}, token)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
 func TestHandleUpdateEpic_ForeignEpicGets404(t *testing.T) {
 	s, q := newTestServer(t)
 	owner := q.SeedUser("octocat", "octocat@example.com")

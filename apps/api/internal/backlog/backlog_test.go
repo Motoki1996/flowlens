@@ -92,22 +92,61 @@ func TestService_Update_ChangesPriority(t *testing.T) {
 
 	// An absent Priority leaves the stored value alone, the same as the two
 	// dates on UpdateParams.
-	untouched, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"}, backlog.ActorKindUser)
+	untouched, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: optional.Present("Sprint 1")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, backlog.PriorityLow, untouched.Priority)
 
 	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:     "Sprint 1",
+		Name:     optional.Present("Sprint 1"),
 		Priority: optional.Present(backlog.PriorityUrgent),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, backlog.PriorityUrgent, updated.Priority)
 
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:     "Sprint 1",
+		Name:     optional.Present("Sprint 1"),
 		Priority: optional.Present("not-a-priority"),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidPriority)
+}
+
+// A caller that sends only one field must not have the backlog renamed to ""
+// behind it — the rule every other field on UpdateParams already followed,
+// which name and description were left out of until the Backlog collection
+// grew a bulk edit that sends exactly one field.
+func TestService_Update_AbsentNameAndDescriptionKeepTheStoredOnes(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+	p := q.SeedProject(owner, "Alpha")
+	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{
+		Name:        "Sprint 1",
+		Description: "the original",
+	})
+	require.NoError(t, err)
+
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Priority: optional.Present(backlog.PriorityHigh),
+	}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, backlog.PriorityHigh, updated.Priority)
+	assert.Equal(t, "Sprint 1", updated.Name)
+	assert.Equal(t, "the original", updated.Description)
+
+	// Absent and blank stay different things: a backlog has to be called
+	// something, so only the absent case is left alone.
+	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Name: optional.Present("  "),
+	}, backlog.ActorKindUser)
+	assert.ErrorIs(t, err, backlog.ErrInvalidName)
+
+	// An explicitly empty description is a real value, not an absent field.
+	cleared, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
+		Description: optional.Present(""),
+	}, backlog.ActorKindUser)
+	require.NoError(t, err)
+	assert.Equal(t, "", cleared.Description)
 }
 
 // Progress is the backlog's own four-stage work state, independent of the
@@ -123,19 +162,19 @@ func TestService_Update_ChangesProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, backlog.ProgressNotStarted, created.Progress, "an absent progress defaults to not_started")
 
-	untouched, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"}, backlog.ActorKindUser)
+	untouched, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: optional.Present("Sprint 1")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, backlog.ProgressNotStarted, untouched.Progress)
 
 	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:     "Sprint 1",
+		Name:     optional.Present("Sprint 1"),
 		Progress: optional.Present(backlog.ProgressInProgress),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, backlog.ProgressInProgress, updated.Progress)
 
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:     "Sprint 1",
+		Name:     optional.Present("Sprint 1"),
 		Progress: optional.Present("nearly-done"),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidProgress)
@@ -155,7 +194,7 @@ func TestService_Update_ChangingProgress_RecordsOneProgressEvent(t *testing.T) {
 	assert.Empty(t, mustListBacklogProgressEvents(t, q, created.ID), "creating a backlog writes no progress event")
 
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:     "Sprint 1",
+		Name:     optional.Present("Sprint 1"),
 		Progress: optional.Present(backlog.ProgressInProgress),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -178,12 +217,12 @@ func TestService_Update_UnchangedProgress_RecordsNoProgressEvent(t *testing.T) {
 	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1", Progress: backlog.ProgressInProgress})
 	require.NoError(t, err)
 
-	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1, edited"}, backlog.ActorKindUser)
+	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: optional.Present("Sprint 1, edited")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Empty(t, mustListBacklogProgressEvents(t, q, created.ID))
 
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:     "Sprint 1, edited",
+		Name:     optional.Present("Sprint 1, edited"),
 		Progress: optional.Present(backlog.ProgressInProgress),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -202,7 +241,7 @@ func TestService_Update_ChangingProgress_AttributesActorKind(t *testing.T) {
 	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1"})
 	require.NoError(t, err)
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:     "Sprint 1",
+		Name:     optional.Present("Sprint 1"),
 		Progress: optional.Present(backlog.ProgressInProgress),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -212,7 +251,7 @@ func TestService_Update_ChangingProgress_AttributesActorKind(t *testing.T) {
 	agentBacklog, err := svc.Create(ctx, other, p2.ID, backlog.CreateParams{Name: "Agent backlog"})
 	require.NoError(t, err)
 	_, err = svc.Update(ctx, other, agentBacklog.ID, backlog.UpdateParams{
-		Name:     "Agent backlog",
+		Name:     optional.Present("Agent backlog"),
 		Progress: optional.Present(backlog.ProgressInProgress),
 	}, backlog.ActorKindAgent)
 	require.NoError(t, err)
@@ -402,7 +441,7 @@ func TestService_ScopesEveryOperationToProjectOwner(t *testing.T) {
 		p := q.SeedProject(owner, "Alpha")
 		b := q.SeedBacklog(p.ID, "Sprint 1")
 
-		_, err := svc.Update(ctx, other, b.ID, backlog.UpdateParams{Name: "Hijacked"}, backlog.ActorKindUser)
+		_, err := svc.Update(ctx, other, b.ID, backlog.UpdateParams{Name: optional.Present("Hijacked")}, backlog.ActorKindUser)
 		require.ErrorIs(t, err, backlog.ErrNotFound)
 
 		still, err := svc.Get(ctx, owner, b.ID)
@@ -443,8 +482,8 @@ func TestService_Update_ChangesNameAndDescription(t *testing.T) {
 	b := q.SeedBacklog(p.ID, "Sprint 1")
 
 	updated, err := svc.Update(context.Background(), owner, b.ID, backlog.UpdateParams{
-		Name:        "Renamed",
-		Description: "new description",
+		Name:        optional.Present("Renamed"),
+		Description: optional.Present("new description"),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed", updated.Name)
@@ -510,7 +549,7 @@ func TestService_Update_LeavesAbsentDatesUntouched(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Renamed"}, backlog.ActorKindUser)
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: optional.Present("Renamed")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed", updated.Name)
 	assert.Equal(t, date(2026, 8, 1), updated.StartDate)
@@ -526,7 +565,7 @@ func TestService_Update_SetsAndClearsSchedule(t *testing.T) {
 	b := q.SeedBacklog(p.ID, "Sprint 1")
 
 	set, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
-		Name:      "Sprint 1",
+		Name:      optional.Present("Sprint 1"),
 		StartDate: optional.Present(date(2026, 8, 1)),
 		DueOn:     optional.Present(date(2026, 8, 31)),
 	}, backlog.ActorKindUser)
@@ -534,7 +573,7 @@ func TestService_Update_SetsAndClearsSchedule(t *testing.T) {
 	assert.Equal(t, date(2026, 8, 1), set.StartDate)
 
 	cleared, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
-		Name:      "Sprint 1",
+		Name:      optional.Present("Sprint 1"),
 		StartDate: optional.Present[*time.Time](nil),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -558,7 +597,7 @@ func TestService_Update_RejectsStartAfterStoredDue(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:      "Sprint 1",
+		Name:      optional.Present("Sprint 1"),
 		StartDate: optional.Present(date(2026, 9, 15)),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidSchedule)
@@ -643,7 +682,7 @@ func TestService_Update_SetsKeepsAndClearsDefaultLinkedGitlabProject(t *testing.
 	b := q.SeedBacklog(p.ID, "Sprint 1")
 
 	set, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
-		Name:                         "Sprint 1",
+		Name:                         optional.Present("Sprint 1"),
 		DefaultLinkedGitlabProjectID: optional.Present(&link.ID),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -651,13 +690,13 @@ func TestService_Update_SetsKeepsAndClearsDefaultLinkedGitlabProject(t *testing.
 	assert.Equal(t, link.ID, *set.DefaultLinkedGitlabProjectID)
 
 	// A rename must not silently reset where this backlog's issues go.
-	renamed, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{Name: "Renamed"}, backlog.ActorKindUser)
+	renamed, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{Name: optional.Present("Renamed")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	require.NotNil(t, renamed.DefaultLinkedGitlabProjectID)
 	assert.Equal(t, link.ID, *renamed.DefaultLinkedGitlabProjectID)
 
 	cleared, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
-		Name:                         "Renamed",
+		Name:                         optional.Present("Renamed"),
 		DefaultLinkedGitlabProjectID: optional.Present[*uuid.UUID](nil),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -675,7 +714,7 @@ func TestService_Update_RejectsLinkedGitlabProjectOutsideProject(t *testing.T) {
 	b := q.SeedBacklog(p.ID, "Sprint 1")
 
 	_, err := svc.Update(ctx, owner, b.ID, backlog.UpdateParams{
-		Name:                         "Sprint 1",
+		Name:                         optional.Present("Sprint 1"),
 		DefaultLinkedGitlabProjectID: optional.Present(&foreign.ID),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrLinkNotInProject)
@@ -753,13 +792,13 @@ func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Absent leaves the stored value untouched.
-	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"}, backlog.ActorKindUser)
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: optional.Present("Sprint 1")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, "main", updated.BaseBranch)
 
 	// Explicit value overwrites it.
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:       "Sprint 1",
+		Name:       optional.Present("Sprint 1"),
 		BaseBranch: optional.Present("develop"),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -767,7 +806,7 @@ func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
 
 	// Explicit empty string clears it back to "not set".
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:       "Sprint 1",
+		Name:       optional.Present("Sprint 1"),
 		BaseBranch: optional.Present(""),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)
@@ -775,7 +814,7 @@ func TestService_Update_SetsKeepsAndClearsBaseBranch(t *testing.T) {
 
 	// An invalid explicit value is rejected.
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:       "Sprint 1",
+		Name:       optional.Present("Sprint 1"),
 		BaseBranch: optional.Present("bad branch"),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidBaseBranch)
@@ -817,14 +856,14 @@ func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
 	require.NoError(t, err)
 
 	// Absent leaves the stored values untouched.
-	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 1"}, backlog.ActorKindUser)
+	updated, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: optional.Present("Sprint 1")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	assert.Equal(t, "internal/payments/**", updated.AllowedScope)
 	assert.Equal(t, "internal/auth/**", updated.ForbiddenScope)
 
 	// Explicit value overwrites it.
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:           "Sprint 1",
+		Name:           optional.Present("Sprint 1"),
 		AllowedScope:   optional.Present("cmd/**"),
 		ForbiddenScope: optional.Present("vendor/**"),
 	}, backlog.ActorKindUser)
@@ -834,7 +873,7 @@ func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
 
 	// Explicit empty string clears it back to "not set".
 	updated, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:           "Sprint 1",
+		Name:           optional.Present("Sprint 1"),
 		AllowedScope:   optional.Present(""),
 		ForbiddenScope: optional.Present(""),
 	}, backlog.ActorKindUser)
@@ -844,7 +883,7 @@ func TestService_Update_SetsKeepsAndClearsScope(t *testing.T) {
 
 	// An invalid explicit value is rejected.
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:           "Sprint 1",
+		Name:           optional.Present("Sprint 1"),
 		ForbiddenScope: optional.Present(strings.Repeat("a", 20001)),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrInvalidScope)

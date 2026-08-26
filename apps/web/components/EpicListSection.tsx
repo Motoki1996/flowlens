@@ -18,7 +18,7 @@ import type {
   Task,
 } from "@/types";
 import { PROGRESS_COLUMNS, PROGRESS_LABELS } from "@/lib/progress";
-import { PRIORITY_COLUMNS, PRIORITY_LABELS } from "@/lib/priority";
+import { PRIORITY_LABELS, PRIORITY_OPTIONS } from "@/lib/priority";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CreateFormRegion } from "@/components/CreateFormRegion";
@@ -29,8 +29,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PriorityBadge } from "@/components/PriorityBadge";
-import { ProgressBadge } from "@/components/ProgressBadge";
+import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
+import { ProgressBadge, ProgressDot } from "@/components/ProgressBadge";
 import { EpicForm } from "@/components/EpicForm";
 import { EpicDeleteButton } from "@/components/EpicDeleteButton";
 import { EpicBoardSection } from "@/components/EpicBoardSection";
@@ -275,8 +275,9 @@ export function EpicListSection({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All priorities</SelectItem>
-                  {PRIORITY_COLUMNS.map((option) => (
+                  {PRIORITY_OPTIONS.map((option) => (
                     <SelectItem key={option.priority} value={option.priority}>
+                      <PriorityDot priority={option.priority} />
                       {option.label}
                     </SelectItem>
                   ))}
@@ -298,6 +299,7 @@ export function EpicListSection({
                   <SelectItem value="all">All progress</SelectItem>
                   {PROGRESS_COLUMNS.map((option) => (
                     <SelectItem key={option.progress} value={option.progress}>
+                      <ProgressDot progress={option.progress} />
                       {option.label}
                     </SelectItem>
                   ))}

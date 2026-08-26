@@ -17,6 +17,9 @@ import type {
 } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { SIZE_OPTIONS, SIZE_POINTS } from "@/lib/size";
+import { PRIORITY_OPTIONS } from "@/lib/priority";
+import { PriorityDot } from "@/components/PriorityBadge";
+import { ProgressDot } from "@/components/ProgressBadge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -304,10 +307,12 @@ export function TaskEditForm({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="low">Low</SelectItem>
-            <SelectItem value="medium">Medium</SelectItem>
-            <SelectItem value="high">High</SelectItem>
-            <SelectItem value="urgent">Urgent</SelectItem>
+            {PRIORITY_OPTIONS.map((option) => (
+              <SelectItem key={option.priority} value={option.priority}>
+                <PriorityDot priority={option.priority} />
+                {option.label}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -342,6 +347,7 @@ export function TaskEditForm({
           <SelectContent>
             {PROGRESS_COLUMNS.map((option) => (
               <SelectItem key={option.progress} value={option.progress}>
+                <ProgressDot progress={option.progress} />
                 {option.label}
               </SelectItem>
             ))}

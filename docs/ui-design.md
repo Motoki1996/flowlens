@@ -316,7 +316,11 @@ component, widened by its own splitter.
 
 A **single view's heading** clips the same way, and its header row does not
 wrap: Edit and Delete belong beside the name however long it is, never pushed
-onto a line of their own. A **breadcrumb** takes a share of the line and no
+onto a line of their own. That clip needs `min-w-0` on **every** box between
+the heading and the card — `CardHeader` is a grid, and a grid item's automatic
+minimum size is its content's, so a `nowrap` heading sizes the track and runs
+the whole card off the screen rather than being cut. The same is true of a
+board column, which is a grid item too. A **breadcrumb** takes a share of the line and no
 more (`CRUMB_WIDTH`) — it points at another screen rather than being where its
 object is read, and a trail that wrapped to three lines pushed the heading
 below the fold.

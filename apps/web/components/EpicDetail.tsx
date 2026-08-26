@@ -203,8 +203,12 @@ export function EpicDetail({
             <CardHeader>
               {/* No flex-wrap: the actions belong beside the name however long
                   it is, and a name that doesn't fit clips instead of pushing
-                  them onto a line of their own. */}
-              <div className="flex items-start justify-between gap-3">
+                  them onto a line of their own. min-w-0 is what makes that
+                  clip possible — CardHeader is a grid, and a grid item's
+                  automatic minimum size is its content's, so a nowrap heading
+                  would otherwise size the track and run the card off the
+                  screen instead of being cut. */}
+              <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <TruncatedName
                     as="h1"

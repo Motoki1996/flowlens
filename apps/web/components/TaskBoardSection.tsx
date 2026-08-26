@@ -133,7 +133,10 @@ export function TaskBoardSection({
                 e.preventDefault();
                 handleDrop(column.progress);
               }}
-              className={`bg-muted/40 rounded-md p-2 ${
+              // min-w-0: a column is a grid item, whose automatic minimum
+              // size is its content's — without it a single unbreakable title
+              // widens the column and pushes the board off the screen.
+              className={`bg-muted/40 min-w-0 rounded-md p-2 ${
                 dragOverProgress === column.progress ? "ring-primary/50 ring-2" : ""
               }`}
             >

@@ -7,7 +7,11 @@ import Link from "next/link";
 import { Plus, X } from "lucide-react";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
-import { gitlabConnectionPath, taskPath, UNCLASSIFIED_BACKLOG } from "@/lib/routes";
+import {
+  gitlabConnectionPath,
+  taskPath,
+  UNCLASSIFIED_BACKLOG,
+} from "@/lib/routes";
 import { fromDateParam } from "@/lib/dates";
 import { dueStatus } from "@/lib/dashboard";
 import { useViewMode } from "@/lib/useViewMode";
@@ -1053,16 +1057,23 @@ export function TaskListSection({
               {groups.map((group) => {
                 return (
                   <div key={group.key}>
-                    <h3 className="text-muted-foreground mb-2 flex items-center gap-2 text-sm font-medium">
+                    <h3 className="text-foreground mb-2 flex items-center gap-2 text-sm font-semibold">
                       <SelectAllCheckbox
                         label={`Select all in ${group.name}`}
                         ids={group.tasks.map((t) => t.id)}
                         selected={selected}
                         onChange={setSelected}
                       />
-                      {group.name} ({group.tasks.length})
+                      {group.name}{" "}
+                      <span className="text-muted-foreground font-normal">
+                        ({group.tasks.length})
+                      </span>
                     </h3>
-                    <ul className="space-y-2">
+                    {/* The rows are indented under their backlog heading and
+                        share a left rule, so which group a task belongs to is
+                        readable at a glance rather than inferred from where
+                        the previous heading was. */}
+                    <ul className="border-border ml-2 space-y-2 border-l pl-4">
                       {group.tasks.map((task) => {
                         return (
                           <li key={task.id} className="flex items-center gap-2">
@@ -1155,7 +1166,10 @@ export function TaskListSection({
             rather than the whole match — the header count above stays the
             server's, which is the number the pager is walking. */}
         {!error && (page > 1 || nextPage > 0) ? (
-          <nav aria-label="Pagination" className="mt-4 flex items-center justify-between gap-3">
+          <nav
+            aria-label="Pagination"
+            className="mt-4 flex items-center justify-between gap-3"
+          >
             <p className="text-muted-foreground text-xs">
               {tasks.length === 0 ? 0 : (page - 1) * perPage + 1}–
               {(page - 1) * perPage + tasks.length}
@@ -1167,7 +1181,9 @@ export function TaskListSection({
                 variant="outline"
                 size="sm"
                 disabled={page <= 1}
-                onClick={() => updateQuery({ page: page > 2 ? String(page - 1) : undefined })}
+                onClick={() =>
+                  updateQuery({ page: page > 2 ? String(page - 1) : undefined })
+                }
               >
                 Previous
               </Button>

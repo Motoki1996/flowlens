@@ -3,6 +3,7 @@ import { projectPath } from "@/lib/routes";
 import type { Project } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 /**
  * DashboardSyncFailuresSection lists every project with at least one
@@ -32,7 +33,7 @@ export function DashboardSyncFailuresSection({ projects }: { projects: Project[]
                   href={projectPath(project.id)}
                   className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
                 >
-                  <span className="text-foreground truncate">{project.name}</span>
+                  <TruncatedName text={project.name} className="text-foreground" />
                   <Badge
                     variant="outline"
                     className="border-destructive/50 text-destructive shrink-0"

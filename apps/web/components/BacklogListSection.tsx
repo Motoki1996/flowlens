@@ -42,6 +42,7 @@ import {
 import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
 import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
 import { ProgressBadge, ProgressDot } from "@/components/ProgressBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 import { BacklogBoardSection } from "@/components/BacklogBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
@@ -712,14 +713,19 @@ export function BacklogListSection({
                         <div className="flex items-center justify-between gap-4">
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <Link
+                              {/* The name clips rather than wraps: a long one
+                                  used to push the badges onto their own line
+                                  and grow the row. The full text is on hover
+                                  when it did clip. */}
+                              <TruncatedName
                                 href={backlogPath(projectId, backlog.id)}
+                                text={backlog.name}
                                 className="text-foreground text-sm hover:underline"
-                              >
-                                {backlog.name}
-                              </Link>
-                              <PriorityBadge priority={backlog.priority} />
-                              <ProgressBadge progress={backlog.progress} />
+                              />
+                              <span className="flex shrink-0 items-center gap-2">
+                                <PriorityBadge priority={backlog.priority} />
+                                <ProgressBadge progress={backlog.progress} />
+                              </span>
                             </div>
                             {backlogScheduleLabel(backlog) ? (
                               <p className="text-muted-foreground truncate text-xs">

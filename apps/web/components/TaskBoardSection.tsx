@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { API_PUBLIC_URL } from "@/lib/config";
 import { csrfHeaders } from "@/lib/csrf";
 import { taskPath } from "@/lib/routes";
@@ -15,6 +14,7 @@ import { DueDateLabel } from "@/components/DueDateLabel";
 import { LabelBadge } from "@/components/LabelBadge";
 import { PriorityBadge } from "@/components/PriorityBadge";
 import { SyncBadge } from "@/components/SyncBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 const UNCLASSIFIED_LABEL = "Unclassified";
 
@@ -171,12 +171,15 @@ export function TaskBoardSection({
                         draggingId === task.id ? "opacity-50" : ""
                       } ${task.status === "closed" ? "opacity-70" : ""}`}
                     >
-                      <Link
+                      {/* Two lines, then the rest on hover: a card is only as
+                          wide as its column, and a title left to run freely
+                          stretched the card instead of fitting it. */}
+                      <TruncatedName
                         href={taskPath(projectId, task.id)}
+                        text={task.title}
+                        lines={2}
                         className="text-foreground block text-sm hover:underline"
-                      >
-                        {task.title}
-                      </Link>
+                      />
 
                       <p className="text-muted-foreground truncate text-xs">
                         {task.backlogId

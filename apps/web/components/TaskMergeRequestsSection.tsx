@@ -3,6 +3,7 @@ import { mergeRequestPath } from "@/lib/routes";
 import type { MergeRequest } from "@/types";
 import { MergeRequestStateBadge } from "@/components/MergeRequestStateBadge";
 import { PipelineStatusBadge } from "@/components/PipelineStatusBadge";
+import { TruncatedName } from "@/components/TruncatedName";
 
 /**
  * TaskMergeRequestsSection is the Task single view's reverse link to the
@@ -31,9 +32,10 @@ export function TaskMergeRequestsSection({
             href={mergeRequestPath(projectId, mr.id)}
             className="border-border hover:border-ring flex items-center justify-between gap-4 rounded-md border px-3 py-2 text-sm transition-colors"
           >
-            <span className="text-foreground truncate">
-              !{mr.number} {mr.title}
-            </span>
+            <TruncatedName
+              text={`!${mr.number} ${mr.title}`}
+              className="text-foreground"
+            />
             <span className="flex shrink-0 items-center gap-2 text-xs">
               <PipelineStatusBadge status={mr.pipelineStatus} />
               <MergeRequestStateBadge state={mr.state} />

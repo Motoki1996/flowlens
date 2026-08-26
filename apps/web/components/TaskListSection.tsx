@@ -43,6 +43,7 @@ import { ProgressBadge, ProgressDot } from "@/components/ProgressBadge";
 import { SyncBadge } from "@/components/SyncBadge";
 import { TaskBoardSection } from "@/components/TaskBoardSection";
 import { TaskSearchBox } from "@/components/TaskSearchBox";
+import { TruncatedName } from "@/components/TruncatedName";
 import { ViewModeToggle, type ViewMode } from "@/components/ViewModeToggle";
 
 /**
@@ -1054,9 +1055,10 @@ export function TaskListSection({
                               className="border-border hover:border-ring flex flex-1 flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-md border px-3 py-2 text-sm transition-colors"
                             >
                               <span className="flex min-w-0 items-center gap-2">
-                                <span className="text-foreground truncate">
-                                  {task.title}
-                                </span>
+                                <TruncatedName
+                                  text={task.title}
+                                  className="text-foreground"
+                                />
                                 {task.labels.length > 0 ? (
                                   <span className="flex shrink-0 flex-wrap gap-1">
                                     {task.labels
@@ -1090,9 +1092,9 @@ export function TaskListSection({
                                       doesn't say, and one backlog group
                                       routinely holds several. */}
                                 {task.epicId && epicNames.has(task.epicId) ? (
-                                  <span className="truncate">
-                                    {epicNames.get(task.epicId)}
-                                  </span>
+                                  <TruncatedName
+                                    text={epicNames.get(task.epicId) ?? ""}
+                                  />
                                 ) : null}
                                 {task.assigneeGitlabUsername ? (
                                   <span>{task.assigneeGitlabUsername}</span>

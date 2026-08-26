@@ -7,7 +7,17 @@ vi.mock("next/headers", () => ({
   }),
 }));
 
-import { getBacklogs, getCurrentUser, getTask, getTaskDependencies, getTasks } from "./api";
+// The 401 answer is a redirect to /login, so the readers need next/navigation
+// too. redirect() throws in Next itself (that is how it unwinds the render);
+// the mock does the same so a caller can't accidentally carry on past it.
+const redirectMock = vi.fn((path: string) => {
+  throw new Error(`NEXT_REDIRECT:${path}`);
+});
+vi.mock("next/navigation", () => ({
+  redirect: (path: string) => redirectMock(path),
+}));
+
+import { getBacklogs, getCurrentUser, getProject, getTask, getTaskDependencies, getTasks } from "./api";
 
 describe("getCurrentUser", () => {
   beforeEach(() => {
@@ -176,5 +186,46 @@ describe("getTask", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 404 })));
     const result = await getTask("unknown");
     expect(result).toBeNull();
+  });
+});
+
+/**
+ * Every reader but getCurrentUser answers a 401 by redirecting to /login
+ * rather than throwing "Failed to load …" (apiFetch). A page and the layout
+ * above it render at the same time, so the layout's own redirect can't be
+ * relied on to have happened first.
+ */
+describe("401 handling", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    redirectMock.mockClear();
+  });
+
+  it("redirects to /login instead of throwing a load failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
+
+    await expect(getProject("p1")).rejects.toThrow("NEXT_REDIRECT:/login");
+    expect(redirectMock).toHaveBeenCalledWith("/login");
+  });
+
+  it("does the same for a collection reader", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
+
+    await expect(getBacklogs("p1")).rejects.toThrow("NEXT_REDIRECT:/login");
+    expect(redirectMock).toHaveBeenCalledWith("/login");
+  });
+
+  it("leaves every other failure throwing, so it still reads as an API failure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 500 })));
+
+    await expect(getProject("p1")).rejects.toThrow("Failed to load project: 500");
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
+  it("still lets getCurrentUser report a signed-out visitor as null", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 401 })));
+
+    await expect(getCurrentUser()).resolves.toBeNull();
+    expect(redirectMock).not.toHaveBeenCalled();
   });
 });

@@ -44,7 +44,7 @@ func TestService_Assignee_RejectsNonMember(t *testing.T) {
 	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1"})
 	require.NoError(t, err)
 	_, err = svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:           "Sprint 1",
+		Name:           optional.Present("Sprint 1"),
 		AssigneeUserID: optional.Present(&outsider),
 	}, backlog.ActorKindUser)
 	assert.ErrorIs(t, err, backlog.ErrAssigneeNotMember)
@@ -63,14 +63,14 @@ func TestService_Update_AbsentAssignee_KeepsCurrent(t *testing.T) {
 	created, err := svc.Create(ctx, owner, p.ID, backlog.CreateParams{Name: "Sprint 1", AssigneeUserID: &member})
 	require.NoError(t, err)
 
-	renamed, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: "Sprint 2"}, backlog.ActorKindUser)
+	renamed, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{Name: optional.Present("Sprint 2")}, backlog.ActorKindUser)
 	require.NoError(t, err)
 	require.NotNil(t, renamed.AssigneeUserID)
 	assert.Equal(t, member, *renamed.AssigneeUserID)
 	assert.Equal(t, "hubot", renamed.AssigneeUsername)
 
 	unassigned, err := svc.Update(ctx, owner, created.ID, backlog.UpdateParams{
-		Name:           "Sprint 2",
+		Name:           optional.Present("Sprint 2"),
 		AssigneeUserID: optional.Present[*uuid.UUID](nil),
 	}, backlog.ActorKindUser)
 	require.NoError(t, err)

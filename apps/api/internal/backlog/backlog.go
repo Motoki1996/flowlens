@@ -570,8 +570,13 @@ func (s *Service) ProjectID(ctx context.Context, backlogID uuid.UUID) (uuid.UUID
 // leaves its planned period untouched rather than clearing it. An explicit
 // null clears the date.
 type UpdateParams struct {
-	Name        string
-	Description string
+	// Name and Description follow the same absent-keeps-the-current-value
+	// rule as every field below, which is what makes this a real partial
+	// update: a caller changing only a backlog's priority sends only that,
+	// and must not have the backlog renamed to "" behind it. An explicit
+	// empty Name is still rejected — a backlog has to be called something.
+	Name        optional.Optional[string]
+	Description optional.Optional[string]
 	StartDate   optional.Optional[*time.Time]
 	DueOn       optional.Optional[*time.Time]
 	// Priority left absent keeps the backlog's current priority; an
@@ -609,11 +614,6 @@ type UpdateParams struct {
 // changes — this is the sole place that table is ever written, mirroring
 // internal/task.Service.Update's own progress-event insertion point.
 func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p UpdateParams, actorKind string) (Backlog, error) {
-	normalized, err := normalizeName(p.Name)
-	if err != nil {
-		return Backlog{}, err
-	}
-
 	// The UPDATE writes every column, so absent dates have to be resolved
 	// against the stored row first. Get is viewer-scoped, so a foreign
 	// backlog stops here with ErrNotFound before anything is written; the
@@ -624,6 +624,10 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 		return Backlog{}, err
 	}
 	if err := s.authorize(ctx, ownerID, current.ProjectID, project.RoleMember); err != nil {
+		return Backlog{}, err
+	}
+	normalized, err := normalizeName(p.Name.Or(current.Name))
+	if err != nil {
 		return Backlog{}, err
 	}
 	startDate := p.StartDate.Or(current.StartDate)
@@ -683,7 +687,7 @@ func (s *Service) Update(ctx context.Context, ownerID, backlogID uuid.UUID, p Up
 			ID:                           backlogID,
 			OwnerUserID:                  ownerID,
 			Name:                         normalized,
-			Description:                  p.Description,
+			Description:                  p.Description.Or(current.Description),
 			StartDate:                    toDate(startDate),
 			DueOn:                        toDate(dueOn),
 			Priority:                     priority,

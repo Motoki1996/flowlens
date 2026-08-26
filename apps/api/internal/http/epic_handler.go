@@ -46,15 +46,17 @@ type createEpicRequest struct {
 	AssigneeUserID *uuid.UUID `json:"assigneeUserId"`
 }
 
-// Everything except name/description is Optional, so PATCH stays a
-// partial update: an absent key keeps the stored value, an explicit null
-// clears a nullable field, and an explicit empty string clears baseBranch/
-// allowedScope/forbiddenScope (none of which has a null case) or resets
-// priority/progress to their default.
+// Every field is Optional, so PATCH is a real partial update: an absent key
+// keeps the stored value, an explicit null clears a nullable field, and an
+// explicit empty string clears baseBranch/allowedScope/forbiddenScope (none
+// of which has a null case) or resets priority/progress to their default.
+//
+// Name and description were the exception until they weren't — see
+// updateBacklogRequest, which had the same bug and for the same reason.
 type updateEpicRequest struct {
 	BacklogID                    optional.Optional[*uuid.UUID] `json:"backlogId"`
-	Name                         string                        `json:"name"`
-	Description                  string                        `json:"description"`
+	Name                         optional.Optional[string]     `json:"name"`
+	Description                  optional.Optional[string]     `json:"description"`
 	StartDate                    optional.Optional[*time.Time] `json:"startDate"`
 	DueOn                        optional.Optional[*time.Time] `json:"dueOn"`
 	Priority                     optional.Optional[string]     `json:"priority"`

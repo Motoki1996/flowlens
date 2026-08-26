@@ -592,9 +592,14 @@ func (s *Service) ProjectID(ctx context.Context, epicID uuid.UUID) (uuid.UUID, e
 type UpdateParams struct {
 	// BacklogID absent keeps the epic where it is; an explicit null unfiles
 	// it. Either way the epic's tasks follow it, in the same transaction.
-	BacklogID   optional.Optional[*uuid.UUID]
-	Name        string
-	Description string
+	BacklogID optional.Optional[*uuid.UUID]
+	// Name and Description follow the same absent-keeps-the-current-value
+	// rule as every field below, which is what makes this a real partial
+	// update: a caller changing only an epic's priority sends only that, and
+	// must not have the epic renamed to "" behind it. An explicit empty Name
+	// is still rejected — an epic has to be called something.
+	Name        optional.Optional[string]
+	Description optional.Optional[string]
 	StartDate   optional.Optional[*time.Time]
 	DueOn       optional.Optional[*time.Time]
 	// Priority absent keeps the current value; an explicit empty string resets
@@ -641,7 +646,7 @@ func (s *Service) Update(ctx context.Context, ownerID, epicID uuid.UUID, p Updat
 	}
 
 	fields, err := normalize(normalizeInput{
-		Name:           p.Name,
+		Name:           p.Name.Or(current.Name),
 		StartDate:      p.StartDate.Or(current.StartDate),
 		DueOn:          p.DueOn.Or(current.DueOn),
 		Priority:       p.Priority.Or(current.Priority),
@@ -693,7 +698,7 @@ func (s *Service) Update(ctx context.Context, ownerID, epicID uuid.UUID, p Updat
 			OwnerUserID:                  ownerID,
 			BacklogID:                    toUUID(backlogID),
 			Name:                         fields.Name,
-			Description:                  p.Description,
+			Description:                  p.Description.Or(current.Description),
 			StartDate:                    toDate(startDate),
 			DueOn:                        toDate(dueOn),
 			Priority:                     fields.Priority,

@@ -8,6 +8,29 @@ procedure itself.
 
 ## Unreleased
 
+### Added
+
+- **A cron-able auto-updater for self-hosters**
+  ([`scripts/flowlens-autoupdate.sh`](scripts/flowlens-autoupdate.sh)). It
+  compares the `FLOWLENS_VERSION` pin in `.env` against the latest GitHub
+  release and, when that release is one it can apply safely, dumps the
+  database, moves the pin, pulls, restarts, and waits for `/app/api version`
+  to actually report the new tag before calling it done.
+
+  The point is what it *won't* do unattended: it holds — notifying and
+  exiting non-zero rather than upgrading — on a release whose notes carry a
+  ⚠️ Breaking marker, on anything more than a patch bump by default, across a
+  major version, on empty release notes, and on an instance still pinned to
+  `latest`. Those gates are why an auto-updater is defensible here at all;
+  v0.2.0 and v0.3.0 would both have been held. It never rolls back on its
+  own either, since that needs the database restored alongside the image.
+
+  Needs nothing on the host but bash, curl and the Docker CLI. A
+  closed-network install can't use it — a mirrored registry carries tags but
+  no release notes, so the Breaking gate would have nothing to read. See the
+  new "Automatic updates" section in
+  [`docs/self-hosting.md`](docs/self-hosting.md).
+
 ## v0.3.0 — 2026-08-26
 
 ### Added

@@ -3447,9 +3447,11 @@ paths:
             format: date-time
         - in: query
           name: sort
+          description: Order of the returned page. Defaults to "created" (gitlab_created_at, newest first) when omitted.
           schema:
             type: string
             enum:
+              - created
               - updated
         - in: query
           name: page

@@ -442,7 +442,7 @@ export type MergeRequestFilter = {
   taskId?: string;
   since?: string;
   until?: string;
-  sort?: "updated";
+  sort?: "created" | "updated";
   page?: number;
   perPage?: number;
 };

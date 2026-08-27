@@ -26,8 +26,8 @@ func mergeRequestIDFromURL(r *http.Request) (uuid.UUID, bool) {
 // state ("opened", "merged", "closed", "locked"); since/until are
 // YYYY-MM-DD dates bounding gitlab_created_at, the same format
 // parseDateQueryParam already uses for task due/start dates; sort accepts
-// "updated" to rank by gitlab_updated_at instead of the default
-// gitlab_created_at. taskId lets the Task single view fetch its own related
+// "updated" to rank by gitlab_updated_at, or "created" to name the default
+// gitlab_created_at order explicitly. taskId lets the Task single view fetch its own related
 // merge requests through this same endpoint rather than a separate route.
 // page/per_page are the same 1-based paging parameters
 // handleListWebhookEvents takes, clamped in mergerequest.Service.
@@ -67,8 +67,8 @@ func parseMergeRequestListFilter(r *http.Request) (mergerequest.ListFilter, erro
 	filter.Until = until
 
 	if v := r.URL.Query().Get("sort"); v != "" {
-		if v != mergerequest.SortUpdated {
-			return mergerequest.ListFilter{}, errors.New("sort must be \"updated\"")
+		if v != mergerequest.SortCreated && v != mergerequest.SortUpdated {
+			return mergerequest.ListFilter{}, errors.New("sort must be \"created\" or \"updated\"")
 		}
 		filter.Sort = v
 	}

@@ -61,7 +61,7 @@ export function MergeRequestListSection({
   mergeRequests: MergeRequest[];
   state?: MergeRequestState;
   author?: string;
-  sort?: "updated";
+  sort?: "created" | "updated";
   page?: number;
   perPage?: number;
   nextPage?: number;

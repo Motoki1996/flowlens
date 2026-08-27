@@ -2093,6 +2093,11 @@ here.
   states" stays one click away, and `?state=all` is the explicit opt-out.
   Paging is held in the URL as `?page=`, so a deep page can be linked to and
   survives a refresh; changing any filter resets to page 1.
+- `?sort=` takes `created` (`gitlab_created_at` descending, the order an
+  omitted `?sort=` also gives) or `updated` (`gitlab_updated_at` descending).
+  `created` is deliberately a real value rather than "omit the parameter":
+  the screen's own Sort select has to be able to send the default order back
+  when you switch away from `updated`.
 - Four indexes on `merge_requests` (migration 28) back the list's two sorts,
   each in a state-filtered and an unfiltered form. Each leads with the **sort
   key**, not `repository_id`: the project scope reaches this query through a

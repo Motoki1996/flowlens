@@ -26,10 +26,16 @@ var (
 	ErrForbidden = errors.New("mergerequest: forbidden")
 )
 
-// Sort values ListFilter.Sort accepts. The empty string ("") sorts by
+// Sort values ListFilter.Sort accepts. SortCreated sorts by
 // gitlab_created_at DESC, the default "newest first" order; SortUpdated
-// switches to gitlab_updated_at DESC.
-const SortUpdated = "updated"
+// switches to gitlab_updated_at DESC. The empty string ("") is the older,
+// still-accepted spelling of SortCreated: the default was originally
+// expressible only by omitting the parameter, which left the collection
+// view's own "Newest created" option with no value it could send.
+const (
+	SortCreated = "created"
+	SortUpdated = "updated"
+)
 
 // Paging bounds for List. A repository that has been synced for a year or
 // two holds thousands of merged merge requests, so the collection view is
@@ -178,8 +184,8 @@ type ListFilter struct {
 	TaskID *uuid.UUID // non-nil: only the merge request(s) linked to this task
 	Since  *time.Time // non-nil: only merge requests GitLab created on or after this time
 	Until  *time.Time // non-nil: only merge requests GitLab created on or before this time
-	// Sort is "" (gitlab_created_at DESC, newest first) or SortUpdated
-	// (gitlab_updated_at DESC). Both keep created_at DESC as a tiebreak for
+	// Sort is "" or SortCreated (gitlab_created_at DESC, newest first), or
+	// SortUpdated (gitlab_updated_at DESC). All keep created_at DESC as a tiebreak for
 	// merge requests with no GitLab timestamp yet.
 	Sort string
 	// Page is the 1-based page number; anything below 1 means the first

@@ -44,7 +44,12 @@ export default async function MergeRequestsPage({
   const rawState = resolvedSearchParams?.state ?? DEFAULT_STATE;
   const stateFilter = (rawState === "all" ? undefined : rawState) as MergeRequestFilter["state"];
   const authorFilter = resolvedSearchParams?.author;
-  const sort = (resolvedSearchParams?.sort ?? DEFAULT_SORT) as MergeRequestFilter["sort"];
+  // An unknown ?sort= falls back to the default rather than reaching the API,
+  // which answers a value outside its enum with a 400 the screen can only
+  // render as "failed to load".
+  const rawSort = resolvedSearchParams?.sort;
+  const sort: MergeRequestFilter["sort"] =
+    rawSort === "created" || rawSort === "updated" ? rawSort : DEFAULT_SORT;
   const page = Number(resolvedSearchParams?.page) || 1;
 
   const project = await getProject(projectId);

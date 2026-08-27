@@ -157,6 +157,50 @@ func TestHandleListMergeRequests_SortsByUpdated(t *testing.T) {
 	assert.Equal(t, "Updated first", body.MergeRequests[0]["title"])
 }
 
+// The collection view's Sort select sends sort=created for the default
+// order, which must be accepted rather than 400'd like an unknown value.
+func TestHandleListMergeRequests_SortQuery(t *testing.T) {
+	tests := []struct {
+		name      string
+		sort      string
+		wantCode  int
+		wantFirst string
+	}{
+		{name: "created is the explicit default order", sort: "created", wantCode: http.StatusOK, wantFirst: "Created last"},
+		{name: "unknown value is rejected", sort: "bogus", wantCode: http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, q := newTestServer(t)
+			ownerID, token := loginSession(t, s, q)
+			p := q.SeedProject(ownerID, "Alpha")
+			repo := seedRepository(t, q, p)
+			older := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+			newer := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			_, err := q.CreateMergeRequest(context.Background(), db.CreateMergeRequestParams{
+				RepositoryID: repo.ID, GitlabMergeRequestID: 1, Number: 1, Title: "Created first", State: "opened",
+				GitlabCreatedAt: pgtype.Timestamptz{Time: older, Valid: true},
+			})
+			require.NoError(t, err)
+			_, err = q.CreateMergeRequest(context.Background(), db.CreateMergeRequestParams{
+				RepositoryID: repo.ID, GitlabMergeRequestID: 2, Number: 2, Title: "Created last", State: "opened",
+				GitlabCreatedAt: pgtype.Timestamptz{Time: newer, Valid: true},
+			})
+			require.NoError(t, err)
+
+			rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/merge-requests?sort="+tt.sort, nil, token)
+			require.Equal(t, tt.wantCode, rec.Code)
+			if tt.wantFirst == "" {
+				return
+			}
+			var body mergeRequestListBody
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			require.Len(t, body.MergeRequests, 2)
+			assert.Equal(t, tt.wantFirst, body.MergeRequests[0]["title"])
+		})
+	}
+}
+
 func TestHandleGetMergeRequest(t *testing.T) {
 	s, q := newTestServer(t)
 	ownerID, token := loginSession(t, s, q)

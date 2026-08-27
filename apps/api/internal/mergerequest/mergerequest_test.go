@@ -163,6 +163,33 @@ func TestService_List_SortsByUpdated(t *testing.T) {
 	assert.Equal(t, "Created first, updated last", got[0].Title)
 }
 
+// SortCreated is the explicit spelling of the default order, so it must
+// order the same seed the other way round from TestService_List_SortsByUpdated.
+func TestService_List_SortsByCreated(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	older := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_, err := f.q.CreateMergeRequest(ctx, db.CreateMergeRequestParams{
+		RepositoryID: f.repo.ID, GitlabMergeRequestID: 1, Number: 1, Title: "Created first, updated last", State: "opened",
+		GitlabCreatedAt: pgtype.Timestamptz{Time: older, Valid: true},
+		GitlabUpdatedAt: pgtype.Timestamptz{Time: newer, Valid: true},
+	})
+	require.NoError(t, err)
+	_, err = f.q.CreateMergeRequest(ctx, db.CreateMergeRequestParams{
+		RepositoryID: f.repo.ID, GitlabMergeRequestID: 2, Number: 2, Title: "Created last, updated first", State: "opened",
+		GitlabCreatedAt: pgtype.Timestamptz{Time: newer, Valid: true},
+		GitlabUpdatedAt: pgtype.Timestamptz{Time: older, Valid: true},
+	})
+	require.NoError(t, err)
+
+	page, err := f.svc.List(ctx, f.owner, f.project.ID, mergerequest.ListFilter{Sort: mergerequest.SortCreated})
+	require.NoError(t, err)
+	got := page.MergeRequests
+	require.Len(t, got, 2)
+	assert.Equal(t, "Created last, updated first", got[0].Title)
+}
+
 // Paging is table-driven over one seeded set (docs/testing.md): the same 5
 // merge requests read at three page/per_page combinations, asserting both
 // the page contents and whether NextPage points at a further page.

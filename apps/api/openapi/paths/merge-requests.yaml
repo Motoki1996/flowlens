@@ -25,7 +25,10 @@ list:
         schema: { type: string, format: date-time }
       - in: query
         name: sort
-        schema: { type: string, enum: [updated] }
+        description: >-
+          Order of the returned page. Defaults to "created"
+          (gitlab_created_at, newest first) when omitted.
+        schema: { type: string, enum: [created, updated] }
       - in: query
         name: page
         description: 1-based page number. Defaults to the first page.

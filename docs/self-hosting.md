@@ -113,6 +113,70 @@ Keep `.env` — in particular `ENCRYPTION_KEY`. It is not stored in the
 database, and without the same key every saved GitLab token and webhook
 secret is unreadable.
 
+### Automatic updates
+
+[`scripts/flowlens-autoupdate.sh`](../scripts/flowlens-autoupdate.sh) does the
+sequence above from cron: it compares the pin in `.env` against the latest
+GitHub release and, **only when that release is one it can apply safely**,
+backs the database up and rolls the stack onto it. It needs nothing on the
+host but bash, curl and the Docker CLI.
+
+What it refuses to apply unattended, notifying and exiting non-zero instead:
+
+| Held when | Why |
+| --- | --- |
+| The release notes carry a ⚠️ Breaking marker | That marker exists precisely to say a human has to read something. |
+| The bump is not a patch (`AUTO_LEVEL=patch`, the default) | Pre-1.0, a minor can still change the API's shape — v0.3.0 paged the task collections out from under every client. Set `AUTO_LEVEL=minor` if you run no API clients of your own. |
+| The bump crosses a major version | Always your call. |
+| The release notes are empty | The Breaking marker can't be trusted absent from notes nobody wrote. |
+| `FLOWLENS_VERSION=latest` | An unpinned instance is already taking whatever `pull` gives it; automating on top of that hides which upgrade you took. |
+
+When it does apply one, it dumps the database first, moves the pin, pulls,
+restarts, and then waits for `/app/api version` to actually report the new
+tag before calling it a success. Every failure message names the restore
+command for the dump it just took. It never rolls back on its own — that
+needs the database restored alongside the image, which is a decision, not a
+retry.
+
+```bash
+sudo install -m 755 flowlens-autoupdate.sh /usr/local/bin/flowlens-autoupdate.sh
+
+sudo mkdir -p /etc/flowlens
+sudo tee /etc/flowlens/autoupdate.env >/dev/null <<'EOF'
+FLOWLENS_DIR=/srv/flowlens
+AUTO_LEVEL=patch
+BACKUP_KEEP=14
+# Optional: anything accepting a JSON POST with a "text" key. Without it,
+# a held or failed upgrade is only in the log.
+NOTIFY_WEBHOOK=
+# Set this if you run the TLS overlay:
+# COMPOSE_FILES=-f compose.yaml -f compose.tls.yaml
+EOF
+sudo chmod 600 /etc/flowlens/autoupdate.env
+```
+
+Then, in `sudo crontab -e` — `flock` so a slow pull can't overlap the next
+run:
+
+```cron
+17 4 * * * set -a; . /etc/flowlens/autoupdate.env; set +a; /usr/bin/flock -n /var/lock/flowlens-autoupdate /usr/local/bin/flowlens-autoupdate.sh >> /var/log/flowlens-autoupdate.log 2>&1
+```
+
+Run it by hand once first — it prints `up to date on vX.Y.Z` and exits 0 when
+there is nothing to do, which is the cheapest way to confirm the paths and
+permissions are right.
+
+Note the containers restart while it runs, so this is a short outage at
+whatever hour you pick, not a zero-downtime upgrade.
+
+**A closed-network install cannot use this script**, since the check reads
+the GitHub release API. Mirroring the images (see [Closed networks and
+air-gapped installs](#closed-networks-and-air-gapped-installs)) doesn't help:
+a registry carries tags but no release notes, so the Breaking gate — the
+thing that makes unattended upgrades defensible at all — would have nothing
+to read. Watch releases from a machine that is on the internet and upgrade by
+hand.
+
 ### Rolling back
 
 **Restore the database alongside the image.** Rolling only the image back

@@ -7,8 +7,9 @@ A release is tag-driven: pushing a `v*` tag runs
 [`.github/workflows/release.yml`](../.github/workflows/release.yml), which
 builds multi-arch images, pushes them to GHCR, creates the GitHub Release
 and attaches an offline image bundle. The version in the image, the git tag
-and the release notes are the same string by construction, so there is
-nothing to keep in sync by hand.
+and the release notes are the same string by construction, so those three
+need nothing kept in sync by hand — the OpenAPI document's `info.version` is
+the one version string that does, see step 2 below.
 
 The same workflow also publishes
 [`packages/agent-kit`](../packages/agent-kit) to npm as `@motokis-lab/agent-kit`
@@ -24,14 +25,23 @@ and open a fresh empty `## Unreleased` above it. Mark anything that needs a
 self-hoster to do more than `docker compose pull && docker compose up -d`
 as **⚠️ Breaking**, with the steps written out.
 
-**2. Run the checks.**
+**2. Bump the OpenAPI document's `info.version`.**
+`apps/api/openapi/openapi.yaml` carries the version by hand and nothing
+fails when it lags — `openapi_drift_test.go` compares the *route set*
+against the router, not the version string. It is the version an AI agent
+sees, since `@motokis-lab/agent-kit` commits the served document into the
+repository it works in as `.flowlens/openapi.yaml`. Set it to this release's
+`X.Y.Z` (no `v`) and re-run `make generate` so
+`openapi.bundled.yaml` — the embedded copy that is actually served — matches.
+
+**3. Run the checks.**
 
 ```bash
 make test
 make lint
 ```
 
-**3. Verify a clean install, the way a self-hoster does it.** This is the
+**4. Verify a clean install, the way a self-hoster does it.** This is the
 step that earns its keep — it catches what CI cannot, because CI never
 assembles the distributed artifact:
 

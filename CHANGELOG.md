@@ -8,6 +8,8 @@ procedure itself.
 
 ## Unreleased
 
+## v0.4.0 — 2026-08-27
+
 ### Added
 
 - **A cron-able auto-updater for self-hosters**
@@ -30,6 +32,24 @@ procedure itself.
   no release notes, so the Breaking gate would have nothing to read. See the
   new "Automatic updates" section in
   [`docs/self-hosting.md`](docs/self-hosting.md).
+
+  The script is attached to this release as an asset, so an install that
+  never cloned the repository can fetch it the same way it fetched
+  `compose.yaml`.
+
+### Fixed
+
+- **The merge-request list's Sort select no longer breaks when you switch
+  back to the default order.** `?sort=` on
+  `GET /api/v1/projects/{projectID}/merge-requests` now accepts `created`
+  (`gitlab_created_at` descending) alongside `updated`, naming the order an
+  omitted `?sort=` already gave. The web screen offered "Newest created" as
+  `sort=created`, but the API rejected anything but `updated` with a 400,
+  which the screen could only render as "Failed to load merge requests". An
+  omitted `?sort=` keeps meaning exactly what it did, so no existing caller
+  changes. The screen also clamps an unrecognised `?sort=` to the default
+  rather than forwarding it, so a hand-edited URL can't reach the same
+  dead end.
 
 ## v0.3.0 — 2026-08-26
 

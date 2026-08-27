@@ -138,7 +138,11 @@ command for the dump it just took. It never rolls back on its own — that
 needs the database restored alongside the image, which is a decision, not a
 retry.
 
+The script is attached to every release as an asset, and also lives in the
+repository — take it from either, since it is the same file:
+
 ```bash
+curl -O https://raw.githubusercontent.com/Motoki1996/flowlens/main/scripts/flowlens-autoupdate.sh
 sudo install -m 755 flowlens-autoupdate.sh /usr/local/bin/flowlens-autoupdate.sh
 
 sudo mkdir -p /etc/flowlens

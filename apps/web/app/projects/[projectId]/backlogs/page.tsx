@@ -3,6 +3,7 @@ import {
   getBacklogs,
   getLinkedGitlabProjects,
   getProject,
+  getProjectMembers,
   getTasks,
 } from "@/lib/api";
 import { BacklogListSection } from "@/components/BacklogListSection";
@@ -133,11 +134,21 @@ export default async function BacklogsPage({
     links = [];
   }
 
+  // The edit form's assignee picker. A failed fetch drops the field rather
+  // than the screen, the same as links above.
+  let members: Awaited<ReturnType<typeof getProjectMembers>> = null;
+  try {
+    members = await getProjectMembers(projectId);
+  } catch {
+    members = null;
+  }
+
   return (
     <BacklogListSection
       projectId={project.id}
       backlogs={backlogs}
       links={links}
+      members={members}
       statusFilter={status}
       priorityFilter={priority}
       progressFilter={progress}

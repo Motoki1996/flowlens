@@ -9,12 +9,14 @@ import type {
   Backlog,
   LinkedGitlabProject,
   Priority,
+  ProjectMember,
   Progress,
 } from "@/types";
 import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { PRIORITY_OPTIONS } from "@/lib/priority";
 import { PriorityDot } from "@/components/PriorityBadge";
 import { ProgressDot } from "@/components/ProgressBadge";
+import { AssigneeField, UNASSIGNED_MEMBER } from "@/components/AssigneeField";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -100,11 +102,15 @@ export function LinkedGitlabProjectField({
 export function BacklogEditForm({
   backlog,
   links,
+  members = null,
   onSaved,
   onCancel,
 }: {
   backlog: Backlog;
   links: LinkedGitlabProject[];
+  /** The project's members, for the assignee picker's options — null when the
+   *  listing fetch failed, which hides the field (AssigneeField). */
+  members?: ProjectMember[] | null;
   onSaved: (backlog: Backlog) => void;
   onCancel: () => void;
 }) {
@@ -114,6 +120,9 @@ export function BacklogEditForm({
   const [dueOn, setDueOn] = useState(fromApiDate(backlog.dueOn));
   const [priority, setPriority] = useState<Priority>(backlog.priority);
   const [progress, setProgress] = useState<Progress>(backlog.progress);
+  const [assigneeUserId, setAssigneeUserId] = useState(
+    backlog.assigneeUserId ?? UNASSIGNED_MEMBER,
+  );
   const [linkId, setLinkId] = useState<string | null>(
     backlog.defaultLinkedGitlabProjectId,
   );
@@ -146,6 +155,7 @@ export function BacklogEditForm({
             dueOn: toApiDate(dueOn),
             priority,
             progress,
+            assigneeUserId: assigneeUserId === UNASSIGNED_MEMBER ? null : assigneeUserId,
             defaultLinkedGitlabProjectId: linkId,
             baseBranch,
             allowedScope,
@@ -279,6 +289,33 @@ export function BacklogEditForm({
             ))}
           </SelectContent>
         </Select>
+      </div>
+      <div>
+        <label
+          htmlFor={`edit-backlog-assignee-${backlog.id}`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Assignee
+        </label>
+        <AssigneeField
+          id={`edit-backlog-assignee-${backlog.id}`}
+          members={members}
+          current={
+            backlog.assigneeUserId
+              ? {
+                  userId: backlog.assigneeUserId,
+                  username: backlog.assigneeUsername,
+                  displayName: backlog.assigneeDisplayName,
+                }
+              : null
+          }
+          value={assigneeUserId}
+          onChange={setAssigneeUserId}
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The project member who owns this backlog. App-only, never
+          synced to GitLab.
+        </p>
       </div>
       <LinkedGitlabProjectField
         id={`edit-backlog-linked-gitlab-project-${backlog.id}`}

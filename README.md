@@ -1097,9 +1097,11 @@ an operator, with `flowlens-api hash-password` — see
 
 A project can have more than one user, each with a role — `owner`,
 `member`, or `viewer` — recorded in `project_members`
-([ADR-0010](docs/decisions/0010-why-project-membership.md)). Managing
-membership is always owner-only, session-only (a project API token can
-never reach these routes — see
+([ADR-0010](docs/decisions/0010-why-project-membership.md)). Adding,
+changing a role, and removing a member are owner-only; **listing members
+is open to any project member**, since a Backlog/Epic/Task assignee picker
+needs the list regardless of the caller's own role. Every one of these
+routes is session-only (a project API token can never reach them — see
 [What a token can't reach](#what-a-token-cant-reach) above).
 
 Adding a member this way resolves an **existing** FlowLens account by
@@ -1550,12 +1552,12 @@ creating or editing one never reads or writes the other. Priority is no longer
 the board's axis — see [Task & backlog progress](#task--backlog-progress)
 below — but it stays a badge on every board card.
 
-### Task & backlog assignee
+### Task, backlog & epic assignee
 
-A task and a backlog each carry an `assigneeUserId` — the **FlowLens project
-member who owns the work**, drawn from `project_members`. It is optional
-everywhere: nullable in the schema, never in a `required` request field, and
-every object starts unassigned.
+A task, a backlog and an epic each carry an `assigneeUserId` — the **FlowLens
+project member who owns the work**, drawn from `project_members`. It is
+optional everywhere: nullable in the schema, never in a `required` request
+field, and every object starts unassigned.
 
 This is deliberately a second axis alongside a task's existing
 `assigneeGitlabUserId`, which mirrors the GitLab issue's own assignee and
@@ -1575,29 +1577,38 @@ syncs both ways. The two are connected by a **one-way bridge**:
   bridge, which is how assigning a GitLab user who has no FlowLens account
   keeps working.
 
-A backlog's assignee has no bridge at all: a backlog has no GitLab
-counterpart, so it is app-only end to end, like `baseBranch` and
+A backlog's and an epic's assignee have no bridge at all: neither has a
+GitLab counterpart, so both are app-only end to end, like `baseBranch` and
 `allowedScope`.
 
 - `POST`/`PATCH` on `/api/v1/projects/{projectID}/tasks` /
   `/api/v1/tasks/{taskID}`, `/api/v1/projects/{projectID}/backlogs` /
-  `/api/v1/backlogs/{backlogID}`, and `POST .../tasks/bulk` all accept
+  `/api/v1/backlogs/{backlogID}`, `/api/v1/projects/{projectID}/epics` /
+  `/api/v1/epics/{epicID}`, and `POST .../tasks/bulk` all accept
   `assigneeUserId`. It follows the same partial-update contract as the rest of
   the object: a body without the key leaves both axes alone — which is what
   stops a PATCH of some unrelated field from reassigning the GitLab issue as a
   side effect — and an explicit `null` unassigns. A user who is not a member of
   the project is rejected with 400 `invalid_assignee`.
-- `GET .../tasks`, `GET /api/v1/tasks` (cross-project) and `GET .../backlogs`
-  accept `?assignee=`, which takes **`me`, a user UUID, or `unassigned`**.
-  Previously it took only `me`; a UUID is what lets a lead see what someone
-  else is carrying. For a task the filter matches on *either* axis — the
-  FlowLens assignee or that same user's GitLab identity — so a task synced in
-  from GitLab and a purely local one both show up for the same person.
-  `unassigned` is the complement: assigned to nobody on either axis. Over a
-  bearer token, `me` resolves to the token's project owner, since a token acts
-  as that owner everywhere else in the API ([ADR-0009](docs/decisions/0009-why-project-scoped-api-tokens.md)).
+- `GET .../tasks`, `GET /api/v1/tasks` (cross-project), `GET .../backlogs` and
+  `GET .../epics` accept `?assignee=`, which takes **`me`, a user UUID, or
+  `unassigned`**. Previously it took only `me`; a UUID is what lets a lead see
+  what someone else is carrying. For a task the filter matches on *either*
+  axis — the FlowLens assignee or that same user's GitLab identity — so a task
+  synced in from GitLab and a purely local one both show up for the same
+  person. `unassigned` is the complement: assigned to nobody on either axis.
+  Over a bearer token, `me` resolves to the token's project owner, since a
+  token acts as that owner everywhere else in the API
+  ([ADR-0009](docs/decisions/0009-why-project-scoped-api-tokens.md)).
 - `GET /api/v1/tasks/{taskID}/context` carries the assignee too, so an AI agent
   reading its context knows whether the work is already someone's, and whose.
+- The web app's create/edit forms for all three objects (and each object's
+  single view) carry an assignee picker (`components/AssigneeField.tsx`)
+  populated from `GET /api/v1/projects/{projectID}/members` — which is why
+  that listing endpoint is open to any project member rather than owner-only
+  (see [Project membership](#project-membership) above). A task's picker sits
+  beside its separate GitLab-assignee picker, labelled distinctly so the two
+  axes are never confused for one field.
 
 `assigneeUsername`/`assigneeDisplayName` are resolved from `users` on read
 rather than stored, so a rename is picked up without a backfill; both are `""`

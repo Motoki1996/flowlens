@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { Backlog, Epic, LinkedGitlabProject, Task, TaskStatus } from "@/types";
+import type { Backlog, Epic, LinkedGitlabProject, ProjectMember, Task, TaskStatus } from "@/types";
 import { backlogPath, epicsPath, taskPath, tasksPath } from "@/lib/routes";
 import { groupTaskCompletion } from "@/lib/timeline";
 import {
@@ -98,6 +98,7 @@ export function EpicDetail({
   tasks = [],
   projectTasks,
   links = [],
+  members = null,
   tasksError = false,
 }: {
   epic: Epic;
@@ -116,6 +117,9 @@ export function EpicDetail({
   /** The project's linked GitLab projects, used to name this epic's issue
    *  destination. Empty hides that row. */
   links?: LinkedGitlabProject[];
+  /** The project's members, for the edit form's assignee picker — null when
+   *  the listing fetch failed, which hides that field (AssigneeField). */
+  members?: ProjectMember[] | null;
   tasksError?: boolean;
 }) {
   const router = useRouter();
@@ -192,6 +196,7 @@ export function EpicDetail({
               backlogs={backlogs}
               tasks={candidates}
               links={links}
+              members={members}
               onSaved={(updated) => {
                 setEpic(updated);
                 setEditing(false);
@@ -284,6 +289,12 @@ export function EpicDetail({
                   <dt className="text-muted-foreground">Progress</dt>
                   <dd className="text-foreground">
                     <ProgressBadge progress={epic.progress} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Assignee</dt>
+                  <dd className="text-foreground">
+                    {epic.assigneeUserId ? epic.assigneeDisplayName : "Unassigned"}
                   </dd>
                 </div>
                 <div>

@@ -214,6 +214,7 @@ describe("TaskDetail", () => {
       description: "Details about the bug.",
       backlogId: "b1",
       assigneeGitlabUsername: "octocat",
+      assigneeUserId: null,
       labels: ["bug", "urgent"],
       startDate: null,
       dueOn: "2026-02-01T00:00:00Z",
@@ -242,7 +243,7 @@ describe("TaskDetail", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Edit task" }));
 
-    fireEvent.click(screen.getByRole("combobox", { name: "Assignee" }));
+    fireEvent.click(screen.getByRole("combobox", { name: "GitLab assignee" }));
     fireEvent.click(await screen.findByRole("option", { name: "Alice (@alice)" }));
 
     fireEvent.click(screen.getByRole("combobox", { name: "Labels" }));

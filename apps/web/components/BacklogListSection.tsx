@@ -17,6 +17,7 @@ import type {
   Backlog,
   LinkedGitlabProject,
   Priority,
+  ProjectMember,
   Progress,
   StatusFilter,
 } from "@/types";
@@ -403,6 +404,7 @@ export function BacklogListSection({
   projectId,
   backlogs,
   links = [],
+  members = null,
   statusFilter = "open",
   priorityFilter,
   progressFilter,
@@ -418,6 +420,9 @@ export function BacklogListSection({
    *  — the default, and the case for a project with no GitLab connection —
    *  hides that field entirely. */
   links?: LinkedGitlabProject[];
+  /** The project's members, for the edit form's assignee picker — null when
+   *  the listing fetch failed, which hides that field (AssigneeField). */
+  members?: ProjectMember[] | null;
   /** The applied `?status=`. Defaults to "open", which is also the API's own
    *  default — unlike the filters below, this one is never "all" unless it
    *  was asked for. */
@@ -826,6 +831,7 @@ export function BacklogListSection({
                           <BacklogEditForm
                             backlog={backlog}
                             links={links}
+                            members={members}
                             onSaved={() => {
                               // The row is rendered from the server-fetched
                               // list, so the saved values only appear after a

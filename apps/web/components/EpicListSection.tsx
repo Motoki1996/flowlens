@@ -14,6 +14,7 @@ import type {
   Epic,
   LinkedGitlabProject,
   Priority,
+  ProjectMember,
   Progress,
   StatusFilter,
   Task,
@@ -125,6 +126,7 @@ export function EpicListSection({
   backlogs = [],
   tasks = [],
   links = [],
+  members = null,
   statusFilter = "open",
   backlogFilter,
   priorityFilter,
@@ -143,6 +145,9 @@ export function EpicListSection({
   tasks?: Task[];
   /** The project's linked GitLab projects; empty hides that form field. */
   links?: LinkedGitlabProject[];
+  /** The project's members, for the create/edit form's assignee picker — null
+   *  when the listing fetch failed, which hides that field (AssigneeField). */
+  members?: ProjectMember[] | null;
   /** The applied `?status=`. Defaults to "open", the API's own default — an
    *  epic's status is independent of its backlog's, so a closed epic in an
    *  open backlog is hidden here just the same. */
@@ -433,6 +438,7 @@ export function EpicListSection({
               backlogs={backlogs}
               tasks={tasks}
               links={links}
+              members={members}
               defaultBacklogId={
                 backlogFilter && backlogFilter !== NO_BACKLOG_FILTER
                   ? backlogFilter
@@ -554,6 +560,7 @@ export function EpicListSection({
                         backlogs={backlogs}
                         tasks={tasks}
                         links={links}
+                        members={members}
                         onSaved={() => {
                           // The row is rendered from the server-fetched list,
                           // so the saved values only appear after a refresh.

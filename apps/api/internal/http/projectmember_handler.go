@@ -30,7 +30,9 @@ func memberUserIDFromURL(r *http.Request) (uuid.UUID, bool) {
 	return id, true
 }
 
-// handleListProjectMembers returns every member of the project, owner-only.
+// handleListProjectMembers returns every member of the project, open to any
+// project member (not just the owner) — a Backlog/Epic/Task assignee picker
+// needs this list to populate its options regardless of the caller's role.
 func (s *Server) handleListProjectMembers(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	projectID, ok := projectIDFromURL(r)

@@ -1,10 +1,14 @@
 // Package projectmember manages a project's project_members rows: inviting
 // an existing user, listing members, changing a member's role, and removing
 // one — the first thing to actually write to project_members since it was
-// added by docs/decisions/0010-why-project-membership.md. Every method is
-// owner-minimum (issue #100): managing who can access a project is a
-// project-management action, not a day-to-day member one, the same rule
-// internal/apitoken already follows for issuing credentials.
+// added by docs/decisions/0010-why-project-membership.md. Inviting, changing
+// a role, and removing a member are owner-minimum (issue #100): managing who
+// can access a project is a project-management action, not a day-to-day
+// member one, the same rule internal/apitoken already follows for issuing
+// credentials. Listing is viewer-minimum instead (any project member can
+// read it): a Backlog/Epic/Task assignee picker needs the member list to
+// populate its options, and that picker is available to every role, not just
+// the owner.
 package projectmember
 
 import (
@@ -86,11 +90,10 @@ func NewService(q db.Querier, projects *project.Service, users *user.Service) *S
 	return &Service{q: q, projects: projects, users: users}
 }
 
-// authorize requires callerID to hold at least project.RoleOwner on
-// projectID, mapping project.ErrNotFound/ErrForbidden to this package's own
-// sentinels.
-func (s *Service) authorize(ctx context.Context, callerID, projectID uuid.UUID) error {
-	err := s.projects.Authorize(ctx, callerID, projectID, project.RoleOwner)
+// authorize requires callerID to hold at least min on projectID, mapping
+// project.ErrNotFound/ErrForbidden to this package's own sentinels.
+func (s *Service) authorize(ctx context.Context, callerID, projectID uuid.UUID, min project.Role) error {
+	err := s.projects.Authorize(ctx, callerID, projectID, min)
 	switch {
 	case err == nil:
 		return nil
@@ -115,7 +118,7 @@ func normalizeRole(raw string) (string, error) {
 
 // List returns every member of projectID, oldest first.
 func (s *Service) List(ctx context.Context, callerID, projectID uuid.UUID) ([]Member, error) {
-	if err := s.authorize(ctx, callerID, projectID); err != nil {
+	if err := s.authorize(ctx, callerID, projectID, project.RoleViewer); err != nil {
 		return nil, err
 	}
 	rows, err := s.q.ListProjectMembersWithUser(ctx, projectID)
@@ -153,7 +156,7 @@ func (s *Service) List(ctx context.Context, callerID, projectID uuid.UUID) ([]Me
 // knows an exact username or email can still be invited without appearing
 // here.
 func (s *Service) SearchCandidates(ctx context.Context, callerID, projectID uuid.UUID, query string) ([]Candidate, error) {
-	if err := s.authorize(ctx, callerID, projectID); err != nil {
+	if err := s.authorize(ctx, callerID, projectID, project.RoleOwner); err != nil {
 		return nil, err
 	}
 	trimmed := strings.TrimSpace(query)
@@ -193,7 +196,7 @@ func escapeLike(s string) string {
 // about the target's existence a caller ever gets — and ErrAlreadyMember if
 // the resolved user already has a project_members row for projectID.
 func (s *Service) Add(ctx context.Context, callerID, projectID uuid.UUID, identifier, role string) (Member, error) {
-	if err := s.authorize(ctx, callerID, projectID); err != nil {
+	if err := s.authorize(ctx, callerID, projectID, project.RoleOwner); err != nil {
 		return Member{}, err
 	}
 	normalizedRole, err := normalizeRole(role)
@@ -238,7 +241,7 @@ func (s *Service) Add(ctx context.Context, callerID, projectID uuid.UUID, identi
 // docs/decisions/0010-why-project-membership.md for why that single column,
 // not a COUNT(*) over project_members, is the source of truth here.
 func (s *Service) UpdateRole(ctx context.Context, callerID, projectID, userID uuid.UUID, role string) (Member, error) {
-	if err := s.authorize(ctx, callerID, projectID); err != nil {
+	if err := s.authorize(ctx, callerID, projectID, project.RoleOwner); err != nil {
 		return Member{}, err
 	}
 	if userID == callerID {
@@ -292,7 +295,7 @@ func (s *Service) UpdateRole(ctx context.Context, callerID, projectID, userID uu
 // would leave the project with no owner_user_id row in project_members at
 // all.
 func (s *Service) Remove(ctx context.Context, callerID, projectID, userID uuid.UUID) error {
-	if err := s.authorize(ctx, callerID, projectID); err != nil {
+	if err := s.authorize(ctx, callerID, projectID, project.RoleOwner); err != nil {
 		return err
 	}
 	if userID == callerID {

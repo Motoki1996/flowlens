@@ -13,6 +13,7 @@ import type {
   GitlabLabelOption,
   GitlabMemberOption,
   MergeRequest,
+  ProjectMember,
   Task,
   TaskComment,
   TaskDependency,
@@ -365,6 +366,7 @@ export function TaskDetail({
   dependencies,
   assigneeOptions = null,
   labelOptions = null,
+  members = null,
   comments = [],
   currentUserId = "",
   apiTokens = [],
@@ -384,6 +386,11 @@ export function TaskDetail({
   // to free-text assignee/label entry in that case (issue #80).
   assigneeOptions?: GitlabMemberOption[] | null;
   labelOptions?: GitlabLabelOption[] | null;
+  /** The project's members, for the edit form's FlowLens assignee picker —
+   *  null when the listing fetch failed, which hides that field
+   *  (AssigneeField). Independent of assigneeOptions above, which is the
+   *  GitLab-mirrored axis. */
+  members?: ProjectMember[] | null;
   // The task's activity log (issue #105) and what TaskActivitySection needs
   // to render it: the caller's own id (to tell "you" apart and gate the
   // delete button) and the project's API tokens (to name an agent comment's
@@ -410,6 +417,7 @@ export function TaskDetail({
               backlogs={backlogs}
               assigneeOptions={assigneeOptions}
               labelOptions={labelOptions}
+              members={members}
               onSaved={(updated) => {
                 setTask(updated);
                 setEditing(false);
@@ -483,8 +491,14 @@ export function TaskDetail({
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Assignee</dt>
+                  <dt className="text-muted-foreground">GitLab assignee</dt>
                   <dd className="text-foreground">{task.assigneeGitlabUsername || "Unassigned"}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Assignee</dt>
+                  <dd className="text-foreground">
+                    {task.assigneeUserId ? task.assigneeDisplayName : "Unassigned"}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Labels</dt>

@@ -9,6 +9,7 @@ import {
   getMergeRequests,
   getProject,
   getProjectApiTokens,
+  getProjectMembers,
   getTask,
   getTaskComments,
   getTaskDependencies,
@@ -71,6 +72,15 @@ export default async function TaskPage({
     ]);
   }
 
+  // The edit form's FlowLens assignee picker. A failed fetch drops the field
+  // rather than the screen, the same as assigneeOptions/labelOptions above.
+  let members: Awaited<ReturnType<typeof getProjectMembers>> = null;
+  try {
+    members = await getProjectMembers(projectId);
+  } catch {
+    members = null;
+  }
+
   // Naming an agent comment's author needs the project's token roster, which
   // is owner-only (issue #100) — left empty for anyone else, the same
   // fallback the Project single view uses for the same endpoint.
@@ -107,6 +117,7 @@ export default async function TaskPage({
         dependencies={dependencies}
         assigneeOptions={assigneeOptions}
         labelOptions={labelOptions}
+        members={members}
         comments={comments}
         currentUserId={user.id}
         apiTokens={apiTokens}

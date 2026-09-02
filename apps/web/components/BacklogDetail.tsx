@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
-import type { Backlog, Epic, LinkedGitlabProject, Task, TaskStatus } from "@/types";
+import type { Backlog, Epic, LinkedGitlabProject, ProjectMember, Task, TaskStatus } from "@/types";
 import { backlogsPath, epicPath, epicsPath, taskPath, tasksPath } from "@/lib/routes";
 import { backlogCompletion, groupTaskCompletion } from "@/lib/timeline";
 import {
@@ -70,6 +70,7 @@ export function BacklogDetail({
   epics = [],
   tasks = [],
   links = [],
+  members = null,
   tasksError = false,
 }: {
   backlog: Backlog;
@@ -83,6 +84,9 @@ export function BacklogDetail({
   /** The project's linked GitLab projects (issue #180), used to name this
    *  backlog's issue destination. Empty hides that row. */
   links?: LinkedGitlabProject[];
+  /** The project's members, for the edit form's assignee picker — null when
+   *  the listing fetch failed, which hides that field (AssigneeField). */
+  members?: ProjectMember[] | null;
   tasksError?: boolean;
 }) {
   const router = useRouter();
@@ -133,6 +137,7 @@ export function BacklogDetail({
             <BacklogEditForm
               backlog={backlog}
               links={links}
+              members={members}
               onSaved={(updated) => {
                 setBacklog(updated);
                 setEditing(false);
@@ -219,6 +224,12 @@ export function BacklogDetail({
                   <dt className="text-muted-foreground">Progress</dt>
                   <dd className="text-foreground">
                     <ProgressBadge progress={backlog.progress} />
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Assignee</dt>
+                  <dd className="text-foreground">
+                    {backlog.assigneeUserId ? backlog.assigneeDisplayName : "Unassigned"}
                   </dd>
                 </div>
                 <div>

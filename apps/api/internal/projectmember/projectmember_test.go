@@ -54,7 +54,7 @@ func TestService_List_MarksOnlyTheDesignatedOwner(t *testing.T) {
 	assert.False(t, members[1].IsProjectOwner)
 }
 
-func TestService_List_ReturnsForbiddenForNonOwner(t *testing.T) {
+func TestService_List_AllowsAnyMemberRole(t *testing.T) {
 	q := dbtest.New()
 	svc := newService(q)
 	owner := q.SeedUser("octocat", "octocat@example.com")
@@ -65,11 +65,14 @@ func TestService_List_ReturnsForbiddenForNonOwner(t *testing.T) {
 	q.SeedProjectMember(p.ID, member.ID, "member")
 	ctx := context.Background()
 
+	// Listing is viewer-minimum, unlike every other membership operation: an
+	// assignee picker needs the member list regardless of the caller's own
+	// role.
 	_, err := svc.List(ctx, viewer.ID, p.ID)
-	assert.ErrorIs(t, err, projectmember.ErrForbidden, "viewer must be rejected")
+	assert.NoError(t, err, "viewer must be allowed to list")
 
 	_, err = svc.List(ctx, member.ID, p.ID)
-	assert.ErrorIs(t, err, projectmember.ErrForbidden, "member must be rejected")
+	assert.NoError(t, err, "member must be allowed to list")
 }
 
 func TestService_List_ReturnsNotFoundForForeignOrMissingProject(t *testing.T) {

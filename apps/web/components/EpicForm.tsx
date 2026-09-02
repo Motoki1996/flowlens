@@ -10,6 +10,7 @@ import type {
   Epic,
   LinkedGitlabProject,
   Priority,
+  ProjectMember,
   Progress,
   Task,
 } from "@/types";
@@ -17,6 +18,7 @@ import { PROGRESS_COLUMNS } from "@/lib/progress";
 import { PRIORITY_OPTIONS } from "@/lib/priority";
 import { PriorityDot } from "@/components/PriorityBadge";
 import { ProgressDot } from "@/components/ProgressBadge";
+import { AssigneeField, UNASSIGNED_MEMBER } from "@/components/AssigneeField";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +59,7 @@ export function EpicForm({
   backlogs,
   links,
   tasks = [],
+  members = null,
   defaultBacklogId = null,
   onSaved,
   onCancel,
@@ -74,6 +77,9 @@ export function EpicForm({
    *  destination for new issues. Empty — the case for a project with no
    *  GitLab connection — hides that field entirely. */
   links: LinkedGitlabProject[];
+  /** The project's members, for the assignee picker's options — null when the
+   *  listing fetch failed, which hides the field (AssigneeField). */
+  members?: ProjectMember[] | null;
   /** Pre-selects the backlog on a create form, so "New epic" from a backlog's
    *  own screen files it there without a second choice. */
   defaultBacklogId?: string | null;
@@ -96,6 +102,9 @@ export function EpicForm({
     epic?.defaultLinkedGitlabProjectId ?? null,
   );
   const [baseBranch, setBaseBranch] = useState(epic?.baseBranch ?? "");
+  const [assigneeUserId, setAssigneeUserId] = useState(
+    epic?.assigneeUserId ?? UNASSIGNED_MEMBER,
+  );
   // Held as the raw string the input carries, not a number: "" is the only
   // way to spell "unestimated" in a text field, and it has to survive a round
   // trip distinctly from 0 — which the API rejects precisely so the two stay
@@ -163,6 +172,7 @@ export function EpicForm({
             dueOn: toApiDate(dueOn),
             priority,
             progress,
+            assigneeUserId: assigneeUserId === UNASSIGNED_MEMBER ? null : assigneeUserId,
             defaultLinkedGitlabProjectId: linkId,
             baseBranch,
             allowedScope,
@@ -420,6 +430,34 @@ export function EpicForm({
           </p>
         </div>
       ) : null}
+
+      <div>
+        <label
+          htmlFor={`${idPrefix}-assignee`}
+          className="text-foreground block text-sm font-medium"
+        >
+          Assignee
+        </label>
+        <AssigneeField
+          id={`${idPrefix}-assignee`}
+          members={members}
+          current={
+            epic?.assigneeUserId
+              ? {
+                  userId: epic.assigneeUserId,
+                  username: epic.assigneeUsername,
+                  displayName: epic.assigneeDisplayName,
+                }
+              : null
+          }
+          value={assigneeUserId}
+          onChange={setAssigneeUserId}
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The project member who owns this epic. App-only, never
+          synced to GitLab.
+        </p>
+      </div>
 
       <LinkedGitlabProjectField
         id={`${idPrefix}-linked-gitlab-project`}

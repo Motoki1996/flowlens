@@ -11,6 +11,7 @@ import type {
   ApiError,
   Backlog,
   Priority,
+  ProjectMember,
   Size,
   Progress,
   Task,
@@ -20,6 +21,7 @@ import { SIZE_OPTIONS, SIZE_POINTS } from "@/lib/size";
 import { PRIORITY_OPTIONS } from "@/lib/priority";
 import { PriorityDot } from "@/components/PriorityBadge";
 import { ProgressDot } from "@/components/ProgressBadge";
+import { AssigneeField, UNASSIGNED_MEMBER } from "@/components/AssigneeField";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -37,9 +39,11 @@ import { DateField } from "@/components/DateField";
 
 const UNCLASSIFIED_LABEL = "Unclassified";
 
-// UNASSIGNED is the assignee Combobox's sentinel for "no assignee", mirroring
-// UNCLASSIFIED_BACKLOG's role for the backlog picker — a GitLab user ID is
-// never negative, so it can't collide with a real option's value.
+// UNASSIGNED is the GitLab assignee Combobox's sentinel for "no assignee",
+// mirroring UNCLASSIFIED_BACKLOG's role for the backlog picker — a GitLab
+// user ID is never negative, so it can't collide with a real option's value.
+// The FlowLens assignee field below has its own sentinel, UNASSIGNED_MEMBER
+// (AssigneeField), since the two axes are independent.
 const UNASSIGNED = "unassigned";
 
 /** parseLabels reads the comma-separated label input back into the API's array. */
@@ -65,6 +69,7 @@ export function TaskEditForm({
   backlogs,
   assigneeOptions = null,
   labelOptions = null,
+  members = null,
   onSaved,
   onCancel,
 }: {
@@ -76,6 +81,10 @@ export function TaskEditForm({
   // local equivalent to pick from (issue #80).
   assigneeOptions?: GitlabMemberOption[] | null;
   labelOptions?: GitlabLabelOption[] | null;
+  /** The project's members, for the FlowLens assignee picker's options — a
+   *  separate axis from assigneeOptions above (the GitLab-mirrored one). Null
+   *  when the listing fetch failed, which hides that field (AssigneeField). */
+  members?: ProjectMember[] | null;
   onSaved: (task: Task) => void;
   onCancel: () => void;
 }) {
@@ -83,8 +92,11 @@ export function TaskEditForm({
   const [description, setDescription] = useState(task.description);
   const [backlogId, setBacklogId] = useState(task.backlogId ?? UNCLASSIFIED_BACKLOG);
   const [assignee, setAssignee] = useState(task.assigneeGitlabUsername);
-  const [assigneeUserId, setAssigneeUserId] = useState(
+  const [gitlabAssigneeId, setGitlabAssigneeId] = useState(
     task.assigneeGitlabUserId != null ? String(task.assigneeGitlabUserId) : UNASSIGNED,
+  );
+  const [assigneeUserId, setAssigneeUserId] = useState(
+    task.assigneeUserId ?? UNASSIGNED_MEMBER,
   );
   const [labels, setLabels] = useState(task.labels.join(", "));
   const [labelsList, setLabelsList] = useState<string[]>(task.labels);
@@ -144,13 +156,13 @@ export function TaskEditForm({
       return;
     }
 
-    const assigneeFields = assigneeOptions
+    const gitlabAssigneeFields = assigneeOptions
       ? {
-          assigneeGitlabUserId: assigneeUserId === UNASSIGNED ? null : Number(assigneeUserId),
+          assigneeGitlabUserId: gitlabAssigneeId === UNASSIGNED ? null : Number(gitlabAssigneeId),
           assigneeGitlabUsername:
-            assigneeUserId === UNASSIGNED
+            gitlabAssigneeId === UNASSIGNED
               ? ""
-              : (assigneeOptions.find((m) => String(m.id) === assigneeUserId)?.username ?? ""),
+              : (assigneeOptions.find((m) => String(m.id) === gitlabAssigneeId)?.username ?? ""),
         }
       : { assigneeGitlabUsername: assignee };
 
@@ -165,7 +177,8 @@ export function TaskEditForm({
           title,
           description,
           backlogId: backlogId === UNCLASSIFIED_BACKLOG ? null : backlogId,
-          ...assigneeFields,
+          ...gitlabAssigneeFields,
+          assigneeUserId: assigneeUserId === UNASSIGNED_MEMBER ? null : assigneeUserId,
           labels: labelOptions ? labelsList : parseLabels(labels),
           startDate: toApiDate(startDate),
           dueOn: toApiDate(dueOn),
@@ -220,24 +233,24 @@ export function TaskEditForm({
           Markdown supported — pasted URLs become links.
         </p>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <div>
-          <label htmlFor="edit-task-assignee" className="text-foreground block text-sm font-medium">
-            Assignee
+          <label htmlFor="edit-task-gitlab-assignee" className="text-foreground block text-sm font-medium">
+            GitLab assignee
           </label>
           {assigneeOptions ? (
             <Combobox
-              id="edit-task-assignee"
+              id="edit-task-gitlab-assignee"
               options={assigneeSelectOptions}
-              value={assigneeUserId}
-              onChange={setAssigneeUserId}
+              value={gitlabAssigneeId}
+              onChange={setGitlabAssigneeId}
               searchPlaceholder="Search members…"
               emptyText="No member found."
               className="mt-1"
             />
           ) : (
             <Input
-              id="edit-task-assignee"
+              id="edit-task-gitlab-assignee"
               name="assigneeGitlabUsername"
               value={assignee}
               onChange={(e) => setAssignee(e.target.value)}
@@ -245,6 +258,30 @@ export function TaskEditForm({
               className="mt-1"
             />
           )}
+        </div>
+        <div>
+          <label htmlFor="edit-task-assignee" className="text-foreground block text-sm font-medium">
+            Assignee
+          </label>
+          <AssigneeField
+            id="edit-task-assignee"
+            members={members}
+            current={
+              task.assigneeUserId
+                ? {
+                    userId: task.assigneeUserId,
+                    username: task.assigneeUsername,
+                    displayName: task.assigneeDisplayName,
+                  }
+                : null
+            }
+            value={assigneeUserId}
+            onChange={setAssigneeUserId}
+          />
+          <p className="text-muted-foreground mt-1 text-xs">
+            The FlowLens project member who owns this work — separate from the
+            GitLab assignee above.
+          </p>
         </div>
         <div>
           <label htmlFor="edit-task-labels" className="text-foreground block text-sm font-medium">

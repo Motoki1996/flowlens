@@ -4,6 +4,7 @@ import {
   getEpic,
   getLinkedGitlabProjects,
   getProject,
+  getProjectMembers,
   getTasks,
   MAX_TASKS_PER_PAGE,
 } from "@/lib/api";
@@ -60,6 +61,15 @@ export default async function EpicPage({
     links = [];
   }
 
+  // The edit form's assignee picker. A failed fetch drops the field rather
+  // than the screen, the same as links above.
+  let members: Awaited<ReturnType<typeof getProjectMembers>> = null;
+  try {
+    members = await getProjectMembers(projectId);
+  } catch {
+    members = null;
+  }
+
   return (
     <>
       <Breadcrumbs
@@ -85,6 +95,7 @@ export default async function EpicPage({
         tasks={tasks}
         projectTasks={projectTasks}
         links={links}
+        members={members}
         tasksError={tasksError}
       />
     </>

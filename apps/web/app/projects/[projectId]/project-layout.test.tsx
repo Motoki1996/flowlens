@@ -116,7 +116,7 @@ describe("ProjectLayout", () => {
     const nav = within(screen.getByRole("navigation", { name: "Project sections" }));
     expect(nav.getByRole("link", { name: /^Backlogs/ })).toHaveTextContent("2");
     expect(nav.getByRole("link", { name: /^Epics/ })).toHaveTextContent("1");
-    expect(nav.getByRole("link", { name: /^Tasks/ })).toHaveTextContent("1/2");
+    expect(nav.getByRole("link", { name: /^Tasks/ })).toHaveTextContent("1");
     expect(nav.getByRole("link", { name: /^GitLab connection/ })).toHaveTextContent("1");
   });
 

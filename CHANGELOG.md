@@ -8,6 +8,36 @@ procedure itself.
 
 ## Unreleased
 
+## v0.5.0 — 2026-09-02
+
+### Added
+
+- **A task, a backlog and an epic can each be assigned to a FlowLens project
+  member**, editable from the web app. `assigneeUserId` already existed on
+  all three objects in the API; the web app only exposed a task's
+  GitLab-mirrored assignee. A shared `AssigneeField` component now wires the
+  picker into all three objects' edit forms and single views, and into
+  Backlog's create form (Epic's create form already shared the edit form and
+  so already had one).
+
+  Setting a task's `assigneeUserId` also sets its GitLab assignee, when that
+  member has a GitLab identity registered for the project's connection — a
+  one-way bridge, since a GitLab-side assignee change never writes back. A
+  backlog's and an epic's assignee have no bridge at all, since neither has
+  a GitLab counterpart. See the "Task, backlog & epic assignee" section in
+  [`README.md`](README.md).
+
+  `GET /api/v1/projects/{projectID}/members` (the picker's data source) is
+  now viewer-minimum rather than owner-only, so a non-owner member editing
+  one of these objects can still see who to assign it to. Invite/role-change/
+  remove stay owner-only.
+
+### Changed
+
+- **The project sidebar's Tasks and Merge requests badges show only the
+  open count**, dropping the `/total` denominator — matching the
+  Backlogs/Epics badges beside them.
+
 ## v0.4.0 — 2026-08-27
 
 ### Added

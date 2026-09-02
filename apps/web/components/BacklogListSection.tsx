@@ -42,6 +42,7 @@ import {
   BacklogEditForm,
   LinkedGitlabProjectField,
 } from "@/components/BacklogEditForm";
+import { AssigneeField, UNASSIGNED_MEMBER } from "@/components/AssigneeField";
 import { BacklogDeleteButton } from "@/components/BacklogDeleteButton";
 import { PriorityBadge, PriorityDot } from "@/components/PriorityBadge";
 import { ProgressBadge, ProgressDot } from "@/components/ProgressBadge";
@@ -100,10 +101,14 @@ const BacklogTimelineSection = dynamic(
 function NewBacklogForm({
   projectId,
   links,
+  members = null,
   onCancel,
 }: {
   projectId: string;
   links: LinkedGitlabProject[];
+  /** The project's members, for the assignee picker's options — null when the
+   *  listing fetch failed, which hides the field (AssigneeField). */
+  members?: ProjectMember[] | null;
   onCancel: () => void;
 }) {
   const router = useRouter();
@@ -113,6 +118,7 @@ function NewBacklogForm({
   const [dueOn, setDueOn] = useState<Date | undefined>(undefined);
   const [priority, setPriority] = useState<Priority>("medium");
   const [progress, setProgress] = useState<Progress>("not_started");
+  const [assigneeUserId, setAssigneeUserId] = useState(UNASSIGNED_MEMBER);
   const [linkId, setLinkId] = useState<string | null>(null);
   const [baseBranch, setBaseBranch] = useState("");
   const [allowedScope, setAllowedScope] = useState("");
@@ -143,6 +149,8 @@ function NewBacklogForm({
             dueOn: toApiDate(dueOn),
             priority,
             progress,
+            assigneeUserId:
+              assigneeUserId === UNASSIGNED_MEMBER ? null : assigneeUserId,
             defaultLinkedGitlabProjectId: linkId,
             baseBranch,
             allowedScope,
@@ -277,6 +285,25 @@ function NewBacklogForm({
             ))}
           </SelectContent>
         </Select>
+      </div>
+      <div>
+        <label
+          htmlFor="new-backlog-assignee"
+          className="text-foreground block text-sm font-medium"
+        >
+          Assignee
+        </label>
+        <AssigneeField
+          id="new-backlog-assignee"
+          members={members}
+          current={null}
+          value={assigneeUserId}
+          onChange={setAssigneeUserId}
+        />
+        <p className="text-muted-foreground mt-1 text-xs">
+          Optional. The project member who owns this backlog. App-only, never
+          synced to GitLab.
+        </p>
       </div>
       <LinkedGitlabProjectField
         id="new-backlog-linked-gitlab-project"
@@ -752,6 +779,7 @@ export function BacklogListSection({
             <NewBacklogForm
               projectId={projectId}
               links={links}
+              members={members}
               onCancel={() => setCreating(false)}
             />
           </CreateFormRegion>

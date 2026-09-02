@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
-import type { Backlog, LinkedGitlabProject } from "@/types";
+import type { Backlog, LinkedGitlabProject, ProjectMember } from "@/types";
 import { BacklogListSection } from "./BacklogListSection";
 
 const refresh = vi.fn();
@@ -39,6 +39,17 @@ const backlog: Backlog = {
   createdAt: "2026-01-01T00:00:00Z",
   updatedAt: "2026-01-01T00:00:00Z",
 };
+
+const members: ProjectMember[] = [
+  {
+    userId: "u1",
+    username: "alice",
+    displayName: "Alice",
+    role: "member",
+    isProjectOwner: false,
+    createdAt: "2026-01-01T00:00:00Z",
+  },
+];
 
 /** Two links so "the project default" and "this backlog's own" are distinct
  *  (issue #180). */
@@ -199,6 +210,36 @@ describe("BacklogListSection", () => {
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(bodyOf(vi.mocked(fetch).mock.calls[0])).toMatchObject({
       baseBranch: "main",
+    });
+  });
+
+  it("sends the picked assignee when creating a backlog", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ...backlog, id: "b2" }), { status: 201 }));
+    render(<BacklogListSection projectId="p1" backlogs={[]} members={members} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New backlog" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Sprint 2" } });
+    await userEvent.click(screen.getByLabelText("Assignee"));
+    await userEvent.click(await screen.findByText("Alice (@alice)"));
+    fireEvent.click(screen.getByRole("button", { name: "Create backlog" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(bodyOf(vi.mocked(fetch).mock.calls[0])).toMatchObject({
+      assigneeUserId: "u1",
+    });
+  });
+
+  it("defaults a new backlog to unassigned when no assignee is picked", async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ ...backlog, id: "b2" }), { status: 201 }));
+    render(<BacklogListSection projectId="p1" backlogs={[]} members={members} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "New backlog" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Sprint 2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create backlog" }));
+
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(bodyOf(vi.mocked(fetch).mock.calls[0])).toMatchObject({
+      assigneeUserId: null,
     });
   });
 

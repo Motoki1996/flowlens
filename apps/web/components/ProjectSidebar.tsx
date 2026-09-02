@@ -38,7 +38,6 @@ export type ProjectSidebarCounts = {
   backlogs: number | null;
   epics: number | null;
   openTasks: number | null;
-  totalTasks: number | null;
   mergeRequests: number | null;
   gitlab: string | null;
 };
@@ -61,9 +60,7 @@ function summaryOf(section: ProjectSection, counts: ProjectSidebarCounts) {
     case "epics":
       return counts.epics === null ? null : String(counts.epics);
     case "tasks":
-      return counts.openTasks === null || counts.totalTasks === null
-        ? null
-        : `${counts.openTasks}/${counts.totalTasks}`;
+      return counts.openTasks === null ? null : String(counts.openTasks);
     case "merge-requests":
       return counts.mergeRequests === null ? null : String(counts.mergeRequests);
     case "gitlab-connection":

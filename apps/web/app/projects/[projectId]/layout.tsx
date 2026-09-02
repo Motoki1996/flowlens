@@ -57,15 +57,14 @@ export default async function ProjectLayout({
     backlogs: null,
     epics: null,
     openTasks: null,
-    totalTasks: null,
     mergeRequests: null,
     gitlab: null,
   };
   try {
     // perPage: 1 for the tasks, for the same reason the merge-request badge
-    // below uses it — the sidebar wants two numbers, and both are counted in
-    // SQL, so it no longer pulls every task of the project on every page load
-    // just to read .length and .filter().length off them.
+    // below uses it — openCount is counted in SQL, so this no longer pulls
+    // every task of the project on every page load just to read
+    // .filter().length off them.
     const [backlogs, epics, tasks] = await Promise.all([
       getBacklogs(projectId),
       getEpics(projectId),
@@ -76,17 +75,18 @@ export default async function ProjectLayout({
       backlogs: backlogs.length,
       epics: epics.length,
       openTasks: tasks.openCount,
-      totalTasks: tasks.totalCount,
     };
   } catch {
     // Counts stay null.
   }
 
   try {
-    // perPage: 1 because only the badge's number is wanted here — totalCount
-    // is counted in SQL, so the sidebar no longer pulls every merge request
-    // of the project on every page load just to read .length off it.
-    counts.mergeRequests = (await getMergeRequests(projectId, { perPage: 1 })).totalCount;
+    // state: "opened" + perPage: 1, so the badge is a count of open merge
+    // requests only (like every other sidebar count), read via totalCount
+    // rather than pulling every merge request of the project.
+    counts.mergeRequests = (
+      await getMergeRequests(projectId, { state: "opened", perPage: 1 })
+    ).totalCount;
   } catch {
     // Left null — the section reads as "no summary".
   }

@@ -1441,10 +1441,14 @@ grew with the project until it was the slowest thing on the screen.
 
   `nextPage` is `0` on the last page. `totalCount` and `openCount` (the latter
   only on the per-project list) count **the filter's whole match**, not the
-  page — they are counted in SQL, which is what lets the project sidebar and
-  the Project single view show "96 open / 137 total" without fetching a single
-  task row (`?per_page=1`). A filtered list reports its own totals, never the
-  project's.
+  page — they are counted in SQL, which is what lets the Project single view
+  show "96 open / 137 total" without fetching a single task row
+  (`?per_page=1`). A filtered list reports its own totals, never the
+  project's. The project sidebar's own Tasks/Merge requests badges take the
+  same shortcut but show only the open count, no denominator, matching the
+  Backlogs/Epics badges beside them (an omitted `?status=` there already
+  means open-only) — every sidebar count is "how much is still open", not a
+  fraction.
 - Every `?sort=` order is applied in SQL. On an unpaged list the sort only
   decided the sequence rows arrived in, so `dueOn`/`updatedAt` were applied in
   Go; on a paged one it decides which rows a page *contains*, so all five now

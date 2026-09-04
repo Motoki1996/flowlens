@@ -175,7 +175,7 @@ Integration              Go API
   routes explicitly mounted behind `requireAuthOrBearer` in `server.go`
   accept a token at all; everything else remains session-only. See
   [ADR-0009](decisions/0009-why-project-scoped-api-tokens.md) for the
-  rationale and the "API tokens" section of [`README.md`](../README.md)
+  rationale and [API tokens & AI agents](features/agents.md)
   for the reachable-route/scope reference.
 - **Never reachable from the browser.** `corsMiddleware` never lists
   `Authorization` in `Access-Control-Allow-Headers`, so a browser's own CORS

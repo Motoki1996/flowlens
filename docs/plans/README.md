@@ -30,12 +30,12 @@ Rules:
 
 The epic-layer plan shipped (all 7 phases) and was deleted per phase 7's own
 instruction; what survives it lives in
-[`README.md`](../../README.md#epics-an-optional-layer-between-a-backlog-and-its-tasks),
+[`docs/features/epics.md`](../features/epics.md),
 [`docs/ui-design.md`](../ui-design.md) and
 [ADR-0012](../decisions/0012-why-an-epic-layer.md).
 
 The issue-sync MVP plan shipped (all 7 phases) and was
 deleted per phase 7's own instruction; what survives it lives in
-[`README.md`](../../README.md#gitlab-ce-connection--sync),
+[`docs/features/gitlab-sync.md`](../features/gitlab-sync.md),
 [`docs/ui-design.md`](../ui-design.md), [ADR-0007](../decisions/0007-why-outbox-worker.md),
 and [ADR-0008](../decisions/0008-why-per-project-gitlab-connection.md).

@@ -99,6 +99,38 @@ which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
 
+### Starting from a GitLab issue IID instead of a task ID
+
+Every task endpoint is keyed by the task's UUID, but a caller in the
+development environment often knows only the GitLab issue: the branch it is
+on is named after the issue IID, the MR description says `Closes #7`, the CI
+job was handed an issue number. `GET /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}`
+resolves that IID back to the task and returns **exactly the body
+`GET /api/v1/tasks/{taskID}` returns**, so the task's `id` from it drives
+`/design-started`, `/implementation-started`, `/comments`, `PATCH` and the
+rest:
+
+```bash
+TASK_ID=$(curl -s "$API_BASE_URL/api/v1/projects/$PROJECT_ID/tasks/by-gitlab-issue/7" \
+  -H "Authorization: Bearer $FLOWLENS_API_TOKEN" | jq -r .id)
+
+curl -X POST "$API_BASE_URL/api/v1/tasks/$TASK_ID/design-started" \
+  -H "Authorization: Bearer $FLOWLENS_API_TOKEN"
+```
+
+`read` scope is enough (it is a read); the write-scoped call is the marker
+that follows. A task that was never pushed to GitLab has no IID and is by
+definition not reachable this way — a 404, the same as an unknown IID.
+
+`?gitlabProjectId=<GitLab's own numeric project id>` narrows the lookup to
+one linked GitLab project. It matters only when the FlowLens project links
+more than one: the 1:1 task↔issue guarantee is a `UNIQUE
+(linked_gitlab_project_id, gitlab_issue_iid)`, i.e. *per linked project*, so
+two repositories can each hold an issue `#42`. That case answers **409
+`ambiguous_issue_iid`** rather than picking one, since either choice would
+be a guess about which repository the caller meant. With a single linked
+project — the normal setup — the parameter is unnecessary.
+
 ### Progress convention for agents (issue #170)
 
 FlowLens can only measure how long work actually takes if an agent keeps
@@ -194,6 +226,7 @@ allowlist of the regular task-tracker routes:
 | GET | `/projects/{projectID}/tasks` | `read` |
 | POST | `/projects/{projectID}/tasks` | `write` |
 | POST | `/projects/{projectID}/tasks/bulk` | `write` |
+| GET | `/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}` | `read` |
 | GET | `/tasks/{taskID}` | `read` |
 | PATCH, DELETE | `/tasks/{taskID}` | `write` |
 | POST | `/tasks/{taskID}/close`, `/reopen`, `/assign-backlog`, `/sync-retry` | `write` |

@@ -733,6 +733,18 @@ type Querier interface {
 	// the '' case (no done transition) is never looked at.
 	ListTaskCompletionsForVelocity(ctx context.Context, arg ListTaskCompletionsForVelocityParams) ([]ListTaskCompletionsForVelocityRow, error)
 	ListTaskDependenciesByProject(ctx context.Context, projectID uuid.UUID) ([]TaskDependency, error)
+	// ListTaskGitlabLinksByProjectAndIID resolves a GitLab issue IID back to the
+	// FlowLens task mirroring it, for the by-gitlab-issue lookup an AI agent uses
+	// when it knows only the issue it is working on (the branch/MR it just made
+	// names the IID, not the task UUID). Unlike
+	// GetTaskGitlabLinkByLinkedProjectAndIID above, the caller here does not know
+	// which linked_gitlab_project the issue is in, so this is keyed by the app
+	// project and returns :many: the 1:1 UNIQUE constraint is per linked GitLab
+	// project, so an app project with two links can hold two different issues
+	// with the same IID. gitlab_project_id narrows to one link when the caller
+	// does know it. Ownership is checked by the caller (internal/task authorizes
+	// the app project first), the same way ListTasksByProject's filters are.
+	ListTaskGitlabLinksByProjectAndIID(ctx context.Context, arg ListTaskGitlabLinksByProjectAndIIDParams) ([]ListTaskGitlabLinksByProjectAndIIDRow, error)
 	ListTaskProgressEventsByTask(ctx context.Context, taskID uuid.UUID) ([]TaskProgressEvent, error)
 	// ListTaskProgressEventsForFlowMetrics returns every task_progress_events
 	// row for tasks in the same project/date range ListTasksForFlowMetrics

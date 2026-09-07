@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/flowlens/api/internal/metricsperiod"
@@ -290,6 +291,48 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		TotalCount: page.TotalCount,
 		OpenCount:  page.OpenCount,
 	})
+}
+
+// handleGetTaskByGitlabIssue returns the task mirroring one GitLab issue,
+// keyed by that issue's IID instead of the task's own UUID, and answers with
+// exactly the body GET /tasks/{taskID} does. It exists for a caller that has
+// only the issue number — an AI agent on a branch named after the issue, a
+// CI job, a script reading an MR description — for which every other task
+// endpoint was previously unreachable.
+//
+// ?gitlabProjectId= is GitLab's own numeric project ID and is needed only
+// when the app project links more than one GitLab project; without it, an
+// IID present in two of them is a 409 rather than a coin flip.
+func (s *Server) handleGetTaskByGitlabIssue(w http.ResponseWriter, r *http.Request) {
+	u, _ := userFromContext(r.Context())
+	projectID, ok := projectIDFromURL(r)
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "project not found")
+		return
+	}
+
+	issueIID, err := strconv.ParseInt(chi.URLParam(r, "issueIid"), 10, 64)
+	if err != nil || issueIID < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_issue_iid", "issue iid must be a positive integer")
+		return
+	}
+
+	var gitlabProjectID *int64
+	if raw := r.URL.Query().Get("gitlabProjectId"); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 1 {
+			writeError(w, http.StatusBadRequest, "invalid_query", "gitlabProjectId must be a positive integer")
+			return
+		}
+		gitlabProjectID = &v
+	}
+
+	t, err := s.tasks.GetByGitlabIssueIID(r.Context(), u.ID, projectID, issueIID, gitlabProjectID)
+	if err != nil {
+		writeTaskError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 // parseDateQueryParam reads name as a YYYY-MM-DD date, mirroring the format
@@ -852,6 +895,8 @@ func taskErrorDetails(err error) (status int, code, message string) {
 		return http.StatusBadRequest, "bulk_self_dependency", "a task cannot depend on itself"
 	case errors.Is(err, task.ErrBulkCyclicDependency):
 		return http.StatusBadRequest, "bulk_cyclic_dependency", "would create a cyclic dependency"
+	case errors.Is(err, task.ErrIssueIIDAmbiguous):
+		return http.StatusConflict, "ambiguous_issue_iid", "issue iid matches more than one linked gitlab project; pass gitlabProjectId"
 	case errors.Is(err, task.ErrNotFound):
 		return http.StatusNotFound, "not_found", "task not found"
 	case errors.Is(err, task.ErrForbidden):

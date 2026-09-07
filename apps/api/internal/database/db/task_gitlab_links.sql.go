@@ -167,6 +167,61 @@ func (q *Queries) GetTaskGitlabLinkWithProjectPathByTaskID(ctx context.Context, 
 	return i, err
 }
 
+const listTaskGitlabLinksByProjectAndIID = `-- name: ListTaskGitlabLinksByProjectAndIID :many
+
+SELECT tgl.task_id, lgp.gitlab_project_id, lgp.path_with_namespace
+FROM task_gitlab_links tgl
+JOIN linked_gitlab_projects lgp ON lgp.id = tgl.linked_gitlab_project_id
+JOIN tasks t ON t.id = tgl.task_id
+WHERE t.project_id = $1
+  AND tgl.gitlab_issue_iid = $2
+  AND ($3::BIGINT IS NULL OR lgp.gitlab_project_id = $3)
+ORDER BY lgp.gitlab_project_id
+`
+
+type ListTaskGitlabLinksByProjectAndIIDParams struct {
+	ProjectID       uuid.UUID   `json:"project_id"`
+	GitlabIssueIid  int64       `json:"gitlab_issue_iid"`
+	GitlabProjectID pgtype.Int8 `json:"gitlab_project_id"`
+}
+
+type ListTaskGitlabLinksByProjectAndIIDRow struct {
+	TaskID            uuid.UUID `json:"task_id"`
+	GitlabProjectID   int64     `json:"gitlab_project_id"`
+	PathWithNamespace string    `json:"path_with_namespace"`
+}
+
+// ListTaskGitlabLinksByProjectAndIID resolves a GitLab issue IID back to the
+// FlowLens task mirroring it, for the by-gitlab-issue lookup an AI agent uses
+// when it knows only the issue it is working on (the branch/MR it just made
+// names the IID, not the task UUID). Unlike
+// GetTaskGitlabLinkByLinkedProjectAndIID above, the caller here does not know
+// which linked_gitlab_project the issue is in, so this is keyed by the app
+// project and returns :many: the 1:1 UNIQUE constraint is per linked GitLab
+// project, so an app project with two links can hold two different issues
+// with the same IID. gitlab_project_id narrows to one link when the caller
+// does know it. Ownership is checked by the caller (internal/task authorizes
+// the app project first), the same way ListTasksByProject's filters are.
+func (q *Queries) ListTaskGitlabLinksByProjectAndIID(ctx context.Context, arg ListTaskGitlabLinksByProjectAndIIDParams) ([]ListTaskGitlabLinksByProjectAndIIDRow, error) {
+	rows, err := q.db.Query(ctx, listTaskGitlabLinksByProjectAndIID, arg.ProjectID, arg.GitlabIssueIid, arg.GitlabProjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTaskGitlabLinksByProjectAndIIDRow{}
+	for rows.Next() {
+		var i ListTaskGitlabLinksByProjectAndIIDRow
+		if err := rows.Scan(&i.TaskID, &i.GitlabProjectID, &i.PathWithNamespace); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markTaskGitlabLinkAppliedForTask = `-- name: MarkTaskGitlabLinkAppliedForTask :one
 
 UPDATE task_gitlab_links

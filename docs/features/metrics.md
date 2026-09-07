@@ -79,8 +79,10 @@ done.
     directly by whoever starts that phase (an AI agent doing spec-driven
     development, or a human) via `POST /api/v1/tasks/{taskID}/design-started`
     and `POST /api/v1/tasks/{taskID}/implementation-started`. Both endpoints
-    are session- and bearer-token-writable (`write` scope), **always
-    overwrite** — unlike most task fields there is no "already set" guard,
+    are session- and bearer-token-writable (`write` scope) and keyed by the
+    task's own ID — a caller that knows only the GitLab issue resolves it
+    first via [`GET /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}`](agents.md#starting-from-a-gitlab-issue-iid-instead-of-a-task-id).
+    They **always overwrite** — unlike most task fields there is no "already set" guard,
     so redoing the design after review feedback just moves the timestamp
     forward — and are independent of each other: a task with
     `implementation_started_at` but no `design_started_at` simply skipped

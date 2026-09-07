@@ -1296,3 +1296,93 @@ func TestCreateWebhookEvent_DuplicateDeliveryIsNoOp(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM webhook_events WHERE id = $1`, first.ID).Scan(&count))
 	assert.Equal(t, 1, count, "exactly one row must exist for the delivery")
 }
+
+// ListTaskGitlabLinksByProjectAndIID's narg predicate (NULL means "any linked
+// GitLab project", a value means "that one") and its three-table join can
+// only be checked against real SQL — the fake querier reimplements both in Go.
+// The case that matters is the ambiguous one: the 1:1 task<->issue UNIQUE is
+// per linked project, so one app project linking two repositories can hold
+// the same IID twice, and the query must return both rather than silently
+// picking one.
+func TestListTaskGitlabLinksByProjectAndIID_NarrowsByLinkedProject(t *testing.T) {
+	pool := testPool(t)
+	q := db.New(pool)
+	ctx := context.Background()
+
+	owner := createUser(t, q, "owner")
+	p, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Alpha"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: p.ID, OwnerUserID: owner.ID})
+	})
+	other, err := q.CreateProject(ctx, db.CreateProjectParams{OwnerUserID: owner.ID, Name: "Beta"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = q.DeleteProjectForOwner(ctx, db.DeleteProjectForOwnerParams{ID: other.ID, OwnerUserID: owner.ID})
+	})
+
+	conn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:      p.ID,
+		BaseUrl:        "https://gitlab.example.com",
+		EncryptedToken: []byte("ciphertext"),
+	})
+	require.NoError(t, err)
+	first := seedLinkedGitlabProject(t, q, conn.ID, 601)
+	second := seedLinkedGitlabProject(t, q, conn.ID, 602)
+
+	otherConn, err := q.UpsertGitlabConnection(ctx, db.UpsertGitlabConnectionParams{
+		ProjectID:      other.ID,
+		BaseUrl:        "https://gitlab.example.com",
+		EncryptedToken: []byte("ciphertext"),
+	})
+	require.NoError(t, err)
+	otherLink := seedLinkedGitlabProject(t, q, otherConn.ID, 603)
+
+	seedTaskLinkedToIssue := func(projectID, linkID uuid.UUID, title string, iid int64) uuid.UUID {
+		t.Helper()
+		tsk, err := q.CreateTask(ctx, db.CreateTaskParams{
+			ProjectID:       projectID,
+			Title:           title,
+			Labels:          []string{},
+			Priority:        "medium",
+			Progress:        "not_started",
+			Size:            "m",
+			CreatedByUserID: owner.ID,
+		})
+		require.NoError(t, err)
+		_, err = pool.Exec(ctx, `
+			INSERT INTO task_gitlab_links (task_id, linked_gitlab_project_id, gitlab_issue_id, gitlab_issue_iid)
+			VALUES ($1, $2, $3, $4)`, tsk.ID, linkID, iid*1000, iid)
+		require.NoError(t, err)
+		return tsk.ID
+	}
+
+	inFirst := seedTaskLinkedToIssue(p.ID, first.ID, "Issue 42 in the first repo", 42)
+	inSecond := seedTaskLinkedToIssue(p.ID, second.ID, "Issue 42 in the second repo", 42)
+	seedTaskLinkedToIssue(other.ID, otherLink.ID, "Issue 42 in another app project", 42)
+
+	both, err := q.ListTaskGitlabLinksByProjectAndIID(ctx, db.ListTaskGitlabLinksByProjectAndIIDParams{
+		ProjectID:      p.ID,
+		GitlabIssueIid: 42,
+	})
+	require.NoError(t, err)
+	require.Len(t, both, 2, "a NULL gitlab_project_id must not filter, and must not reach the other app project")
+	assert.Equal(t, []uuid.UUID{inFirst, inSecond}, []uuid.UUID{both[0].TaskID, both[1].TaskID}, "ordered by gitlab_project_id")
+	assert.Equal(t, "group/demo-602", both[1].PathWithNamespace)
+
+	narrowed, err := q.ListTaskGitlabLinksByProjectAndIID(ctx, db.ListTaskGitlabLinksByProjectAndIIDParams{
+		ProjectID:       p.ID,
+		GitlabIssueIid:  42,
+		GitlabProjectID: pgtype.Int8{Int64: 602, Valid: true},
+	})
+	require.NoError(t, err)
+	require.Len(t, narrowed, 1)
+	assert.Equal(t, inSecond, narrowed[0].TaskID)
+
+	none, err := q.ListTaskGitlabLinksByProjectAndIID(ctx, db.ListTaskGitlabLinksByProjectAndIIDParams{
+		ProjectID:      p.ID,
+		GitlabIssueIid: 999,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}

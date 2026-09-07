@@ -2893,6 +2893,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}:
+    get:
+      summary: Get a task by the GitLab issue it mirrors
+      description: Resolves a GitLab issue IID to the task mirroring it and returns that task exactly as GET /api/v1/tasks/{taskID} does. For a caller that knows only the issue number — an AI agent on a branch named after the issue — since every other task endpoint is keyed by the task's UUID. gitlabProjectId is needed only when the project links more than one GitLab project, where the same IID can exist in each; without it that case answers 409 rather than picking one.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - in: query
+          name: gitlabProjectId
+          description: GitLab's own numeric project ID, to disambiguate the IID.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: The task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/v1/tasks/{taskID}:
     get:
       summary: Get a task
@@ -5695,6 +5744,13 @@ components:
       schema:
         type: string
         format: uuid
+    issueIid:
+      in: path
+      name: issueIid
+      required: true
+      schema:
+        type: integer
+        format: int64
     taskID:
       in: path
       name: taskID

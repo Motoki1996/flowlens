@@ -3636,6 +3636,39 @@ func (f *FakeQuerier) GetTaskGitlabLinkByLinkedProjectAndIID(_ context.Context, 
 	return db.TaskGitlabLink{}, pgx.ErrNoRows
 }
 
+// ListTaskGitlabLinksByProjectAndIID mirrors the SQL: every link in the app
+// project whose issue IID matches, optionally narrowed to one linked GitLab
+// project. Returns more than one row only when the app project links two
+// GitLab projects that each hold that IID — the ambiguity internal/task
+// reports rather than resolves. Ordered by gitlab_project_id like the query,
+// so the result is stable across map iteration.
+func (f *FakeQuerier) ListTaskGitlabLinksByProjectAndIID(_ context.Context, arg db.ListTaskGitlabLinksByProjectAndIIDParams) ([]db.ListTaskGitlabLinksByProjectAndIIDRow, error) {
+	rows := []db.ListTaskGitlabLinksByProjectAndIIDRow{}
+	for _, l := range f.taskGitlabLinksByTaskID {
+		if l.GitlabIssueIid != arg.GitlabIssueIid {
+			continue
+		}
+		t, ok := f.tasksByID[l.TaskID]
+		if !ok || t.ProjectID != arg.ProjectID {
+			continue
+		}
+		p, ok := f.linkedGitlabProjectsByID[l.LinkedGitlabProjectID]
+		if !ok {
+			continue
+		}
+		if arg.GitlabProjectID.Valid && p.GitlabProjectID != arg.GitlabProjectID.Int64 {
+			continue
+		}
+		rows = append(rows, db.ListTaskGitlabLinksByProjectAndIIDRow{
+			TaskID:            l.TaskID,
+			GitlabProjectID:   p.GitlabProjectID,
+			PathWithNamespace: p.PathWithNamespace,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].GitlabProjectID < rows[j].GitlabProjectID })
+	return rows, nil
+}
+
 // MarkTaskGitlabLinkAppliedForTask mirrors the SQL: records a successful
 // inbound apply (internal/webhookapply) without touching
 // last_pushed_fingerprint, unlike MarkTaskGitlabLinkSyncedForTask.

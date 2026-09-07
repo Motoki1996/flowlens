@@ -89,3 +89,25 @@ SET gitlab_updated_at = COALESCE(sqlc.narg('gitlab_updated_at'), gitlab_updated_
     last_error = ''
 WHERE task_id = $1
 RETURNING *;
+
+-- ListTaskGitlabLinksByProjectAndIID resolves a GitLab issue IID back to the
+-- FlowLens task mirroring it, for the by-gitlab-issue lookup an AI agent uses
+-- when it knows only the issue it is working on (the branch/MR it just made
+-- names the IID, not the task UUID). Unlike
+-- GetTaskGitlabLinkByLinkedProjectAndIID above, the caller here does not know
+-- which linked_gitlab_project the issue is in, so this is keyed by the app
+-- project and returns :many: the 1:1 UNIQUE constraint is per linked GitLab
+-- project, so an app project with two links can hold two different issues
+-- with the same IID. gitlab_project_id narrows to one link when the caller
+-- does know it. Ownership is checked by the caller (internal/task authorizes
+-- the app project first), the same way ListTasksByProject's filters are.
+
+-- name: ListTaskGitlabLinksByProjectAndIID :many
+SELECT tgl.task_id, lgp.gitlab_project_id, lgp.path_with_namespace
+FROM task_gitlab_links tgl
+JOIN linked_gitlab_projects lgp ON lgp.id = tgl.linked_gitlab_project_id
+JOIN tasks t ON t.id = tgl.task_id
+WHERE t.project_id = $1
+  AND tgl.gitlab_issue_iid = $2
+  AND (sqlc.narg('gitlab_project_id')::BIGINT IS NULL OR lgp.gitlab_project_id = sqlc.narg('gitlab_project_id'))
+ORDER BY lgp.gitlab_project_id;

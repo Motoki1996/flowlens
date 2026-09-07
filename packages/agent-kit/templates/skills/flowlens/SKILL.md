@@ -74,6 +74,25 @@ POST /api/v1/tasks/{taskID}/close             # once the work is done
 - `GET .../context`'s `progressGuidance` field carries this same
   instruction — trust it over stale caches of this file.
 
+## Working from a GitLab issue iid instead of a task ID
+
+Every route above is keyed by the FlowLens task ID. When all you have is the
+GitLab issue — you're on a branch named `issue-7-…`, or resuming from an MR
+that says `Closes #7` — resolve it first:
+
+```
+GET /api/v1/projects/{projectId}/tasks/by-gitlab-issue/{issueIid}
+```
+
+It returns the same body as `GET /api/v1/tasks/{taskID}`, so take `.id` from
+it and use it for the markers, comments and PATCHes above. `read` scope is
+enough. A 404 means no FlowLens task mirrors that issue (a purely local task
+has no iid at all). A 409 `ambiguous_issue_iid` means the project links more
+than one GitLab repository and both hold that iid — retry with
+`?gitlabProjectId=<GitLab's numeric project id>`.
+
+Do **not** guess a task ID or list every task and match on title.
+
 ## Branch naming (required for MR ↔ task linking)
 
 A merge request is linked to its task **by branch name**, matched against:

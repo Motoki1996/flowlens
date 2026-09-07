@@ -45,7 +45,10 @@ var (
 	ErrEpicNotInProject      = errors.New("task: epic belongs to a different project")
 	ErrAIContextFieldTooLong = errors.New("task: AI context fields must be at most 20000 characters")
 	ErrSyncNotFailed         = errors.New("task: gitlab sync is not currently failed")
-	ErrForbidden             = errors.New("task: forbidden")
+	// ErrIssueIIDAmbiguous is GetByGitlabIssueIID's "more than one linked
+	// GitLab project holds this IID"; the caller must say which one.
+	ErrIssueIIDAmbiguous = errors.New("task: gitlab issue iid matches more than one linked gitlab project")
+	ErrForbidden         = errors.New("task: forbidden")
 )
 
 // maxAIContextFieldLength bounds each of the four task_ai_contexts fields.
@@ -1285,6 +1288,46 @@ func (s *Service) Get(ctx context.Context, ownerID, taskID uuid.UUID) (Task, err
 		return Task{}, err
 	}
 	return t, nil
+}
+
+// GetByGitlabIssueIID resolves a GitLab issue IID back to the task mirroring
+// it, inside projectID, and returns that task exactly as Get would. It is the
+// lookup for a caller that knows only the issue — an AI agent working from a
+// branch or MR that names the IID, never the task UUID — so that every other
+// task endpoint, which is keyed by task ID, becomes reachable from an issue
+// number in one extra call.
+//
+// gitlabProjectID (GitLab's own numeric project ID, not FlowLens's) is
+// optional and narrows the search to one linked GitLab project. It is needed
+// only when an app project links more than one GitLab project: the 1:1
+// task<->issue UNIQUE constraint is per linked project, so two links can each
+// hold an issue with the same IID. That case reports ErrIssueIIDAmbiguous
+// rather than picking one, since either answer would be a guess about which
+// repository the caller meant.
+//
+// A task with no task_gitlab_links row at all — purely local, never pushed to
+// GitLab — has no IID and is by definition unreachable here.
+func (s *Service) GetByGitlabIssueIID(ctx context.Context, ownerID, projectID uuid.UUID, issueIID int64, gitlabProjectID *int64) (Task, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return Task{}, err
+	}
+
+	links, err := s.q.ListTaskGitlabLinksByProjectAndIID(ctx, db.ListTaskGitlabLinksByProjectAndIIDParams{
+		ProjectID:       projectID,
+		GitlabIssueIid:  issueIID,
+		GitlabProjectID: toInt8(gitlabProjectID),
+	})
+	if err != nil {
+		return Task{}, fmt.Errorf("task: get by gitlab issue iid: %w", err)
+	}
+	switch len(links) {
+	case 0:
+		return Task{}, ErrNotFound
+	case 1:
+		return s.Get(ctx, ownerID, links[0].TaskID)
+	default:
+		return Task{}, ErrIssueIIDAmbiguous
+	}
 }
 
 // attachEpicSummary fills t.Epic from t.EpicID, scoped through the same owner

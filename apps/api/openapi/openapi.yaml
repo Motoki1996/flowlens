@@ -156,6 +156,8 @@ paths:
     $ref: './paths/tasks.yaml#/taskDependency'
   /api/v1/projects/{projectID}/tasks/context:
     $ref: './paths/tasks.yaml#/projectTaskContexts'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}:
+    $ref: './paths/tasks.yaml#/byGitlabIssue'
   /api/v1/tasks/{taskID}:
     $ref: './paths/tasks.yaml#/task'
   /api/v1/tasks/{taskID}/close:

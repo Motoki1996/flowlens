@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/flowlens/api/internal/apitoken"
+	"github.com/flowlens/api/internal/database/db"
+	"github.com/flowlens/api/internal/database/dbtest"
 	"github.com/flowlens/api/internal/issuesync"
 	"github.com/flowlens/api/internal/task"
 	"github.com/google/uuid"
@@ -1291,4 +1293,112 @@ func TestHandleGetTaskContext_IncludesSize(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "xl", body["size"])
+}
+
+// seedLink links a GitLab project to conn under a caller-chosen numeric
+// GitLab project ID, so the by-gitlab-issue tests can hold two links apart.
+func seedLink(t *testing.T, q *dbtest.FakeQuerier, conn db.GitlabConnection, gitlabProjectID int64, path string) db.LinkedGitlabProject {
+	t.Helper()
+	link, err := q.CreateLinkedGitlabProject(context.Background(), db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: conn.ID,
+		GitlabProjectID:    gitlabProjectID,
+		PathWithNamespace:  path,
+		Name:               path,
+		SyncScope:          "all",
+		SyncLabels:         []string{},
+	})
+	require.NoError(t, err)
+	return link
+}
+
+func TestHandleGetTaskByGitlabIssue_ResolvesIIDToTheSameBodyAsGetTask(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLink(t, q, conn, 100, "group/demo")
+	tsk := q.SeedTask(p.ID, ownerID, "Fix bug")
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	rec := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks/by-gitlab-issue/7", nil, token)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	byTaskID := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String(), nil, token)
+	require.Equal(t, http.StatusOK, byTaskID.Code)
+	assert.JSONEq(t, byTaskID.Body.String(), rec.Body.String())
+}
+
+func TestHandleGetTaskByGitlabIssue_Rejects(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	first := seedLink(t, q, conn, 100, "group/demo")
+	second := seedLink(t, q, conn, 200, "group/other")
+	a := q.SeedTask(p.ID, ownerID, "Dupe in first")
+	q.SeedTaskGitlabLink(a.ID, first.ID, 42)
+	b := q.SeedTask(p.ID, ownerID, "Dupe in second")
+	q.SeedTaskGitlabLink(b.ID, second.ID, 42)
+
+	base := "/api/v1/projects/" + p.ID.String() + "/tasks/by-gitlab-issue/"
+	tests := []struct {
+		name     string
+		path     string
+		wantCode int
+		wantErr  string
+	}{
+		{"non-numeric iid", base + "abc", http.StatusBadRequest, "invalid_issue_iid"},
+		{"zero iid", base + "0", http.StatusBadRequest, "invalid_issue_iid"},
+		{"non-numeric gitlabProjectId", base + "42?gitlabProjectId=abc", http.StatusBadRequest, "invalid_query"},
+		{"unknown iid", base + "999", http.StatusNotFound, "not_found"},
+		{"iid in two links", base + "42", http.StatusConflict, "ambiguous_issue_iid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doRequest(t, s, http.MethodGet, tt.path, nil, token)
+			require.Equal(t, tt.wantCode, rec.Code)
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(t, tt.wantErr, body.Error.Code)
+		})
+	}
+
+	t.Run("gitlabProjectId picks one of the two", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodGet, base+"42?gitlabProjectId=200", nil, token)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		assert.Equal(t, b.ID.String(), got["id"])
+	})
+}
+
+// A read-scoped project API token is the caller this endpoint exists for: an
+// agent holding only the issue number, which then feeds the resolved task ID
+// to /design-started, /implementation-started and the rest.
+func TestHandleGetTaskByGitlabIssue_BearerReadScope(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p := q.SeedProject(owner.ID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLink(t, q, conn, 100, "group/demo")
+	tsk := q.SeedTask(p.ID, owner.ID, "Fix bug")
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+
+	_, raw, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "CI bot", []string{apitoken.ScopeRead}, nil)
+	require.NoError(t, err)
+
+	rec := doBearerRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks/by-gitlab-issue/7", nil, raw)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, tsk.ID.String(), got["id"])
+
+	// And the resolved ID really does drive the marker endpoint — except a
+	// read-scoped token is refused there, which is the scope split working.
+	rec = doBearerRequest(t, s, http.MethodPost, "/api/v1/tasks/"+tsk.ID.String()+"/design-started", nil, raw)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 }

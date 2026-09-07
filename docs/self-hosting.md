@@ -98,7 +98,7 @@ docker compose exec -T db pg_dump -U flowlens flowlens | gzip > "backup-$(date +
 cp .env .env.backup
 
 # 3. Move the pin.
-sed -i 's/^FLOWLENS_VERSION=.*/FLOWLENS_VERSION=v0.3.0/' .env
+sed -i 's/^FLOWLENS_VERSION=.*/FLOWLENS_VERSION=v0.6.0/' .env
 
 # 4. Apply.
 docker compose pull

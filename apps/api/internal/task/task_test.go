@@ -2162,3 +2162,89 @@ func TestService_List_FiltersByEpic(t *testing.T) {
 	require.Len(t, loose, 1)
 	assert.Equal(t, "Directly in the backlog", loose[0].Title)
 }
+
+// seedSecondLinkedGitlabProject links a second GitLab project (id 200) to
+// connectionID, so a test can hold two links under one app project — the only
+// arrangement in which an issue IID is ambiguous, since the 1:1 task<->issue
+// constraint is per linked project.
+func seedSecondLinkedGitlabProject(t *testing.T, q *dbtest.FakeQuerier, connectionID uuid.UUID) db.LinkedGitlabProject {
+	t.Helper()
+	link, err := q.CreateLinkedGitlabProject(context.Background(), db.CreateLinkedGitlabProjectParams{
+		GitlabConnectionID: connectionID,
+		GitlabProjectID:    200,
+		PathWithNamespace:  "group/other",
+		Name:               "other",
+		WebUrl:             "https://gitlab.example.com/group/other",
+		SyncScope:          "all",
+	})
+	require.NoError(t, err)
+	return link
+}
+
+func TestService_GetByGitlabIssueIID(t *testing.T) {
+	q := dbtest.New()
+	svc := newService(q)
+	ctx := context.Background()
+	owner := q.SeedUser("octocat", "octocat@example.com").ID
+
+	p := q.SeedProject(owner, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	first := seedLinkedGitlabProject(t, q, conn.ID)
+	second := seedSecondLinkedGitlabProject(t, q, conn.ID)
+
+	// Issue 7 exists in the first link only; issue 42 exists in both, which
+	// is the ambiguity the endpoint must refuse to guess at.
+	linked := q.SeedTask(p.ID, owner, "Linked")
+	q.SeedTaskGitlabLink(linked.ID, first.ID, 7)
+	dupeA := q.SeedTask(p.ID, owner, "Dupe in first")
+	q.SeedTaskGitlabLink(dupeA.ID, first.ID, 42)
+	dupeB := q.SeedTask(p.ID, owner, "Dupe in second")
+	q.SeedTaskGitlabLink(dupeB.ID, second.ID, 42)
+	// A purely local task, never pushed, has no IID to be found by.
+	q.SeedTask(p.ID, owner, "Local only")
+
+	// A second app project with its own link, to prove the lookup is scoped
+	// to the project in the URL and not to the whole database.
+	other := q.SeedProject(owner, "Beta")
+	otherConn := q.SeedGitlabConnection(other.ID, []byte("encrypted"))
+	otherLink := seedLinkedGitlabProject(t, q, otherConn.ID)
+	otherTask := q.SeedTask(other.ID, owner, "Elsewhere")
+	q.SeedTaskGitlabLink(otherTask.ID, otherLink.ID, 7)
+
+	stranger := q.SeedUser("mona", "mona@example.com").ID
+
+	gitlabProjectID := func(v int64) *int64 { return &v }
+
+	tests := []struct {
+		name            string
+		caller          uuid.UUID
+		projectID       uuid.UUID
+		issueIID        int64
+		gitlabProjectID *int64
+		wantTaskID      uuid.UUID
+		wantErr         error
+	}{
+		{name: "resolves an iid to its task", caller: owner, projectID: p.ID, issueIID: 7, wantTaskID: linked.ID},
+		{name: "scopes to the project in the request", caller: owner, projectID: other.ID, issueIID: 7, wantTaskID: otherTask.ID},
+		{name: "unknown iid is not found", caller: owner, projectID: p.ID, issueIID: 999, wantErr: task.ErrNotFound},
+		{name: "iid in two links is ambiguous", caller: owner, projectID: p.ID, issueIID: 42, wantErr: task.ErrIssueIIDAmbiguous},
+		{name: "gitlabProjectId resolves the ambiguity", caller: owner, projectID: p.ID, issueIID: 42, gitlabProjectID: gitlabProjectID(200), wantTaskID: dupeB.ID},
+		{name: "gitlabProjectId naming another link is not found", caller: owner, projectID: p.ID, issueIID: 7, gitlabProjectID: gitlabProjectID(200), wantErr: task.ErrNotFound},
+		{name: "a non-member never learns the task exists", caller: stranger, projectID: p.ID, issueIID: 7, wantErr: task.ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.GetByGitlabIssueIID(ctx, tt.caller, tt.projectID, tt.issueIID, tt.gitlabProjectID)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTaskID, got.ID)
+			// The body is Get's, gitlab block included — that equivalence is
+			// the whole point of resolving rather than returning a bare ID.
+			require.NotNil(t, got.Gitlab)
+			assert.Equal(t, tt.issueIID, *got.Gitlab.IssueIID)
+		})
+	}
+}

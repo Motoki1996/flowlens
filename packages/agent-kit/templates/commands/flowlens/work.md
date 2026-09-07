@@ -1,6 +1,6 @@
 ---
 description: 1つの FlowLens タスクについて、設計→実装のライフサイクルを実行する（SDD、逐次実行前提）
-argument-hint: <taskId>
+argument-hint: <taskId|gitlabIssueIid>
 allowed-tools: Bash(cat .flowlens/config.json), Bash(curl:*), Bash(git checkout:*), Bash(git branch:*), Read, Edit, Write, Grep, Glob
 ---
 
@@ -12,6 +12,11 @@ task-claiming mechanism yet, so two agents can race onto the same task.
 ## Target task
 
 Task ID: $1
+
+If `$1` is not a UUID but a GitLab issue iid (a bare number, e.g. from the
+branch you are on), resolve it first with
+`GET {baseUrl}/api/v1/projects/{projectId}/tasks/by-gitlab-issue/$1` and use
+that response's `.id` as the task ID for every step below.
 
 ## Steps
 

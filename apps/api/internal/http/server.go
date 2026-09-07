@@ -385,6 +385,13 @@ func (s *Server) Router() chi.Router {
 
 			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks/context", s.handleListTaskContexts)
 
+			// The task keyed by the GitLab issue it mirrors rather than by
+			// its own UUID: an agent working from a branch or MR knows only
+			// the issue IID, and every other task route needs the task ID.
+			// Another flat leaf beside the {taskID} mount, like /tasks/bulk
+			// and /tasks/context above.
+			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}", s.handleGetTaskByGitlabIssue)
+
 			// Read-only, mirroring the issue-sync task collection's route
 			// shape (issue #112): merge_requests is never written back to
 			// GitLab (ADR-0011), so there is no create/update/delete pair

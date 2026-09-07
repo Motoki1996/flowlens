@@ -2896,7 +2896,7 @@ paths:
   /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}:
     get:
       summary: Get a task by the GitLab issue it mirrors
-      description: Resolves a GitLab issue IID to the task mirroring it and returns that task exactly as GET /api/v1/tasks/{taskID} does. For a caller that knows only the issue number — an AI agent on a branch named after the issue — since every other task endpoint is keyed by the task's UUID. gitlabProjectId is needed only when the project links more than one GitLab project, where the same IID can exist in each; without it that case answers 409 rather than picking one.
+      description: Resolves a GitLab issue IID to the task mirroring it and returns that task exactly as GET /api/v1/tasks/{taskID} does. For a caller that knows only the issue number — an AI agent on a branch named after the issue — since every other task endpoint is keyed by the task's UUID. Every write route below carries the same resolution, so an agent that only ever learns the IID never has to address the task by UUID at all. gitlabProjectId is needed only when the project links more than one GitLab project, where the same IID can exist in each; without it that case answers 409 rather than picking one.
       tags:
         - tasks
       security:
@@ -2905,12 +2905,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/projectID'
         - $ref: '#/components/parameters/issueIid'
-        - in: query
-          name: gitlabProjectId
-          description: GitLab's own numeric project ID, to disambiguate the IID.
-          schema:
-            type: integer
-            format: int64
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
       responses:
         '200':
           description: The task
@@ -2926,6 +2921,613 @@ paths:
                 $ref: '#/components/schemas/Error'
         '401':
           description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      summary: Update a task by the GitLab issue it mirrors
+      description: Identical to PATCH /api/v1/tasks/{taskID}, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the PATCH /api/v1/tasks/{taskID} route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskRequest'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid input, issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      summary: Delete a task by the GitLab issue it mirrors
+      description: Identical to DELETE /api/v1/tasks/{taskID}, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the DELETE /api/v1/tasks/{taskID} route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '204':
+          description: Deleted
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/close:
+    post:
+      summary: Close a task by the GitLab issue it mirrors
+      description: Identical to POST /api/v1/tasks/{taskID}/close, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the POST /api/v1/tasks/{taskID}/close route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '200':
+          description: The closed task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/reopen:
+    post:
+      summary: Reopen a task by the GitLab issue it mirrors
+      description: Identical to POST /api/v1/tasks/{taskID}/reopen, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the POST /api/v1/tasks/{taskID}/reopen route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '200':
+          description: The reopened task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/assign-backlog:
+    post:
+      summary: Assign (or unassign) a task's backlog by the GitLab issue it mirrors
+      description: Identical to POST /api/v1/tasks/{taskID}/assign-backlog, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the POST /api/v1/tasks/{taskID}/assign-backlog route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignTaskBacklogRequest'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/sync-retry:
+    post:
+      summary: Retry a task's failed GitLab sync by the GitLab issue it mirrors
+      description: Identical to POST /api/v1/tasks/{taskID}/sync-retry, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the POST /api/v1/tasks/{taskID}/sync-retry route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '200':
+          description: The task, with sync retried
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/ai-context:
+    put:
+      summary: Save a task's AI context by the GitLab issue it mirrors
+      description: Identical to PUT /api/v1/tasks/{taskID}/ai-context, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the PUT /api/v1/tasks/{taskID}/ai-context route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpsertTaskAIContextRequest'
+      responses:
+        '200':
+          description: The saved AI context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskAIContext'
+        '400':
+          description: Invalid input, issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/design-started:
+    post:
+      summary: Mark a task's design phase as started, by the GitLab issue it mirrors
+      description: Identical to POST /api/v1/tasks/{taskID}/design-started, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the POST /api/v1/tasks/{taskID}/design-started route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/implementation-started:
+    post:
+      summary: Mark a task's implementation phase as started, by the GitLab issue it mirrors
+      description: Identical to POST /api/v1/tasks/{taskID}/implementation-started, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the POST /api/v1/tasks/{taskID}/implementation-started route does. Requires write scope for a bearer token.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '200':
+          description: The updated task
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/context:
+    get:
+      summary: Get a task's AI-facing context by the GitLab issue it mirrors
+      description: Identical to GET /api/v1/tasks/{taskID}/context, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the GET /api/v1/tasks/{taskID}/context route does.
+      tags:
+        - tasks
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '200':
+          description: The task's context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskContext'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/comments:
+    get:
+      summary: List a task's activity-log comments by the GitLab issue it mirrors
+      description: Identical to GET /api/v1/tasks/{taskID}/comments, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the GET /api/v1/tasks/{taskID}/comments route does.
+      tags:
+        - task-comments
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      responses:
+        '200':
+          description: Comments, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskComment'
+        '400':
+          description: Invalid issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No task mirrors that issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: The IID matches more than one linked GitLab project
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      summary: Post a comment to a task's activity log, by the GitLab issue it mirrors
+      description: Identical to POST /api/v1/tasks/{taskID}/comments, addressed by the GitLab issue IID the task mirrors instead of by its own UUID; the IID is resolved to that task first and the request then behaves exactly as the POST /api/v1/tasks/{taskID}/comments route does. Requires write scope for a bearer token.
+      tags:
+        - task-comments
+      security:
+        - cookieAuth: []
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/projectID'
+        - $ref: '#/components/parameters/issueIid'
+        - $ref: '#/components/parameters/gitlabProjectIdQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskCommentRequest'
+      responses:
+        '201':
+          description: The created comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskComment'
+        '400':
+          description: Invalid input, issue iid or query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Token missing write scope
           content:
             application/json:
               schema:
@@ -5748,6 +6350,13 @@ components:
       in: path
       name: issueIid
       required: true
+      schema:
+        type: integer
+        format: int64
+    gitlabProjectIdQuery:
+      in: query
+      name: gitlabProjectId
+      description: GitLab's own numeric project ID, to disambiguate the IID when the project links more than one GitLab project. Omitting it where the IID is ambiguous answers 409 rather than picking a repository.
       schema:
         type: integer
         format: int64

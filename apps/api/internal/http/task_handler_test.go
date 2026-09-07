@@ -1402,3 +1402,230 @@ func TestHandleGetTaskByGitlabIssue_BearerReadScope(t *testing.T) {
 	rec = doBearerRequest(t, s, http.MethodPost, "/api/v1/tasks/"+tsk.ID.String()+"/design-started", nil, raw)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
+
+// seedTaskWithIssue seeds a project whose second task mirrors GitLab issue
+// iid 7, and returns both the project and that task. The first task exists
+// only so a by-IID route that resolved to "some task in this project"
+// rather than to the right one would be visible.
+func seedTaskWithIssue(t *testing.T, q *dbtest.FakeQuerier, ownerID uuid.UUID) (db.Project, db.Task) {
+	t.Helper()
+	p := q.SeedProject(ownerID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	link := seedLink(t, q, conn, 100, "group/demo")
+	q.SeedTask(p.ID, ownerID, "Decoy")
+	tsk := q.SeedTask(p.ID, ownerID, "Fix bug")
+	q.SeedTaskGitlabLink(tsk.ID, link.ID, 7)
+	return p, tsk
+}
+
+// The whole point of the by-IID write surface: every task route reachable by
+// UUID is reachable by the issue IID too, acting on the task that IID
+// resolves to. A route that silently resolved to the wrong task, or that
+// answered 404/405 because it was never mounted, fails here.
+func TestTaskByGitlabIssue_WriteRoutesActOnTheResolvedTask(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		suffix   string
+		body     any
+		wantCode int
+		// wantErr, where set, is asserted instead of the returned task's
+		// id: the route resolved and reached its handler, which then
+		// refused for a reason of its own that has nothing to do with how
+		// the task was addressed.
+		wantErr string
+	}{
+		{name: "patch", method: http.MethodPatch, body: map[string]any{"title": "Renamed"}, wantCode: http.StatusOK},
+		{name: "close", method: http.MethodPost, suffix: "/close", wantCode: http.StatusOK},
+		{name: "reopen", method: http.MethodPost, suffix: "/reopen", wantCode: http.StatusOK},
+		{name: "assign-backlog", method: http.MethodPost, suffix: "/assign-backlog", body: map[string]any{"backlogId": nil}, wantCode: http.StatusOK},
+		// Nothing has failed to sync on a freshly seeded task, so the
+		// handler's own precondition is what answers here.
+		{name: "sync-retry", method: http.MethodPost, suffix: "/sync-retry", wantCode: http.StatusConflict, wantErr: "sync_not_failed"},
+		{name: "design-started", method: http.MethodPost, suffix: "/design-started", wantCode: http.StatusOK},
+		{name: "implementation-started", method: http.MethodPost, suffix: "/implementation-started", wantCode: http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, q := newTestServer(t)
+			ownerID, token := loginSession(t, s, q)
+			p, tsk := seedTaskWithIssue(t, q, ownerID)
+
+			rec := doRequest(t, s, tt.method, "/api/v1/projects/"+p.ID.String()+"/tasks/by-gitlab-issue/7"+tt.suffix, tt.body, token)
+			require.Equal(t, tt.wantCode, rec.Code, rec.Body.String())
+
+			if tt.wantErr != "" {
+				var body struct {
+					Error struct {
+						Code string `json:"code"`
+					} `json:"error"`
+				}
+				require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+				assert.Equal(t, tt.wantErr, body.Error.Code)
+				return
+			}
+			var got map[string]any
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			assert.Equal(t, tsk.ID.String(), got["id"])
+		})
+	}
+}
+
+// The routes whose response is not a Task, checked through the effect they
+// leave behind rather than through an "id" field they do not carry.
+func TestTaskByGitlabIssue_NonTaskBodiedRoutes(t *testing.T) {
+	t.Run("ai-context is saved on the resolved task", func(t *testing.T) {
+		s, q := newTestServer(t)
+		ownerID, token := loginSession(t, s, q)
+		p, tsk := seedTaskWithIssue(t, q, ownerID)
+		base := "/api/v1/projects/" + p.ID.String() + "/tasks/by-gitlab-issue/7"
+
+		rec := doRequest(t, s, http.MethodPut, base+"/ai-context",
+			map[string]any{"acceptanceCriteria": "It works", "aiContext": "Notes"}, token)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		byTaskID := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String()+"/context", nil, token)
+		require.Equal(t, http.StatusOK, byTaskID.Code)
+		var ctx map[string]any
+		require.NoError(t, json.Unmarshal(byTaskID.Body.Bytes(), &ctx))
+		assert.Equal(t, "It works", ctx["acceptanceCriteria"])
+	})
+
+	t.Run("comments are posted to and listed from the resolved task", func(t *testing.T) {
+		s, q := newTestServer(t)
+		ownerID, token := loginSession(t, s, q)
+		p, tsk := seedTaskWithIssue(t, q, ownerID)
+		base := "/api/v1/projects/" + p.ID.String() + "/tasks/by-gitlab-issue/7"
+
+		rec := doRequest(t, s, http.MethodPost, base+"/comments", map[string]any{"body": "Started"}, token)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var created map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+		assert.Equal(t, tsk.ID.String(), created["taskId"])
+
+		rec = doRequest(t, s, http.MethodGet, base+"/comments", nil, token)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var listed []map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &listed))
+		require.Len(t, listed, 1)
+		assert.Equal(t, "Started", listed[0]["body"])
+	})
+
+	t.Run("context is the same body as the taskID route's", func(t *testing.T) {
+		s, q := newTestServer(t)
+		ownerID, token := loginSession(t, s, q)
+		p, tsk := seedTaskWithIssue(t, q, ownerID)
+
+		byIID := doRequest(t, s, http.MethodGet, "/api/v1/projects/"+p.ID.String()+"/tasks/by-gitlab-issue/7/context", nil, token)
+		require.Equal(t, http.StatusOK, byIID.Code, byIID.Body.String())
+		byTaskID := doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String()+"/context", nil, token)
+		require.Equal(t, http.StatusOK, byTaskID.Code)
+		assert.JSONEq(t, byTaskID.Body.String(), byIID.Body.String())
+	})
+
+	t.Run("delete removes the resolved task", func(t *testing.T) {
+		s, q := newTestServer(t)
+		ownerID, token := loginSession(t, s, q)
+		p, tsk := seedTaskWithIssue(t, q, ownerID)
+
+		rec := doRequest(t, s, http.MethodDelete, "/api/v1/projects/"+p.ID.String()+"/tasks/by-gitlab-issue/7", nil, token)
+		require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+		rec = doRequest(t, s, http.MethodGet, "/api/v1/tasks/"+tsk.ID.String(), nil, token)
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}
+
+// The resolution failures are the GET route's, reported identically on a
+// write — the middleware is the same code, so what a caller has to handle
+// does not depend on the verb.
+func TestTaskByGitlabIssue_WriteRoutesRejectUnresolvableIIDs(t *testing.T) {
+	s, q := newTestServer(t)
+	ownerID, token := loginSession(t, s, q)
+	p := q.SeedProject(ownerID, "Alpha")
+	conn := q.SeedGitlabConnection(p.ID, []byte("encrypted"))
+	first := seedLink(t, q, conn, 100, "group/demo")
+	second := seedLink(t, q, conn, 200, "group/other")
+	a := q.SeedTask(p.ID, ownerID, "Dupe in first")
+	q.SeedTaskGitlabLink(a.ID, first.ID, 42)
+	b := q.SeedTask(p.ID, ownerID, "Dupe in second")
+	q.SeedTaskGitlabLink(b.ID, second.ID, 42)
+
+	base := "/api/v1/projects/" + p.ID.String() + "/tasks/by-gitlab-issue/"
+	tests := []struct {
+		name     string
+		path     string
+		wantCode int
+		wantErr  string
+	}{
+		{"non-numeric iid", base + "abc", http.StatusBadRequest, "invalid_issue_iid"},
+		{"zero iid", base + "0", http.StatusBadRequest, "invalid_issue_iid"},
+		{"non-numeric gitlabProjectId", base + "42?gitlabProjectId=abc", http.StatusBadRequest, "invalid_query"},
+		{"unknown iid", base + "999", http.StatusNotFound, "not_found"},
+		{"iid in two links", base + "42", http.StatusConflict, "ambiguous_issue_iid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := doRequest(t, s, http.MethodPatch, tt.path, map[string]any{"title": "Renamed"}, token)
+			require.Equal(t, tt.wantCode, rec.Code)
+			var body struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+			assert.Equal(t, tt.wantErr, body.Error.Code)
+		})
+	}
+
+	t.Run("gitlabProjectId disambiguates a write too", func(t *testing.T) {
+		rec := doRequest(t, s, http.MethodPatch, base+"42?gitlabProjectId=200", map[string]any{"title": "Renamed"}, token)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var got map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+		assert.Equal(t, b.ID.String(), got["id"])
+	})
+}
+
+// The scope split has to survive the new spelling: a read-scoped token can
+// resolve an IID but must not write through it, or by-IID would be a way
+// around the very allowlist that keeps a read token read-only.
+func TestTaskByGitlabIssue_WriteRoutesNeedWriteScope(t *testing.T) {
+	s, q := newTestServer(t)
+	owner := q.SeedUser("octocat", "octocat@example.com")
+	p, _ := seedTaskWithIssue(t, q, owner.ID)
+
+	_, readOnly, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "Reader", []string{apitoken.ScopeRead}, nil)
+	require.NoError(t, err)
+	_, writer, err := s.apiTokens.Create(context.Background(), owner.ID, p.ID, "Writer", []string{apitoken.ScopeWrite}, nil)
+	require.NoError(t, err)
+
+	base := "/api/v1/projects/" + p.ID.String() + "/tasks/by-gitlab-issue/7"
+	writes := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{http.MethodPatch, base, map[string]any{"title": "Renamed"}},
+		{http.MethodDelete, base, nil},
+		{http.MethodPost, base + "/close", nil},
+		{http.MethodPost, base + "/reopen", nil},
+		{http.MethodPost, base + "/assign-backlog", map[string]any{"backlogId": nil}},
+		{http.MethodPost, base + "/sync-retry", nil},
+		{http.MethodPut, base + "/ai-context", map[string]any{"acceptanceCriteria": "x", "aiContext": "y"}},
+		{http.MethodPost, base + "/design-started", nil},
+		{http.MethodPost, base + "/implementation-started", nil},
+		{http.MethodPost, base + "/comments", map[string]any{"body": "hi"}},
+	}
+	for _, w := range writes {
+		t.Run(w.method+" "+w.path, func(t *testing.T) {
+			rec := doBearerRequest(t, s, w.method, w.path, w.body, readOnly)
+			assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		})
+	}
+
+	// And the same token set with write scope gets through, so the 403s
+	// above are the scope check rather than a route that is simply broken.
+	rec := doBearerRequest(t, s, http.MethodPost, base+"/design-started", nil, writer)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}

@@ -2247,4 +2247,22 @@ func TestService_GetByGitlabIssueIID(t *testing.T) {
 			assert.Equal(t, tt.issueIID, *got.Gitlab.IssueIID)
 		})
 	}
+
+	// ResolveGitlabIssueIID is the half of the above that the by-IID write
+	// routes call on their own, so it has to answer every one of these cases
+	// identically — a middleware that resolved more permissively than the
+	// read does would be a way around the read's own authorization.
+	t.Run("ResolveGitlabIssueIID agrees with the full read", func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, err := svc.ResolveGitlabIssueIID(ctx, tt.caller, tt.projectID, tt.issueIID, tt.gitlabProjectID)
+				if tt.wantErr != nil {
+					assert.ErrorIs(t, err, tt.wantErr)
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantTaskID, got)
+			})
+		}
+	})
 }

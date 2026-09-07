@@ -56,6 +56,10 @@ func TestTokenAuthorization_CrossProjectResourceGets404(t *testing.T) {
 		{"GET foreign project's tasks", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String() + "/tasks"},
 		{"POST foreign project bulk create tasks", http.MethodPost, "/api/v1/projects/" + otherProject.ID.String() + "/tasks/bulk"},
 		{"GET foreign project's task by gitlab issue", http.MethodGet, "/api/v1/projects/" + otherProject.ID.String() + "/tasks/by-gitlab-issue/1"},
+		{"PATCH foreign project's task by gitlab issue", http.MethodPatch, "/api/v1/projects/" + otherProject.ID.String() + "/tasks/by-gitlab-issue/1"},
+		{"DELETE foreign project's task by gitlab issue", http.MethodDelete, "/api/v1/projects/" + otherProject.ID.String() + "/tasks/by-gitlab-issue/1"},
+		{"POST foreign project's task close by gitlab issue", http.MethodPost, "/api/v1/projects/" + otherProject.ID.String() + "/tasks/by-gitlab-issue/1/close"},
+		{"POST foreign project's task comment by gitlab issue", http.MethodPost, "/api/v1/projects/" + otherProject.ID.String() + "/tasks/by-gitlab-issue/1/comments"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

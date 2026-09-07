@@ -303,6 +303,79 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 // ?gitlabProjectId= is GitLab's own numeric project ID and is needed only
 // when the app project links more than one GitLab project; without it, an
 // IID present in two of them is a 409 rather than a coin flip.
+// gitlabIssueRefFromURL parses the {issueIid} path parameter and the
+// optional ?gitlabProjectId= that disambiguates it, writing the error
+// response itself and reporting false when either is malformed.
+func gitlabIssueRefFromURL(w http.ResponseWriter, r *http.Request) (int64, *int64, bool) {
+	issueIID, err := strconv.ParseInt(chi.URLParam(r, "issueIid"), 10, 64)
+	if err != nil || issueIID < 1 {
+		writeError(w, http.StatusBadRequest, "invalid_issue_iid", "issue iid must be a positive integer")
+		return 0, nil, false
+	}
+
+	var gitlabProjectID *int64
+	if raw := r.URL.Query().Get("gitlabProjectId"); raw != "" {
+		v, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || v < 1 {
+			writeError(w, http.StatusBadRequest, "invalid_query", "gitlabProjectId must be a positive integer")
+			return 0, nil, false
+		}
+		gitlabProjectID = &v
+	}
+	return issueIID, gitlabProjectID, true
+}
+
+// resolveTaskByGitlabIssue turns the {issueIid} in a
+// /projects/{projectID}/tasks/by-gitlab-issue/{issueIid} URL into the
+// {taskID} of the task mirroring that issue, then hands the request to the
+// ordinary task handler mounted behind it. Adding the parameter to chi's
+// RouteContext rather than rewriting the path is what lets every one of
+// those handlers stay untouched: chi.URLParam reads the last value added
+// for a key, so taskIDFromURL sees the resolved ID.
+//
+// It is the whole of the by-IID write surface's implementation. The
+// alternative — an IID-shaped twin of each of the eleven task handlers —
+// would duplicate the request decoding and the error mapping of each one,
+// and the two copies would drift the first time a field was added.
+//
+// Resolution is deliberately *before* the handler's own authorization
+// rather than a substitute for it: ResolveGitlabIssueIID authorizes the
+// lookup at viewer, and the service method behind the handler then applies
+// whatever role the write itself requires.
+func (s *Server) resolveTaskByGitlabIssue(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+			return
+		}
+		projectID, ok := projectIDFromURL(r)
+		if !ok {
+			writeError(w, http.StatusNotFound, "not_found", "project not found")
+			return
+		}
+		issueIID, gitlabProjectID, ok := gitlabIssueRefFromURL(w, r)
+		if !ok {
+			return
+		}
+
+		taskID, err := s.tasks.ResolveGitlabIssueIID(r.Context(), u.ID, projectID, issueIID, gitlabProjectID)
+		if err != nil {
+			writeTaskError(w, err)
+			return
+		}
+
+		rctx := chi.RouteContext(r.Context())
+		if rctx == nil {
+			slog.Error("resolve task by gitlab issue: no chi route context")
+			writeError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+			return
+		}
+		rctx.URLParams.Add("taskID", taskID.String())
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) handleGetTaskByGitlabIssue(w http.ResponseWriter, r *http.Request) {
 	u, _ := userFromContext(r.Context())
 	projectID, ok := projectIDFromURL(r)
@@ -311,20 +384,9 @@ func (s *Server) handleGetTaskByGitlabIssue(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	issueIID, err := strconv.ParseInt(chi.URLParam(r, "issueIid"), 10, 64)
-	if err != nil || issueIID < 1 {
-		writeError(w, http.StatusBadRequest, "invalid_issue_iid", "issue iid must be a positive integer")
+	issueIID, gitlabProjectID, ok := gitlabIssueRefFromURL(w, r)
+	if !ok {
 		return
-	}
-
-	var gitlabProjectID *int64
-	if raw := r.URL.Query().Get("gitlabProjectId"); raw != "" {
-		v, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || v < 1 {
-			writeError(w, http.StatusBadRequest, "invalid_query", "gitlabProjectId must be a positive integer")
-			return
-		}
-		gitlabProjectID = &v
 	}
 
 	t, err := s.tasks.GetByGitlabIssueIID(r.Context(), u.ID, projectID, issueIID, gitlabProjectID)

@@ -78,18 +78,34 @@ POST /api/v1/tasks/{taskID}/close             # once the work is done
 
 Every route above is keyed by the FlowLens task ID. When all you have is the
 GitLab issue — you're on a branch named `issue-7-…`, or resuming from an MR
-that says `Closes #7` — resolve it first:
+that says `Closes #7` — use the by-issue spelling of the same routes:
 
 ```
-GET /api/v1/projects/{projectId}/tasks/by-gitlab-issue/{issueIid}
+     /api/v1/projects/{projectId}/tasks/by-gitlab-issue/{issueIid}
+GET      …                      # the task, same body as GET /tasks/{taskID}
+PATCH    …                      # same as PATCH /tasks/{taskID}
+DELETE   …
+GET      …/context              # the read you start a task from
+GET/POST …/comments
+POST     …/close  …/reopen
+POST     …/design-started  …/implementation-started
+POST     …/assign-backlog  …/sync-retry
+PUT      …/ai-context
 ```
 
-It returns the same body as `GET /api/v1/tasks/{taskID}`, so take `.id` from
-it and use it for the markers, comments and PATCHes above. `read` scope is
-enough. A 404 means no FlowLens task mirrors that issue (a purely local task
-has no iid at all). A 409 `ambiguous_issue_iid` means the project links more
-than one GitLab repository and both hold that iid — retry with
-`?gitlabProjectId=<GitLab's numeric project id>`.
+Each one behaves exactly as its `/tasks/{taskID}` twin, on the task that iid
+resolves to, and needs the same scope: `read` for the reads, `write` for the
+writes. So you can work a whole task from the issue number alone.
+
+If you are making several calls, prefer resolving once — `GET` the first
+route, take `.id`, and use `/tasks/{taskID}` from there — rather than paying
+the lookup on every request.
+
+A 404 means no FlowLens task mirrors that issue (a purely local task has no
+iid at all). A 409 `ambiguous_issue_iid` means the project links more than
+one GitLab repository and both hold that iid — retry with
+`?gitlabProjectId=<GitLab's numeric project id>`, which every route above
+accepts.
 
 Do **not** guess a task ID or list every task and match on title.
 

@@ -99,28 +99,56 @@ which returns the same per-task shape plus `nextPage` (`0` when there is no
 next page). `?updated_since=<RFC 3339 timestamp>` filters to tasks touched
 at or after it, for incremental polling.
 
-### Starting from a GitLab issue IID instead of a task ID
+### Working from a GitLab issue IID instead of a task ID
 
 Every task endpoint is keyed by the task's UUID, but a caller in the
 development environment often knows only the GitLab issue: the branch it is
 on is named after the issue IID, the MR description says `Closes #7`, the CI
-job was handed an issue number. `GET /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}`
-resolves that IID back to the task and returns **exactly the body
-`GET /api/v1/tasks/{taskID}` returns**, so the task's `id` from it drives
-`/design-started`, `/implementation-started`, `/comments`, `PATCH` and the
-rest:
+job was handed an issue number. `/api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}`
+is the whole task surface addressed that way instead — the read returns
+**exactly the body `GET /api/v1/tasks/{taskID}` returns**, and every write
+below it behaves exactly as its `/tasks/{taskID}` twin does:
+
+| Method | Path (under `/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}`) | Twin |
+| --- | --- | --- |
+| GET | *(the task itself)* | `GET /tasks/{taskID}` |
+| PATCH | *(the task itself)* | `PATCH /tasks/{taskID}` |
+| DELETE | *(the task itself)* | `DELETE /tasks/{taskID}` |
+| POST | `/close`, `/reopen` | `POST /tasks/{taskID}/close`, `/reopen` |
+| POST | `/assign-backlog`, `/sync-retry` | the same on `/tasks/{taskID}` |
+| POST | `/design-started`, `/implementation-started` | the same on `/tasks/{taskID}` |
+| PUT | `/ai-context` | `PUT /tasks/{taskID}/ai-context` |
+| GET, POST | `/comments` | the same on `/tasks/{taskID}` |
+| GET | `/context` | `GET /tasks/{taskID}/context` |
+
+So an agent that only ever learns an issue number never has to hold a task
+UUID at all:
 
 ```bash
-TASK_ID=$(curl -s "$API_BASE_URL/api/v1/projects/$PROJECT_ID/tasks/by-gitlab-issue/7" \
-  -H "Authorization: Bearer $FLOWLENS_API_TOKEN" | jq -r .id)
+BY_ISSUE="$API_BASE_URL/api/v1/projects/$PROJECT_ID/tasks/by-gitlab-issue/7"
 
-curl -X POST "$API_BASE_URL/api/v1/tasks/$TASK_ID/design-started" \
-  -H "Authorization: Bearer $FLOWLENS_API_TOKEN"
+curl -s "$BY_ISSUE/context" -H "Authorization: Bearer $FLOWLENS_API_TOKEN"
+curl -X POST "$BY_ISSUE/design-started" -H "Authorization: Bearer $FLOWLENS_API_TOKEN"
+curl -X PATCH "$BY_ISSUE" -H "Authorization: Bearer $FLOWLENS_API_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"progress": "in_progress"}'
 ```
 
-`read` scope is enough (it is a read); the write-scoped call is the marker
-that follows. A task that was never pushed to GitLab has no IID and is by
-definition not reachable this way — a 404, the same as an unknown IID.
+Resolving first and then addressing the task by its `id` still works and is
+still the right thing when a caller is about to make several calls — one
+lookup instead of one per request:
+
+```bash
+TASK_ID=$(curl -s "$BY_ISSUE" -H "Authorization: Bearer $FLOWLENS_API_TOKEN" | jq -r .id)
+```
+
+Scope rules are the twin's, not the lookup's: the reads take `read`, every
+write takes `write`, so a read-scoped token can resolve an IID and still not
+write through it. Resolution itself is authorized at viewer, and the write
+is then authorized again by the endpoint doing it — addressing a task by its
+issue grants nothing that addressing it by UUID would not.
+
+A task that was never pushed to GitLab has no IID and is by definition not
+reachable this way — a 404, the same as an unknown IID.
 
 `?gitlabProjectId=<GitLab's own numeric project id>` narrows the lookup to
 one linked GitLab project. It matters only when the FlowLens project links
@@ -226,7 +254,9 @@ allowlist of the regular task-tracker routes:
 | GET | `/projects/{projectID}/tasks` | `read` |
 | POST | `/projects/{projectID}/tasks` | `write` |
 | POST | `/projects/{projectID}/tasks/bulk` | `write` |
-| GET | `/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}` | `read` |
+| GET | `/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}` (and `/context`, `/comments`) | `read` |
+| PATCH, DELETE | `/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}` | `write` |
+| POST, PUT | `.../by-gitlab-issue/{issueIid}/close`, `/reopen`, `/assign-backlog`, `/sync-retry`, `/design-started`, `/implementation-started`, `/ai-context`, `/comments` | `write` |
 | GET | `/tasks/{taskID}` | `read` |
 | PATCH, DELETE | `/tasks/{taskID}` | `write` |
 | POST | `/tasks/{taskID}/close`, `/reopen`, `/assign-backlog`, `/sync-retry` | `write` |

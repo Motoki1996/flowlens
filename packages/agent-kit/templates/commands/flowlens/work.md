@@ -14,9 +14,11 @@ task-claiming mechanism yet, so two agents can race onto the same task.
 Task ID: $1
 
 If `$1` is not a UUID but a GitLab issue iid (a bare number, e.g. from the
-branch you are on), resolve it first with
+branch you are on), resolve it once with
 `GET {baseUrl}/api/v1/projects/{projectId}/tasks/by-gitlab-issue/$1` and use
-that response's `.id` as the task ID for every step below.
+that response's `.id` as the task ID for every step below. (Every task route
+this command uses also exists under that same `by-gitlab-issue/$1` prefix,
+but this command makes many calls, so resolve once rather than per call.)
 
 ## Steps
 

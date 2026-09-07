@@ -158,6 +158,24 @@ paths:
     $ref: './paths/tasks.yaml#/projectTaskContexts'
   /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}:
     $ref: './paths/tasks.yaml#/byGitlabIssue'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/close:
+    $ref: './paths/tasks.yaml#/byGitlabIssueClose'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/reopen:
+    $ref: './paths/tasks.yaml#/byGitlabIssueReopen'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/assign-backlog:
+    $ref: './paths/tasks.yaml#/byGitlabIssueAssignBacklog'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/sync-retry:
+    $ref: './paths/tasks.yaml#/byGitlabIssueSyncRetry'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/ai-context:
+    $ref: './paths/tasks.yaml#/byGitlabIssueAIContext'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/design-started:
+    $ref: './paths/tasks.yaml#/byGitlabIssueDesignStarted'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/implementation-started:
+    $ref: './paths/tasks.yaml#/byGitlabIssueImplementationStarted'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/context:
+    $ref: './paths/tasks.yaml#/byGitlabIssueContext'
+  /api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}/comments:
+    $ref: './paths/tasks.yaml#/byGitlabIssueComments'
   /api/v1/tasks/{taskID}:
     $ref: './paths/tasks.yaml#/task'
   /api/v1/tasks/{taskID}/close:

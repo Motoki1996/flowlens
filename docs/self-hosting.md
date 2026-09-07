@@ -113,6 +113,28 @@ Keep `.env` — in particular `ENCRYPTION_KEY`. It is not stored in the
 database, and without the same key every saved GitLab token and webhook
 secret is unreadable.
 
+### One-off: repairing imported completion dates
+
+If you linked a GitLab project before the release that started reading
+GitLab's `closed_at`, every issue that was already closed at import time is
+dated to the import rather than to when it was actually closed — which shows
+up as a single enormous spike in the project's Velocity chart in that week,
+and a flat-looking chart after it.
+
+There is no migration for this: the real timestamps live in GitLab. After
+upgrading, run **one full resync per linked GitLab project** — open the
+linked project's view, tick *full*, and press Sync now:
+
+```bash
+# or, by API, with a session cookie and CSRF token:
+curl -X POST .../api/v1/linked-gitlab-projects/<linkID>/sync-runs -d '{"full": true}'
+```
+
+It re-walks every issue including the closed ones and writes the real dates.
+Issues since deleted in GitLab, or now outside the link's sync scope, are not
+re-walked and keep their import-time date. Details:
+[When a task counts as completed](features/gitlab-sync.md#when-a-task-counts-as-completed).
+
 ### Automatic updates
 
 [`scripts/flowlens-autoupdate.sh`](../scripts/flowlens-autoupdate.sh) does the

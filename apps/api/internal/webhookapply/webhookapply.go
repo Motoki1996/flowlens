@@ -57,6 +57,7 @@ type issueWebhookPayload struct {
 		State       string `json:"state"` // "opened" | "closed"
 		DueDate     string `json:"due_date"`
 		UpdatedAt   string `json:"updated_at"`
+		ClosedAt    string `json:"closed_at"`
 		URL         string `json:"url"`
 	} `json:"object_attributes"`
 	Labels []struct {
@@ -79,10 +80,17 @@ type taskFields struct {
 	AssigneeID       *int64
 	AssigneeUsername string
 	UpdatedAt        time.Time
-	IssueID          int64
-	IssueIID         int64
-	WebURL           string
-	Fingerprint      string
+	// ClosedAt is GitLab's own close timestamp, nil for an open issue or a
+	// payload that omits it. On this path the difference from now() is
+	// usually seconds — a live delivery arrives right after the close — but
+	// it matters for a redelivery, for events that queued up while the
+	// worker was down, and for keeping this path's rule identical to
+	// internal/projectsync's; see ApplyWebhookTaskFields in tasks.sql.
+	ClosedAt    *time.Time
+	IssueID     int64
+	IssueIID    int64
+	WebURL      string
+	Fingerprint string
 }
 
 func fieldsFromPayload(p issueWebhookPayload) taskFields {
@@ -117,6 +125,7 @@ func fieldsFromPayload(p issueWebhookPayload) taskFields {
 		AssigneeID:       assigneeID,
 		AssigneeUsername: assigneeUsername,
 		UpdatedAt:        parseHookTime(p.ObjectAttributes.UpdatedAt),
+		ClosedAt:         parseOptionalHookTime(p.ObjectAttributes.ClosedAt),
 		IssueID:          p.ObjectAttributes.ID,
 		IssueIID:         p.ObjectAttributes.IID,
 		WebURL:           p.ObjectAttributes.URL,
@@ -512,6 +521,7 @@ func (s *Service) applyToExistingTask(ctx context.Context, q db.Querier, event d
 		Labels:                 fields.Labels,
 		DueOn:                  toDate(fields.DueDate),
 		Status:                 fields.Status,
+		GitlabClosedAt:         toTimestamptzPtr(fields.ClosedAt),
 	}); err != nil {
 		return s.markFailed(ctx, q, event.ID, fmt.Errorf("update task: %w", err))
 	}
@@ -570,6 +580,7 @@ func (s *Service) applyAsNewTask(ctx context.Context, q db.Querier, event db.Web
 			Labels:                 fields.Labels,
 			DueOn:                  toDate(fields.DueDate),
 			Status:                 task.StatusClosed,
+			GitlabClosedAt:         toTimestamptzPtr(fields.ClosedAt),
 		}); err != nil {
 			return s.markFailed(ctx, q, event.ID, fmt.Errorf("close new task: %w", err))
 		}
@@ -678,6 +689,16 @@ func toTimestamptz(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
 
+// toTimestamptzPtr is toTimestamptz for an optional time: a nil pointer
+// becomes SQL NULL, which is what makes ApplyWebhookTaskFields' COALESCE
+// fall through to the stored value instead of overwriting it.
+func toTimestamptzPtr(v *time.Time) pgtype.Timestamptz {
+	if v == nil {
+		return pgtype.Timestamptz{}
+	}
+	return toTimestamptz(*v)
+}
+
 // parseHookTime wraps gitlab.ParseHookTime for call sites here that only
 // want the zero-time-on-failure shape, logging a warning first so a payload
 // in a format ParseHookTime doesn't recognise is never silently swallowed
@@ -688,6 +709,22 @@ func parseHookTime(s string) time.Time {
 		slog.Warn("unparsable gitlab webhook timestamp", "raw_updated_at", s)
 	}
 	return t
+}
+
+// parseOptionalHookTime is parseHookTime for a field that is legitimately
+// absent most of the time — object_attributes.closed_at is empty on every
+// open issue — so an empty string is returned as nil without a warning,
+// while a value that is present but unparsable still gets one.
+func parseOptionalHookTime(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	t, ok := gitlab.ParseHookTime(s)
+	if !ok {
+		slog.Warn("unparsable gitlab webhook timestamp", "raw_closed_at", s)
+		return nil
+	}
+	return &t
 }
 
 // parseGitlabDate parses a GitLab webhook payload date-only field

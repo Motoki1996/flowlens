@@ -429,6 +429,7 @@ func (s *Service) applyToExistingTask(ctx context.Context, projectID uuid.UUID, 
 			Labels:                 fields.Labels,
 			DueOn:                  toDate(fields.DueDate),
 			Status:                 fields.Status,
+			GitlabClosedAt:         toTimestamptzPtr(fields.ClosedAt),
 		}); err != nil {
 			return fmt.Errorf("update task: %w", err)
 		}
@@ -493,6 +494,7 @@ func (s *Service) applyAsNewTask(ctx context.Context, link db.LinkedGitlabProjec
 				Labels:                 fields.Labels,
 				DueOn:                  toDate(fields.DueDate),
 				Status:                 task.StatusClosed,
+				GitlabClosedAt:         toTimestamptzPtr(fields.ClosedAt),
 			}); err != nil {
 				return fmt.Errorf("close new task: %w", err)
 			}
@@ -595,10 +597,15 @@ type issueFields struct {
 	AssigneeID       *int64
 	AssigneeUsername string
 	UpdatedAt        time.Time
-	IssueID          int64
-	IssueIID         int64
-	WebURL           string
-	Fingerprint      string
+	// ClosedAt is GitLab's own close timestamp, nil for an open issue (and
+	// for a closed one whose GitLab predates the field). It is what stops an
+	// initial import from dating every historical completion to the moment
+	// the project was connected — see ApplyWebhookTaskFields in tasks.sql.
+	ClosedAt    *time.Time
+	IssueID     int64
+	IssueIID    int64
+	WebURL      string
+	Fingerprint string
 }
 
 func fieldsFromIssue(issue gitlab.Issue) issueFields {
@@ -637,6 +644,7 @@ func fieldsFromIssue(issue gitlab.Issue) issueFields {
 		AssigneeID:       assigneeID,
 		AssigneeUsername: assigneeUsername,
 		UpdatedAt:        issue.UpdatedAt,
+		ClosedAt:         issue.ClosedAt,
 		IssueID:          issue.ID,
 		IssueIID:         issue.IID,
 		WebURL:           issue.WebURL,
@@ -680,6 +688,17 @@ func toTimestamptz(t time.Time) pgtype.Timestamptz {
 		return pgtype.Timestamptz{}
 	}
 	return pgtype.Timestamptz{Time: t, Valid: true}
+}
+
+// toTimestamptzPtr is toTimestamptz for an optional time: a nil pointer (an
+// open issue, or a GitLab that reports no closed_at) becomes SQL NULL, which
+// is what makes ApplyWebhookTaskFields' COALESCE fall through to the value
+// already stored rather than overwriting it.
+func toTimestamptzPtr(v *time.Time) pgtype.Timestamptz {
+	if v == nil {
+		return pgtype.Timestamptz{}
+	}
+	return toTimestamptz(*v)
 }
 
 // parseGitlabDate parses a GitLab issue's due_date ("YYYY-MM-DD"). An empty

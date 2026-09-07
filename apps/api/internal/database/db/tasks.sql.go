@@ -68,21 +68,26 @@ SET title = $2,
     labels = $6,
     due_on = $7,
     status = $8,
-    closed_at = CASE WHEN $8 = 'closed' THEN COALESCE(closed_at, now()) ELSE NULL END,
+    closed_at = CASE
+        WHEN $8 = 'closed'
+        THEN COALESCE($9::timestamptz, closed_at, now())
+        ELSE NULL
+    END,
     updated_at = now()
 WHERE tasks.id = $1
 RETURNING tasks.id, tasks.project_id, backlog_id, title, description, status, closed_at, assignee_gitlab_user_id, assignee_gitlab_username, labels, due_on, created_by_user_id, created_at, updated_at, start_date, priority, progress, search_vector, design_started_at, implementation_started_at, size, assignee_user_id, epic_id
 `
 
 type ApplyWebhookTaskFieldsParams struct {
-	ID                     uuid.UUID   `json:"id"`
-	Title                  string      `json:"title"`
-	Description            string      `json:"description"`
-	AssigneeGitlabUserID   pgtype.Int8 `json:"assignee_gitlab_user_id"`
-	AssigneeGitlabUsername string      `json:"assignee_gitlab_username"`
-	Labels                 []string    `json:"labels"`
-	DueOn                  pgtype.Date `json:"due_on"`
-	Status                 string      `json:"status"`
+	ID                     uuid.UUID          `json:"id"`
+	Title                  string             `json:"title"`
+	Description            string             `json:"description"`
+	AssigneeGitlabUserID   pgtype.Int8        `json:"assignee_gitlab_user_id"`
+	AssigneeGitlabUsername string             `json:"assignee_gitlab_username"`
+	Labels                 []string           `json:"labels"`
+	DueOn                  pgtype.Date        `json:"due_on"`
+	Status                 string             `json:"status"`
+	GitlabClosedAt         pgtype.Timestamptz `json:"gitlab_closed_at"`
 }
 
 // CountFailedSyncTasksByProjectForOwner backs the project single view's sync
@@ -99,10 +104,35 @@ type ApplyWebhookTaskFieldsParams struct {
 // created it). It never touches backlog_id, priority, progress or
 // size, which are app-only — in particular an issue being closed on GitLab moves
 // status, never progress (see the 000011 migration).
-// closed_at only advances when status transitions into 'closed' — the CASE
-// reads the pre-update closed_at (every SET expression in one UPDATE sees
-// the same original row), so re-applying while already closed never moves
-// the timestamp, mirroring internal/task.Service.Close's own no-op rule.
+// closed_at is set from GitLab's own closed_at whenever GitLab supplies one,
+// and only ever while status is 'closed'. The COALESCE order is the whole
+// point and the easy thing to get backwards: GitLab's value comes FIRST, so
+// it overwrites whatever is already stored, rather than the more
+// conservative-looking COALESCE(closed_at, ...) that would keep the existing
+// value forever.
+//
+// Writing it the other way round was the bug: tasks.closed_at used to be
+// COALESCE(closed_at, now()), i.e. "when FlowLens first saw this issue
+// closed", so an initial import of a project with months of history stamped
+// every closed issue with now() and internal/velocity — which buckets by
+// completion time — reported the whole backlog of finished work as one spike
+// in the week the project was connected, with every week after it looking
+// dead by comparison. status is GitLab's truth (see the 000011 migration),
+// so the timestamp of its transition is GitLab's truth too.
+//
+// Letting GitLab win is also what repairs already-imported tasks: a full
+// resync re-walks every issue including the closed ones, and the stale guard
+// in internal/projectsync only skips a *strictly* older updated_at, so an
+// untouched issue still re-applies and its real closed_at lands. Re-applying
+// is idempotent — the same GitLab value is written again — so this keeps
+// internal/task.Service.Close's "re-closing never moves the timestamp" rule
+// in spirit: the timestamp is pinned to the close event, not to the write.
+//
+// The two later COALESCE arms are fallbacks for the cases GitLab gives us
+// nothing: an existing closed_at is preferred to now() so that a task closed
+// in FlowLens (which stamps its own closed_at, then pushes the close to
+// GitLab) doesn't have it overwritten by a later resync of a GitLab old
+// enough not to report closed_at at all.
 func (q *Queries) ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTaskFieldsParams) (Task, error) {
 	row := q.db.QueryRow(ctx, applyWebhookTaskFields,
 		arg.ID,
@@ -113,6 +143,7 @@ func (q *Queries) ApplyWebhookTaskFields(ctx context.Context, arg ApplyWebhookTa
 		arg.Labels,
 		arg.DueOn,
 		arg.Status,
+		arg.GitlabClosedAt,
 	)
 	var i Task
 	err := row.Scan(

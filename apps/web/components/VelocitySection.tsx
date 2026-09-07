@@ -70,8 +70,9 @@ const UNIT_TABS: ReadonlyArray<{ key: Unit; label: string }> = [
 
 const UNIT_NOUN: Record<Unit, string> = { tasks: "tasks", points: "points" };
 
-/** formatVelocity renders averageVelocity as "9.5 tasks/week" — or a
- *  placeholder once there is no complete period to average yet, which is
+/** formatVelocity renders averageVelocity — the median of the last complete
+ *  periods, despite the API field's name — as "9.5 tasks/week", or a
+ *  placeholder once there is no complete period to measure yet, which is
  *  different from a velocity of zero and must not be shown as a number. */
 function formatVelocity(averageVelocity: number | null, interval: MetricsInterval, unit: Unit): string {
   if (averageVelocity == null) return "Not enough completed tasks yet";
@@ -187,7 +188,7 @@ export function VelocitySection({
           <>
             <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
               <div>
-                <dt className="text-muted-foreground">Average velocity (last complete periods)</dt>
+                <dt className="text-muted-foreground">Typical velocity (median, last complete periods)</dt>
                 <dd className="text-foreground font-medium">
                   {formatVelocity(averageVelocity, interval, unit)}
                 </dd>

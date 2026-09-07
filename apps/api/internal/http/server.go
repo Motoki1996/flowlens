@@ -390,7 +390,38 @@ func (s *Server) Router() chi.Router {
 			// the issue IID, and every other task route needs the task ID.
 			// Another flat leaf beside the {taskID} mount, like /tasks/bulk
 			// and /tasks/context above.
-			shared.With(requireTokenProjectMatch).Get("/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}", s.handleGetTaskByGitlabIssue)
+			//
+			// Everything a caller can do to a task by its UUID it can do by
+			// the issue IID instead, since an agent that only ever learns
+			// the IID would otherwise have to resolve it and then re-address
+			// the task on every single call. The routes below are the same
+			// handlers as the /tasks/{taskID} group further down, with
+			// resolveTaskByGitlabIssue turning {issueIid} into the {taskID}
+			// they read — the middleware is the only new code, so the two
+			// spellings of a route cannot drift apart in behaviour.
+			//
+			// requireTokenResourceProject is not needed on any of them,
+			// unlike their {taskID} twins: the URL carries a {projectID} of
+			// its own, so requireTokenProjectMatch already confines a token
+			// to its own project, and the resolution itself is scoped to
+			// that same project.
+			byIssue := s.resolveTaskByGitlabIssue
+			writeByIssue := chi.Middlewares{requireTokenScope(apitoken.ScopeWrite), requireTokenProjectMatch, byIssue}
+			const byIssuePath = "/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}"
+
+			shared.With(requireTokenProjectMatch).Get(byIssuePath, s.handleGetTaskByGitlabIssue)
+			shared.With(writeByIssue...).Patch(byIssuePath, s.handleUpdateTask)
+			shared.With(writeByIssue...).Delete(byIssuePath, s.handleDeleteTask)
+			shared.With(writeByIssue...).Post(byIssuePath+"/close", s.handleCloseTask)
+			shared.With(writeByIssue...).Post(byIssuePath+"/reopen", s.handleReopenTask)
+			shared.With(writeByIssue...).Post(byIssuePath+"/assign-backlog", s.handleAssignTaskBacklog)
+			shared.With(writeByIssue...).Post(byIssuePath+"/sync-retry", s.handleRetryTaskSync)
+			shared.With(writeByIssue...).Put(byIssuePath+"/ai-context", s.handleUpsertTaskAIContext)
+			shared.With(writeByIssue...).Post(byIssuePath+"/design-started", s.handleMarkTaskDesignStarted)
+			shared.With(writeByIssue...).Post(byIssuePath+"/implementation-started", s.handleMarkTaskImplementationStarted)
+			shared.With(requireTokenProjectMatch, byIssue).Get(byIssuePath+"/context", s.handleGetTaskContext)
+			shared.With(requireTokenProjectMatch, byIssue).Get(byIssuePath+"/comments", s.handleListTaskComments)
+			shared.With(writeByIssue...).Post(byIssuePath+"/comments", s.handleCreateTaskComment)
 
 			// Read-only, mirroring the issue-sync task collection's route
 			// shape (issue #112): merge_requests is never written back to

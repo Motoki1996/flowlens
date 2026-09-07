@@ -1308,8 +1308,27 @@ func (s *Service) Get(ctx context.Context, ownerID, taskID uuid.UUID) (Task, err
 // A task with no task_gitlab_links row at all — purely local, never pushed to
 // GitLab — has no IID and is by definition unreachable here.
 func (s *Service) GetByGitlabIssueIID(ctx context.Context, ownerID, projectID uuid.UUID, issueIID int64, gitlabProjectID *int64) (Task, error) {
-	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+	taskID, err := s.ResolveGitlabIssueIID(ctx, ownerID, projectID, issueIID, gitlabProjectID)
+	if err != nil {
 		return Task{}, err
+	}
+	return s.Get(ctx, ownerID, taskID)
+}
+
+// ResolveGitlabIssueIID is GetByGitlabIssueIID's first half on its own: the
+// issue IID turned into a task ID, without reading the task. It exists
+// because the whole task write surface is reachable by IID as well (the
+// /projects/{projectID}/tasks/by-gitlab-issue/{issueIid} routes), and those
+// routes resolve in middleware and then hand the request to the ordinary
+// {taskID} handler — which reads, writes and re-reads the task itself, so
+// resolving through Get first would be a wasted read on every mutation.
+//
+// It authorizes at viewer, the lowest role that may learn a task exists;
+// every caller's own write goes on to be authorized again by the service
+// method that performs it, which is where the member/owner rules live.
+func (s *Service) ResolveGitlabIssueIID(ctx context.Context, ownerID, projectID uuid.UUID, issueIID int64, gitlabProjectID *int64) (uuid.UUID, error) {
+	if err := s.authorize(ctx, ownerID, projectID, project.RoleViewer); err != nil {
+		return uuid.Nil, err
 	}
 
 	links, err := s.q.ListTaskGitlabLinksByProjectAndIID(ctx, db.ListTaskGitlabLinksByProjectAndIIDParams{
@@ -1318,15 +1337,15 @@ func (s *Service) GetByGitlabIssueIID(ctx context.Context, ownerID, projectID uu
 		GitlabProjectID: toInt8(gitlabProjectID),
 	})
 	if err != nil {
-		return Task{}, fmt.Errorf("task: get by gitlab issue iid: %w", err)
+		return uuid.Nil, fmt.Errorf("task: resolve gitlab issue iid: %w", err)
 	}
 	switch len(links) {
 	case 0:
-		return Task{}, ErrNotFound
+		return uuid.Nil, ErrNotFound
 	case 1:
-		return s.Get(ctx, ownerID, links[0].TaskID)
+		return links[0].TaskID, nil
 	default:
-		return Task{}, ErrIssueIIDAmbiguous
+		return uuid.Nil, ErrIssueIIDAmbiguous
 	}
 }
 

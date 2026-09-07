@@ -8,6 +8,27 @@ procedure itself.
 
 ## Unreleased
 
+### Added
+
+- **The whole task API is addressable by the GitLab issue IID it mirrors**,
+  not just readable by it. `/api/v1/projects/{projectID}/tasks/by-gitlab-issue/{issueIid}`
+  now carries `PATCH` and `DELETE` on the task itself, plus `/close`,
+  `/reopen`, `/assign-backlog`, `/sync-retry`, `/design-started`,
+  `/implementation-started`, `/ai-context`, `/comments` and `/context` —
+  each behaving exactly as its `/tasks/{taskID}` twin, on the task that IID
+  resolves to. An agent that only ever learns an issue number (the branch it
+  is on, an MR saying `Closes #7`) can now work a task end to end without
+  ever holding a task UUID.
+
+  Only the resolution is new code: a middleware turns the IID into the
+  `{taskID}` the existing handler reads, so the two spellings of a route
+  cannot drift apart. Scopes are unchanged — the reads take `read`, the
+  writes take `write`, and a read-scoped token can resolve an IID without
+  being able to write through it.
+
+  `@motokis-lab/agent-kit` 0.4.0 ships the updated skill and `/flowlens:work`
+  command describing the new routes.
+
 ## v0.5.0 — 2026-09-02
 
 ### Added

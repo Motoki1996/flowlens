@@ -43,18 +43,28 @@ type Label struct {
 }
 
 // Issue is the subset of a GitLab issue FlowLens reads and writes.
+//
+// ClosedAt is when GitLab closed the issue, nil while it is open (and, for
+// an issue closed by a GitLab old enough to predate the field, on a closed
+// one too). It is what keeps tasks.closed_at meaning "when the work
+// finished" rather than "when FlowLens first heard about it": an initial
+// import of a project with months of closed issues would otherwise stamp
+// every one of them with now(), and internal/velocity — which buckets by
+// completion time — would report the entire history as one enormous spike
+// in the week the project was connected.
 type Issue struct {
-	ID          int64     `json:"id"`
-	IID         int64     `json:"iid"`
-	ProjectID   int64     `json:"project_id"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	State       string    `json:"state"`
-	Labels      []string  `json:"labels"`
-	DueDate     string    `json:"due_date"`
-	Assignees   []User    `json:"assignees"`
-	WebURL      string    `json:"web_url"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          int64      `json:"id"`
+	IID         int64      `json:"iid"`
+	ProjectID   int64      `json:"project_id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	State       string     `json:"state"`
+	Labels      []string   `json:"labels"`
+	DueDate     string     `json:"due_date"`
+	Assignees   []User     `json:"assignees"`
+	WebURL      string     `json:"web_url"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	ClosedAt    *time.Time `json:"closed_at"`
 }
 
 // Pipeline is the subset of a GitLab CI pipeline FlowLens reads. It tracks

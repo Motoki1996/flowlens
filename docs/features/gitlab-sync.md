@@ -101,6 +101,59 @@ reads back at `GET /api/v1/projects/{projectID}/linked-gitlab-projects/{linkID}`
 carries no project in its response. Trigger a re-sync at any time from the
 linked project's view (`POST .../sync-runs`, `kind = 'manual_resync'`).
 
+## When a task counts as completed
+
+A synced task's `closed_at` is **GitLab's own `closed_at`** — the moment
+GitLab recorded the issue as closed — not the moment FlowLens learned about
+it. That distinction is the whole of the column's usefulness, because
+[Velocity](metrics.md#velocity-issue-195) buckets tasks by completion time
+and reads `closed_at` as one of its two completion signals.
+
+Before this was read, an initial import stamped every already-closed issue
+with `now()`. A project with months of finished work would therefore report
+all of it as one enormous spike in the week it was connected, with every week
+after it looking dead by comparison, and the forecast drawn from an
+impossible pace. `status` is GitLab's truth (see
+[Task & backlog progress](tasks.md#task--backlog-progress)), so the timestamp
+of its transition is GitLab's truth too.
+
+Concretely, on every inbound apply — initial import, resync and live webhook
+alike:
+
+- GitLab's `closed_at` **overwrites** whatever FlowLens has stored, whenever
+  GitLab supplies one. Re-applying is idempotent (the same value is written
+  again), so the timestamp stays pinned to the close event rather than to the
+  write.
+- If GitLab reports no `closed_at` (an older GitLab CE, or a hook payload
+  that omits it), an existing timestamp is kept and only a task that has none
+  falls back to `now()` — a task closed inside FlowLens, which stamps its own
+  `closed_at` before pushing the close, is never dragged forward by a later
+  resync.
+- Reopening clears it outright, so a reopened task carries no stale
+  completion time.
+
+### Repairing tasks imported before this
+
+Instances that imported a GitLab project earlier hold the old, import-time
+timestamps, and no migration can fix them — the real values live in GitLab.
+**Run one full resync per linked GitLab project** (its view →
+"Sync now" with *full* ticked, or `POST
+/api/v1/linked-gitlab-projects/{linkID}/sync-runs` with `{"full": true}`).
+A full run re-walks every issue including the closed ones, and the stale
+guard skips only a *strictly* older `updated_at`, so an issue nobody has
+touched since is still re-applied and its real `closed_at` lands.
+
+Two things stay unrepaired, both by construction:
+
+- an issue **deleted in GitLab, or now out of [sync scope](#sync-scope)** is
+  never re-walked, so it keeps its import-time timestamp;
+- the **actor breakdown** for historical completions. If
+  [progress sync on issue close](tasks.md#task--backlog-progress) was on, the
+  `task_progress_events` rows written at import time keep their import-time
+  `occurred_at`. Velocity takes the earlier of the two signals, so the
+  repaired `closed_at` decides the *period* correctly, but those completions
+  are attributed to `unknown` rather than to a user or an agent.
+
 ## A backlog's own GitLab project
 
 A project's default link is project-wide, but a team often keeps one backlog's

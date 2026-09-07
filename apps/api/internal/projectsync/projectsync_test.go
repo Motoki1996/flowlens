@@ -122,6 +122,112 @@ func issue(iid int64, title, state string, updatedAt time.Time, labels ...string
 	}
 }
 
+// closedIssue is issue() for an issue GitLab reports as closed, carrying the
+// close timestamp GitLab itself recorded.
+func closedIssue(iid int64, title string, updatedAt, closedAt time.Time) gitlab.Issue {
+	i := issue(iid, title, "closed", updatedAt)
+	i.ClosedAt = &closedAt
+	return i
+}
+
+// An import must date a completion to when GitLab closed the issue, not to
+// when FlowLens first saw it. Getting this wrong is what made connecting a
+// project with months of history report all of it as one spike in that
+// week — internal/velocity buckets by exactly this column.
+func TestHandleImport_ClosedIssueTakesGitlabClosedAt(t *testing.T) {
+	closedAt := time.Now().AddDate(0, 0, -90)
+	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{
+		closedIssue(1, "long done", time.Now(), closedAt),
+		issue(2, "still open", "opened", time.Now()),
+	}}
+	f := newFixture(t, fake)
+
+	f.runImport(t, true)
+
+	tasks := f.tasksInProject(t)
+	require.Len(t, tasks, 2)
+	byTitle := map[string]db.Task{}
+	for _, task := range tasks {
+		byTitle[task.Title] = task
+	}
+
+	done := byTitle["long done"]
+	require.True(t, done.ClosedAt.Valid)
+	assert.WithinDuration(t, closedAt, done.ClosedAt.Time, time.Second,
+		"closed_at must be GitLab's close time, not the import's now()")
+	assert.False(t, byTitle["still open"].ClosedAt.Valid, "an open issue has no closed_at")
+}
+
+// The repair path for instances that imported before FlowLens read
+// closed_at: their tasks carry an import-time closed_at, and a full resync
+// has to overwrite it. This is also what pins the two behaviours that make
+// that possible — the stale guard skipping only a *strictly* older
+// updated_at, so an untouched issue still re-applies, and GitLab's value
+// winning over the stored one in ApplyWebhookTaskFields' COALESCE.
+func TestHandleResync_OverwritesImportTimeClosedAtWithGitlabsOwn(t *testing.T) {
+	updatedAt := time.Now().Add(-time.Hour)
+
+	// The pre-fix state: GitLab reported no closed_at, so the import stamped
+	// the row with its own now().
+	stale := issue(1, "done long ago", "closed", updatedAt)
+	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{stale}}
+	f := newFixture(t, fake)
+	f.runImport(t, true)
+
+	tasks := f.tasksInProject(t)
+	require.Len(t, tasks, 1)
+	require.True(t, tasks[0].ClosedAt.Valid)
+	assert.WithinDuration(t, time.Now(), tasks[0].ClosedAt.Time, time.Minute,
+		"precondition: without a GitLab closed_at the import dates it to now()")
+
+	// A full resync of the *unchanged* issue (same updated_at), now that
+	// GitLab's closed_at is read, repairs the row.
+	realClose := time.Now().AddDate(0, 0, -120)
+	fake.Issues = []gitlab.Issue{closedIssue(1, "done long ago", updatedAt, realClose)}
+	f.runResync(t, true)
+
+	tasks = f.tasksInProject(t)
+	require.Len(t, tasks, 1)
+	assert.WithinDuration(t, realClose, tasks[0].ClosedAt.Time, time.Second)
+}
+
+// The fallback arm of the same COALESCE: a GitLab that reports no closed_at
+// must not push a task's existing timestamp forward on every resync, or the
+// spike would simply follow the resyncs around.
+func TestHandleResync_MissingGitlabClosedAt_LeavesExistingTimestamp(t *testing.T) {
+	updatedAt := time.Now().Add(-time.Hour)
+	closedAt := time.Now().AddDate(0, 0, -30)
+
+	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{closedIssue(1, "done", updatedAt, closedAt)}}
+	f := newFixture(t, fake)
+	f.runImport(t, true)
+
+	fake.Issues = []gitlab.Issue{issue(1, "done", "closed", updatedAt)}
+	f.runResync(t, true)
+
+	tasks := f.tasksInProject(t)
+	require.Len(t, tasks, 1)
+	assert.WithinDuration(t, closedAt, tasks[0].ClosedAt.Time, time.Second)
+}
+
+// Reopening clears closed_at outright — the CASE's ELSE arm — so a reopened
+// task never keeps a stale completion time that internal/velocity would go
+// on counting.
+func TestHandleResync_ReopenedIssueClearsClosedAt(t *testing.T) {
+	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{
+		closedIssue(1, "done", time.Now().Add(-time.Hour), time.Now().AddDate(0, 0, -30)),
+	}}
+	f := newFixture(t, fake)
+	f.runImport(t, true)
+
+	fake.Issues = []gitlab.Issue{issue(1, "done", "opened", time.Now())}
+	f.runResync(t, true)
+
+	tasks := f.tasksInProject(t)
+	require.Len(t, tasks, 1)
+	assert.False(t, tasks[0].ClosedAt.Valid)
+}
+
 func TestHandleImport_CreatesUnclassifiedTasksFromScopedIssues(t *testing.T) {
 	fake := &gitlab.FakeClient{Issues: []gitlab.Issue{
 		issue(1, "first bug", "opened", time.Now(), "bug"),

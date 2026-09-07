@@ -4553,6 +4553,7 @@ components:
           type:
             - number
             - 'null'
+          description: 'The median `completed` over the most recent (up to 4) complete periods, excluding any still-running one; null until at least one period in range is complete. A median rather than a mean so that one freak period — a newly connected GitLab project''s imported history, a release week — does not decide the number a team plans against. The field name is historical: read "average" as the typical period, not the arithmetic mean.'
         forecastPeriods:
           type:
             - number
@@ -4565,6 +4566,7 @@ components:
           type:
             - number
             - 'null'
+          description: The point-denominated counterpart of averageVelocity, by identical rules — also a median, also over complete periods only. Taken over the point series independently, so the median period by points need not be the median period by count.
         unbrokenDownEpicPoints:
           type: integer
           description: Summed estimatedPoints of the project's not-done epics that have no tasks at all. Epics that do have tasks contribute nothing here — their work is already in openTaskPoints, and counting both would double it.

@@ -721,8 +721,13 @@ export interface Velocity {
   /** Current count of tasks with status='open' AND progress<>'done',
    *  regardless of from/to. */
   openTaskCount: number;
-  /** Mean `completed` over the most recent up to 4 *complete* periods
-   *  (excluding any still-running one); null when none is complete yet. */
+  /** Median `completed` over the most recent up to 4 *complete* periods
+   *  (excluding any still-running one); null when none is complete yet.
+   *  A median, not a mean, so a single outlier period — a freshly connected
+   *  GitLab project's imported history, a release week — cannot set the
+   *  pace the forecast is drawn from. The name is the API's, kept stable;
+   *  `VelocityPeriod.movingAverage` is still a real mean, since that one is
+   *  the chart's smoothing line rather than a planning number. */
   averageVelocity: number | null;
   /** openTaskCount / averageVelocity; null whenever averageVelocity is null
    *  or 0. */

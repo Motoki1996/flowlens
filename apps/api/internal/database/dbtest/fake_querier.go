@@ -1411,9 +1411,10 @@ func (f *FakeQuerier) CreateTask(_ context.Context, arg db.CreateTaskParams) (db
 
 // ApplyWebhookTaskFields mirrors the SQL: an unscoped write by task ID only,
 // used by the inbound webhook apply pipeline (internal/webhookapply).
-// closed_at only advances on a transition into 'closed' — re-applying while
-// already closed never moves it — mirroring the real query's CASE, which
-// reads the pre-update value.
+// closed_at follows the real query's COALESCE order exactly: GitLab's own
+// closed_at wins whenever the caller supplies one (which is what lets a full
+// resync repair tasks imported before FlowLens read that field), falling back
+// to the stored value and only then to now().
 func (f *FakeQuerier) ApplyWebhookTaskFields(_ context.Context, arg db.ApplyWebhookTaskFieldsParams) (db.Task, error) {
 	existing, ok := f.tasksByID[arg.ID]
 	if !ok {
@@ -1427,7 +1428,10 @@ func (f *FakeQuerier) ApplyWebhookTaskFields(_ context.Context, arg db.ApplyWebh
 	existing.DueOn = arg.DueOn
 	existing.Status = arg.Status
 	if arg.Status == "closed" {
-		if !existing.ClosedAt.Valid {
+		switch {
+		case arg.GitlabClosedAt.Valid:
+			existing.ClosedAt = arg.GitlabClosedAt
+		case !existing.ClosedAt.Valid:
 			existing.ClosedAt = now()
 		}
 	} else {

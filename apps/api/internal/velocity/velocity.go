@@ -19,7 +19,11 @@
 //
 // A task's completion time is min(its first done-progress-transition's
 // occurred_at, tasks.closed_at), whichever is non-nil; a task with neither
-// is not completed. Both have to be checked: tasks.progress is app-only and
+// is not completed. tasks.closed_at is GitLab's own close timestamp wherever
+// GitLab reports one (see ApplyWebhookTaskFields in tasks.sql): it used to be
+// the time FlowLens first observed the issue closed, which made connecting a
+// project with months of history report all of it as a single spike in that
+// week — the bucketing here is only ever as good as that column. Both have to be checked: tasks.progress is app-only and
 // never written by GitLab sync, so a task closed on the GitLab side alone
 // never reaches progress='done' and would be invisible if only the
 // task_progress_events log were read. Conversely tasks.status can stay
@@ -55,6 +59,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"time"
 
 	"github.com/flowlens/api/internal/database/db"
@@ -150,21 +156,40 @@ type Metrics struct {
 	// ForecastPeriods, which is about what's left right now, not about the
 	// requested window.
 	OpenTaskCount int `json:"openTaskCount"`
-	// AverageVelocity is the mean Completed over the most recent (up to)
+	// AverageVelocity is the *median* Completed over the most recent (up to)
 	// MovingAverageWindow periods with Complete=true, excluding any
 	// still-running period — an in-progress period is necessarily
 	// undercounted and would bias this down. nil when no period in range is
 	// yet complete.
+	//
+	// A median, not a mean, for the reason internal/deliverymetrics reports
+	// every distribution as median and p90: one freak period must not decide
+	// the number a team plans against. The concrete case is a newly connected
+	// GitLab project, whose imported history lands disproportionately in one
+	// bucket, but a release week works the same way. The JSON name is kept as
+	// averageVelocity — "average" in the everyday sense of the typical
+	// period, not the arithmetic mean — because it is a published /api/v1
+	// field with callers (the web Velocity card, agent-kit's bundled spec)
+	// and renaming it would break them for a cosmetic gain. Note Period.
+	// MovingAverage above is still a genuine mean: it is the chart's
+	// smoothing line, where showing the spike is honest, not a number
+	// anything is forecast from.
 	AverageVelocity *float64 `json:"averageVelocity"`
 	// ForecastPeriods is OpenTaskCount / AverageVelocity: how many more
 	// periods, at the recent pace, the remaining open tasks would take. nil
-	// whenever AverageVelocity is nil or zero.
+	// whenever AverageVelocity is nil or zero. It inherits the median's
+	// outlier resistance, which is the half of this that actually misleads
+	// when it goes wrong: a spike-inflated velocity makes the remaining work
+	// look closer, not further away.
 	ForecastPeriods *float64 `json:"forecastPeriods"`
 
 	// OpenTaskPoints is OpenTaskCount weighted by size — tasks only, exactly
 	// as its name says. AverageVelocityPoints is the point-denominated
 	// counterpart of AverageVelocity, computed by the identical rules (in
-	// particular it also excludes still-running periods). The points forecast
+	// particular it is also a median, and also excludes still-running
+	// periods). It is taken over the point series independently rather than
+	// derived from AverageVelocity, so the median period by count and the
+	// median period by points need not be the same period. The points forecast
 	// is the more trustworthy of the two once sizes are actually being set,
 	// since it accounts for the remaining work being unusually large or small
 	// rather than assuming an average task.
@@ -420,33 +445,34 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		periods[i].MovingAveragePoints = float64(pointSum) / float64(i-first+1)
 	}
 
-	// Both averages walk the *complete* periods only, newest first. Skipping
+	// Both figures walk the *complete* periods only, newest first. Skipping
 	// a still-running period rather than stopping at it is the whole point:
 	// an in-progress bucket is partial by construction and would drag the
-	// average — and so the forecast — down every time the endpoint is called
+	// figure — and so the forecast — down every time the endpoint is called
 	// mid-period.
-	var averageVelocity, forecastPeriods *float64
-	var averageVelocityPoints, forecastPeriodsByPoints *float64
-	var sum, pointSum, count int
-	for i := len(periods) - 1; i >= 0 && count < MovingAverageWindow; i-- {
+	var recentCounts, recentPoints []int
+	for i := len(periods) - 1; i >= 0 && len(recentCounts) < MovingAverageWindow; i-- {
 		if !periods[i].Complete {
 			continue
 		}
-		sum += periods[i].Completed
-		pointSum += periods[i].CompletedPoints
-		count++
+		recentCounts = append(recentCounts, periods[i].Completed)
+		recentPoints = append(recentPoints, periods[i].CompletedPoints)
 	}
-	if count > 0 {
-		v := float64(sum) / float64(count)
-		averageVelocity = &v
-		if v > 0 {
-			f := float64(openCount) / v
+
+	// The two slices are filled in lockstep, so either both are empty or
+	// neither is — one median check covers both.
+	var averageVelocity, forecastPeriods *float64
+	var averageVelocityPoints, forecastPeriodsByPoints *float64
+	if v := median(recentCounts); v != nil {
+		averageVelocity = v
+		if *v > 0 {
+			f := float64(openCount) / *v
 			forecastPeriods = &f
 		}
-		pv := float64(pointSum) / float64(count)
-		averageVelocityPoints = &pv
-		if pv > 0 {
-			pf := float64(openPointsTotal) / pv
+		pv := median(recentPoints)
+		averageVelocityPoints = pv
+		if *pv > 0 {
+			pf := float64(openPointsTotal) / *pv
 			forecastPeriodsByPoints = &pf
 		}
 	}
@@ -473,4 +499,31 @@ func (s *Service) Compute(ctx context.Context, ownerID, projectID uuid.UUID, fro
 		ForecastPeriodsByPoints: forecastPeriodsByPoints,
 		SizedTaskRatio:          sizedRatio,
 	}, nil
+}
+
+// median returns the middle value of an unsorted slice, or nil when it is
+// empty. It uses the nearest-rank method (rank = ceil(0.5n), 1-indexed, no
+// interpolation) — the same convention internal/deliverymetrics' percentile
+// helper uses, so "median" means one thing across the metrics endpoints.
+//
+// A median rather than a mean is what makes AverageVelocity survive a single
+// outlier period, and the outlier this exists for is real: connecting a
+// GitLab project imports its whole issue history at once, and any completion
+// FlowLens cannot date precisely still lands in one bucket. A mean over the
+// four-period window would carry that spike for four periods and quietly
+// deflate ForecastPeriods with it; a median over the same window ignores it
+// unless it is genuinely the typical period.
+func median(values []int) *float64 {
+	if len(values) == 0 {
+		return nil
+	}
+	sorted := make([]int, len(values))
+	copy(sorted, values)
+	sort.Ints(sorted)
+	rank := int(math.Ceil(0.5 * float64(len(sorted))))
+	if rank < 1 {
+		rank = 1
+	}
+	m := float64(sorted[rank-1])
+	return &m
 }

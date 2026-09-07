@@ -230,12 +230,57 @@ func TestService_Compute_AverageVelocityExcludesInProgressPeriod(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, got.AverageVelocity)
-	// (2+3+4+5)/4 = 3.5, excluding both the current partial week and the
+	// The median of (2,3,4,5) by nearest rank — ceil(0.5*4) = 2nd of the
+	// sorted four — is 3, excluding both the current partial week and the
 	// too-old fifth week.
-	assert.InDelta(t, 3.5, *got.AverageVelocity, 0.001)
+	assert.InDelta(t, 3.0, *got.AverageVelocity, 0.001)
 
 	last := got.Periods[len(got.Periods)-1]
 	assert.False(t, last.Complete)
+}
+
+// The regression this guards is the one a GitLab import produces: one period
+// holding far more completions than any other must not become the pace the
+// forecast is drawn from. A mean would have reported 28 tasks/week here and
+// divided the remaining work by it.
+func TestService_Compute_AverageVelocityIgnoresOneSpikePeriod(t *testing.T) {
+	f := newFixture(t)
+	currentWeekStart := metricsperiod.BucketStart(time.Now(), metricsperiod.Week)
+
+	// Four complete weeks, the oldest of them a 100-task import spike.
+	weekCounts := []int{100, 3, 4, 5} // oldest to newest, excluding current
+	for i, n := range weekCounts {
+		weeksAgo := len(weekCounts) - i // 4,3,2,1 weeks ago
+		weekStart := currentWeekStart.AddDate(0, 0, -7*weeksAgo)
+		for j := 0; j < n; j++ {
+			task := f.q.SeedTaskWithCreatedAt(f.project.ID, f.owner, "Task", weekStart)
+			f.q.SeedTaskProgressEventWithActor(task.ID, "in_progress", "done", weekStart.Add(time.Hour), "user")
+			f.q.SeedTaskProgress(task.ID, "done")
+		}
+	}
+	for j := 0; j < 8; j++ {
+		open := f.q.SeedTask(f.project.ID, f.owner, "Open")
+		f.q.SeedTaskProgress(open.ID, "in_progress")
+	}
+
+	got, err := f.svc.Compute(context.Background(), f.owner, f.project.ID, nil, nil, metricsperiod.Week)
+	require.NoError(t, err)
+
+	require.NotNil(t, got.AverageVelocity)
+	assert.InDelta(t, 4.0, *got.AverageVelocity, 0.001, "median of (3,4,5,100), not their mean of 28")
+
+	// The spike is still *shown* — it is real data, and hiding it would be a
+	// different lie. Only the number the forecast divides by is protected.
+	var spikes int
+	for _, p := range got.Periods {
+		if p.Completed == 100 {
+			spikes++
+		}
+	}
+	assert.Equal(t, 1, spikes, "the outlier period is still reported in full")
+
+	require.NotNil(t, got.ForecastPeriods)
+	assert.InDelta(t, 2.0, *got.ForecastPeriods, 0.001, "8 open / 4 per week, not 8/28")
 }
 
 func TestService_Compute_ForecastPeriods(t *testing.T) {

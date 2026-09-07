@@ -246,7 +246,11 @@ types per task; `size` is a five-value T-shirt scale and the weights
 
 - A task's **completion time** is `min(its first progress='done'
   transition's occurred_at, tasks.closed_at)`, whichever is non-nil; a task
-  with neither is not completed and is never counted. Both signals have to
+  with neither is not completed and is never counted. For a task synced from
+  GitLab, `closed_at` is
+  [GitLab's own close timestamp](gitlab-sync.md#when-a-task-counts-as-completed),
+  not the moment FlowLens learned of the close — which is what keeps an
+  initial import from reporting a project's whole history as one spike. Both signals have to
   be checked: `tasks.progress` is app-only and GitLab sync does not write it
   by default, so a task closed on the GitLab side alone never reaches
   `progress='done'` and would be invisible if only `task_progress_events`
@@ -288,15 +292,29 @@ types per task; `size` is a five-value T-shirt scale and the weights
     weighting each completed task by its size.
   - The response also reports `openTaskCount` (current
     `status='open' AND progress<>'done'` count, regardless of `from`/`to`),
-    `averageVelocity` (the mean `completed` over the most recent up to 4
+    `averageVelocity` (the **median** `completed` over the most recent up to 4
     **complete** periods — excluding any still-running period, which would
     otherwise understate velocity by construction — `null` if none is
     complete yet), and `forecastPeriods` (`openTaskCount / averageVelocity`,
     `null` whenever that's `null` or `0`): how many more periods, at the
     recent pace, the remaining open tasks would take.
+
+    A median, not a mean, for the same reason
+    [Delivery metrics](#delivery-metrics-issue-113) reports median and p90 and
+    never a mean: one freak period must not set the pace a team plans
+    against. A release week does this, and so does connecting a GitLab
+    project, whose imported history lands disproportionately in one bucket.
+    A mean would carry such a period for four periods and deflate
+    `forecastPeriods` with it — in the direction that flatters, making the
+    remaining work look closer than it is. The JSON field keeps the name
+    `averageVelocity`: read "average" as the typical period, not the
+    arithmetic mean. Note `movingAverage` on each period is still a genuine
+    mean — it is the chart's smoothing line, where showing the spike is
+    honest, not a number anything is forecast from.
   - `openTaskPoints`, `averageVelocityPoints` and `forecastPeriodsByPoints`
     are the point-denominated counterparts of those three, by identical
-    rules — `averageVelocityPoints` also excludes still-running periods.
+    rules — `averageVelocityPoints` is also a median and also excludes
+    still-running periods.
     Once sizes are actually set, the point forecast is the more trustworthy
     of the two, since it accounts for the remaining work being unusually
     large or small instead of assuming an average-sized task.

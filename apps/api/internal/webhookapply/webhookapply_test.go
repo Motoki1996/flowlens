@@ -73,6 +73,7 @@ type issuePayloadOpts struct {
 	DueDate          string
 	UpdatedAt        time.Time
 	UpdatedAtRaw     string // overrides UpdatedAt's RFC3339 formatting when set, for a raw GitLab hook-format timestamp
+	ClosedAtRaw      string // object_attributes.closed_at exactly as GitLab would send it; empty means the field is absent, as it is on every open issue
 	URL              string
 }
 
@@ -111,6 +112,7 @@ func issuePayload(o issuePayloadOpts) []byte {
 			"state":       o.State,
 			"due_date":    o.DueDate,
 			"updated_at":  updatedAt,
+			"closed_at":   o.ClosedAtRaw,
 			"url":         o.URL,
 		},
 		"labels":    labels,
@@ -217,6 +219,59 @@ func TestProcessNext_KnownIssue_UpdatesExistingTask(t *testing.T) {
 	assert.Equal(t, task.StatusClosed, updated.Status)
 	assert.True(t, updated.ClosedAt.Valid)
 	assert.EqualValues(t, 5, updated.AssigneeGitlabUserID.Int64)
+}
+
+// A live delivery carries GitLab's own closed_at, and that — not the moment
+// the worker happened to apply the event — is what dates the completion.
+// The gap is usually seconds here, but a redelivery or a backlog of events
+// queued while the worker was down can make it hours, and internal/velocity
+// buckets by this column. The raw value is in GitLab's hook timestamp
+// format rather than RFC3339 on purpose: hook payloads serialise a Ruby
+// Time, so this path has to go through gitlab.ParseHookTime.
+func TestProcessNext_ClosedIssue_TakesGitlabClosedAt(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Old title")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 99)
+
+	closedAt := time.Date(2026, 3, 4, 9, 30, 0, 0, time.UTC)
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{
+		IID: 99, Title: "Done", State: "closed",
+		ClosedAtRaw: closedAt.Format("2006-01-02 15:04:05 MST"),
+	}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	updated, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
+	require.NoError(t, err)
+	require.True(t, updated.ClosedAt.Valid)
+	assert.WithinDuration(t, closedAt, updated.ClosedAt.Time, time.Second)
+}
+
+// A payload with no closed_at at all (an older GitLab, or a hook builder
+// that omits it) still has to close the task — falling back to now() rather
+// than leaving a closed task with no completion time, which internal/velocity
+// would read as "never finished".
+func TestProcessNext_ClosedIssueWithoutClosedAt_FallsBackToNow(t *testing.T) {
+	f := newFixture(t, linkedproject.ScopeAll, nil)
+	ctx := context.Background()
+
+	tsk := f.q.SeedTask(f.projectID, f.ownerID, "Old title")
+	f.q.SeedTaskGitlabLink(tsk.ID, f.link.ID, 99)
+
+	f.q.SeedWebhookEvent(f.link.ID, issuePayload(issuePayloadOpts{IID: 99, Title: "Done", State: "closed"}))
+
+	claimed, err := f.svc.ProcessNext(ctx)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	updated, err := f.q.GetTaskForOwner(ctx, db.GetTaskForOwnerParams{ID: tsk.ID, OwnerUserID: f.ownerID})
+	require.NoError(t, err)
+	require.True(t, updated.ClosedAt.Valid)
+	assert.WithinDuration(t, time.Now(), updated.ClosedAt.Time, time.Minute)
 }
 
 // An unparsable updated_at (issue #183) must not overwrite the

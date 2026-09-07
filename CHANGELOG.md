@@ -8,6 +8,8 @@ procedure itself.
 
 ## Unreleased
 
+## v0.6.0 — 2026-09-07
+
 ### Added
 
 - **The whole task API is addressable by the GitLab issue IID it mirrors**,
@@ -28,6 +30,52 @@ procedure itself.
 
   `@motokis-lab/agent-kit` 0.4.0 ships the updated skill and `/flowlens:work`
   command describing the new routes.
+
+### Fixed
+
+- **A task's completion is now dated by GitLab's own `closed_at`**, not by
+  when FlowLens first saw the issue closed. `ApplyWebhookTaskFields` wrote
+  `COALESCE(closed_at, now())` and `gitlab.Issue` did not even carry the
+  field, so an initial import stamped every already-closed issue with the
+  time of the import: connecting a project with months of history reported
+  all of that finished work as one enormous spike in the Velocity chart in
+  the week of the connection, with every week after it looking dead by
+  comparison. GitLab's value now comes first in the `COALESCE`
+  (`gitlab_closed_at → closed_at → now()`), on both inbound paths — the live
+  Issue Hook and the periodic resync.
+
+  ⚠️ **Breaking (data, not schema).** Upgrading fixes new syncs but does not
+  rewrite what is already stored — the real timestamps live in GitLab. After
+  `docker compose pull && docker compose up -d`, run **one full resync per
+  linked GitLab project** (the linked project's view → tick *full* → *Sync
+  now*). A full resync re-walks closed issues and the stale guard skips only
+  a strictly older `updated_at`, so untouched issues re-apply and their real
+  dates land. Issues since deleted in GitLab, or now outside the link's sync
+  scope, are not re-walked and keep their import-time date; historical
+  `task_progress_events` keep their import-time `occurred_at`, so repaired
+  completions land in the right period but attribute to `unknown`. Procedure
+  and caveats: the "One-off: repairing imported completion dates" section in
+  [`docs/self-hosting.md`](docs/self-hosting.md).
+
+### Changed
+
+- **`averageVelocity` and `averageVelocityPoints` are the median of the last
+  complete periods, not the mean** — for the same reason the delivery
+  metrics report median and p90 and never a mean: one freak period must not
+  set the pace `forecastPeriods` divides by, and it errs in the flattering
+  direction. A release week does this as well, so the change outlives the
+  import bug above. The JSON field names stay (published `/api/v1` fields
+  with callers); the web label now reads "Typical velocity (median, …)".
+  `VelocityPeriod.movingAverage` is still a real mean, since that one is the
+  chart's smoothing line rather than a planning number.
+
+### Documentation
+
+- **`README.md` is a 210-line summary with screenshots** instead of 2,548
+  lines of reference. The detail moves verbatim into one file per area under
+  [`docs/features/`](docs/features/README.md), with local setup, env vars and
+  `make` targets in [`docs/development.md`](docs/development.md). No prose
+  was dropped; every cross-section link was rewritten to its new file.
 
 ## v0.5.0 — 2026-09-02
 
